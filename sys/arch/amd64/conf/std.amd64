@@ -1,0 +1,19 @@
+# $NetBSD: std.amd64,v 1.9 2012/09/27 18:28:55 alnsn Exp $
+#
+# standard, required NetBSD/amd64 'options'
+
+machine amd64 x86
+include		"conf/std"	# MI standard options
+
+options 	CPU_IN_CKSUM
+options 	EXEC_ELF64	# exec ELF binaries
+options 	EXEC_SCRIPT	# exec #! scripts
+options 	MTRR
+options		MULTIPROCESSOR
+
+mainbus0 at root
+cpu* at mainbus?
+ioapic* at mainbus? apid ?
+
+# Atheros HAL options
+include "external/isc/atheros_hal/conf/std.ath_hal"

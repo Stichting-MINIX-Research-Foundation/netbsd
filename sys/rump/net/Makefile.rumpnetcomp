@@ -1,0 +1,15 @@
+#	$NetBSD: Makefile.rumpnetcomp,v 1.5 2012/08/15 17:56:58 rmind Exp $
+#
+
+RUMPNETCOMP=	agr bridge net net80211 netbt netinet npf local shmif virtif
+
+RUMPNETSOCKIN=	sockin
+
+.for var in ${RUMPNETCOMP}
+RUMPNETLIBS+=lib${var}
+RUMPNETLDADD+=-lrumpnet_${var}
+.endfor
+
+.for var in ${RUMPNETSOCKIN}
+RUMPNETLIBS+=lib${var}
+.endfor
