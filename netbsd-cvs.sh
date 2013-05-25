@@ -1,12 +1,13 @@
 #!/bin/sh
 
 # Invocation of this script : 
-#  $ ./netbsd-cvs.sh checkout -A -P -D "2012/10/17 12:00:00 UTC" src -d .
-#  $ ROOT=/some/path ./netbsd-cvs.sh checkout -A -P -D "2012/10/17 12:00:00 UTC" src -d .
-#  $ NETBSD_SRC=/some/absolute/path ./netbsd-cvs.sh checkout -A -P -D "2012/10/17 12:00:00 UTC" src -d .
+#  For a first checkout, supposing your are in the src directory : 
+#  $ ./netbsd-cvs.sh checkout -A -P -D '2012/10/17 12:00:00 UTC' src
+#
+#  For updates (hypotesis, current directory is the git root directory
+#  $ ./netbsd-cvs.sh update -A -Pd -D "2012/10/18 12:00:00 UTC"
 
-: ${ROOT=.}
-: ${NETBSD_SRC=${ROOT}/netbsd}
+: ${NETBSD_SRC=..}
 
 if [ "$#" -lt "1" ]; then
   echo "Wrong number of arguments."
