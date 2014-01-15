@@ -1,4 +1,4 @@
-/*	$NetBSD: tcp_usrreq.c,v 1.165 2012/06/02 21:36:47 dsl Exp $	*/
+/*	$NetBSD: tcp_usrreq.c,v 1.169 2013/11/23 14:20:21 christos Exp $	*/
 
 /*
  * Copyright (C) 1995, 1996, 1997, and 1998 WIDE Project.
@@ -95,7 +95,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: tcp_usrreq.c,v 1.165 2012/06/02 21:36:47 dsl Exp $");
+__KERNEL_RCSID(0, "$NetBSD: tcp_usrreq.c,v 1.169 2013/11/23 14:20:21 christos Exp $");
 
 #include "opt_inet.h"
 #include "opt_ipsec.h"
@@ -1164,18 +1164,20 @@ sysctl_net_inet_ip_ports(SYSCTLFN_ARGS)
 static inline int
 copyout_uid(struct socket *sockp, void *oldp, size_t *oldlenp)
 {
-	size_t sz;
-	int error;
-	uid_t uid;
-
-	uid = kauth_cred_geteuid(sockp->so_cred);
 	if (oldp) {
+		size_t sz;
+		uid_t uid;
+		int error;
+
+		if (sockp->so_cred == NULL)
+			return EPERM;
+
+		uid = kauth_cred_geteuid(sockp->so_cred);
 		sz = MIN(sizeof(uid), *oldlenp);
-		error = copyout(&uid, oldp, sz);
-		if (error)
+		if ((error = copyout(&uid, oldp, sz)) != 0)
 			return error;
 	}
-	*oldlenp = sizeof(uid);
+	*oldlenp = sizeof(uid_t);
 	return 0;
 }
 
@@ -1394,16 +1396,11 @@ sysctl_inpcblist(SYSCTLFN_ARGS)
 	struct sockaddr_in6 *in6;
 	const struct in6pcb *in6p;
 #endif
-	/*
-	 * sysctl_data is const, but CIRCLEQ_FOREACH can't use a const
-	 * struct inpcbtable pointer, so we have to discard const.  :-/
-	 */
 	struct inpcbtable *pcbtbl = __UNCONST(rnode->sysctl_data);
 	const struct inpcb_hdr *inph;
 	struct tcpcb *tp;
 	struct kinfo_pcb pcb;
 	char *dp;
-	u_int op, arg;
 	size_t len, needed, elem_size, out_size;
 	int error, elem_count, pf, proto, pf2;
 
@@ -1423,8 +1420,6 @@ sysctl_inpcblist(SYSCTLFN_ARGS)
 	}
 	error = 0;
 	dp = oldp;
-	op = name[0];
-	arg = name[1];
 	out_size = elem_size;
 	needed = 0;
 
@@ -1440,7 +1435,7 @@ sysctl_inpcblist(SYSCTLFN_ARGS)
 
 	mutex_enter(softnet_lock);
 
-	CIRCLEQ_FOREACH(inph, &pcbtbl->inpt_queue, inph_queue) {
+	TAILQ_FOREACH(inph, &pcbtbl->inpt_queue, inph_queue) {
 #ifdef INET
 		inp = (const struct inpcb *)inph;
 #endif
@@ -1600,6 +1595,27 @@ sysctl_tcp_congctl(SYSCTLFN_ARGS)
 }
 
 static int
+sysctl_tcp_init_win(SYSCTLFN_ARGS)
+{
+	int error;
+	u_int iw;
+	struct sysctlnode node;
+
+	iw = *(u_int *)rnode->sysctl_data;
+	node = *rnode;
+	node.sysctl_data = &iw;
+	node.sysctl_size = sizeof(iw);
+	error = sysctl_lookup(SYSCTLFN_CALL(&node));
+	if (error || newp == NULL)
+		return error;
+
+	if (iw >= __arraycount(tcp_init_win_max))
+		return EINVAL;
+	*(u_int *)rnode->sysctl_data = iw;
+	return 0;
+}
+
+static int
 sysctl_tcp_keep(SYSCTLFN_ARGS)
 {  
 	int error;
@@ -1732,7 +1748,7 @@ sysctl_net_inet_tcp_setup2(struct sysctllog **clog, int pf, const char *pfname,
 		       CTLFLAG_PERMANENT|CTLFLAG_READWRITE,
 		       CTLTYPE_INT, "init_win",
 		       SYSCTL_DESCR("Initial TCP congestion window"),
-		       NULL, 0, &tcp_init_win, 0,
+		       sysctl_tcp_init_win, 0, &tcp_init_win, 0,
 		       CTL_NET, pf, IPPROTO_TCP, TCPCTL_INIT_WIN, CTL_EOL);
 	sysctl_createv(clog, 0, NULL, NULL,
 		       CTLFLAG_PERMANENT|CTLFLAG_READWRITE,
@@ -1861,7 +1877,7 @@ sysctl_net_inet_tcp_setup2(struct sysctllog **clog, int pf, const char *pfname,
 		       CTLFLAG_PERMANENT|CTLFLAG_READWRITE,
 		       CTLTYPE_INT, "init_win_local",
 		       SYSCTL_DESCR("Initial TCP window size (in segments)"),
-		       NULL, 0, &tcp_init_win_local, 0,
+		       sysctl_tcp_init_win, 0, &tcp_init_win_local, 0,
 		       CTL_NET, pf, IPPROTO_TCP, TCPCTL_INIT_WIN_LOCAL,
 		       CTL_EOL);
 	sysctl_createv(clog, 0, NULL, NULL,

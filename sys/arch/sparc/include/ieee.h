@@ -1,4 +1,4 @@
-/*	$NetBSD: ieee.h,v 1.14 2011/07/10 04:49:37 matt Exp $	*/
+/*	$NetBSD: ieee.h,v 1.16 2013/11/20 22:22:20 martin Exp $	*/
 
 /*
  * Copyright (c) 1992, 1993
@@ -57,27 +57,28 @@
 #if defined(__arch64__) || defined(_KERNEL)
 
 #define	EXT_EXPBITS	15
-#define EXT_FRACHBITS	16
-#define	EXT_FRACHMBITS	32
-#define	EXT_FRACLMBITS	32
-#define	EXT_FRACLBITS	32
-#define	EXT_FRACBITS	(EXT_FRACLBITS + EXT_FRACLMBITS + EXT_FRACHMBITS + EXT_FRACHBITS)
-
-#define	EXT_TO_ARRAY32(u, a) do {			\
-	(a)[0] = (uint32_t)(u).extu_ext.ext_fracl;	\
-	(a)[1] = (uint32_t)(u).extu_ext.ext_fraclm;	\
-	(a)[2] = (uint32_t)(u).extu_ext.ext_frachm;	\
-	(a)[3] = (uint32_t)(u).extu_ext.ext_frach;	\
-} while(/*CONSTCOND*/0)
+#define EXT_FRACHBITS	(16+32)
+#define	EXT_FRACLBITS	(32+32)
+#define	EXT_FRACBITS	(EXT_FRACLBITS + EXT_FRACHBITS)
 
 struct ieee_ext {
-	u_int	ext_sign:1;
-	u_int	ext_exp:EXT_EXPBITS;
-	u_int	ext_frach:EXT_FRACHBITS;
-	u_int	ext_frachm;
-	u_int	ext_fraclm;
-	u_int	ext_fracl;
+	uint64_t	ext_sign:1;
+	uint64_t	ext_exp:EXT_EXPBITS;
+	uint64_t	ext_frach:EXT_FRACHBITS;
+	uint64_t	ext_fracl;
 };
+__CTASSERT(sizeof(struct ieee_ext) == 16);
+
+/*
+ * Copy all mantissa bits to an array of uint32_t big enough to hold them all.
+ * This is an insane API (seems to only be needed in gdtoa).
+ */
+#define EXT_TO_ARRAY32(u, a) do {					\
+	(a)[0] = (uint32_t)((u).extu_ext.ext_fracl & 0x0ffffffffL);	\
+	(a)[1] = (uint32_t)((u).extu_ext.ext_fracl >> 32);		\
+	(a)[2] = (uint32_t)((u).extu_ext.ext_frach & 0x0ffffffffL);	\
+	(a)[3] = (uint32_t)((u).extu_ext.ext_frach >> 32) & 0x0ffff;	\
+} while(/*CONSTCOND*/0)
 
 /*
  * Floats whose exponent is in [1..INFNAN) (of whatever type) are
@@ -118,6 +119,6 @@ union ieee_ext_u {
 #define extu_frachm	extu_ext.ext_frachm
 #define extu_frach	extu_ext.ext_frach
 
-#define LDBL_NBIT	0x80000000
-#define mask_nbit_l(u)	((u).extu_frach &= ~LDBL_NBIT)
+#define	LDBL_IMPLICIT_NBIT	1
+
 #endif /* __arch64__ || _KERNEL */

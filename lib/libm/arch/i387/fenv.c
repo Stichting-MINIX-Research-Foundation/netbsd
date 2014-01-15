@@ -1,4 +1,4 @@
-/* $NetBSD: fenv.c,v 1.4 2012/08/04 03:53:55 riastradh Exp $ */
+/* $NetBSD: fenv.c,v 1.6 2013/11/11 00:31:51 joerg Exp $ */
 
 /*-
  * Copyright (c) 2004-2005 David Schultz <das@FreeBSD.ORG>
@@ -27,7 +27,7 @@
  */
 
 #include <sys/cdefs.h>
-__RCSID("$NetBSD: fenv.c,v 1.4 2012/08/04 03:53:55 riastradh Exp $");
+__RCSID("$NetBSD: fenv.c,v 1.6 2013/11/11 00:31:51 joerg Exp $");
 
 #include <sys/param.h>
 #include <sys/sysctl.h>
@@ -115,16 +115,20 @@ fenv_t __fe_dfl_env = {
  */
 static int __HAS_SSE = 0;
 
-static void __test_sse(void) __attribute__ ((constructor));
+static void __init_libm(void) __attribute__ ((constructor, used));
 
-static void __test_sse(void)
+static void __init_libm(void)
 {
 	size_t oldlen = sizeof(__HAS_SSE);
 	int rv;
+	uint16_t control;
 
 	rv = sysctlbyname("machdep.sse", &__HAS_SSE, &oldlen, NULL, 0);
 	if (rv == -1)
 		__HAS_SSE = 0;
+
+	__fnstcw(&control);
+	__fe_dfl_env.x87.control = control;
 }
 
 /*
@@ -510,5 +514,5 @@ fegetexcept(void)
 	 */
 	__fnstcw(&control);
 
-	return (control & FE_ALL_EXCEPT);
+	return (~control & FE_ALL_EXCEPT);
 }

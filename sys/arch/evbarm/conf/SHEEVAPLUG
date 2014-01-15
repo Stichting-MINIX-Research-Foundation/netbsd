@@ -1,4 +1,4 @@
-#	$NetBSD: SHEEVAPLUG,v 1.24 2012/10/09 08:57:36 msaitoh Exp $
+#	$NetBSD: SHEEVAPLUG,v 1.35 2013/10/05 02:39:06 kiyohara Exp $
 #
 #  This configuration supports for generically Marvell SheevaPlug
 #
@@ -27,6 +27,7 @@ options 	KIRKWOOD
 
 # Standard system options
 
+options 	MSGBUFSIZE=32768
 options 	RTC_OFFSET=0	# hardware clock is this many mins. west of GMT
 #options 	NTP		# NTP phase/frequency locked loop
 
@@ -74,18 +75,13 @@ options 	FFS_NO_SNAPSHOT	# No FFS snapshot support
 options 	INET		# IP + ICMP + TCP + UDP
 options 	INET6		# IPv6
 #options 	IPSEC		# IP security
-#options 	IPSEC_ESP	# IP security (encryption part; define w/IPSEC)
-#options 	IPSEC_NAT_T	# IPsec NAT traversal (NAT-T)
 #options 	IPSEC_DEBUG	# debug for IP security
 #options 	MROUTING	# IP multicast routing
 #options 	PIM		# Protocol Independent Multicast
-#options 	ISO,TPIP	# OSI
-#options 	EON		# OSI tunneling over IP
 #options 	NETATALK	# AppleTalk networking protocols
 #options 	PPP_BSDCOMP	# BSD-Compress compression support for PPP
 #options 	PPP_DEFLATE	# Deflate compression support for PPP
 #options 	PPP_FILTER	# Active filter support for PPP (requires bpf)
-#options 	PFIL_HOOKS	# pfil(9) packet filter hooks
 #options 	IPFILTER_LOG	# ipmon(8) log support
 #options 	IPFILTER_LOOKUP	# ippool(8) support
 #options 	IPFILTER_COMPAT	# Compat for IP-Filter
@@ -95,6 +91,7 @@ options 	INET6		# IPv6
 #options 	INET_CSUM_COUNTERS
 #options 	TCP_CSUM_COUNTERS
 #options 	UDP_CSUM_COUNTERS
+#options 	MVGBE_EVENT_COUNTERS
 
 #options 	NFS_BOOT_BOOTP
 options 	NFS_BOOT_DHCP
@@ -114,6 +111,7 @@ options 	NFS_BOOT_DHCP
 #options 	COMPAT_30	# NetBSD 3.0 compatibility.
 #options 	COMPAT_40	# NetBSD 4.0 compatibility.
 options 	COMPAT_50	# NetBSD 5.0 compatibility.
+options 	COMPAT_60	# NetBSD 6.0 compatibility.
 #options 	COMPAT_43	# 4.3BSD compatibility.
 #options 	TCP_COMPAT_42	# 4.2BSD TCP/IP bug compat. Not recommended.
 
@@ -142,7 +140,6 @@ options 	DKWEDGE_METHOD_GPT
 
 options 	KTRACE		# system call tracing, a la ktrace(1)
 options 	IRQSTATS	# manage IRQ statistics
-#options 	LKM		# loadable kernel modules
 #options 	KMEMSTATS	# kernel memory statistics
 options 	MIIVERBOSE	# Verbose MII autoconfuration messages
 #options 	PCIVERBOSE	# Verbose PCI descriptions
@@ -165,7 +162,7 @@ options 	DDB		# in-kernel debugger
 #options 	KGDB
 #options 	DEBUG_KGDB
 makeoptions	DEBUG="-g"	# compile full symbol table
-makeoptions	COPTS="-O1"
+#makeoptions	COPTS="-O1"
 options 	SYMTAB_SPACE=800000
 #options 	AUDIO_DEBUG=2
 
@@ -181,23 +178,26 @@ cpu0	at mainbus?
 mvsoc0	at mainbus?
 
 # On-chip PCI Express Interface
-#mvpex*	at mvsoc? offset ? irq ?
+mvpex*	at mvsoc? offset ? irq ?
 
 # PCI bus support
 options 	PCI_NETBSD_CONFIGURE
 #options 	PCI_CONFIG_DUMP		# verbosely dump PCI config space
 
-#pci*	at mvpex?
+pci*	at mvpex?
 
-#pchb*	at pci? dev ? function ?	# PCI-Host bridges
+pchb*	at pci? dev ? function ?	# PCI-Host bridges
 
 # On-chip Serial-ATA II Host Controller (SATAHC)
-#mvsata* at mvsoc? offset ? irq ?
+mvsata* at mvsoc? offset ? irq ?
 
 # On-chip Gigabit Ethernet Controller Interface
 mvgbec* at mvsoc? offset ?
 mvgbe*	at mvgbec? port ? irq ?
+
+# MII/PHY support
 makphy* at mii? phy ?
+ukphy*	at mii? phy ?			# generic unknown PHYs
 
 # On-chip USB 2.0 Interface
 ehci*	at mvsoc? offset ? irq ?
@@ -216,8 +216,8 @@ com*	at mvsoc? offset ? irq ?
 gtidmac* at mvsoc? offset ? irq ?
 
 # On-chip General Purpose I/O Port Interface
-#mvsocgpp* at mvsoc? offset ? irq ?
-#gpio*	at mvsocgpp?
+mvsocgpp* at mvsoc? offset ? irq ?
+gpio*	at mvsocgpp?
 
 # On-chip Timers
 mvsoctmr* at mvsoc? offset ? irq ?
@@ -229,11 +229,11 @@ sdmmc*	at mvsdio?
 ld*	at sdmmc?
 
 # ATA (IDE) bus support
-#atabus* at ata?
+atabus* at ata?
 #options 	ATADEBUG
 
 # IDE drives
-#wd*	at atabus? drive ? flags 0x0000
+wd*	at atabus? drive ? flags 0x0000
 
 # ATAPI bus support
 atapibus* at atapi?
@@ -442,9 +442,9 @@ pseudo-device	swcrypto		# software crypto implementation
 
 # disk/mass storage pseudo-devices
 #pseudo-device	bio			# RAID control device driver
-#pseudo-device	ccd		4	# concatenated/striped disk devices
-#pseudo-device	cgd		4	# cryptographic disk devices
-#pseudo-device	raid		8	# RAIDframe disk driver
+#pseudo-device	ccd			# concatenated/striped disk devices
+#pseudo-device	cgd			# cryptographic disk devices
+#pseudo-device	raid			# RAIDframe disk driver
 #options 	RAID_AUTOCONFIG		# auto-configuration of RAID components
 # Options to enable various other RAIDframe RAID types.
 #options 	RF_INCLUDE_EVENODD=1
@@ -486,14 +486,14 @@ pseudo-device	stf			# 6to4 IPv6 over IPv4 encapsulation
 
 # miscellaneous pseudo-devices
 pseudo-device	pty			# pseudo-terminals
-#pseudo-device	sequencer	1	# MIDI sequencer
+#pseudo-device	sequencer		# MIDI sequencer
 #options 	RND_COM
 pseudo-device	clockctl		# user control of clock subsystem
 pseudo-device	ksyms			# /dev/ksyms
 pseudo-device	drvctl			# device control
 
 # a pseudo device needed for Coda	# also needs CODA (above)
-#pseudo-device	vcoda		4	# coda minicache <-> venus comm.
+#pseudo-device	vcoda			# coda minicache <-> venus comm.
 
 # a pseudo device needed for SMBFS
 #pseudo-device	nsmb			# experimental - SMB requester

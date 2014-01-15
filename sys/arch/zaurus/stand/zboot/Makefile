@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.8 2012/01/18 23:12:21 nonaka Exp $
+#	$NetBSD: Makefile,v 1.13 2013/11/04 21:30:16 christos Exp $
 
 PROG=		zboot
 
@@ -17,9 +17,17 @@ NOMAN=		# defined
 CFLAGS+=	-Wall -Wno-main
 CFLAGS+=	-Wmissing-prototypes -Wstrict-prototypes -Wpointer-arith
 CFLAGS+=	-fno-stack-protector -fno-builtin -ffreestanding
+CFLAGS+=	-fno-unwind-tables
 CPPFLAGS+=	-nostdinc -I. -I${.CURDIR} -I${.OBJDIR} -I${S}
 CPPFLAGS+=	-D_STANDALONE -DHEAP_VARIABLE
 CPPFLAGS+=	-DLIBSA_ENABLE_LS_OP
+CPPFLAGS+=	-mabi=apcs-gnu -mfloat-abi=soft -mcpu=xscale
+.if ${HAVE_GCC} < 48
+CPPFLAGS+=	-mno-thumb -mno-thumb-interwork
+.else
+CPPFLAGS+=	-marm
+.endif
+CPUFLAGS=
 AFLAGS+=	-D_LOCORE
 LDFLAGS+=	-nostdlib -Bstatic
 
@@ -50,9 +58,10 @@ SAMISCMAKEFLAGS= SA_USE_CREAD=yes SA_USE_LOADFILE=yes SA_ENABLE_LS_OP=yes
 LIBSA=		${SALIB}
 
 ${PROG}: ${OBJS} ${LIBSA} ${LIBZ} ${LIBKERN} ${VERSIONFILE}
+	${_MKTARGET_LINK}
 	${HOST_SH} ${S}/conf/newvers_stand.sh ${${MKREPRO} == "yes" :?:-D} \
 	    ${VERSIONFILE} ${MACHINE} ${NEWVERSWHAT}
-	${CC} -c vers.c
+	${CC} ${CFLAGS} ${CPPFLAGS} -c vers.c
 	${LD} ${LDFLAGS} -o ${PROG} ${OBJS} vers.o ${LIBSA} ${LIBZ} ${LIBKERN}
 
 .include <bsd.klinks.mk>

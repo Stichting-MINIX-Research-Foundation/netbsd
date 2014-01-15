@@ -1,5 +1,5 @@
 #
-# $NetBSD: HADES,v 1.100 2012/03/10 21:51:49 joerg Exp $
+# $NetBSD: HADES,v 1.103 2013/06/30 21:38:55 rmind Exp $
 #
 # This file was automatically created. Changes will be
 # lost when running makeconf in this directory.
@@ -21,7 +21,6 @@ options INET6 # IPV6
 options PPP_BSDCOMP # BSD-Compress compression support for PPP
 options PPP_DEFLATE # Deflate compression support for PPP
 options PPP_FILTER # Active filter support for PPP (requires bpf)
-options PFIL_HOOKS # pfil(9) packet filter hooks
 options IPFILTER_LOG # ipmon(8) log support
 options IPFILTER_LOOKUP # ippool(8) support
 options IPFILTER_COMPAT # Compat for IP-Filter
@@ -58,6 +57,7 @@ options COMPAT_20 # Compatibility with NetBSD 2.0
 options COMPAT_30 # NetBSD 3.0 compatibility.
 options COMPAT_40 # NetBSD 4.0 compatibility.
 options COMPAT_50 # NetBSD 5.0 compatibility.
+options COMPAT_60 # NetBSD 6.0 compatibility.
 options COMPAT_AOUT_M68K # Compatibility to a.out executables
 options EXEC_AOUT # a.out format executables
 options COMPAT_BSDPTY # /dev/[pt]ty?? ptys.
@@ -92,7 +92,7 @@ pseudo-device tun # network tunnel
 pseudo-device tap # virtual Ethernet
 pseudo-device gif # IPv[46] over IPv[46] tunnel (RFC1933)
 pseudo-device stf # 6to4 IPv6 over IPv4 encapsulation
-pseudo-device ccd 4 # concatenating disk driver
+pseudo-device ccd # concatenating disk driver
 pseudo-device fss # file system snapshot device
 pseudo-device ipfilter # IP filtering device
 pseudo-device clockctl # user control of clock subsystem

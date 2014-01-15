@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.6 2011/01/17 15:57:04 pooka Exp $
+#	$NetBSD: Makefile,v 1.9 2013/04/16 15:30:09 christos Exp $
 
 .include "../Makefile.inc"
 
@@ -13,26 +13,12 @@ KMOD=	compat
 #
 .if (${MACHINE_ARCH} != "x86_64")
 CPPFLAGS+=	-DCOMPAT_09
-.endif
-.if (${MACHINE_ARCH} != "x86_64")
 CPPFLAGS+=	-DCOMPAT_10
-.endif
-.if (${MACHINE_ARCH} != "x86_64")
 CPPFLAGS+=	-DCOMPAT_11
-.endif
-.if (${MACHINE_ARCH} != "x86_64")
 CPPFLAGS+=	-DCOMPAT_12
-.endif
-.if (${MACHINE_ARCH} != "x86_64")
 CPPFLAGS+=	-DCOMPAT_13
-.endif
-.if (${MACHINE_ARCH} != "x86_64")
 CPPFLAGS+=	-DCOMPAT_14
-.endif
-.if (${MACHINE_ARCH} != "x86_64")
 CPPFLAGS+=	-DCOMPAT_15
-.endif
-.if (${MACHINE_ARCH} != "x86_64")
 CPPFLAGS+=	-DCOMPAT_16
 .endif
 
@@ -50,6 +36,7 @@ SRCS+=	vfs_syscalls_20.c vfs_syscalls_30.c vfs_syscalls_40.c
 SRCS+=	vfs_syscalls_43.c vm_12.c vm_43.c compat_mod.c
 SRCS+=	sysv_msg_50.c sysv_sem_50.c kern_time_50.c
 SRCS+=	sysv_shm_50.c vfs_syscalls_50.c sysv_ipc_50.c
+SRCS+=	tty_60.c kern_time_60.c
 
 .PATH:	${S}/arch/${MACHINE}/${MACHINE}
 .PATH:	${S}/arch/${MACHINE_ARCH}/${MACHINE_ARCH}

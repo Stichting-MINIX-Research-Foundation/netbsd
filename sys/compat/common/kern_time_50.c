@@ -1,4 +1,4 @@
-/*	$NetBSD: kern_time_50.c,v 1.23 2012/10/02 01:44:27 christos Exp $	*/
+/*	$NetBSD: kern_time_50.c,v 1.26 2013/03/29 01:02:49 christos Exp $	*/
 
 /*-
  * Copyright (c) 2008, 2009 The NetBSD Foundation, Inc.
@@ -29,7 +29,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: kern_time_50.c,v 1.23 2012/10/02 01:44:27 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: kern_time_50.c,v 1.26 2013/03/29 01:02:49 christos Exp $");
 
 #ifdef _KERNEL_OPT
 #include "opt_aio.h"
@@ -58,13 +58,17 @@ __KERNEL_RCSID(0, "$NetBSD: kern_time_50.c,v 1.23 2012/10/02 01:44:27 christos E
 #include <sys/aio.h>
 #include <sys/poll.h>
 #include <sys/syscallargs.h>
+#include <sys/sysctl.h>
 #include <sys/resource.h>
 
 #include <compat/common/compat_util.h>
+#include <compat/common/compat_mod.h>
 #include <compat/sys/time.h>
 #include <compat/sys/timex.h>
 #include <compat/sys/resource.h>
 #include <compat/sys/clockctl.h>
+
+struct timeval50 boottime50; 
 
 int
 compat_50_sys_clock_gettime(struct lwp *l,
@@ -375,7 +379,7 @@ compat_50_sys__lwp_park(struct lwp *l,
 			return error;
 	}
 
-	return lwp_park(tsp, SCARG(uap, hint));
+	return lwp_park(CLOCK_REALTIME, TIMER_ABSTIME, tsp, SCARG(uap, hint));
 }
 
 int
@@ -509,27 +513,15 @@ compat_50_sys_getrusage(struct lwp *l,
 		syscallarg(int) who;
 		syscallarg(struct rusage50 *) rusage;
 	} */
+	int error;
 	struct rusage ru;
 	struct rusage50 ru50;
 	struct proc *p = l->l_proc;
 
-	switch (SCARG(uap, who)) {
-	case RUSAGE_SELF:
-		mutex_enter(p->p_lock);
-		memcpy(&ru, &p->p_stats->p_ru, sizeof(ru));
-		calcru(p, &ru.ru_utime, &ru.ru_stime, NULL, NULL);
-		mutex_exit(p->p_lock);
-		break;
+	error = getrusage1(p, SCARG(uap, who), &ru);
+	if (error != 0)
+		return error;
 
-	case RUSAGE_CHILDREN:
-		mutex_enter(p->p_lock);
-		memcpy(&ru, &p->p_stats->p_cru, sizeof(ru));
-		mutex_exit(p->p_lock);
-		break;
-
-	default:
-		return EINVAL;
-	}
 	rusage_to_rusage50(&ru, &ru50);
 	return copyout(&ru50, SCARG(uap, rusage), sizeof(ru50));
 }
@@ -717,4 +709,20 @@ compat_50_sys_wait4(struct lwp *l, const struct compat_50_sys_wait4_args *uap,
 		error = copyout(&status, SCARG(uap, status), sizeof(status));
 
 	return error;
+}
+
+void
+compat_sysctl_time(struct sysctllog **clog)
+{
+	struct timeval tv;
+
+	TIMESPEC_TO_TIMEVAL(&tv, &boottime);
+	timeval_to_timeval50(&tv, &boottime50);
+
+	sysctl_createv(clog, 0, NULL, NULL,
+		CTLFLAG_PERMANENT, 
+		CTLTYPE_STRUCT, "oboottime", 
+		SYSCTL_DESCR("System boot time"),
+		NULL, 0, &boottime50, sizeof(boottime50),
+		CTL_KERN, KERN_OBOOTTIME, CTL_EOL);
 }

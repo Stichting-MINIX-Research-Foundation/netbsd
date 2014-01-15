@@ -1,4 +1,4 @@
-/*	$NetBSD: kern_sysctl.c,v 1.236 2012/06/06 05:10:54 matt Exp $	*/
+/*	$NetBSD: kern_sysctl.c,v 1.243 2013/04/27 20:13:16 christos Exp $	*/
 
 /*-
  * Copyright (c) 2003, 2007, 2008 The NetBSD Foundation, Inc.
@@ -68,10 +68,12 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: kern_sysctl.c,v 1.236 2012/06/06 05:10:54 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: kern_sysctl.c,v 1.243 2013/04/27 20:13:16 christos Exp $");
 
 #include "opt_defcorename.h"
 #include "ksyms.h"
+
+#define SYSCTL_PRIVATE
 
 #include <sys/param.h>
 #define __COMPAT_SYSCTL
@@ -102,7 +104,13 @@ static int sysctl_cvt_out(struct lwp *, int, const struct sysctlnode *,
 static int sysctl_log_add(struct sysctllog **, const struct sysctlnode *);
 static int sysctl_log_realloc(struct sysctllog *);
 
-typedef void (*sysctl_setup_func)(struct sysctllog **);
+typedef void sysctl_setup_func(struct sysctllog **);
+
+#ifdef SYSCTL_DEBUG
+#define DPRINTF(a)	printf a
+#else
+#define DPRINTF(a)
+#endif
 
 struct sysctllog {
 	const struct sysctlnode *log_root;
@@ -223,7 +231,7 @@ sysctl_copyinstr(struct lwp *l, const void *uaddr, void *kaddr,
 void
 sysctl_init(void)
 {
-	sysctl_setup_func * const *sysctl_setup, f;
+	sysctl_setup_func *const *sysctl_setup;
 
 	rw_init(&sysctl_treelock);
 
@@ -233,11 +241,7 @@ sysctl_init(void)
 	sysctl_root.sysctl_num = CREATE_BASE;
 
         __link_set_foreach(sysctl_setup, sysctl_funcs) {
-		/*
-		 * XXX - why do i have to coerce the pointers like this?
-		 */
-		f = (void*)*sysctl_setup;
-		(*f)(NULL);
+		(**sysctl_setup)(NULL);
 	}
 
 	mutex_init(&sysctl_file_marker_lock, MUTEX_DEFAULT, IPL_NONE);
@@ -1435,8 +1439,8 @@ sysctl_lookup(SYSCTLFN_ARGS)
 	KASSERT(rw_lock_held(&sysctl_treelock));
 
 	if (SYSCTL_VERS(rnode->sysctl_flags) != SYSCTL_VERSION) {
-		printf("sysctl_lookup: rnode %p wrong version\n", rnode);
-		return (EINVAL);
+		printf("%s: rnode %p wrong version\n", __func__, rnode);
+		return EINVAL;
 	}
 
 	error = 0;
@@ -1445,16 +1449,20 @@ sysctl_lookup(SYSCTLFN_ARGS)
 	 * you can't "look up" a node.  you can "query" it, but you
 	 * can't "look it up".
 	 */
-	if (SYSCTL_TYPE(rnode->sysctl_flags) == CTLTYPE_NODE || namelen != 0)
-		return (EINVAL);
+	if (SYSCTL_TYPE(rnode->sysctl_flags) == CTLTYPE_NODE || namelen != 0) {
+		DPRINTF(("%s: can't lookup a node\n", __func__));
+		return EINVAL;
+	}
 
 	/*
 	 * some nodes are private, so only root can look into them.
 	 */
 	if (l != NULL && (rnode->sysctl_flags & CTLFLAG_PRIVATE) &&
 	    (error = kauth_authorize_system(l->l_cred, KAUTH_SYSTEM_SYSCTL,
-	    KAUTH_REQ_SYSTEM_SYSCTL_PRVT, NULL, NULL, NULL)) != 0)
-		return (error);
+	    KAUTH_REQ_SYSTEM_SYSCTL_PRVT, NULL, NULL, NULL)) != 0) {
+		DPRINTF(("%s: private node\n", __func__));
+		return error;
+	}
 
 	/*
 	 * if a node wants to be writable according to different rules
@@ -1466,8 +1474,10 @@ sysctl_lookup(SYSCTLFN_ARGS)
 	    !(rnode->sysctl_flags & CTLFLAG_ANYWRITE) &&
 	    (error = kauth_authorize_system(l->l_cred,
 	    KAUTH_SYSTEM_SYSCTL, KAUTH_REQ_SYSTEM_SYSCTL_MODIFY, NULL, NULL,
-	    NULL)) != 0)
-		return (error);
+	    NULL)) != 0) {
+		DPRINTF(("%s: can't modify\n", __func__));
+		return error;
+	}
 
 	/*
 	 * is this node supposedly writable?
@@ -1478,8 +1488,10 @@ sysctl_lookup(SYSCTLFN_ARGS)
 	 * it appears not to be writable at this time, so if someone
 	 * tried to write to it, we must tell them to go away
 	 */
-	if (!rw && newp != NULL)
-		return (EPERM);
+	if (!rw && newp != NULL) {
+		DPRINTF(("%s: not writable\n", __func__));
+		return EPERM;
+	}
 
 	/*
 	 * step one, copy out the stuff we have presently
@@ -1501,7 +1513,8 @@ sysctl_lookup(SYSCTLFN_ARGS)
 			d = __UNCONST(&rnode->sysctl_qdata);
 			break;
 		default:
-			return (EINVAL);
+			DPRINTF(("%s: bad type\n", __func__));
+			return EINVAL;
 		}
 	} else
 		d = rnode->sysctl_data;
@@ -1509,17 +1522,20 @@ sysctl_lookup(SYSCTLFN_ARGS)
 		sz = strlen(d) + 1; /* XXX@@@ possible fault here */
 	else
 		sz = rnode->sysctl_size;
-	if (oldp != NULL)
+	if (oldp != NULL) {
 		error = sysctl_copyout(l, d, oldp, MIN(sz, *oldlenp));
-	if (error)
-		return (error);
+		if (error) {
+			DPRINTF(("%s: bad copyout %d\n", __func__, error));
+			return error;
+		}
+	}
 	*oldlenp = sz;
 
 	/*
 	 * are we done?
 	 */
 	if (newp == NULL || newlen == 0)
-		return (0);
+		return 0;
 
 	/*
 	 * hmm...not done.  must now "copy in" new value.  re-adjust
@@ -1533,13 +1549,20 @@ sysctl_lookup(SYSCTLFN_ARGS)
 		 * these data must be *exactly* the same size coming
 		 * in.  bool may only be true or false.
 		 */
-		if (newlen != sz)
-			return (EINVAL);
-		error = sysctl_copyin(l, newp, &tmp, sz);
-		if (tmp != true && tmp != false)
+		if (newlen != sz) {
+			DPRINTF(("%s: bad size %zu != %zu\n", __func__, newlen,
+			    sz));
 			return EINVAL;
-		if (error)
+		}
+		error = sysctl_copyin(l, newp, &tmp, sz);
+		if (tmp != true && tmp != false) {
+			DPRINTF(("%s: tmp %d\n", __func__, tmp));
+			return EINVAL;
+		}
+		if (error) {
+			DPRINTF(("%s: copyin %d\n", __func__, error));
 			break;
+		}
 		*(bool *)d = tmp;
 		break;
 	}
@@ -1550,8 +1573,11 @@ sysctl_lookup(SYSCTLFN_ARGS)
 		 * these data must be *exactly* the same size coming
 		 * in.
 		 */
-		if (newlen != sz)
-			return (EINVAL);
+		if (newlen != sz) {
+			DPRINTF(("%s: bad size %zu != %zu\n", __func__, newlen,
+			    sz));
+			return EINVAL;
+		}
 		error = sysctl_copyin(l, newp, d, sz);
 		break;
 	case CTLTYPE_STRING: {
@@ -1564,20 +1590,26 @@ sysctl_lookup(SYSCTLFN_ARGS)
 		/*
 		 * too much new string?
 		 */
-		if (newlen > sz)
-			return (EINVAL);
+		if (newlen > sz) {
+			DPRINTF(("%s: bad size %zu > %zu\n", __func__, newlen,
+			    sz));
+			return EINVAL;
+		}
 
 		/*
 		 * temporary copy of new inbound string
 		 */
 		len = MIN(sz, newlen);
 		newbuf = malloc(len, M_SYSCTLDATA, M_WAITOK|M_CANFAIL);
-		if (newbuf == NULL)
-			return (ENOMEM);
+		if (newbuf == NULL) {
+			DPRINTF(("%s: oomem %zu\n", __func__, len));
+			return ENOMEM;
+		}
 		error = sysctl_copyin(l, newp, newbuf, len);
 		if (error) {
 			free(newbuf, M_SYSCTLDATA);
-			return (error);
+			DPRINTF(("%s: copyin %d\n", __func__, error));
+			return error;
 		}
 
 		/*
@@ -1586,7 +1618,8 @@ sysctl_lookup(SYSCTLFN_ARGS)
 		 */
 		if (newbuf[len - 1] != '\0' && len == sz) {
 			free(newbuf, M_SYSCTLDATA);
-			return (EINVAL);
+			DPRINTF(("%s: string too long\n", __func__));
+			return EINVAL;
 		}
 
 		/*
@@ -1600,10 +1633,14 @@ sysctl_lookup(SYSCTLFN_ARGS)
 		break;
 	}
 	default:
-		return (EINVAL);
+		DPRINTF(("%s: bad type\n", __func__));
+		return EINVAL;
+	}
+	if (error) {
+		DPRINTF(("%s: copyin %d\n", __func__, error));
 	}
 
-	return (error);
+	return error;
 }
 
 /*
@@ -2172,8 +2209,10 @@ sysctl_destroyv(struct sysctlnode *rnode, ...)
 	namelen = 0;
 	ni = 0;
 	do {
-		if (ni == CTL_MAXNAME)
+		if (ni == CTL_MAXNAME) {
+			va_end(ap);
 			return (ENAMETOOLONG);
+		}
 		name[ni] = va_arg(ap, int);
 	} while (name[ni++] != CTL_EOL);
 	namelen = ni - 1;

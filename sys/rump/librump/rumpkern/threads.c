@@ -1,4 +1,4 @@
-/*	$NetBSD: threads.c,v 1.15 2011/08/07 14:03:16 rmind Exp $	*/
+/*	$NetBSD: threads.c,v 1.21 2013/05/02 19:15:01 pooka Exp $	*/
 
 /*
  * Copyright (c) 2007-2009 Antti Kantee.  All Rights Reserved.
@@ -29,7 +29,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: threads.c,v 1.15 2011/08/07 14:03:16 rmind Exp $");
+__KERNEL_RCSID(0, "$NetBSD: threads.c,v 1.21 2013/05/02 19:15:01 pooka Exp $");
 
 #include <sys/param.h>
 #include <sys/atomic.h>
@@ -48,6 +48,10 @@ struct kthdesc {
 	struct lwp *mylwp;
 };
 
+static bool threads_are_go;
+static struct rumpuser_mtx *thrmtx;
+static struct rumpuser_cv *thrcv;
+
 static void *
 threadbouncer(void *arg)
 {
@@ -59,8 +63,17 @@ threadbouncer(void *arg)
 	f = k->f;
 	thrarg = k->arg;
 
+	/* don't allow threads to run before all CPUs have fully attached */
+	if (!threads_are_go) {
+		rumpuser_mutex_enter_nowrap(thrmtx);
+		while (!threads_are_go) {
+			rumpuser_cv_wait_nowrap(thrcv, thrmtx);
+		}
+		rumpuser_mutex_exit(thrmtx);
+	}
+
 	/* schedule ourselves */
-	rumpuser_set_curlwp(l);
+	rumpuser_curlwpop(RUMPUSER_LWP_SET, l);
 	rump_schedule();
 
 	/* free dance struct */
@@ -73,6 +86,38 @@ threadbouncer(void *arg)
 
 	panic("unreachable, should kthread_exit()");
 }
+
+void
+rump_thread_init(void)
+{
+
+	rumpuser_mutex_init(&thrmtx, RUMPUSER_MTX_SPIN);
+	rumpuser_cv_init(&thrcv);
+}
+
+void
+rump_thread_allow(void)
+{
+
+	rumpuser_mutex_enter(thrmtx);
+	threads_are_go = true;
+	rumpuser_cv_broadcast(thrcv);
+	rumpuser_mutex_exit(thrmtx);
+
+}
+
+static struct {
+	const char *t_name;
+	bool t_ncmp;
+} nothreads[] = {
+	{ "vrele", false },
+	{ "vdrain", false },
+	{ "cachegc", false },
+	{ "nfssilly", false },
+	{ "unpgc", false },
+	{ "pmf", true },
+	{ "xcall", true },
+};
 
 int
 kthread_create(pri_t pri, int flags, struct cpu_info *ci,
@@ -104,33 +149,25 @@ kthread_create(pri_t pri, int flags, struct cpu_info *ci,
 	}
 
 	if (!rump_threads) {
-		/* fake them */
-		if (strcmp(thrstore, "vrele") == 0) {
-			printf("rump warning: threads not enabled, not starting"
-			   " vrele thread\n");
-			return 0;
-		} else if (strcmp(thrstore, "cachegc") == 0) {
-			printf("rump warning: threads not enabled, not starting"
-			   " namecache g/c thread\n");
-			return 0;
-		} else if (strcmp(thrstore, "nfssilly") == 0) {
-			printf("rump warning: threads not enabled, not enabling"
-			   " nfs silly rename\n");
-			return 0;
-		} else if (strcmp(thrstore, "unpgc") == 0) {
-			printf("rump warning: threads not enabled, not enabling"
-			   " UNP garbage collection\n");
-			return 0;
-		} else if (strncmp(thrstore, "pmf", sizeof("pmf")-1) == 0) {
-			printf("rump warning: threads not enabled, not enabling"
-			   " pmf thread\n");
-			return 0;
-		} else if (strncmp(thrstore, "xcall", sizeof("xcall")-1) == 0) {
-			printf("rump warning: threads not enabled, CPU xcall"
-			   " not functional\n");
-			return 0;
-		} else
-			panic("threads not available, setenv RUMP_THREADS 1");
+		bool matched;
+		int i;
+
+		/* do we want to fake it? */
+		for (i = 0; i < __arraycount(nothreads); i++) {
+			if (nothreads[i].t_ncmp) {
+				matched = strncmp(thrstore, nothreads[i].t_name,
+				    strlen(nothreads[i].t_name)) == 0;
+			} else {
+				matched = strcmp(thrstore,
+				    nothreads[i].t_name) == 0;
+			}
+			if (matched) {
+				aprint_error("rump kernel threads not enabled, "
+				    "%s not functional\n", nothreads[i].t_name);
+				return 0;
+			}
+		}
+		panic("threads not available");
 	}
 	KASSERT(fmt != NULL);
 
@@ -153,7 +190,8 @@ kthread_create(pri_t pri, int flags, struct cpu_info *ci,
 	}
 		
 	rv = rumpuser_thread_create(threadbouncer, k, thrname,
-	    (flags & KTHREAD_MUSTJOIN) == KTHREAD_MUSTJOIN, &l->l_ctxlink);
+	    (flags & KTHREAD_MUSTJOIN) == KTHREAD_MUSTJOIN,
+	    pri, ci ? ci->ci_index : -1, &l->l_ctxlink);
 	if (rv)
 		return rv;
 

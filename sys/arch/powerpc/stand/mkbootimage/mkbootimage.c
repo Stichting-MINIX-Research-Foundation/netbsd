@@ -1,4 +1,4 @@
-/*	$NetBSD: mkbootimage.c,v 1.15 2012/05/19 14:47:37 kiyohara Exp $	*/
+/*	$NetBSD: mkbootimage.c,v 1.17 2013/07/09 13:10:33 joerg Exp $	*/
 
 /*-
  * Copyright (c) 2007 The NetBSD Foundation, Inc.
@@ -396,7 +396,7 @@ prep_build_image(char *kernel, char *boot, char *rawdev, char *outname)
 	else
 		flength -= (2880 * 512);
 	if (flength > 0 && !saloneflag)
-		fprintf(stderr, "%s: Image %s is %d bytes larger than single"
+		fprintf(stderr, "%s: Image %s is %ld bytes larger than single"
 		    " floppy. Can only be used for netboot.\n", getprogname(),
 		    outname, flength);
 
@@ -604,8 +604,6 @@ bebox_write_header(int bebox_fd, int elf_image_len, int kern_img_len)
 	struct SectionHeader textHdr, dataHdr, ldrHdr;
 	struct LoaderHeader lh;
 
-	if (saloneflag)
-		hsize = 0;
 
 	ldrOffset = ULALIGN(sizeof (fileHdr) + sizeof (textHdr) +
 	    sizeof (dataHdr) + sizeof (ldrHdr));
@@ -696,9 +694,6 @@ bebox_build_image(char *kernel, char *boot, char *rawdev, char *outname)
 	struct bebox_image_block *p;
 	struct timeval tp;
 	Elf32_External_Phdr phdr;
-
-	if (saloneflag)
-		hsize = 0;
 
 	elf_fd = open_file("bootloader", boot, &hdr, &elf_stat);
 	if (inkernflag) {
@@ -804,11 +799,6 @@ bebox_build_image(char *kernel, char *boot, char *rawdev, char *outname)
 	if (inkernflag)
 		close(kern_fd);
 	close(elf_fd);
-
-	if (saloneflag) {
-		close(bebox_fd);
-		return 0;
-	}
 
 	/* Now go back and write in the block header */
 	endoff = lseek(bebox_fd, 0, SEEK_END);

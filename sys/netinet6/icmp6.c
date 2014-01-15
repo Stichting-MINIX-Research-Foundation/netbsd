@@ -1,4 +1,4 @@
-/*	$NetBSD: icmp6.c,v 1.161 2012/06/23 03:14:03 christos Exp $	*/
+/*	$NetBSD: icmp6.c,v 1.163 2013/11/23 14:20:22 christos Exp $	*/
 /*	$KAME: icmp6.c,v 1.217 2001/06/20 15:03:29 jinmei Exp $	*/
 
 /*
@@ -62,7 +62,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: icmp6.c,v 1.161 2012/06/23 03:14:03 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: icmp6.c,v 1.163 2013/11/23 14:20:22 christos Exp $");
 
 #include "opt_inet.h"
 #include "opt_ipsec.h"
@@ -99,7 +99,7 @@ __KERNEL_RCSID(0, "$NetBSD: icmp6.c,v 1.161 2012/06/23 03:14:03 christos Exp $")
 #include <netinet6/ip6protosw.h>
 #include <netinet6/scope6_var.h>
 
-#ifdef FAST_IPSEC
+#ifdef IPSEC
 #include <netipsec/ipsec.h>
 #include <netipsec/key.h>
 #endif
@@ -1878,7 +1878,7 @@ icmp6_rip6_input(struct mbuf **mp, int off)
 		return (IPPROTO_DONE);
 	}
 
-	CIRCLEQ_FOREACH(inph, &raw6cbtable.inpt_queue, inph_queue) {
+	TAILQ_FOREACH(inph, &raw6cbtable.inpt_queue, inph_queue) {
 		in6p = (struct in6pcb *)inph;
 		if (in6p->in6p_af != AF_INET6)
 			continue;
@@ -2316,7 +2316,7 @@ icmp6_redirect_input(struct mbuf *m, int off)
 
 		sockaddr_in6_init(&sdst, &reddst6, 0, 0, 0);
 		pfctlinput(PRC_REDIRECT_HOST, (struct sockaddr *)&sdst);
-#if defined(FAST_IPSEC)
+#if defined(IPSEC)
 		key_sa_routechange((struct sockaddr *)&sdst);
 #endif
 	}

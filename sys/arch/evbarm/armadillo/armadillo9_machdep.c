@@ -1,4 +1,4 @@
-/*	$NetBSD: armadillo9_machdep.c,v 1.24 2012/09/22 00:33:38 matt Exp $	*/
+/*	$NetBSD: armadillo9_machdep.c,v 1.27 2013/08/18 15:58:20 matt Exp $	*/
 
 /*
  * Copyright (c) 2001, 2002, 2003 Wasabi Systems, Inc.
@@ -110,7 +110,7 @@
 */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: armadillo9_machdep.c,v 1.24 2012/09/22 00:33:38 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: armadillo9_machdep.c,v 1.27 2013/08/18 15:58:20 matt Exp $");
 
 #include "opt_ddb.h"
 #include "opt_kgdb.h"
@@ -126,6 +126,8 @@ __KERNEL_RCSID(0, "$NetBSD: armadillo9_machdep.c,v 1.24 2012/09/22 00:33:38 matt
 #include <sys/reboot.h>
 #include <sys/termios.h>
 #include <sys/ksyms.h>
+#include <sys/bus.h>
+#include <sys/cpu.h>
 
 #include <net/if.h>
 #include <net/if_ether.h>
@@ -141,9 +143,7 @@ __KERNEL_RCSID(0, "$NetBSD: armadillo9_machdep.c,v 1.24 2012/09/22 00:33:38 matt
 #define	DRAM_BLOCKS	4
 #include <machine/bootconfig.h>
 #include <machine/autoconf.h>
-#include <sys/bus.h>
-#include <machine/cpu.h>
-#include <machine/frame.h>
+#include <arm/locore.h>
 #include <arm/undefined.h>
 
 /* Define various stack sizes in pages */
@@ -299,7 +299,7 @@ armadillo9_device_register(device_t dev, void *aux)
 		if (prop_dictionary_set(device_properties(dev),
 					"mac-address", pd) == false) {
 			printf("WARNING: unable to set mac-addr property "
-			    "for %s\n", dev->dv_xname);
+			    "for %s\n", device_xname(dev));
 		}
 		prop_object_release(pd);
 	}
@@ -376,8 +376,8 @@ cpu_reboot(int howto, char *bootstr)
 	epwdog_reset();
 #else
 	{
-	u_int32_t ctrl = EP93XX_APB_VBASE + EP93XX_APB_WDOG + EP93XX_WDOG_Ctrl;
-	u_int32_t val = EP93XX_WDOG_ENABLE;
+	uint32_t ctrl = EP93XX_APB_VBASE + EP93XX_APB_WDOG + EP93XX_WDOG_Ctrl;
+	uint32_t val = EP93XX_WDOG_ENABLE;
 	__asm volatile (
 		"str %1, [%0]\n"
 		:

@@ -1,4 +1,4 @@
-/*	$NetBSD: iteide.c,v 1.17 2012/07/31 15:50:36 bouyer Exp $	*/
+/*	$NetBSD: iteide.c,v 1.19 2013/10/07 19:51:55 jakllsch Exp $	*/
 
 /*
  * Copyright (c) 2004 The NetBSD Foundation, Inc.
@@ -31,7 +31,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: iteide.c,v 1.17 2012/07/31 15:50:36 bouyer Exp $");
+__KERNEL_RCSID(0, "$NetBSD: iteide.c,v 1.19 2013/10/07 19:51:55 jakllsch Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -49,7 +49,7 @@ static int  iteide_match(device_t, cfdata_t, void *);
 static void iteide_attach(device_t, device_t, void *);
 
 CFATTACH_DECL_NEW(iteide, sizeof(struct pciide_softc),
-    iteide_match, iteide_attach, NULL, NULL);
+    iteide_match, iteide_attach, pciide_detach, NULL);
 
 static const struct pciide_product_desc pciide_ite_products[] =  {
 	{ PCI_PRODUCT_ITE_IT8211,
@@ -204,7 +204,7 @@ ite_setup_channel(struct ata_channel *chp)
 			    (cfg & IT_CFG_CABLE(channel, drive)) == 0) {
 				ATADEBUG_PRINT(("(%s:%d:%d): "
 				    "80-wire cable not detected\n",
-				    device_xname(&sc->sc_wdcdev.sc_atac.atac_dev),
+				    device_xname(sc->sc_wdcdev.sc_atac.atac_dev),
 				    channel, drive), DEBUG_PROBE);
 				drvp->UDMA_mode = 2;
 			}

@@ -1,4 +1,4 @@
-/*	$NetBSD: quot.c,v 1.29 2011/03/06 23:41:47 christos Exp $	*/
+/*	$NetBSD: quot.c,v 1.33 2013/10/19 17:16:38 christos Exp $	*/
 
 /*
  * Copyright (C) 1991, 1994 Wolfgang Solfrank.
@@ -33,7 +33,7 @@
 
 #include <sys/cdefs.h>
 #ifndef lint
-__RCSID("$NetBSD: quot.c,v 1.29 2011/03/06 23:41:47 christos Exp $");
+__RCSID("$NetBSD: quot.c,v 1.33 2013/10/19 17:16:38 christos Exp $");
 #endif /* not lint */
 
 #include <sys/param.h>
@@ -150,8 +150,8 @@ virtualblocks(struct fs *super, union dinode *dp)
 	
 	sz = DIP(super, dp, size);
 #ifdef	COMPAT
-	if (lblkno(super, sz) >= NDADDR) {
-		nblk = blkroundup(super, sz);
+	if (ffs_lblkno(super, sz) >= UFS_NDADDR) {
+		nblk = ffs_blkroundup(super, sz);
 		if (sz == nblk)
 			nblk += super->fs_bsize;
 	}
@@ -159,17 +159,17 @@ virtualblocks(struct fs *super, union dinode *dp)
 	return sz / 1024;
 #else	/* COMPAT */
 	
-	if (lblkno(super, sz) >= NDADDR) {
-		nblk = blkroundup(super, sz);
-		sz = lblkno(super, nblk);
-		sz = howmany(sz - NDADDR, NINDIR(super));
+	if (ffs_lblkno(super, sz) >= UFS_NDADDR) {
+		nblk = ffs_blkroundup(super, sz);
+		sz = ffs_lblkno(super, nblk);
+		sz = howmany(sz - UFS_NDADDR, FFS_NINDIR(super));
 		while (sz > 0) {
 			nblk += sz * super->fs_bsize;
 			/* One block on this level is in the inode itself */
-			sz = howmany(sz - 1, NINDIR(super));
+			sz = howmany(sz - 1, FFS_NINDIR(super));
 		}
 	} else
-		nblk = fragroundup(super, sz);
+		nblk = ffs_fragroundup(super, sz);
 	
 	return nblk / DEV_BSIZE;
 #endif	/* COMPAT */
@@ -450,7 +450,10 @@ static void
 donames(int fd, struct fs *super, const char *name)
 {
 	int c;
-	ino_t inode, inode1;
+	ino_t inode;
+#ifdef COMPAT
+	ino_t inode1 = -1;
+#endif
 	ino_t maxino;
 	union dinode *dp;
 	
@@ -459,7 +462,6 @@ donames(int fd, struct fs *super, const char *name)
 	while ((c = getchar()) != EOF && (c < '0' || c > '9'))
 		while ((c = getchar()) != EOF && c != '\n');
 	ungetc(c, stdin);
-	inode1 = -1;
 	while (scanf("%" SCNu64, &inode) == 1) {
 		if (inode > maxino) {
 #ifndef	COMPAT
@@ -483,7 +485,9 @@ donames(int fd, struct fs *super, const char *name)
 				c = getchar();
 			}
 			putchar('\n');
+#ifdef COMPAT
 			inode1 = inode;
+#endif
 		} else {
 			if (errno)
 				errx(1, "%s", name);
@@ -520,9 +524,9 @@ ffs_oldfscompat(struct fs *fs)
 	if (fs->fs_old_inodefmt < FS_44INODEFMT) {
 		quad_t sizepb = fs->fs_bsize;
 
-		fs->fs_maxfilesize = fs->fs_bsize * NDADDR - 1;
-		for (i = 0; i < NIADDR; i++) {
-			sizepb *= NINDIR(fs);
+		fs->fs_maxfilesize = fs->fs_bsize * UFS_NDADDR - 1;
+		for (i = 0; i < UFS_NIADDR; i++) {
+			sizepb *= FFS_NINDIR(fs);
 			fs->fs_maxfilesize += sizepb;
 		}
 		fs->fs_qbmask = ~fs->fs_bmask;

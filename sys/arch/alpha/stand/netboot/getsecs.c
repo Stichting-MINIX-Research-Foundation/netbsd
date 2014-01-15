@@ -1,7 +1,8 @@
-/*	$NetBSD: getsecs.c,v 1.9 2009/01/12 11:32:43 tsutsui Exp $	*/
+/*	$NetBSD: getsecs.c,v 1.11 2013/11/03 01:02:37 christos Exp $	*/
 
 #include <sys/param.h>
 
+#include <machine/cpu.h>
 #include <netinet/in.h>
 #include <netinet/in_systm.h>
   
@@ -15,16 +16,16 @@ satime_t
 getsecs(void)
 {
 	static uint64_t tnsec;
-	static uint64_t lastpcc, wrapsecs;
+	static uint64_t lastpcc;
 	uint64_t curpcc;
 
 	if (tnsec == 0) {
 		tnsec = 1;
 		lastpcc = alpha_rpcc() & 0xffffffff;
-		wrapsecs = (0xffffffff /
-		    ((struct rpb *)HWRPB_ADDR)->rpb_cc_freq) + 1;
 
 #if 0
+		uint64_t wrapsecs = (0xffffffff /
+		    ((struct rpb *)HWRPB_ADDR)->rpb_cc_freq) + 1;
 		printf("getsecs: cc freq = %lu, time to wrap = %lu\n",
 		    ((struct rpb *)HWRPB_ADDR)->rpb_cc_freq, wrapsecs);
 #endif

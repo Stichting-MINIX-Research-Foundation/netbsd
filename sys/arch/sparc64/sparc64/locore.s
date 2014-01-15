@@ -1,4 +1,4 @@
-/*	$NetBSD: locore.s,v 1.341 2012/03/17 22:19:53 mrg Exp $	*/
+/*	$NetBSD: locore.s,v 1.349 2013/05/24 23:02:27 nakayama Exp $	*/
 
 /*
  * Copyright (c) 2006-2010 Matthew R. Green
@@ -1743,9 +1743,10 @@ winfixfill:
  *
  * The following is duplicated from datafault:
  */
-	wrpr	%g0, PSTATE_KERN|PSTATE_AG, %pstate	! We need to save volatile stuff to AG regs
 #ifdef TRAPS_USE_IG
-	wrpr	%g0, PSTATE_KERN|PSTATE_IG, %pstate	! We need to save volatile stuff to AG regs
+	wrpr	%g0, PSTATE_KERN|PSTATE_IG, %pstate	! We need to save volatile stuff to interrupt globals
+#else
+	wrpr	%g0, PSTATE_KERN|PSTATE_AG, %pstate	! We need to save volatile stuff to alternate globals
 #endif
 	wr	%g0, ASI_DMMU, %asi			! We need to re-load trap info
 	ldxa	[%g0 + TLB_TAG_ACCESS] %asi, %g1	! Get fault address from tag access register
@@ -2106,9 +2107,10 @@ winfixsave:
 	wrpr	%g1, %cwp
 	andn	%g2, CWP, %g2
 	wrpr	%g1, %g2, %tstate
-	wrpr	%g0, PSTATE_KERN|PSTATE_AG, %pstate
 #ifdef TRAPS_USE_IG
 	wrpr	%g0, PSTATE_KERN|PSTATE_IG, %pstate	! DEBUG
+#else
+	wrpr	%g0, PSTATE_KERN|PSTATE_AG, %pstate
 #endif
 	mov	%g6, %sp
 	done
@@ -2129,9 +2131,10 @@ winfixsave:
  *
  */
 datafault:
-	wrpr	%g0, PSTATE_KERN|PSTATE_AG, %pstate	! We need to save volatile stuff to AG regs
 #ifdef TRAPS_USE_IG
-	wrpr	%g0, PSTATE_KERN|PSTATE_IG, %pstate	! We need to save volatile stuff to AG regs
+	wrpr	%g0, PSTATE_KERN|PSTATE_IG, %pstate	! We need to save volatile stuff to interrupt globals
+#else
+	wrpr	%g0, PSTATE_KERN|PSTATE_AG, %pstate	! We need to save volatile stuff to alternate globals
 #endif
 	wr	%g0, ASI_DMMU, %asi			! We need to re-load trap info
 	ldxa	[%g0 + TLB_TAG_ACCESS] %asi, %g1	! Get fault address from tag access register
@@ -2231,7 +2234,6 @@ Ldatafault_internal:
 	call	_C_LABEL(data_access_fault)	! data_access_fault(&tf, type, 
 						!	pc, addr, sfva, sfsr)
 	 add	%sp, CC64FSZ + STKB, %o0	! (argument: &tf)
-	wrpr	%g0, PSTATE_KERN, %pstate		! disable interrupts
 
 data_recover:
 #ifdef TRAPSTATS
@@ -2240,6 +2242,7 @@ data_recover:
 	set	_C_LABEL(iveccnt), %g1
 	stw	%g0, [%g1]
 #endif
+	wrpr	%g0, PSTATE_KERN, %pstate		! disable interrupts
 	b	return_from_trap			! go return
 	 ldx	[%sp + CC64FSZ + STKB + TF_TSTATE], %g1		! Load this for return_from_trap
 	NOTREACHED
@@ -2374,9 +2377,10 @@ instr_miss:
  */
 
 textfault:
-	wrpr	%g0, PSTATE_KERN|PSTATE_AG, %pstate	! We need to save volatile stuff to AG regs
 #ifdef TRAPS_USE_IG
-	wrpr	%g0, PSTATE_KERN|PSTATE_IG, %pstate	! We need to save volatile stuff to AG regs
+	wrpr	%g0, PSTATE_KERN|PSTATE_IG, %pstate	! We need to save volatile stuff to interrupt globals
+#else
+	wrpr	%g0, PSTATE_KERN|PSTATE_AG, %pstate	! We need to save volatile stuff to alternate globals
 #endif
 	wr	%g0, ASI_IMMU, %asi
 	ldxa	[%g0 + TLB_TAG_ACCESS] %asi, %g1	! Get fault address from tag access register
@@ -3142,7 +3146,7 @@ setup_sparcintr:
 	LDPTR	[%g1], %g3		! Load list head
 	STPTR	%g3, [%g5+IH_PEND]	! Link our intrhand node in
 	mov	%g5, %g7
-	CASPTR	[%g1] ASI_N, %g3, %g7
+	CASPTRA	[%g1] ASI_N, %g3, %g7
 	cmp	%g7, %g3		! Did it work?
 	bne,pn	CCCR, 1b		! No, try again
 	 .empty
@@ -3206,9 +3210,9 @@ ret_from_intr_vector:
 
 /*
  * Ultra1 and Ultra2 CPUs use soft interrupts for everything.  What we do
- * on a soft interrupt, is we should check which bits in ASR_SOFTINT(0x16)
+ * on a soft interrupt, is we should check which bits in SOFTINT(%asr22)
  * are set, handle those interrupts, then clear them by setting the
- * appropriate bits in ASR_CLEAR_SOFTINT(0x15).
+ * appropriate bits in CLEAR_SOFTINT(%asr21).
  *
  * We have an array of 8 interrupt vector slots for each of 15 interrupt
  * levels.  If a vectored interrupt can be dispatched, the dispatch
@@ -3270,13 +3274,16 @@ ENTRY_NOPROFILE(sparc_interrupt)
 	wrpr	%g0, PSTATE_KERN|PSTATE_IG, %pstate	! DEBUG
 #endif
 	/*
-	 * If this is a %tick softint, clear it then call interrupt_vector.
+	 * If this is a %tick or %stick softint, clear it then call
+	 * interrupt_vector. Only one of them should be enabled at any given
+	 * time.
 	 */
 	rd	SOFTINT, %g1
-	btst	1, %g1
+	set	TICK_INT|STICK_INT, %g5
+	andcc	%g5, %g1, %g5
 	bz,pt	%icc, 0f
 	 sethi	%hi(CPUINFO_VA+CI_TICK_IH), %g3
-	wr	%g0, 1, CLEAR_SOFTINT
+	wr	%g0, %g5, CLEAR_SOFTINT
 	ba,pt	%icc, setup_sparcintr
 	 LDPTR	[%g3 + %lo(CPUINFO_VA+CI_TICK_IH)], %g5
 0:
@@ -3389,7 +3396,7 @@ sparc_intr_retry:
 	beq,pn	CCCR, intrcmplt		! Empty list?
 	 mov	-1, %l7
 	membar	#LoadStore
-	CASPTR	[%l4] ASI_N, %l2, %l7	! Grab the entire list
+	CASPTRA	[%l4] ASI_N, %l2, %l7	! Grab the entire list
 	cmp	%l7, %l2
 	bne,pn	CCCR, 1b
 	 add	%sp, CC64FSZ+STKB, %o2	! tf = %sp + CC64FSZ + STKB
@@ -3585,9 +3592,10 @@ return_from_trap:
 	ldx	[%sp + CC64FSZ + STKB + TF_G + (6*8)], %g6
 	ldx	[%sp + CC64FSZ + STKB + TF_G + (7*8)], %g7
 	/* Switch to alternate globals and load outs */
-	wrpr	%g0, PSTATE_KERN|PSTATE_AG, %pstate
 #ifdef TRAPS_USE_IG
 	wrpr	%g0, PSTATE_KERN|PSTATE_IG, %pstate	! DEBUG
+#else
+	wrpr	%g0, PSTATE_KERN|PSTATE_AG, %pstate
 #endif
 	ldx	[%sp + CC64FSZ + STKB + TF_O + (0*8)], %i0
 	ldx	[%sp + CC64FSZ + STKB + TF_O + (1*8)], %i1
@@ -5891,7 +5899,7 @@ ENTRY(send_softint)
 	LDPTR	[%o3], %o5		! Load list head
 	STPTR	%o5, [%o2+IH_PEND]	! Link our intrhand node in
 	mov	%o2, %o4
-	CASPTR	[%o3] ASI_N, %o5, %o4
+	CASPTRA	[%o3] ASI_N, %o5, %o4
 	cmp	%o4, %o5		! Did it work?
 	bne,pn	CCCR, 2b		! No, try again
 	 .empty
@@ -6058,6 +6066,63 @@ Ltick_ovflw:
 	 wr	%o2, TICK_CMPR
 #endif
 
+/*
+ * next_stick(long increment)
+ *
+ * Sets the %stick_cmpr register to fire off in `increment' machine
+ * cycles in the future.  Also handles %stick wraparound.  In 32-bit
+ * mode we're limited to a 32-bit increment.
+ */
+ENTRY(next_stick)
+	rd	STICK_CMPR, %o2
+	rd	STICK, %o1
+
+	mov	1, %o3		! Mask off high bits of these registers
+	sllx	%o3, 63, %o3
+	andn	%o1, %o3, %o1
+	andn	%o2, %o3, %o2
+	cmp	%o1, %o2	! Did we wrap?  (tick < tick_cmpr)
+	bgt,pt	%icc, 1f
+	 add	%o1, 1000, %o1	! Need some slack so we don't lose intrs.
+
+	/*
+	 * Handle the unlikely case of %stick wrapping.
+	 *
+	 * This should only happen every 10 years or more.
+	 *
+	 * We need to increment the time base by the size of %stick in
+	 * microseconds.  This will require some divides and multiplies
+	 * which can take time.  So we re-read %stick.
+	 *
+	 */
+
+	/* XXXXX NOT IMPLEMENTED */
+
+
+
+1:
+	add	%o2, %o0, %o2
+	andn	%o2, %o3, %o4
+	brlz,pn	%o4, Lstick_ovflw
+	 cmp	%o2, %o1	! Has this stick passed?
+	blt,pn	%xcc, 1b	! Yes
+	 nop
+	retl
+	 wr	%o2, STICK_CMPR
+
+Lstick_ovflw:
+/*
+ * When we get here tick_cmpr has wrapped, but we don't know if %stick
+ * has wrapped.  If bit 62 is set then we have not wrapped and we can
+ * use the current value of %o4 as %stick.  Otherwise we need to return
+ * to our loop with %o4 as %stick_cmpr (%o2).
+ */
+	srlx	%o3, 1, %o5
+	btst	%o5, %o1
+	bz,pn	%xcc, 1b
+	 mov	%o4, %o2
+	retl
+	 wr	%o2, STICK_CMPR
 
 ENTRY(setjmp)
 	save	%sp, -CC64FSZ, %sp	! Need a frame to return to.
@@ -6217,6 +6282,67 @@ ENTRY(OF_val2sym32)
 	 restore	%o0, 0, %o0
 #endif /* _LP64 */
 #endif /* DDB */
+
+
+#if defined(MULTIPROCESSOR)
+/*
+ * IPI target function to setup a C compatible environment and call a MI function.
+ *
+ * On entry:
+ *	We are on one of the alternate set of globals
+ *	%g2 = function to call
+ *	%g3 = single argument to called function
+ */
+ENTRY(sparc64_ipi_ccall)
+#ifdef TRAPS_USE_IG
+	wrpr	%g0, PSTATE_KERN|PSTATE_IG, %pstate	! DEBUG
+#endif
+	TRAP_SETUP(-CC64FSZ-TF_SIZE)
+
+#ifdef DEBUG
+	rdpr	%tt, %o1	! debug
+	sth	%o1, [%sp + CC64FSZ + STKB + TF_TT]! debug
+#endif
+	mov	%g3, %o0			! save argument of function to call
+	mov	%g2, %o5			! save function pointer
+
+	wrpr	%g0, PSTATE_KERN, %pstate	! Get back to normal globals
+	stx	%g1, [%sp + CC64FSZ + STKB + TF_G + ( 1*8)]
+	mov	%g1, %o1			! code
+	rdpr	%tpc, %o2			! (pc)
+	stx	%g2, [%sp + CC64FSZ + STKB + TF_G + ( 2*8)]
+	rdpr	%tstate, %g1
+	stx	%g3, [%sp + CC64FSZ + STKB + TF_G + ( 3*8)]
+	rdpr	%tnpc, %o3
+	stx	%g4, [%sp + CC64FSZ + STKB + TF_G + ( 4*8)]
+	rd	%y, %o4
+	stx	%g5, [%sp + CC64FSZ + STKB + TF_G + ( 5*8)]
+	stx	%g6, [%sp + CC64FSZ + STKB + TF_G + ( 6*8)]
+	wrpr	%g0, 0, %tl			! return to tl=0
+	stx	%g7, [%sp + CC64FSZ + STKB + TF_G + ( 7*8)]
+
+	stx	%g1, [%sp + CC64FSZ + STKB + TF_TSTATE]
+	stx	%o2, [%sp + CC64FSZ + STKB + TF_PC]
+	stx	%o3, [%sp + CC64FSZ + STKB + TF_NPC]
+	st	%o4, [%sp + CC64FSZ + STKB + TF_Y]
+
+	rdpr	%pil, %g5
+	stb	%g5, [%sp + CC64FSZ + STKB + TF_PIL]
+	stb	%g5, [%sp + CC64FSZ + STKB + TF_OLDPIL]
+
+	!! In the EMBEDANY memory model %g4 points to the start of the data segment.
+	!! In our case we need to clear it before calling any C-code
+	clr	%g4
+	wr	%g0, ASI_NUCLEUS, %asi			! default kernel ASI
+
+	call %o5					! call function
+	 nop
+
+	ba,a	return_from_trap			! and return from IPI
+	 nop
+
+#endif
+
 
 	.data
 	_ALIGN

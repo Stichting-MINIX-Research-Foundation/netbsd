@@ -1,4 +1,4 @@
-#	$NetBSD: INSTALL,v 1.95 2012/04/29 07:17:11 tsutsui Exp $
+#	$NetBSD: INSTALL,v 1.102 2013/06/30 21:38:59 rmind Exp $
 
 #
 #	INSTALL -- installation kernel.
@@ -8,7 +8,7 @@ include "arch/x68k/conf/std.x68k"
 
 #options 	INCLUDE_CONFIG_FILE	# embed config file in kernel binary
 
-#ident 		"INSTALL-$Revision: 1.95 $"
+#ident 		"INSTALL-$Revision: 1.102 $"
 
 makeoptions	COPTS="-Os"		# Optimise for space. Implies -O2
 
@@ -18,7 +18,7 @@ maxusers	4
 options 	MEMORY_DISK_HOOKS
 options 	MEMORY_DISK_IS_ROOT	# Force root on memory-disk
 options 	MEMORY_DISK_SERVER=0	# No user space hooks
-options 	MEMORY_DISK_ROOT_SIZE=2800
+options 	MEMORY_DISK_ROOT_SIZE=3000
 options 	MEMORY_DISK_RBFLAGS=RB_SINGLE	# boot in single-user mode
 
 ## System kernel configuration.  See options(4) for more detail.
@@ -184,19 +184,14 @@ options 	FFS_NO_SNAPSHOT	# No FFS snapshot support
 options 	INET		# IP (Internet Protocol) v4
 options 	INET6		# IPV6
 #options 	IPSEC		# IP security
-#options 	IPSEC_ESP	# IP security (encryption part; define w/IPSEC)
-#options 	IPSEC_NAT_T	# IPsec NAT traversal (NAT-T)
 #options 	IPSEC_DEBUG	# debug for IP security
 #options 	GATEWAY		# packet forwarding ("router switch")
 #options 	MROUTING	# packet forwarding of multicast packets
 #options 	PIM		# Protocol Independent Multicast
 #options 	DIRECTED_BROADCAST	# allow broadcasts through routers
-#options 	ISO,TPIP	# OSI networking
-#options 	EON		# OSI tunneling over IP
 #options 	NETATALK	# AppleTalk (over Ethernet) protocol
 #options 	NTP		# Network Time Protocol in-kernel support
 #options 	PPS_SYNC	# Add serial line synchronization for NTP
-#options 	PFIL_HOOKS	# Add pfil(9) hooks, intended for custom LKMs.
 #options 	IPFILTER_LOG	# Add ipmon(8) logging for ipfilter device
 #options 	IPFILTER_LOOKUP	# ippool(8) support
 #options 	IPFILTER_COMPAT # Compat for IP-Filter
@@ -277,5 +272,6 @@ ne*	at neptune? addr 0x300			# NE2000 or clone
 
 pseudo-device	md			# boot floppy image
 pseudo-device	loop
+pseudo-device	bpfilter
 pseudo-device	sl		
-pseudo-device	pty		2	# pseudo-terminals (Sysinst needs two)
+pseudo-device	pty			# pseudo-terminals

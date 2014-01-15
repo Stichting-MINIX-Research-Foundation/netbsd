@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.210 2012/08/08 14:13:46 christos Exp $
+#	$NetBSD: Makefile,v 1.214 2013/11/22 16:10:25 christos Exp $
 #	from: @(#)Makefile	8.3 (Berkeley) 1/7/94
 
 .include <bsd.own.mk>
@@ -10,7 +10,7 @@ SUBDIR= apply asa at audio audiocfg \
 	column comm compress config crunch csplit ctags cut \
 	deroff db dirname du \
 	eject elf2aout elf2ecoff env error expand extattr \
-	false fdformat fgen fincore find finger fmt fold fpr from \
+	false fdformat fgen fincore find finger flock fmt fold fpr from \
 	fsplit fstat ftp gcore genassym gencat getconf getent getopt gprof \
 	head hexdump iconv id indent infocmp innetgr ipcrm ipcs join jot \
 	kdump ktrace ktruss lam last lastcomm ldd leave \
@@ -18,13 +18,13 @@ SUBDIR= apply asa at audio audiocfg \
 	machine mail make man menuc mesg midiplay mixerctl mkcsmapper \
 	mkdep mkesdb mkfifo mklocale mkstr mktemp mkubootimage moduli \
 	msgc msgs \
-	nbperf netgroup netstat newgrp newsyslog nfsstat nice nl nohup nvi \
+	nbperf netgroup netstat newgrp newsyslog nfsstat nice nl nohup \
 	pagesize passwd paste patch pathchk pkill pmap pmc pr \
 	printenv printf progress pwhash qsubst quota radioctl rdist \
 	renice rev revoke rfcomm_sppd rlogin rpcgen rpcinfo rs rsh \
 	rup ruptime rusers rwall rwho \
 	script sdiff sdpquery sed seq shar shlock shmif_dumpbus \
-	showmount shuffle sockstat soelim sort spell split stat su systat \
+	showmount shuffle sockstat sort spell split stat su systat \
 	tabs tail talk tcopy tee telnet tftp tic time tip touch tpfmt tput \
 	tr true tset tsort tty ul uname unexpand unifdef \
 	uniq units unvis unzip usbhidaction usbhidctl users utoppya \
@@ -34,6 +34,10 @@ SUBDIR= apply asa at audio audiocfg \
 	write xargs xinstall xlint xstr yes
 
 SUBDIR+= ../external/zlib/pigz/bin/pigz
+
+.if (${MKGROFF} == "no")
+SUBDIR+= soelim
+.endif
 
 .if (${MKMAKEMANDB} == "no")
 SUBDIR+= apropos whatis

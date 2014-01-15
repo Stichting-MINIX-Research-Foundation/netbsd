@@ -1,4 +1,4 @@
-/*	$NetBSD: util.c,v 1.179 2012/07/19 06:07:21 joerg Exp $	*/
+/*	$NetBSD: util.c,v 1.183 2013/03/23 11:50:02 he Exp $	*/
 
 /*
  * Copyright 1997 Piermont Information Systems Inc.
@@ -68,7 +68,7 @@
 #define MD_SETS_SELECTED_NOX SET_KERNEL_1, SET_SYSTEM, SET_MD
 #endif
 #ifndef MD_SETS_VALID
-#define MD_SETS_VALID SET_KERNEL, SET_SYSTEM, SET_X11, SET_MD, SET_SOURCE
+#define MD_SETS_VALID SET_KERNEL, SET_SYSTEM, SET_X11, SET_MD, SET_SOURCE, SET_DEBUGGING
 #endif
 
 #define MAX_CD_DEVS	256	/* how many cd drives do we expect to attach */
@@ -118,6 +118,9 @@ distinfo dist_list[] = {
 #ifdef SET_KERNEL_8_NAME
 	{SET_KERNEL_8_NAME,	SET_KERNEL_8,		MSG_set_kernel_8, NULL},
 #endif
+#ifdef SET_KERNEL_9_NAME
+	{SET_KERNEL_9_NAME,	SET_KERNEL_9,		MSG_set_kernel_9, NULL},
+#endif
 
 	{"modules",		SET_MODULES,		MSG_set_modules, NULL},
 	{"base",		SET_BASE,		MSG_set_base, NULL},
@@ -156,6 +159,8 @@ distinfo dist_list[] = {
 	{"sharesrc",		SET_SHARESRC,		MSG_set_sharesrc, NULL},
 	{"gnusrc",		SET_GNUSRC,		MSG_set_gnusrc, NULL},
 	{"xsrc",		SET_XSRC,		MSG_set_xsrc, NULL},
+	{"debug",		SET_DEBUG,		MSG_set_debug, NULL},
+	{"xdebug",		SET_X11_DEBUG,		MSG_set_xdebug, NULL},
 	{NULL,			SET_GROUP_END,		NULL, NULL},
 
 	{NULL,			SET_LAST,		NULL, NULL},
@@ -520,19 +525,27 @@ boot_media_still_needed(void)
 
 /*
  * Get from a CDROM distribution.
+ * Also used on "installation using bootable install media"
+ * as the default option in the "distmedium" menu.
  */
 int
 get_via_cdrom(void)
 {
 	menu_ent cd_menu[MAX_CD_INFOS];
-	struct statvfs sb;
+	struct stat sb;
 	int num_cds, menu_cd, i, selected_cd = 0;
 	bool silent = false;
+	int mib[2];
+	char rootdev[SSTRSIZE] = "";
+	size_t varlen;
 
-	/* If root is a CD-ROM and we have sets, skip this step. */
-	if (statvfs(set_dir_bin, &sb) == 0 &&
-	    (strcmp(sb.f_fstypename, MOUNT_CD9660) == 0
-		    || strcmp(sb.f_fstypename, MOUNT_UDF) == 0)) {
+	/* If root is not md(4) and we have set dir, skip this step. */
+	mib[0] = CTL_KERN;
+	mib[1] = KERN_ROOT_DEVICE;
+	varlen = sizeof(rootdev);
+	(void)sysctl(mib, 2, rootdev, &varlen, NULL, 0);
+	if (stat(set_dir_bin, &sb) == 0 && S_ISDIR(sb.st_mode) &&
+	    strncmp("md", rootdev, 2) != 0) {
 	    	strlcpy(ext_dir_bin, set_dir_bin, sizeof ext_dir_bin);
 	    	strlcpy(ext_dir_src, set_dir_src, sizeof ext_dir_src);
 		return SET_OK;

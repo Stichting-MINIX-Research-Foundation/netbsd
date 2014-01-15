@@ -51,6 +51,16 @@ BIND 9
         For up-to-date release notes and errata, see
         http://www.isc.org/software/bind9/releasenotes
 
+BIND 9.9.3
+
+	BIND 9.9.3 is a maintenance release and patches the security
+	flaws described in CVE-2012-5688, CVE-2012-5689 and CVE-2013-2266.
+
+BIND 9.9.2
+
+	BIND 9.9.2 is a maintenance release and patches the security
+	flaw described in CVE-2012-4244.
+
 BIND 9.9.1
 
 	BIND 9.9.1 is a maintenance release.
@@ -99,30 +109,6 @@ BIND 9.9.0
         - 'dig +rrcomments' turns on comments about DNSKEY records,
           indicating their key ID, algorithm and function
         - Simplified nsupdate syntax and added readline support
-
-BIND 9.8.0
-
-        BIND 9.8.0 includes a number of changes from BIND 9.7 and earlier
-        releases.  New features include:
-
-        - Built-in trust anchor for the root zone, which can be
-          switched on via "dnssec-validation auto;"
-        - Support for DNS64.
-        - Support for response policy zones (RPZ).
-        - Support for writable DLZ zones.
-        - Improved ease of configuration of GSS/TSIG for
-          interoperability with Active Directory
-        - Support for GOST signing algorithm for DNSSEC.
-        - Removed RTT Banding from server selection algorithm.
-        - New "static-stub" zone type.
-        - Allow configuration of resolver timeouts via
-          "resolver-query-timeout" option.
-	- The DLZ "dlopen" driver is now built by default.
-	- Added a new include file with function typedefs
-          for the DLZ "dlopen" driver.
-	- Made "--with-gssapi" default.
-	- More verbose error reporting from DLZ LDAP.
-
 
 Building
 
@@ -178,7 +164,8 @@ Building
 
 	    CFLAGS
 		C compiler flags.  Defaults to include -g and/or -O2
-		as supported by the compiler.  
+		as supported by the compiler.  Please include '-g'
+		if you need to set CFLAGS.
 
 	    STD_CINCLUDES
 		System header file directories.	 Can be used to specify
@@ -295,6 +282,10 @@ Building
 	libraries.  sh-utils-1.16 provides a "printf" which compiles
 	on SunOS 4.
 
+Known limitations
+
+	Linux requires kernel build 2.6.39 or later to get the
+	performance benefits from using multiple sockets.
 
 Documentation
 

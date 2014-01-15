@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.4 2011/12/11 14:58:50 joerg Exp $
+#	$NetBSD: Makefile,v 1.7 2013/11/11 23:51:36 joerg Exp $
 
 LIB=	clangCodeGen
 
@@ -7,6 +7,7 @@ LIB=	clangCodeGen
 .PATH: ${CLANG_SRCDIR}/lib/CodeGen
 
 SRCS+=	BackendUtil.cpp \
+	CGAtomic.cpp \
 	CGBlocks.cpp \
 	CGBuiltin.cpp \
 	CGCUDANV.cpp \
@@ -36,6 +37,7 @@ SRCS+=	BackendUtil.cpp \
 	CGStmt.cpp \
 	CGVTables.cpp \
 	CGVTT.cpp \
+	CodeGenABITypes.cpp \
 	CodeGenAction.cpp \
 	CodeGenFunction.cpp \
 	CodeGenModule.cpp \
@@ -43,6 +45,7 @@ SRCS+=	BackendUtil.cpp \
 	CodeGenTypes.cpp \
 	ItaniumCXXABI.cpp \
 	MicrosoftCXXABI.cpp \
+	MicrosoftVBTables.cpp \
 	ModuleBuilder.cpp \
 	TargetInfo.cpp
 

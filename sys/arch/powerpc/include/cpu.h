@@ -1,4 +1,4 @@
-/*	$NetBSD: cpu.h,v 1.93 2012/07/28 23:11:00 matt Exp $	*/
+/*	$NetBSD: cpu.h,v 1.98 2013/11/08 03:59:35 nisimura Exp $	*/
 
 /*
  * Copyright (C) 1999 Wolfgang Solfrank.
@@ -165,22 +165,24 @@ struct cpu_hatch_data {
 	uintptr_t hatch_asr;
 	uintptr_t hatch_sdr1;
 	uint32_t hatch_sr[16];
-	uintptr_t hatch_batu[8], hatch_batl[8];
+	uintptr_t hatch_ibatu[8], hatch_ibatl[8];
+	uintptr_t hatch_dbatu[8], hatch_dbatl[8];
 #endif
 #if defined(PPC_BOOKE)
 	vaddr_t hatch_sp;
+	u_int hatch_tlbidx;
 #endif
 };
 
 struct cpuset_info {
-	__cpuset_t cpus_running;
-	__cpuset_t cpus_hatched;
-	__cpuset_t cpus_paused;
-	__cpuset_t cpus_resumed;
-	__cpuset_t cpus_halted;
+	kcpuset_t *cpus_running;
+	kcpuset_t *cpus_hatched;
+	kcpuset_t *cpus_paused;
+	kcpuset_t *cpus_resumed;
+	kcpuset_t *cpus_halted;
 };
 
-extern volatile struct cpuset_info cpuset_info;
+extern struct cpuset_info cpuset_info;
 #endif /* MULTIPROCESSOR && !_MODULE */
 
 #if defined(MULTIPROCESSOR) || defined(_MODULE)
@@ -197,7 +199,7 @@ extern volatile struct cpuset_info cpuset_info;
 #define CPU_IS_PRIMARY(ci)	true
 #define CPU_INFO_ITERATOR	int
 #define CPU_INFO_FOREACH(cii, ci)				\
-	cii = 0, ci = curcpu(); ci != NULL; ci = NULL
+	(void)cii, ci = curcpu(); ci != NULL; ci = NULL
 
 #endif /* MULTIPROCESSOR || _MODULE */
 
@@ -263,7 +265,7 @@ mftb(void)
 {
 	uint64_t tb;
 
-#ifdef _LP64
+#ifdef _ARCH_PPC64
 	__asm volatile ("mftb %0" : "=r"(tb));
 #else
 	int tmp;

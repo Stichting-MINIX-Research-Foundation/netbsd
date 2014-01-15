@@ -1,4 +1,4 @@
-/*	$NetBSD: tcp_var.h,v 1.169 2012/02/02 19:43:08 tls Exp $	*/
+/*	$NetBSD: tcp_var.h,v 1.171 2013/11/12 09:02:05 kefren Exp $	*/
 
 /*
  * Copyright (C) 1995, 1996, 1997, and 1998 WIDE Project.
@@ -328,6 +328,11 @@ struct tcpcb {
 	tcp_seq snd_fack;		/* FACK TCP.  Forward-most data held by
 					   peer. */
 
+/* CUBIC variables */
+	ulong snd_cubic_wmax;		/* W_max */
+	ulong snd_cubic_wmax_last;	/* Used for fast convergence */
+	ulong snd_cubic_ctime;		/* Last congestion time */
+
 /* pointer for syn cache entries*/
 	LIST_HEAD(, syn_cache) t_sc;	/* list of entries by this tcb */
 
@@ -613,8 +618,7 @@ struct syn_cache_head {
  * Compute the initial window for slow start.
  */
 #define	TCP_INITIAL_WINDOW(iw, segsz) \
-	(((iw) == 0) ? (min(4 * (segsz), max(2 * (segsz), 4380))) : \
-	 ((segsz) * (iw)))
+	min((iw) * (segsz), max(2 * (segsz), tcp_init_win_max[(iw)]))
 
 /*
  * TCP statistics.
@@ -797,6 +801,7 @@ extern	int tcp_minmss;		/* minimal seg size */
 extern  int tcp_msl;		/* max segment life */
 extern	int tcp_init_win;	/* initial window */
 extern	int tcp_init_win_local;	/* initial window for local nets */
+extern	int tcp_init_win_max[11];/* max sizes for values of tcp_init_win_* */
 extern	int tcp_mss_ifmtu;	/* take MSS from interface, not in_maxmtu */
 extern	int tcp_compat_42;	/* work around ancient broken TCP peers */
 extern	int tcp_cwm;		/* enable Congestion Window Monitoring */
@@ -966,7 +971,6 @@ void	 tcp_del_sackholes(struct tcpcb *, const struct tcphdr *);
 void	 tcp_free_sackholes(struct tcpcb *);
 void	 tcp_sack_adjust(struct tcpcb *tp);
 struct sackhole *tcp_sack_output(struct tcpcb *tp, int *sack_bytes_rexmt);
-void	 tcp_sack_newack(struct tcpcb *, const struct tcphdr *);
 int	 tcp_sack_numblks(const struct tcpcb *);
 #define	TCP_SACK_OPTLEN(nblks)	((nblks) * 8 + 2 + 2)
 

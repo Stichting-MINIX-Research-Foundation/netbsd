@@ -1,4 +1,4 @@
-/*	$NetBSD: ch.c,v 1.86 2009/11/23 02:13:47 rmind Exp $	*/
+/*	$NetBSD: ch.c,v 1.88 2013/08/09 19:58:44 kardel Exp $	*/
 
 /*-
  * Copyright (c) 1996, 1997, 1998, 1999, 2004 The NetBSD Foundation, Inc.
@@ -31,7 +31,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ch.c,v 1.86 2009/11/23 02:13:47 rmind Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ch.c,v 1.88 2013/08/09 19:58:44 kardel Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -56,10 +56,12 @@ __KERNEL_RCSID(0, "$NetBSD: ch.c,v 1.86 2009/11/23 02:13:47 rmind Exp $");
 #include <dev/scsipi/scsiconf.h>
 
 #define CHRETRIES	2
+#define CHTIMEOUT	(5 * 60 * 1000)
+
 #define CHUNIT(x)	(minor((x)))
 
 struct ch_softc {
-	struct device	sc_dev;		/* generic device info */
+	device_t	sc_dev;		/* generic device info */
 	struct scsipi_periph *sc_periph;/* our periph data */
 
 	u_int		sc_events;	/* event bitmask */
@@ -101,7 +103,7 @@ struct ch_softc {
 static int	chmatch(device_t, cfdata_t, void *);
 static void	chattach(device_t, device_t, void *);
 
-CFATTACH_DECL(ch, sizeof(struct ch_softc),
+CFATTACH_DECL_NEW(ch, sizeof(struct ch_softc),
     chmatch, chattach, NULL, NULL);
 
 extern struct cfdriver ch_cd;
@@ -192,11 +194,12 @@ chattach(device_t parent, device_t self, void *aux)
 	struct scsipibus_attach_args *sa = aux;
 	struct scsipi_periph *periph = sa->sa_periph;
 
+	sc->sc_dev = self;
 	selinit(&sc->sc_selq);
 
 	/* Glue into the SCSI bus */
 	sc->sc_periph = periph;
-	periph->periph_dev = &sc->sc_dev;
+	periph->periph_dev = sc->sc_dev;
 	periph->periph_switch = &ch_switch;
 
 	printf("\n");
@@ -212,7 +215,7 @@ chattach(device_t parent, device_t self, void *aux)
 	 */
 	if (sc->sc_settledelay) {
 		printf("%s: waiting %d seconds for changer to settle...\n",
-		    device_xname(&sc->sc_dev), sc->sc_settledelay);
+		    device_xname(sc->sc_dev), sc->sc_settledelay);
 		delay(1000000 * sc->sc_settledelay);
 	}
 
@@ -221,11 +224,11 @@ chattach(device_t parent, device_t self, void *aux)
 	 * interrupts yet.
 	 */
 	if (ch_get_params(sc, XS_CTL_DISCOVERY|XS_CTL_IGNORE_MEDIA_CHANGE))
-		printf("%s: offline\n", device_xname(&sc->sc_dev));
+		printf("%s: offline\n", device_xname(sc->sc_dev));
 	else {
 #define PLURAL(c)	(c) == 1 ? "" : "s"
 		printf("%s: %d slot%s, %d drive%s, %d picker%s, %d portal%s\n",
-		    device_xname(&sc->sc_dev),
+		    device_xname(sc->sc_dev),
 		    sc->sc_counts[CHET_ST], PLURAL(sc->sc_counts[CHET_ST]),
 		    sc->sc_counts[CHET_DT], PLURAL(sc->sc_counts[CHET_DT]),
 		    sc->sc_counts[CHET_MT], PLURAL(sc->sc_counts[CHET_MT]),
@@ -233,11 +236,11 @@ chattach(device_t parent, device_t self, void *aux)
 #undef PLURAL
 #ifdef CHANGER_DEBUG
 		printf("%s: move mask: 0x%x 0x%x 0x%x 0x%x\n",
-		    device_xname(&sc->sc_dev),
+		    device_xname(sc->sc_dev),
 		    sc->sc_movemask[CHET_MT], sc->sc_movemask[CHET_ST],
 		    sc->sc_movemask[CHET_IE], sc->sc_movemask[CHET_DT]);
 		printf("%s: exchange mask: 0x%x 0x%x 0x%x 0x%x\n",
-		    device_xname(&sc->sc_dev),
+		    device_xname(sc->sc_dev),
 		    sc->sc_exchangemask[CHET_MT], sc->sc_exchangemask[CHET_ST],
 		    sc->sc_exchangemask[CHET_IE], sc->sc_exchangemask[CHET_DT]);
 #endif /* CHANGER_DEBUG */
@@ -513,7 +516,7 @@ ch_interpret_sense(struct scsipi_xfer *xs)
 {
 	struct scsipi_periph *periph = xs->xs_periph;
 	struct scsi_sense_data *sense = &xs->sense.scsi_sense;
-	struct ch_softc *sc = (void *)periph->periph_dev;
+	struct ch_softc *sc = device_private(periph->periph_dev);
 	u_int16_t asc_ascq;
 
 	/*
@@ -611,7 +614,7 @@ ch_move(struct ch_softc *sc, struct changer_move_request *cm)
 	 * Send command to changer.
 	 */
 	return (scsipi_command(sc->sc_periph, (void *)&cmd, sizeof(cmd), 0, 0,
-	    CHRETRIES, 100000, NULL, 0));
+	    CHRETRIES, CHTIMEOUT, NULL, 0));
 }
 
 static int
@@ -665,7 +668,7 @@ ch_exchange(struct ch_softc *sc, struct changer_exchange_request *ce)
 	 * Send command to changer.
 	 */
 	return (scsipi_command(sc->sc_periph, (void *)&cmd, sizeof(cmd), 0, 0,
-	    CHRETRIES, 100000, NULL, 0));
+	    CHRETRIES, CHTIMEOUT, NULL, 0));
 }
 
 static int
@@ -701,7 +704,7 @@ ch_position(struct ch_softc *sc, struct changer_position_request *cp)
 	 * Send command to changer.
 	 */
 	return (scsipi_command(sc->sc_periph, (void *)&cmd, sizeof(cmd), 0, 0,
-	    CHRETRIES, 100000, NULL, 0));
+	    CHRETRIES, CHTIMEOUT, NULL, 0));
 }
 
 /*
@@ -770,7 +773,7 @@ ch_ousergetelemstatus(struct ch_softc *sc, int chet, u_int8_t *uptr)
 
 	if (avail != sc->sc_counts[chet])
 		printf("%s: warning, READ ELEMENT STATUS avail != count\n",
-		    device_xname(&sc->sc_dev));
+		    device_xname(sc->sc_dev));
 
 	desc = (struct read_element_status_descriptor *)((u_long)data +
 	    sizeof(struct read_element_status_header) +
@@ -1040,7 +1043,7 @@ ch_getelemstatus(struct ch_softc *sc, int first, int count, void *data,
 	 */
 	return (scsipi_command(sc->sc_periph, (void *)&cmd, sizeof(cmd),
 	    (void *)data, datalen,
-	    CHRETRIES, 100000, NULL, scsiflags | XS_CTL_DATA_IN));
+	    CHRETRIES, CHTIMEOUT, NULL, scsiflags | XS_CTL_DATA_IN));
 }
 
 static int
@@ -1104,7 +1107,7 @@ ch_setvoltag(struct ch_softc *sc, struct changer_set_voltag_request *csvr)
 	 * Send command to changer.
 	 */
 	return (scsipi_command(sc->sc_periph, (void *)&cmd, sizeof(cmd),
-	    (void *)data, datalen, CHRETRIES, 100000, NULL,
+	    (void *)data, datalen, CHRETRIES, CHTIMEOUT, NULL,
 	    datalen ? XS_CTL_DATA_OUT : 0));
 }
 
@@ -1169,7 +1172,7 @@ ch_get_params(struct ch_softc *sc, int scsiflags)
 	    &sense_data.header, sizeof(sense_data),
 	    scsiflags, CHRETRIES, 6000);
 	if (error) {
-		aprint_error_dev(&sc->sc_dev, "could not sense element address page\n");
+		aprint_error_dev(sc->sc_dev, "could not sense element address page\n");
 		return (error);
 	}
 
@@ -1195,7 +1198,7 @@ ch_get_params(struct ch_softc *sc, int scsiflags)
 	    &sense_data.header, sizeof(sense_data),
 	    scsiflags, CHRETRIES, 6000);
 	if (error) {
-		aprint_error_dev(&sc->sc_dev, "could not sense capabilities page\n");
+		aprint_error_dev(sc->sc_dev, "could not sense capabilities page\n");
 		return (error);
 	}
 

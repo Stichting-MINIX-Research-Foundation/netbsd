@@ -1,4 +1,4 @@
-/*	$NetBSD: ses.c,v 1.43 2011/07/17 20:54:51 joerg Exp $ */
+/*	$NetBSD: ses.c,v 1.45 2013/04/07 18:50:33 wiz Exp $ */
 /*
  * Copyright (C) 2000 National Aeronautics & Space Administration
  * All rights reserved.
@@ -26,7 +26,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ses.c,v 1.43 2011/07/17 20:54:51 joerg Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ses.c,v 1.45 2013/04/07 18:50:33 wiz Exp $");
 
 #include "opt_scsi.h"
 
@@ -150,7 +150,7 @@ static void ses_log(struct ses_softc *, const char *, ...)
  */
 
 struct ses_softc {
-	struct device	sc_device;
+	device_t	sc_dev;
 	struct scsipi_periph *sc_periph;
 	enctyp		ses_type;	/* type of enclosure */
 	encvec		ses_vec;	/* vector to handlers */
@@ -168,10 +168,11 @@ struct ses_softc {
 
 static int ses_match(device_t, cfdata_t, void *);
 static void ses_attach(device_t, device_t, void *);
+static int ses_detach(device_t, int);
 static enctyp ses_device_type(struct scsipibus_attach_args *);
 
-CFATTACH_DECL(ses, sizeof (struct ses_softc),
-    ses_match, ses_attach, NULL, NULL);
+CFATTACH_DECL_NEW(ses, sizeof (struct ses_softc),
+    ses_match, ses_attach, ses_detach, NULL);
 
 extern struct cfdriver ses_cd;
 
@@ -183,8 +184,7 @@ static const struct scsipi_periphsw ses_switch = {
 };
 
 static int
-ses_match(device_t parent, cfdata_t match,
-    void *aux)
+ses_match(device_t parent, cfdata_t match, void *aux)
 {
 	struct scsipibus_attach_args *sa = aux;
 
@@ -219,9 +219,10 @@ ses_attach(device_t parent, device_t self, void *aux)
 	struct scsipibus_attach_args *sa = aux;
 	struct scsipi_periph *periph = sa->sa_periph;
 
+	softc->sc_dev = self;
 	SC_DEBUG(periph, SCSIPI_DB2, ("ssattach: "));
 	softc->sc_periph = periph;
-	periph->periph_dev = &softc->sc_device;
+	periph->periph_dev = self;
 	periph->periph_switch = &ses_switch;
 	periph->periph_openings = 1;
 
@@ -273,9 +274,8 @@ ses_attach(device_t parent, device_t self, void *aux)
 		tname = "SAF-TE Compliant Device";
 		break;
 	}
-	printf("\n%s: %s\n", device_xname(&softc->sc_device), tname);
+	printf("\n%s: %s\n", device_xname(softc->sc_dev), tname);
 }
-
 
 static enctyp
 ses_device_type(struct scsipibus_attach_args *sa)
@@ -524,7 +524,7 @@ ses_log(struct ses_softc *ssc, const char *fmt, ...)
 {
 	va_list ap;
 
-	printf("%s: ", device_xname(&ssc->sc_device));
+	printf("%s: ", device_xname(ssc->sc_dev));
 	va_start(ap, fmt);
 	vprintf(fmt, ap);
 	va_end(ap);
@@ -808,6 +808,29 @@ ses_softc_init(ses_softc_t *ssc, int doinit)
 	ssc->ses_nobjects = 0;
 	ssc->ses_encstat = 0;
 	return (ses_getconfig(ssc));
+}
+
+static int
+ses_detach(device_t self, int flags)
+{
+	struct ses_softc *ssc = device_private(self);
+	struct sscfg *cc = ssc->ses_private;
+
+	if (ssc->ses_objmap) {
+		SES_FREE(ssc->ses_objmap, (nobj * sizeof (encobj)));
+	}
+	if (cc != NULL) {
+		if (cc->ses_typidx) {
+			SES_FREE(cc->ses_typidx,
+			    (nobj * sizeof (struct typidx)));
+		}
+		if (cc->ses_eltmap) {
+			SES_FREE(cc->ses_eltmap, ntype);
+		}
+		SES_FREE(cc, sizeof (struct sscfg));
+	}
+
+	return 0;
 }
 
 static int

@@ -326,6 +326,10 @@ hppa*-*-*)
 m32r*-*-*)
         cpu_type=m32r
         ;;
+m5200-*-*|m5407-*-*)
+	cpu_type=m68k
+	extra_headers=math-68881.h
+	;;
 m680[012]0-*-*)
 	cpu_type=m68k
 	extra_headers=math-68881.h
@@ -724,13 +728,14 @@ arm*-*-freebsd*)
 arm*-*-netbsdelf*)
 	tm_file="dbxelf.h elfos.h netbsd.h netbsd-elf.h arm/elf.h arm/aout.h arm/arm.h"
 	case ${target} in
-	armeb*) tm_defines="${tm_defines} TARGET_ENDIAN_DEFAULT=MASK_BIG_END" ;;
+	arm*eb-*) tm_defines="${tm_defines} TARGET_BIG_ENDIAN_DEFAULT=1" ;;
 	esac
 	tmake_file="${tmake_file} arm/t-arm"
 	case ${target} in
-	arm*-*-netbsdelf-*eabi)
+	arm*-*-netbsdelf-*eabi*)
 	    tm_file="$tm_file arm/bpabi.h arm/netbsd-elf.h arm/netbsd-eabi.h"
-	    tmake_file="$tmake_file arm/t-arm-elf arm/t-bpabi"
+	    #tmake_file="$tmake_file arm/t-arm-elf"
+	    #tmake_file="$tmake_file arm/t-bpabi"
 	    tmake_file="$tmake_file arm/t-netbsd-eabi"
   	    # The BPABI long long divmod functions return a 128-bit value in
 	    # registers r0-r3.  Correctly modeling that requires the use of
@@ -743,6 +748,16 @@ arm*-*-netbsdelf*)
 	    tm_file="$tm_file arm/netbsd-elf.h"
 	    tmake_file="$tmake_file arm/t-netbsd"
 	    ;;
+	esac
+	case ${target} in
+	arm*-*-netbsdelf-*eabihf*)
+	    tm_defines="${tm_defines} TARGET_DEFAULT_FLOAT_ABI=ARM_FLOAT_ABI_HARD"
+	    ;;
+	esac
+	case ${target} in
+	armv4*) with_cpu=${with_cpu:-strongarm};;
+	armv6*) with_cpu=${with_cpu:-arm1176jzf-s};;
+	armv7*) with_cpu=${with_cpu:-cortex-a8};;
 	esac
 	;;
 arm*-*-netbsd*)
@@ -1503,6 +1518,9 @@ ia64*-*-netbsd*)
 	tm_file="${tm_file} dbxelf.h elfos.h netbsd.h netbsd-elf.h ia64/sysv4.h ia64/netbsd.h"
 	target_cpu_default="MASK_GNU_AS|MASK_GNU_LD"
 	tmake_file="${tmake_file} ia64/t-ia64"
+	if test x$with_system_libunwind != xyes ; then
+		tmake_file="${tmake_file} t-libunwind-elf ia64/t-glibc-libunwind"
+	fi
 	extra_parts="crtbegin.o crtend.o crtbeginS.o crtendS.o crtfastmath.o"
 	;;
 ia64*-*-freebsd*)
@@ -1650,21 +1668,28 @@ m68k-*-elf* | fido-*-elf*)
 	esac
 	extra_parts="crtbegin.o crtend.o"
 	;;
-m68010-*-netbsdelf* | m68k*-*-netbsdelf*)
+m68010-*-netbsdelf* | m68k-*-netbsdelf* | m5407-*-netbsdelf*)
 	tm_file="${tm_file} dbxelf.h elfos.h netbsd.h netbsd-elf.h m68k/netbsd-elf.h"
 	tm_defines="${tm_defines} MOTOROLA=1 USE_GAS=1"
 	default_cf_cpu=5475
+	default_m68k_cpu=68020
 	case ${target} in
+	m5407*)
+		with_arch=${with_arch:-cf}
+		target_cpu_default="mcf5475"
+#	        target="`echo ${target} | sed 's/m68kcf/m68k/'`"
+		;;
 	m68010*)
-		target_cpu_default="0"
+		target_cpu_default="m68010"
 		tmake_file="m68k/t-m68kelf m68k/t-m68010-netbsd"
 		default_m68k_cpu=68010
+		tmake_file="${tmake_file} m68k/t-floatlib"
 		;;
 	*)
-		default_m68k_cpu=68020
+		with_arch=${with_arch:-m68k}
+		tmake_file="${tmake_file} m68k/t-floatlib"
 		;;
 	esac
-	tmake_file="${tmake_file} m68k/t-floatlib"
 	;;
 m68k*-*-openbsd*)
 	default_m68k_cpu=68020
@@ -2886,6 +2911,9 @@ if test x$with_cpu = x ; then
     frv550-*-*linux*)
       with_cpu=fr550
       ;;
+    m5200-*-*|m5407-*-*)
+      with_cpu=${default_cf_cpu}
+      ;;
     m68k*-*-*)
       case "$with_arch" in
 	"cf")
@@ -3141,7 +3169,7 @@ case "${target}" in
 		esac
 		;;
 
-	fido-*-* | m68k*-*-*)
+	fido-*-* | m68k*-*-* | m5200-*-* | m5407-*-*)
 		supported_defaults="arch cpu"
 		case "$with_arch" in
 		"" | "m68k"| "cf")

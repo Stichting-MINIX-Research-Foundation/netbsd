@@ -1,4 +1,4 @@
-/* $NetBSD: cpu_ucode_amd.c,v 1.4 2012/08/29 17:13:22 drochner Exp $ */
+/* $NetBSD: cpu_ucode_amd.c,v 1.7 2013/11/15 08:47:55 msaitoh Exp $ */
 /*
  * Copyright (c) 2012 The NetBSD Foundation, Inc.
  * All rights reserved.
@@ -29,10 +29,11 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: cpu_ucode_amd.c,v 1.4 2012/08/29 17:13:22 drochner Exp $");
+__KERNEL_RCSID(0, "$NetBSD: cpu_ucode_amd.c,v 1.7 2013/11/15 08:47:55 msaitoh Exp $");
 
 #include "opt_xen.h"
 #include "opt_cpu_ucode.h"
+#include "opt_compat_netbsd.h"
 
 #include <sys/param.h>
 #include <sys/conf.h>
@@ -94,9 +95,7 @@ amd_cpufamily(void)
 	uint32_t family;
 	struct cpu_info *ci = curcpu();
 
-	family = CPUID2FAMILY(ci->ci_signature);
-	if (family == 0xf)
-		family += CPUID2EXTFAMILY(ci->ci_signature);
+	family = CPUID_TO_FAMILY(ci->ci_signature);
 
 	return family;
 }
@@ -115,6 +114,7 @@ cpu_ucode_amd_get_version(struct cpu_ucode_version *ucode)
 	return copyout(&data, ucode->data, sizeof(data));
 }
 
+#ifdef COMPAT_60
 int
 compat6_cpu_ucode_amd_get_version(struct compat6_cpu_ucode *ucode)
 {
@@ -127,6 +127,7 @@ compat6_cpu_ucode_amd_get_version(struct compat6_cpu_ucode *ucode)
 	ucode->version = uclevel;
 	return 0;
 }
+#endif /* COMPAT60 */
 
 int
 cpu_ucode_amd_firmware_open(firmware_handle_t *fwh, const char *fwname)
@@ -321,4 +322,4 @@ err0:
 	kmem_free(mc.mc_amd, sizeof(*mc.mc_amd));
 	return error;
 }
-#endif
+#endif /* ! XEN */

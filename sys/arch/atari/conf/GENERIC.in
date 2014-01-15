@@ -1,5 +1,5 @@
 #
-#	$NetBSD: GENERIC.in,v 1.98 2012/03/10 21:51:49 joerg Exp $
+#	$NetBSD: GENERIC.in,v 1.105 2013/06/30 21:38:55 rmind Exp $
 #
 # Generic atari
 #
@@ -66,14 +66,10 @@ options 	INET		# IP + ICMP + TCP + UDP
 #if !defined(SMALL030_KERNEL)
 options 	INET6		# IPV6
 #options 	IPSEC		# IP security
-#options 	IPSEC_ESP	# IP security (encryption part; define w/IPSEC)
-#options 	IPSEC_NAT_T	# IPsec NAT traversal (NAT-T)
 #options 	IPSEC_DEBUG	# debug for IP security
 #options 	GATEWAY		# packet forwarding
 #options 	MROUTING	# IP multicast routing
 #options 	PIM		# Protocol Independent Multicast
-#options 	ISO,TPIP	# OSI
-#options 	EON		# OSI tunneling over IP
 #if !defined(NO_PHYS_NETWORK)
 #options 	NETATALK	# AppleTalk networking protocols
 #endif /* NO_PHYS_NETWORK */
@@ -82,7 +78,6 @@ options 	PPP_BSDCOMP	# BSD-Compress compression support for PPP
 options 	PPP_DEFLATE	# Deflate compression support for PPP
 options 	PPP_FILTER	# Active filter support for PPP (requires bpf)
 
-options 	PFIL_HOOKS	# pfil(9) packet filter hooks
 options 	IPFILTER_LOG	# ipmon(8) log support
 options 	IPFILTER_LOOKUP	# ippool(8) support
 options 	IPFILTER_COMPAT # Compat for IP-Filter
@@ -166,6 +161,7 @@ options 	COMPAT_20	# Compatibility with NetBSD 2.0
 options 	COMPAT_30	# NetBSD 3.0 compatibility.
 options 	COMPAT_40	# NetBSD 4.0 compatibility.
 options 	COMPAT_50	# NetBSD 5.0 compatibility.
+options 	COMPAT_60	# NetBSD 6.0 compatibility.
 #if !defined(SMALL030_KERNEL)
 #options 	COMPAT_09	# has no meaning on the atari
 #options 	COMPAT_SUNOS	# Support to run Sun-3 executables
@@ -274,9 +270,9 @@ pseudo-device	stf			# 6to4 IPv6 over IPv4 encapsulation
 #pseudo-device	bridge			# simple inter-network bridging
 #pseudo-device	agr			# IEEE 802.3ad link aggregation
 #endif /* NO_PHYS_NETWORK */
-pseudo-device	ccd		4	# concatenating disk driver
-#pseudo-device	cgd		4	# cryptographic disk driver
-#pseudo-device	raid		8	# RAIDframe disk driver
+pseudo-device	ccd			# concatenating disk driver
+#pseudo-device	cgd			# cryptographic disk driver
+#pseudo-device	raid			# RAIDframe disk driver
 #options 	RAID_AUTOCONFIG		# auto-configuration of RAID components
 # Options to enable various other RAIDframe RAID types.
 # options	RF_INCLUDE_EVENODD=1

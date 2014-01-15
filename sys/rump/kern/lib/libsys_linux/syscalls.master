@@ -1,4 +1,4 @@
-	$NetBSD: syscalls.master,v 1.1 2012/09/19 21:45:40 pooka Exp $
+	$NetBSD: syscalls.master,v 1.5 2013/10/05 09:22:01 njoly Exp $
 
 ;	@(#)syscalls.master	8.2 (Berkeley) 1/13/94
 
@@ -498,8 +498,8 @@
 387	UNIMPL		stat30
 388	UNIMPL		fstat30
 389	UNIMPL		lstat30
-390	NODEF		{ int|linux_sys||getdents(int fd, \
-			    struct linux_dirent *dent, unsigned int count); }
+390	NODEF		{ int|linux_sys||getdents64(int fd, \
+			    struct linux_dirent64 *dent, unsigned int count); }
 391	UNIMPL		old posix_fadvise
 392	UNIMPL		fhstat
 393	UNIMPL		ntp_gettime
@@ -538,11 +538,13 @@
 			    struct timeval50 *tv); }
 418	UNIMPL		gettimeofday
 419	UNIMPL		settimeofday
-420	UNIMPL		utimes
+420	NODEF		{ int|linux_sys||utimes(const char *path, \
+			    struct linux_timeval *tv); }
 421	UNIMPL		adjtime
 422	UNIMPL		lfs_segwait
 423	UNIMPL		futimes
-424	UNIMPL		lutimes
+424	NODEF		{ int|linux_sys||lutimes(const char *path, \
+			    struct linux_timeval *tv); }
 425	UNIMPL		setitimer
 426	UNIMPL		getitimer
 427	UNIMPL		clock_gettime
@@ -563,7 +565,8 @@
 			    struct linux_stat64 *sp); }
 440	NODEF  		{ int|linux_sys||fstat64(int fd, \
 			    struct linux_stat64 *sp); }
-441	UNIMPL		lstat
+441	NODEF  		{ int|linux_sys||lstat64(const char *path, \
+			    struct linux_stat64 *sp); }
 442	UNIMPL		__semctl
 443	UNIMPL		shmctl
 444	UNIMPL		msgctl
@@ -592,7 +595,8 @@
 464	UNIMPL		fchownat
 465	UNIMPL		fexecve
 466	UNIMPL		fstatat
-467	UNIMPL		utimensat
+467	NODEF		{ int|linux_sys||utimensat(int fd, const char *path, \
+			    struct linux_timespec *times, int flag); }
 468	UNIMPL		openat
 469	UNIMPL		readlinkat
 470	UNIMPL		symlinkat

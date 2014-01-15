@@ -47,6 +47,7 @@
 /* #define SLJIT_CONFIG_PPC_32 1 */
 /* #define SLJIT_CONFIG_PPC_64 1 */
 /* #define SLJIT_CONFIG_MIPS_32 1 */
+/* #define SLJIT_CONFIG_SPARC_32 1 */
 
 /* #define SLJIT_CONFIG_AUTO 1 */
 /* #define SLJIT_CONFIG_UNSUPPORTED 1 */
@@ -62,7 +63,7 @@
 #endif
 
 #if defined(_KERNEL) && !defined(SLJIT_CACHE_FLUSH)
-#define SLJIT_CACHE_FLUSH(from, to)
+#error "SLJIT_CACHE_FLUSH must be defined."
 #endif
 
 #if defined(_KERNEL)
@@ -73,11 +74,16 @@
 #endif
 
 #ifdef _KERNEL
+
 #ifdef DIAGNOSTIC
 #define SLJIT_DEBUG 1
 #else
 #define SLJIT_DEBUG 0
 #endif
+
+#define SLJIT_ASSERT(x) KASSERT(x)
+#define SLJIT_ASSERT_STOP() \
+	panic("Should never been reached " __FILE__ ":%d\n", __LINE__)
 #endif
 
 #ifdef _KERNEL

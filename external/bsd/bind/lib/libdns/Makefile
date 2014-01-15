@@ -1,6 +1,7 @@
-#	$NetBSD: Makefile,v 1.8 2012/09/23 17:22:22 joerg Exp $
+#	$NetBSD: Makefile,v 1.12 2013/09/11 23:04:10 joerg Exp $
 
 LIB=dns
+#USE_SHLIBDIR=   yes
 
 .include <bsd.own.mk>
 
@@ -8,6 +9,8 @@ LIB=dns
 
 DIST=	${IDIST}/lib/dns
 .include "${DIST}/api"
+
+LIBDPLIBS+=	isc	${.CURDIR}/../libisc
 
 .PATH.c:	${DIST}/unix ${DIST}/sec/dst ${DIST}
 CPPFLAGS+=	-I${BIND_SRCDIR}/include/dns -I${DIST}
@@ -20,10 +23,11 @@ COPTS.${f}.c+=  -Wno-pointer-sign -fno-strict-aliasing
 
 DNSSEC_SRCS=	dst_api.c dst_lib.c dst_parse.c dst_result.c \
 	gssapi_link.c gssapictx.c hmac_link.c key.c openssl_link.c \
-	openssldh_link.c openssldsa_link.c opensslrsa_link.c
+	openssldh_link.c openssldsa_link.c opensslrsa_link.c \
+	opensslecdsa_link.c opensslgost_link.c spnego.c
 
 SRCS=	acl.c acache.c adb.c byaddr.c cache.c callbacks.c clientinfo.c \
-	compress.c \
+	compress.c client.c tsec.c ecdb.c \
 	db.c dbiterator.c dbtable.c diff.c dispatch.c dlz.c dns64.c dnssec.c \
 	ds.c forward.c iptable.c journal.c keydata.c keytable.c lib.c log.c \
 	lookup.c master.c masterdump.c message.c name.c ncache.c nsec.c \

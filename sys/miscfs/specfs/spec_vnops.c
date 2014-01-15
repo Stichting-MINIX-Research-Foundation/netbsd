@@ -1,4 +1,4 @@
-/*	$NetBSD: spec_vnops.c,v 1.135 2012/04/29 22:54:00 chs Exp $	*/
+/*	$NetBSD: spec_vnops.c,v 1.141 2013/09/30 18:58:00 hannken Exp $	*/
 
 /*-
  * Copyright (c) 2008 The NetBSD Foundation, Inc.
@@ -58,7 +58,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: spec_vnops.c,v 1.135 2012/04/29 22:54:00 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: spec_vnops.c,v 1.141 2013/09/30 18:58:00 hannken Exp $");
 
 #include <sys/param.h>
 #include <sys/proc.h>
@@ -93,7 +93,14 @@ const char	devout[] = "devout";
 const char	devioc[] = "devioc";
 const char	devcls[] = "devcls";
 
-vnode_t		*specfs_hash[SPECHSZ];
+#define	SPECHSZ	64
+#if	((SPECHSZ&(SPECHSZ-1)) == 0)
+#define	SPECHASH(rdev)	(((rdev>>5)+(rdev))&(SPECHSZ-1))
+#else
+#define	SPECHASH(rdev)	(((unsigned)((rdev>>5)+(rdev)))%SPECHSZ)
+#endif
+
+static vnode_t	*specfs_hash[SPECHSZ];
 
 /*
  * This vnode operations vector is used for special device nodes
@@ -265,6 +272,109 @@ spec_node_init(vnode_t *vp, dev_t rdev)
 	if (sd != NULL) {
 		kmem_free(sd, sizeof(*sd));
 	}
+}
+
+/*
+ * Lookup a vnode by device number and return it referenced.
+ */
+int
+spec_node_lookup_by_dev(enum vtype type, dev_t dev, vnode_t **vpp)
+{
+	int error;
+	vnode_t *vp;
+
+	mutex_enter(&device_lock);
+	for (vp = specfs_hash[SPECHASH(dev)]; vp; vp = vp->v_specnext) {
+		if (type == vp->v_type && dev == vp->v_rdev) {
+			mutex_enter(vp->v_interlock);
+			/* If clean or being cleaned, then ignore it. */
+			if ((vp->v_iflag & (VI_CLEAN | VI_XLOCK)) == 0)
+				break;
+			mutex_exit(vp->v_interlock);
+		}
+	}
+	KASSERT(vp == NULL || mutex_owned(vp->v_interlock));
+	if (vp == NULL) {
+		mutex_exit(&device_lock);
+		return ENOENT;
+	}
+	/*
+	 * If it is an opened block device return the opened vnode.
+	 */
+	if (type == VBLK && vp->v_specnode->sn_dev->sd_bdevvp != NULL) {
+		mutex_exit(vp->v_interlock);
+		vp = vp->v_specnode->sn_dev->sd_bdevvp;
+		mutex_enter(vp->v_interlock);
+	}
+	mutex_exit(&device_lock);
+	error = vget(vp, 0);
+	if (error != 0)
+		return error;
+	*vpp = vp;
+
+	return 0;
+}
+
+/*
+ * Lookup a vnode by file system mounted on and return it referenced.
+ */
+int
+spec_node_lookup_by_mount(struct mount *mp, vnode_t **vpp)
+{
+	int i, error;
+	vnode_t *vp, *vq;
+
+	mutex_enter(&device_lock);
+	for (i = 0, vq = NULL; i < SPECHSZ && vq == NULL; i++) {
+		for (vp = specfs_hash[i]; vp; vp = vp->v_specnext) {
+			if (vp->v_type != VBLK)
+				continue;
+			vq = vp->v_specnode->sn_dev->sd_bdevvp;
+			if (vq != NULL &&
+			    vq->v_specnode->sn_dev->sd_mountpoint == mp)
+				break;
+			vq = NULL;
+		}
+	}
+	if (vq == NULL) {
+		mutex_exit(&device_lock);
+		return ENOENT;
+	}
+	mutex_enter(vq->v_interlock);
+	mutex_exit(&device_lock);
+	error = vget(vq, 0);
+	if (error != 0)
+		return error;
+	*vpp = vq;
+
+	return 0;
+
+}
+
+/*
+ * Get the file system mounted on this block device.
+ */
+struct mount *
+spec_node_getmountedfs(vnode_t *devvp)
+{
+	struct mount *mp;
+
+	KASSERT(devvp->v_type == VBLK);
+	mp = devvp->v_specnode->sn_dev->sd_mountpoint;
+
+	return mp;
+}
+
+/*
+ * Set the file system mounted on this block device.
+ */
+void
+spec_node_setmountedfs(vnode_t *devvp, struct mount *mp)
+{
+
+	KASSERT(devvp->v_type == VBLK);
+	KASSERT(devvp->v_specnode->sn_dev->sd_mountpoint == NULL || mp == NULL);
+	devvp->v_specnode->sn_dev->sd_mountpoint = mp;
 }
 
 /*
@@ -600,23 +710,38 @@ spec_read(void *v)
 		if (uio->uio_offset < 0)
 			return (EINVAL);
 		bsize = BLKDEV_IOSIZE;
+
+		/*
+		 * dholland 20130616: XXX this logic should not be
+		 * here. It is here because the old buffer cache
+		 * demands that all accesses to the same blocks need
+		 * to be the same size; but it only works for FFS and
+		 * nowadays I think it'll fail silently if the size
+		 * info in the disklabel is wrong. (Or missing.) The
+		 * buffer cache needs to be smarter; or failing that
+		 * we need a reliable way here to get the right block
+		 * size; or a reliable way to guarantee that (a) the
+		 * fs is not mounted when we get here and (b) any
+		 * buffers generated here will get purged when the fs
+		 * does get mounted.
+		 */
 		if (bdev_ioctl(vp->v_rdev, DIOCGPART, &dpart, FREAD, l) == 0) {
 			if (dpart.part->p_fstype == FS_BSDFFS &&
 			    dpart.part->p_frag != 0 && dpart.part->p_fsize != 0)
 				bsize = dpart.part->p_frag *
 				    dpart.part->p_fsize;
 		}
+
 		bscale = bsize >> DEV_BSHIFT;
 		do {
 			bn = (uio->uio_offset >> DEV_BSHIFT) &~ (bscale - 1);
 			on = uio->uio_offset % bsize;
 			n = min((unsigned)(bsize - on), uio->uio_resid);
 			error = bread(vp, bn, bsize, NOCRED, 0, &bp);
-			n = min(n, bsize - bp->b_resid);
 			if (error) {
-				brelse(bp, 0);
 				return (error);
 			}
+			n = min(n, bsize - bp->b_resid);
 			error = uiomove((char *)bp->b_data + on, n, uio);
 			brelse(bp, 0);
 		} while (error == 0 && uio->uio_resid > 0 && n != 0);
@@ -691,7 +816,6 @@ spec_write(void *v)
 				error = bread(vp, bn, bsize, NOCRED,
 				    B_MODIFY, &bp);
 			if (error) {
-				brelse(bp, 0);
 				return (error);
 			}
 			n = min(n, bsize - bp->b_resid);
@@ -864,7 +988,7 @@ spec_fsync(void *v)
 	int error;
 
 	if (vp->v_type == VBLK) {
-		if ((mp = vp->v_specmountpoint) != NULL) {
+		if ((mp = spec_node_getmountedfs(vp)) != NULL) {
 			error = VFS_FSYNC(mp, vp, ap->a_flags);
 			if (error != EOPNOTSUPP)
 				return error;
@@ -898,6 +1022,7 @@ spec_strategy(void *v)
 
 	if (error) {
 		bp->b_error = error;
+		bp->b_resid = bp->b_bcount;
 		biodone(bp);
 		return (error);
 	}

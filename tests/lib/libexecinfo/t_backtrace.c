@@ -1,4 +1,4 @@
-/*	$NetBSD: t_backtrace.c,v 1.5 2012/06/02 14:52:28 njoly Exp $	*/
+/*	$NetBSD: t_backtrace.c,v 1.10 2013/08/16 11:57:15 martin Exp $	*/
 
 /*-
  * Copyright (c) 2012 The NetBSD Foundation, Inc.
@@ -29,29 +29,48 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 #include <sys/cdefs.h>
-__RCSID("$NetBSD: t_backtrace.c,v 1.5 2012/06/02 14:52:28 njoly Exp $");
+__RCSID("$NetBSD: t_backtrace.c,v 1.10 2013/08/16 11:57:15 martin Exp $");
 
 #include <atf-c.h>
 #include <atf-c/config.h>
 #include <string.h>
 #include <stdlib.h>
 #include <execinfo.h>
+#include <unistd.h>
 
 #ifndef __arraycount
 #define __arraycount(a) (sizeof(a) / sizeof(a[0]))
 #endif
 
-static void __attribute__((__noinline__))
+void myfunc3(size_t ncalls);
+void myfunc2(size_t ncalls);
+void myfunc1(size_t origcalls, volatile size_t ncalls);
+void myfunc(size_t ncalls);
+
+volatile int prevent_inline;
+
+void
 myfunc3(size_t ncalls)
 {
 	static const char *top[] = { "myfunc", "atfu_backtrace_fmt_basic_body",
-	    "atf_tc_run", "atf_tp_main", "main", "___start" };
-	size_t j, nptrs;
+	    "atf_tc_run", "atf_tp_run", "atf_tp_main", "main", "___start" };
+	static bool optional_frame[] = { false, false, false, true, false,
+	    false, true };
+	size_t j, nptrs, min_frames, max_frames;
 	void *buffer[ncalls + 10];
 	char **strings;
+	__CTASSERT(__arraycount(top) == __arraycount(optional_frame));
 
+	min_frames = 0;
+	max_frames = 0;
+	for (j = 0; j < __arraycount(optional_frame); ++j) {
+		if (!optional_frame[j])
+			++min_frames;
+		++max_frames;
+	}
 	nptrs = backtrace(buffer, __arraycount(buffer));
-	ATF_REQUIRE_EQ(nptrs, ncalls + 8);
+	ATF_REQUIRE(nptrs >= ncalls + 2 + min_frames);
+	ATF_REQUIRE(nptrs <= ncalls + 2 + max_frames);
 
 	strings = backtrace_symbols_fmt(buffer, nptrs, "%n");
 
@@ -62,31 +81,48 @@ myfunc3(size_t ncalls)
 	for (j = 2; j < ncalls + 2; j++)
 		ATF_CHECK_STREQ(strings[j], "myfunc1");
 
-	for (size_t i = 0; j < nptrs; i++, j++)
+	for (size_t i = 0; j < nptrs; i++, j++) {
+		if (optional_frame[i] && strcmp(strings[j], top[i])) {
+			--i;
+			continue;
+		}
 		ATF_CHECK_STREQ(strings[j], top[i]);
+	}
 
 	free(strings);
+
+	if (prevent_inline)
+		vfork();
 }
 
-static void __attribute__((__noinline__))
+void
 myfunc2(size_t ncalls)
 {
 	myfunc3(ncalls);
+
+	if (prevent_inline)
+		vfork();
 }
 
-static void __attribute__((__noinline__))
-myfunc1(size_t origcalls, size_t ncalls)
+void
+myfunc1(size_t origcalls, volatile size_t ncalls)
 {
 	if (ncalls > 1)
 		myfunc1(origcalls, ncalls - 1);
 	else
 		myfunc2(origcalls);
+
+	if (prevent_inline)
+		vfork();
 }
 
-static void __attribute__((__noinline__))
+void
 myfunc(size_t ncalls)
 {
 	myfunc1(ncalls, ncalls);
+
+	if (prevent_inline)
+		vfork();
 }
 
 ATF_TC(backtrace_fmt_basic);
@@ -97,13 +133,10 @@ ATF_TC_HEAD(backtrace_fmt_basic, tc)
 
 ATF_TC_BODY(backtrace_fmt_basic, tc)
 {
-	const char *arch = atf_config_get("atf_arch");
-
-        if (strcmp(arch, "x86_64") != 0)
-        	atf_tc_skip("PR toolchain/46490: libexecinfo only"
-		    " works on amd64 currently");
-
 	myfunc(12);
+
+	if (prevent_inline)
+		vfork();
 }
 
 ATF_TP_ADD_TCS(tp)

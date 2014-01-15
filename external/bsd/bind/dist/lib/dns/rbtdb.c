@@ -1,7 +1,7 @@
-/*	$NetBSD: rbtdb.c,v 1.12 2012/06/05 00:41:37 christos Exp $	*/
+/*	$NetBSD: rbtdb.c,v 1.14 2013/07/27 19:23:12 christos Exp $	*/
 
 /*
- * Copyright (C) 2004-2012  Internet Systems Consortium, Inc. ("ISC")
+ * Copyright (C) 2004-2013  Internet Systems Consortium, Inc. ("ISC")
  * Copyright (C) 1999-2003  Internet Software Consortium.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
@@ -115,6 +115,8 @@ typedef isc_uint32_t                    rbtdb_rdatatype_t;
 		RBTDB_RDATATYPE_VALUE(dns_rdatatype_rrsig, dns_rdatatype_cname)
 #define RBTDB_RDATATYPE_SIGDNAME \
 		RBTDB_RDATATYPE_VALUE(dns_rdatatype_rrsig, dns_rdatatype_dname)
+#define RBTDB_RDATATYPE_SIGDDS \
+		RBTDB_RDATATYPE_VALUE(dns_rdatatype_rrsig, dns_rdatatype_ds)
 #define RBTDB_RDATATYPE_NCACHEANY \
 		RBTDB_RDATATYPE_VALUE(0, dns_rdatatype_any)
 
@@ -1550,15 +1552,16 @@ delete_node(dns_rbtdb_t *rbtdb, dns_rbtnode_t *node)
 					      DNS_LOGCATEGORY_DATABASE,
 					      DNS_LOGMODULE_CACHE,
 					      ISC_LOG_WARNING,
-					      "delete_nsecnode(): "
+					      "delete_node(): "
 					      "dns_rbt_deletenode(nsecnode): %s",
 					      isc_result_totext(result));
 			}
 		}
-		result = dns_rbt_deletenode(rbtdb->tree, node, ISC_FALSE);
 #ifdef BIND9
-		dns_rpz_cidr_deleteip(rbtdb->rpz_cidr, name);
+		if (rbtdb->rpz_cidr != NULL)
+			dns_rpz_cidr_deleteip(rbtdb->rpz_cidr, name);
 #endif
+		result = dns_rbt_deletenode(rbtdb->tree, node, ISC_FALSE);
 		break;
 	case DNS_RBT_NSEC_NSEC:
 		result = dns_rbt_deletenode(rbtdb->nsec, node, ISC_FALSE);
@@ -1572,7 +1575,7 @@ delete_node(dns_rbtdb_t *rbtdb, dns_rbtnode_t *node)
 			      DNS_LOGCATEGORY_DATABASE,
 			      DNS_LOGMODULE_CACHE,
 			      ISC_LOG_WARNING,
-			      "delete_nsecnode(): "
+			      "delete_cnode(): "
 			      "dns_rbt_deletenode: %s",
 			      isc_result_totext(result));
 	}
@@ -4547,19 +4550,29 @@ find_coveringnsec(rbtdb_search_t *search, dns_dbnode_t **nodep,
 }
 
 /*
- * Mark a database for response policy rewriting.
+ * Mark a database for response policy rewriting
+ * or find which RPZ data is available.
  */
 #ifdef BIND9
-static void
-get_rpz_enabled(dns_db_t *db, dns_rpz_st_t *st)
+static isc_result_t
+rpz_enabled(dns_db_t *db, dns_rpz_st_t *st)
 {
 	dns_rbtdb_t *rbtdb;
+	isc_result_t result;
 
+	result = ISC_R_SUCCESS;
 	rbtdb = (dns_rbtdb_t *)db;
 	REQUIRE(VALID_RBTDB(rbtdb));
 	RWLOCK(&rbtdb->tree_lock, isc_rwlocktype_read);
-	dns_rpz_enabled(rbtdb->rpz_cidr, st);
+	if (st != NULL) {
+		dns_rpz_enabled_get(rbtdb->rpz_cidr, st);
+	} else {
+		result = dns_rpz_new_cidr(rbtdb->common.mctx,
+					  &rbtdb->common.origin,
+					  &rbtdb->rpz_cidr);
+	}
 	RWUNLOCK(&rbtdb->tree_lock, isc_rwlocktype_read);
+	return (result);
 }
 
 /*
@@ -4574,7 +4587,7 @@ get_rpz_enabled(dns_db_t *db, dns_rpz_st_t *st)
  * configured earlier than this policy zone and does not have a higher
  * precedence type.
  */
-static isc_result_t
+static void
 rpz_findips(dns_rpz_zone_t *rpz, dns_rpz_type_t rpz_type,
 	    dns_zone_t *zone, dns_db_t *db, dns_dbversion_t *version,
 	    dns_rdataset_t *ardataset, dns_rpz_st_t *st,
@@ -4599,7 +4612,7 @@ rpz_findips(dns_rpz_zone_t *rpz, dns_rpz_type_t rpz_type,
 
 	if (rbtdb->rpz_cidr == NULL) {
 		RWUNLOCK(&rbtdb->tree_lock, isc_rwlocktype_read);
-		return (ISC_R_UNEXPECTED);
+		return;
 	}
 
 	dns_fixedname_init(&selfnamef);
@@ -4661,7 +4674,7 @@ rpz_findips(dns_rpz_zone_t *rpz, dns_rpz_type_t rpz_type,
 			dns_name_format(qname, namebuf, sizeof(namebuf));
 			isc_log_write(dns_lctx, DNS_LOGCATEGORY_RPZ,
 				      DNS_LOGMODULE_RBTDB, DNS_RPZ_ERROR_LEVEL,
-				      "rpz_findips findnode(%s): %s",
+				      "rpz_findips findnode(%s) failed: %s",
 				      namebuf, isc_result_totext(result));
 			continue;
 		}
@@ -4682,7 +4695,8 @@ rpz_findips(dns_rpz_zone_t *rpz, dns_rpz_type_t rpz_type,
 			if (zrdataset.type != dns_rdatatype_cname) {
 				rpz_policy = DNS_RPZ_POLICY_RECORD;
 			} else {
-				rpz_policy = dns_rpz_decode_cname(&zrdataset,
+				rpz_policy = dns_rpz_decode_cname(rpz,
+								  &zrdataset,
 								  selfname);
 				if (rpz_policy == DNS_RPZ_POLICY_RECORD ||
 				    rpz_policy == DNS_RPZ_POLICY_WILDCNAME)
@@ -4740,7 +4754,7 @@ rpz_findips(dns_rpz_zone_t *rpz, dns_rpz_type_t rpz_type,
 		st->m.type = rpz_type;
 		st->m.prefix = prefix;
 		st->m.policy = rpz_policy;
-		st->m.ttl = ttl;
+		st->m.ttl = ISC_MIN(ttl, rpz->max_policy_ttl);
 		st->m.result = result;
 		dns_name_copy(qname, st->qname, NULL);
 		if ((rpz_policy == DNS_RPZ_POLICY_RECORD ||
@@ -4757,7 +4771,6 @@ rpz_findips(dns_rpz_zone_t *rpz, dns_rpz_type_t rpz_type,
 	}
 
 	RWUNLOCK(&rbtdb->tree_lock, isc_rwlocktype_read);
-	return (ISC_R_SUCCESS);
 }
 #endif
 
@@ -5916,13 +5929,12 @@ add(dns_rbtdb_t *rbtdb, dns_rbtnode_t *rbtnode, rbtdb_version_t *rbtversion,
 	negtype = 0;
 	if (rbtversion == NULL && !newheader_nx) {
 		rdtype = RBTDB_RDATATYPE_BASE(newheader->type);
+		covers = RBTDB_RDATATYPE_EXT(newheader->type);
+		sigtype = RBTDB_RDATATYPE_VALUE(dns_rdatatype_rrsig, covers);
 		if (NEGATIVE(newheader)) {
 			/*
 			 * We're adding a negative cache entry.
 			 */
-			covers = RBTDB_RDATATYPE_EXT(newheader->type);
-			sigtype = RBTDB_RDATATYPE_VALUE(dns_rdatatype_rrsig,
-							covers);
 			for (topheader = rbtnode->data;
 			     topheader != NULL;
 			     topheader = topheader->next) {
@@ -5955,14 +5967,20 @@ add(dns_rbtdb_t *rbtdb, dns_rbtnode_t *rbtnode, rbtdb_version_t *rbtversion,
 			 * We're adding something that isn't a
 			 * negative cache entry.  Look for an extant
 			 * non-stale NXDOMAIN/NODATA(QTYPE=ANY) negative
-			 * cache entry.
+			 * cache entry.  If we're adding an RRSIG, also
+			 * check for an extant non-stale NODATA ncache
+			 * entry which covers the same type as the RRSIG.
 			 */
 			for (topheader = rbtnode->data;
 			     topheader != NULL;
 			     topheader = topheader->next) {
-				if (topheader->type ==
-				    RBTDB_RDATATYPE_NCACHEANY)
+				if ((topheader->type ==
+					RBTDB_RDATATYPE_NCACHEANY) ||
+					(newheader->type == sigtype &&
+					topheader->type ==
+					RBTDB_RDATATYPE_VALUE(0, covers))) {
 					break;
+			}
 			}
 			if (topheader != NULL && EXISTS(topheader) &&
 			    topheader->rdh_ttl > now) {
@@ -5985,7 +6003,7 @@ add(dns_rbtdb_t *rbtdb, dns_rbtnode_t *rbtnode, rbtdb_version_t *rbtversion,
 				}
 				/*
 				 * The new rdataset is better.  Expire the
-				 * NXDOMAIN/NODATA(QTYPE=ANY).
+				 * ncache entry.
 				 */
 				set_ttl(rbtdb, topheader, 0);
 				topheader->attributes |= RDATASET_ATTR_STALE;
@@ -6147,7 +6165,9 @@ add(dns_rbtdb_t *rbtdb, dns_rbtnode_t *rbtnode, rbtdb_version_t *rbtversion,
 		}
 		if (IS_CACHE(rbtdb) && header->rdh_ttl > now &&
 		    (header->type == dns_rdatatype_a ||
-		     header->type == dns_rdatatype_aaaa) &&
+		     header->type == dns_rdatatype_aaaa ||
+		     header->type == dns_rdatatype_ds ||
+		     header->type == RBTDB_RDATATYPE_SIGDDS) &&
 		    !header_nx && !newheader_nx &&
 		    header->trust >= newheader->trust &&
 		    dns_rdataslab_equal((unsigned char *)header,
@@ -6217,6 +6237,7 @@ add(dns_rbtdb_t *rbtdb, dns_rbtnode_t *rbtnode, rbtdb_version_t *rbtversion,
 				 * will do it on the LRU side, so memory
 				 * will not leak... for long.
 				 */
+				INSIST(rbtdb->heaps != NULL);
 				isc_heap_insert(rbtdb->heaps[idx], newheader);
 			} else if (RESIGN(newheader))
 				resign_insert(rbtdb, idx, newheader);
@@ -6350,7 +6371,8 @@ addnoqname(dns_rbtdb_t *rbtdb, rdatasetheader_t *newheader,
 cleanup:
 	dns_rdataset_disassociate(&neg);
 	dns_rdataset_disassociate(&negsig);
-	free_noqname(mctx, &noqname);
+	if (noqname != NULL)
+		free_noqname(mctx, &noqname);
 	return(result);
 }
 
@@ -6400,7 +6422,8 @@ addclosest(dns_rbtdb_t *rbtdb, rdatasetheader_t *newheader,
  cleanup:
 	dns_rdataset_disassociate(&neg);
 	dns_rdataset_disassociate(&negsig);
-	free_noqname(mctx, &closest);
+	if (closest != NULL)
+		free_noqname(mctx, &closest);
 	return(result);
 }
 
@@ -6853,7 +6876,7 @@ loadnode(dns_rbtdb_t *rbtdb, dns_name_t *name, dns_rbtnode_t **nodep,
 	noderesult = dns_rbt_addnode(rbtdb->tree, name, nodep);
 
 #ifdef BIND9
-	if (noderesult == ISC_R_SUCCESS)
+	if (noderesult == ISC_R_SUCCESS && rbtdb->rpz_cidr != NULL)
 		dns_rpz_cidr_addip(rbtdb->rpz_cidr, name);
 #endif
 
@@ -7440,7 +7463,7 @@ static dns_dbmethods_t zone_methods = {
 	isdnssec,
 	NULL,
 #ifdef BIND9
-	get_rpz_enabled,
+	rpz_enabled,
 	rpz_findips,
 #else
 	NULL,
@@ -7677,24 +7700,6 @@ dns_rbtdb_create
 		free_rbtdb(rbtdb, ISC_FALSE, NULL);
 		return (result);
 	}
-
-#ifdef BIND9
-	/*
-	 * Get ready for response policy IP address searching if at least one
-	 * zone has been configured as a response policy zone and this
-	 * is not a cache zone.
-	 * It would be better to know that this database is for a policy
-	 * zone named for a view, but that would require knowledge from
-	 * above such as an argv[] set from data in the zone.
-	 */
-	if (type == dns_dbtype_zone && !dns_name_equal(origin, dns_rootname)) {
-		result = dns_rpz_new_cidr(mctx, origin, &rbtdb->rpz_cidr);
-		if (result != ISC_R_SUCCESS) {
-			free_rbtdb(rbtdb, ISC_FALSE, NULL);
-			return (result);
-		}
-	}
-#endif
 
 	/*
 	 * In order to set the node callback bit correctly in zone databases,
@@ -7974,7 +7979,9 @@ rdataset_clone(dns_rdataset_t *source, dns_rdataset_t *target) {
 	dns_dbnode_t *cloned_node = NULL;
 
 	attachnode(db, node, &cloned_node);
+	INSIST(!ISC_LINK_LINKED(target, link));
 	*target = *source;
+	ISC_LINK_INIT(target, link);
 
 	/*
 	 * Reset iterator state.
@@ -8926,12 +8933,10 @@ acache_callback(dns_acacheentry_t *entry, void **arg) {
 	if (acarray != NULL && acarray[count].entry == entry) {
 		acarray[count].entry = NULL;
 		INSIST(acarray[count].cbarg == cbarg);
-		isc_mem_put(rbtdb->common.mctx, cbarg, sizeof(acache_cbarg_t));
 		acarray[count].cbarg = NULL;
-	} else
 		isc_mem_put(rbtdb->common.mctx, cbarg, sizeof(acache_cbarg_t));
-
-	dns_acache_detachentry(&entry);
+		dns_acache_detachentry(&entry);
+	}
 
 	NODE_UNLOCK(nodelock, isc_rwlocktype_write);
 
@@ -8955,9 +8960,10 @@ acache_cancelentry(isc_mem_t *mctx, dns_acacheentry_t *entry,
 
 	cbarg = *cbargp;
 
-	dns_acache_cancelentry(entry);
-	dns_db_detachnode(cbarg->db, &cbarg->node);
-	dns_db_detach(&cbarg->db);
+	if (dns_acache_cancelentry(entry)) {
+		dns_db_detachnode(cbarg->db, &cbarg->node);
+		dns_db_detach(&cbarg->db);
+	}
 
 	isc_mem_put(mctx, cbarg, sizeof(acache_cbarg_t));
 
@@ -9024,6 +9030,7 @@ rdataset_setadditional(dns_rdataset_t *rdataset, dns_rdatasetadditional_t type,
 					acache_callback, newcbarg, &newentry);
 	if (result != ISC_R_SUCCESS)
 		goto fail;
+
 	/* Set cache data in the new entry. */
 	result = dns_acache_setentry(acache, newentry, zone, db,
 				     version, node, fname);

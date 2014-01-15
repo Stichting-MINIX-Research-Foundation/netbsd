@@ -1,4 +1,4 @@
-/*	$NetBSD: rump_dev.c,v 1.19 2011/03/28 22:23:39 dyoung Exp $	*/
+/*	$NetBSD: rump_dev.c,v 1.24 2013/09/20 16:49:00 pooka Exp $	*/
 
 /*
  * Copyright (c) 2009 Antti Kantee.  All Rights Reserved.
@@ -26,7 +26,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: rump_dev.c,v 1.19 2011/03/28 22:23:39 dyoung Exp $");
+__KERNEL_RCSID(0, "$NetBSD: rump_dev.c,v 1.24 2013/09/20 16:49:00 pooka Exp $");
 
 #include <sys/param.h>
 #include <sys/device.h>
@@ -36,13 +36,11 @@ __KERNEL_RCSID(0, "$NetBSD: rump_dev.c,v 1.19 2011/03/28 22:23:39 dyoung Exp $")
 
 int nocomponent(void);
 int nocomponent() {return 0;}
-__weak_alias(rump_device_components,nocomponent);
 __weak_alias(buf_syncwait,nocomponent);
 
 const char *rootspec = "rump0a"; /* usually comes from config */
 
-void
-rump_dev_init(void)
+RUMP_COMPONENT(RUMP__FACTION_DEV)
 {
 	extern int cold;
 
@@ -50,25 +48,26 @@ rump_dev_init(void)
 
 	KERNEL_LOCK(1, curlwp);
 
+	rump_mainbus_init();
 	config_init_mi();
 
 	rump_component_init(RUMP_COMPONENT_DEV);
-	rump_device_components();
 
 	rump_pdev_finalize();
 
 	cold = 0;
-	if (rump_component_count(RUMP_COMPONENT_DEV) > 0) {
-		extern struct cfdriver mainbus_cd;
-		extern struct cfattach mainbus_ca;
-		extern struct cfdata cfdata[];
 
-		config_cfdata_attach(cfdata, 0);
-		config_cfdriver_attach(&mainbus_cd);
-		config_cfattach_attach("mainbus", &mainbus_ca);
+	/*
+	 * XXX: does the "if" make any sense?  What if someone wants
+	 * to dynamically load a driver later on?
+	 */
+	if (rump_component_count(RUMP_COMPONENT_DEV) > 0
+	    || rump_component_count(RUMP_COMPONENT_DEV_AFTERMAINBUS) > 0) {
+		rump_mainbus_attach();
 		if (config_rootfound("mainbus", NULL) == NULL)
 			panic("no mainbus");
 
+		rump_component_init(RUMP_COMPONENT_DEV_AFTERMAINBUS);
 	}
 	config_finalize();
 
@@ -83,14 +82,14 @@ cpu_rootconf(void)
 }
 
 void
-device_register(struct device *dev, void *v)
+device_register(device_t dev, void *v)
 {
 
 	/* nada */
 }
 
 void
-device_register_post_config(struct device *dev, void *v)
+device_register_post_config(device_t dev, void *v)
 {
 
 	/* nada */

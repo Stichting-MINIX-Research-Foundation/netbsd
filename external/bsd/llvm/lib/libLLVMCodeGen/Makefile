@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.20 2012/09/23 17:22:23 joerg Exp $
+#	$NetBSD: Makefile,v 1.25 2013/11/11 23:51:36 joerg Exp $
 
 LIB=	LLVMCodeGen
 
@@ -9,17 +9,18 @@ LIB=	LLVMCodeGen
 SRCS+=	AggressiveAntiDepBreaker.cpp \
 	AllocationOrder.cpp \
 	Analysis.cpp \
+	BasicTargetTransformInfo.cpp \
 	BranchFolding.cpp \
 	CalcSpillWeights.cpp \
 	CallingConvLower.cpp \
 	CodeGen.cpp \
-	CodePlacementOpt.cpp \
 	CriticalAntiDepBreaker.cpp \
 	DFAPacketizer.cpp \
 	DeadMachineInstructionElim.cpp \
 	DwarfEHPrepare.cpp \
 	EarlyIfConversion.cpp \
 	EdgeBundles.cpp \
+	ErlangGC.cpp \
 	ExecutionDepsFix.cpp \
 	ExpandISelPseudos.cpp \
 	ExpandPostRAPseudos.cpp \
@@ -39,10 +40,11 @@ SRCS+=	AggressiveAntiDepBreaker.cpp \
 	LiveIntervalAnalysis.cpp \
 	LiveIntervalUnion.cpp \
 	LiveRangeCalc.cpp \
+	LiveRangeEdit.cpp \
 	LiveRegMatrix.cpp \
+	LiveRegUnits.cpp \
 	LiveStackAnalysis.cpp \
 	LiveVariables.cpp \
-	LiveRangeEdit.cpp \
 	LocalStackSlotAllocation.cpp \
 	MachineBasicBlock.cpp \
 	MachineBranchProbabilityInfo.cpp \
@@ -60,7 +62,6 @@ SRCS+=	AggressiveAntiDepBreaker.cpp \
 	MachineInstrBundle.cpp \
 	MachineLICM.cpp \
 	MachineLoopInfo.cpp \
-	MachineLoopRanges.cpp \
 	MachineModuleInfo.cpp \
 	MachineModuleInfoImpls.cpp \
 	MachinePassRegistry.cpp \
@@ -95,21 +96,22 @@ SRCS+=	AggressiveAntiDepBreaker.cpp \
 	ScheduleDAGInstrs.cpp \
 	ScheduleDAGPrinter.cpp \
 	ShadowStackGC.cpp \
-	ShrinkWrapping.cpp \
 	SjLjEHPrepare.cpp \
 	SlotIndexes.cpp \
 	Spiller.cpp \
 	SpillPlacement.cpp \
 	SplitKit.cpp \
 	StackColoring.cpp \
+	StackMaps.cpp \
 	StackProtector.cpp \
 	StackSlotColoring.cpp \
-	StrongPHIElimination.cpp \
 	TailDuplication.cpp \
 	TargetFrameLoweringImpl.cpp \
-	TargetInstrInfoImpl.cpp \
+	TargetInstrInfo.cpp \
+	TargetLoweringBase.cpp \
 	TargetLoweringObjectFileImpl.cpp \
 	TargetOptionsImpl.cpp \
+	TargetRegisterInfo.cpp \
 	TargetSchedule.cpp \
 	TwoAddressInstructionPass.cpp \
 	UnreachableBlockElim.cpp \

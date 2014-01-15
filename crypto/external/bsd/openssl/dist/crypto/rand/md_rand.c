@@ -123,10 +123,10 @@
 
 #include "e_os.h"
 
+#include <openssl/crypto.h>
 #include <openssl/rand.h>
 #include "rand_lcl.h"
 
-#include <openssl/crypto.h>
 #include <openssl/err.h>
 
 #ifdef BN_DEBUG
@@ -396,6 +396,11 @@ static int ssleay_rand_bytes(unsigned char *buf, int num, int pseudo)
 
 		RAND_poll();
 		ok = (entropy >= ENTROPY_NEEDED);
+
+		}
+
+	if (!ok)
+		{
 
 		/* If the PRNG state is not yet unpredictable, then seeing
 		 * the PRNG output may help attackers to determine the new

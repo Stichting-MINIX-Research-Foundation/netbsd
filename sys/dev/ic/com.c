@@ -1,4 +1,4 @@
-/* $NetBSD: com.c,v 1.306 2012/05/21 20:51:46 skrll Exp $ */
+/* $NetBSD: com.c,v 1.317 2013/10/03 13:23:03 kiyohara Exp $ */
 
 /*-
  * Copyright (c) 1998, 1999, 2004, 2008 The NetBSD Foundation, Inc.
@@ -66,7 +66,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: com.c,v 1.306 2012/05/21 20:51:46 skrll Exp $");
+__KERNEL_RCSID(0, "$NetBSD: com.c,v 1.317 2013/10/03 13:23:03 kiyohara Exp $");
 
 #include "opt_com.h"
 #include "opt_ddb.h"
@@ -92,6 +92,7 @@ __KERNEL_RCSID(0, "$NetBSD: com.c,v 1.306 2012/05/21 20:51:46 skrll Exp $");
 	do {					\
 		console_debugger();		\
 		cn_trapped = 1;			\
+		(void)cn_trapped;		\
 	} while (/* CONSTCOND */ 0)
 
 #include <sys/param.h>
@@ -246,8 +247,17 @@ void	com_kgdb_putc(void *, int);
 #define	COM_REG_16550	{ \
 	com_data, com_data, com_dlbl, com_dlbh, com_ier, com_iir, com_fifo, \
 	com_efr, com_lcr, com_mcr, com_lsr, com_msr }
+/* 16750-specific register set, additional UART status register */
+#define	COM_REG_16750	{ \
+	com_data, com_data, com_dlbl, com_dlbh, com_ier, com_iir, com_fifo, \
+	com_efr, com_lcr, com_mcr, com_lsr, com_msr, 0, 0, 0, 0, 0, 0, 0, 0, \
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, com_usr }
 
+#ifdef COM_16750
+const bus_size_t com_std_map[32] = COM_REG_16750;
+#else
 const bus_size_t com_std_map[16] = COM_REG_16550;
+#endif /* COM_16750 */
 #endif /* COM_REGMAP */
 
 #define	COMUNIT_MASK	0x7ffff
@@ -375,12 +385,15 @@ com_attach_subr(struct com_softc *sc)
 {
 	struct com_regs *regsp = &sc->sc_regs;
 	struct tty *tp;
-#ifdef COM_16650
 	u_int8_t lcr;
-#endif
 	const char *fifo_msg = NULL;
+	prop_dictionary_t	dict;
+	bool is_console = true;
 
 	aprint_naive("\n");
+
+	dict = device_properties(sc->sc_dev);
+	prop_dictionary_get_bool(dict, "is_console", &is_console);
 
 	callout_init(&sc->sc_diag_callout, 0);
 	mutex_init(&sc->sc_lock, MUTEX_DEFAULT, IPL_HIGH);
@@ -402,9 +415,17 @@ com_attach_subr(struct com_softc *sc)
 			    (u_long)comcons_info.regs.cr_iobase);
 		}
 
+#ifdef COM_16750
+		/* Use in comintr(). */
+ 		sc->sc_lcr = cflag2lcr(comcons_info.cflag);
+#endif
+
 		/* Make sure the console is always "hardwired". */
 		delay(10000);			/* wait for output to finish */
-		SET(sc->sc_hwflags, COM_HW_CONSOLE);
+		if (is_console) {
+			SET(sc->sc_hwflags, COM_HW_CONSOLE);
+		}
+
 		SET(sc->sc_swflags, TIOCFLAG_SOFTCAR);
 	}
 
@@ -418,7 +439,7 @@ com_attach_subr(struct com_softc *sc)
 		fifo_msg = "Au1X00 UART, working fifo";
 		SET(sc->sc_hwflags, COM_HW_FIFO);
 		goto fifodelay;
- 
+
 	case COM_TYPE_16550_NOERS:
 		sc->sc_fifolen = 16;
 		fifo_msg = "ns16650, no ERS, working fifo";
@@ -459,8 +480,7 @@ com_attach_subr(struct com_softc *sc)
 			CSR_WRITE_1(regsp, COM_REG_LCR, LCR_EERS);
 			CSR_WRITE_1(regsp, COM_REG_EFR, 0);
 			if (CSR_READ_1(regsp, COM_REG_EFR) == 0) {
-				CSR_WRITE_1(regsp, COM_REG_LCR,
-				    lcr | LCR_DLAB);
+				CSR_WRITE_1(regsp, COM_REG_LCR, lcr | LCR_DLAB);
 				if (CSR_READ_1(regsp, COM_REG_EFR) == 0) {
 					CLR(sc->sc_hwflags, COM_HW_FIFO);
 					sc->sc_fifolen = 0;
@@ -472,6 +492,37 @@ com_attach_subr(struct com_softc *sc)
 #endif
 				sc->sc_fifolen = 16;
 
+			/*
+			 * TL16C750 can enable 64byte FIFO, only when DLAB
+			 * is 1.  However, some 16750 may always enable.  For
+			 * example, restrictions according to DLAB in a data
+			 * sheet for SC16C750 were not described.
+			 * Please enable 'options COM_16650', supposing you
+			 * use SC16C750.  Probably 32 bytes of FIFO and HW FLOW
+			 * should become effective.
+			 */
+			uint8_t iir1, iir2;
+			const uint8_t fcr = FIFO_ENABLE | FIFO_TRIGGER_14;
+
+			lcr = CSR_READ_1(regsp, COM_REG_LCR);
+			CSR_WRITE_1(regsp, COM_REG_LCR, lcr & ~LCR_DLAB);
+			CSR_WRITE_1(regsp, COM_REG_FIFO, fcr | FIFO_64B_ENABLE);
+			iir1 = CSR_READ_1(regsp, COM_REG_IIR);
+			CSR_WRITE_1(regsp, COM_REG_FIFO, fcr);
+			CSR_WRITE_1(regsp, COM_REG_LCR, lcr | LCR_DLAB);
+			CSR_WRITE_1(regsp, COM_REG_FIFO, fcr | FIFO_64B_ENABLE);
+			iir2 = CSR_READ_1(regsp, COM_REG_IIR);
+
+			CSR_WRITE_1(regsp, COM_REG_LCR, lcr);
+
+			if (!ISSET(iir1, IIR_64B_FIFO) &&
+			    ISSET(iir2, IIR_64B_FIFO)) {
+				/* It is TL16C750. */
+				sc->sc_fifolen = 64;
+				SET(sc->sc_hwflags, COM_HW_AFE);
+			} else
+				CSR_WRITE_1(regsp, COM_REG_FIFO, fcr);
+
 #ifdef COM_16650
 			CSR_WRITE_1(regsp, COM_REG_LCR, lcr);
 			if (sc->sc_fifolen == 0)
@@ -480,6 +531,9 @@ com_attach_subr(struct com_softc *sc)
 				fifo_msg = "st16650a, working fifo";
 			else
 #endif
+			if (sc->sc_fifolen == 64)
+				fifo_msg = "tl16c750, working fifo";
+			else
 				fifo_msg = "ns16550a, working fifo";
 		} else
 			fifo_msg = "ns16550, broken fifo";
@@ -506,6 +560,7 @@ fifodone:
 	tp->t_oproc = comstart;
 	tp->t_param = comparam;
 	tp->t_hwiflow = comhwiflow;
+	tp->t_softc = sc;
 
 	sc->sc_tty = tp;
 	sc->sc_rbuf = malloc(com_rbuf_size << 1, M_DEVBUF, M_NOWAIT);
@@ -1317,7 +1372,11 @@ comparam(struct tty *tp, struct termios *t)
 		sc->sc_mcr_dtr = MCR_DTR;
 		sc->sc_mcr_rts = MCR_RTS;
 		sc->sc_msr_cts = MSR_CTS;
-		sc->sc_efr = EFR_AUTORTS | EFR_AUTOCTS;
+		if (ISSET(sc->sc_hwflags, COM_HW_AFE)) {
+			SET(sc->sc_mcr, MCR_AFE);
+		} else {
+			sc->sc_efr = EFR_AUTORTS | EFR_AUTOCTS;
+		}
 	} else if (ISSET(t->c_cflag, MDMBUF)) {
 		/*
 		 * For DTR/DCD flow control, make sure we don't toggle DTR for
@@ -1326,7 +1385,11 @@ comparam(struct tty *tp, struct termios *t)
 		sc->sc_mcr_dtr = 0;
 		sc->sc_mcr_rts = MCR_DTR;
 		sc->sc_msr_cts = MSR_DCD;
-		sc->sc_efr = 0;
+		if (ISSET(sc->sc_hwflags, COM_HW_AFE)) {
+			CLR(sc->sc_mcr, MCR_AFE);
+		} else {
+			sc->sc_efr = 0;
+		}
 	} else {
 		/*
 		 * If no flow control, then always set RTS.  This will make
@@ -1336,7 +1399,11 @@ comparam(struct tty *tp, struct termios *t)
 		sc->sc_mcr_dtr = MCR_DTR | MCR_RTS;
 		sc->sc_mcr_rts = 0;
 		sc->sc_msr_cts = 0;
-		sc->sc_efr = 0;
+		if (ISSET(sc->sc_hwflags, COM_HW_AFE)) {
+			CLR(sc->sc_mcr, MCR_AFE);
+		} else {
+			sc->sc_efr = 0;
+		}
 		if (ISSET(sc->sc_mcr, MCR_DTR))
 			SET(sc->sc_mcr, MCR_RTS);
 		else
@@ -1455,6 +1522,20 @@ com_iflush(struct com_softc *sc)
 #ifdef DIAGNOSTIC
 	if (!timo)
 		aprint_error_dev(sc->sc_dev, "com_iflush timeout %02x\n", reg);
+#endif
+
+#ifdef COM_16750
+	uint8_t fifo;
+	/*
+	 * Reset all Rx/Tx FIFO, preserve current FIFO length.
+	 * This should prevent triggering busy interrupt while
+	 * manipulating divisors.
+	 */
+	fifo = CSR_READ_1(regsp, COM_REG_FIFO) & (FIFO_TRIGGER_1 |
+	    FIFO_TRIGGER_4 | FIFO_TRIGGER_8 | FIFO_TRIGGER_14);
+	CSR_WRITE_1(regsp, COM_REG_FIFO, fifo | FIFO_ENABLE | FIFO_RCV_RST |
+	    FIFO_XMT_RST);
+	delay(100);
 #endif
 }
 
@@ -1882,6 +1963,27 @@ comintr(void *arg)
 
 	mutex_spin_enter(&sc->sc_lock);
 	iir = CSR_READ_1(regsp, COM_REG_IIR);
+
+	/* Handle ns16750-specific busy interrupt. */
+#ifdef COM_16750
+	int timeout;
+	if ((iir & IIR_BUSY) == IIR_BUSY) {
+		for (timeout = 10000;
+		    (CSR_READ_1(regsp, COM_REG_USR) & 0x1) != 0; timeout--)
+			if (timeout <= 0) {
+				aprint_error_dev(sc->sc_dev,
+				    "timeout while waiting for BUSY interrupt "
+				    "acknowledge\n");
+				mutex_spin_exit(&sc->sc_lock);
+				return (0);
+			}
+
+		CSR_WRITE_1(regsp, COM_REG_LCR, sc->sc_lcr);
+		iir = CSR_READ_1(regsp, COM_REG_IIR);
+	}
+#endif /* COM_16750 */
+
+
 	if (ISSET(iir, IIR_NOPEND)) {
 		mutex_spin_exit(&sc->sc_lock);
 		return (0);
@@ -1896,7 +1998,7 @@ again:	do {
 
 		lsr = CSR_READ_1(regsp, COM_REG_LSR);
 		if (ISSET(lsr, LSR_BI)) {
-			int cn_trapped = 0;
+			int cn_trapped = 0; /* see above: cn_trap() */
 
 			cn_check_magic(sc->sc_tty->t_dev,
 				       CNC_BREAK, com_cnm_state);
@@ -2116,7 +2218,7 @@ com_common_getc(dev_t dev, struct com_regs *regsp)
 	c = CSR_READ_1(regsp, COM_REG_RXDATA);
 	stat = CSR_READ_1(regsp, COM_REG_IIR);
 	{
-		int cn_trapped = 0; /* unused */
+		int cn_trapped = 0;	/* required by cn_trap, see above */
 #ifdef DDB
 		extern int db_active;
 		if (!db_active)
@@ -2175,7 +2277,7 @@ cominit(struct com_regs *regsp, int rate, int frequency, int type,
 		if (type == COM_TYPE_AU1x00) {
 			CSR_WRITE_2(regsp, COM_REG_DLBL, rate);
 		} else {
-			/* no EFR on alchemy */ 
+			/* no EFR on alchemy */
 			if (type != COM_TYPE_16550_NOERS) {
 				CSR_WRITE_1(regsp, COM_REG_LCR, LCR_EERS);
 				CSR_WRITE_1(regsp, COM_REG_EFR, 0);
@@ -2298,6 +2400,7 @@ void
 comcnpollc(dev_t dev, int on)
 {
 
+	com_readaheadcount = 0;
 }
 
 #ifdef KGDB

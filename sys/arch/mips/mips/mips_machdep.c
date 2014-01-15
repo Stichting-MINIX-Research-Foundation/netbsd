@@ -1,4 +1,4 @@
-/*	$NetBSD: mips_machdep.c,v 1.255 2012/03/11 00:02:05 mrg Exp $	*/
+/*	$NetBSD: mips_machdep.c,v 1.258 2013/11/10 18:27:15 christos Exp $	*/
 
 /*
  * Copyright 2002 Wasabi Systems, Inc.
@@ -111,7 +111,7 @@
  */
 
 #include <sys/cdefs.h>			/* RCS ID & Copyright macro defns */
-__KERNEL_RCSID(0, "$NetBSD: mips_machdep.c,v 1.255 2012/03/11 00:02:05 mrg Exp $");
+__KERNEL_RCSID(0, "$NetBSD: mips_machdep.c,v 1.258 2013/11/10 18:27:15 christos Exp $");
 
 #define __INTR_PRIVATE
 #include "opt_cputype.h"
@@ -259,8 +259,6 @@ struct mips_options mips_options = {
 	.mips_cpu_id = 0xffffffff,
 	.mips_fpu_id = 0xffffffff,
 };
-
-struct	user *proc0paddr;
 
 void *	msgbufaddr;
 
@@ -1656,6 +1654,13 @@ SYSCTL_SETUP(sysctl_machdep_setup, "sysctl machdep subtree setup")
                        CTLTYPE_INT, "llsc", NULL,
                        NULL, MIPS_HAS_LLSC, NULL, 0,
                        CTL_MACHDEP, CPU_LLSC, CTL_EOL);
+#ifdef MIPS3_LOONGSON2
+	sysctl_createv(clog, 0, NULL, NULL,
+		       CTLFLAG_PERMANENT|CTLFLAG_IMMEDIATE,
+		       CTLTYPE_INT, "loongson-mmi", NULL,
+		       NULL, MIPS_HAS_LMMI, NULL, 0,
+		       CTL_MACHDEP, CPU_LMMI, CTL_EOL);
+#endif
 }
 
 /*
@@ -2169,7 +2174,7 @@ startlwp(void *arg)
 {
 	ucontext_t * const uc = arg;
 	lwp_t * const l = curlwp;
-	int error;
+	int error __diagused;
 
 	error = cpu_setmcontext(l, &uc->uc_mcontext, uc->uc_flags);
 	KASSERT(error == 0);

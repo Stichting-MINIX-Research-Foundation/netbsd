@@ -1,4 +1,4 @@
-/*	$NetBSD: msg.md.es,v 1.10 2012/03/01 17:40:31 tsutsui Exp $	*/
+/*	$NetBSD: msg.md.es,v 1.12 2013/03/23 11:50:03 he Exp $	*/
 
 /*
  * Copyright 1997 Piermont Information Systems Inc.
@@ -85,3 +85,13 @@ message set_kernel_6
 {Núcleo (TEAMASA_NPWR)}
 message set_kernel_7
 {Núcleo (TS7200)}
+message set_kernel_8
+{N\xfacleo (RPI)}
+message set_kernel_9
+{Núcleo (KUROBOX_PRO)}
+
+message nomsdospart
+{There is no MSDOS boot partition in the MBR partition table.}
+
+message rpikernelmissing
+{The RPI kernel was not installed, perhaps you didn't select it?}

@@ -1,7 +1,7 @@
-/*	$NetBSD: genrandom.c,v 1.3 2012/06/05 00:39:36 christos Exp $	*/
+/*	$NetBSD: genrandom.c,v 1.5 2013/07/27 19:23:11 christos Exp $	*/
 
 /*
- * Copyright (C) 2004, 2005, 2007, 2009, 2010  Internet Systems Consortium, Inc. ("ISC")
+ * Copyright (C) 2004, 2005, 2007, 2009, 2010, 2012  Internet Systems Consortium, Inc. ("ISC")
  * Copyright (C) 2000-2003  Internet Software Consortium.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
@@ -81,6 +81,10 @@ main(int argc, char **argv) {
 	size_t len;
 	char *name;
 
+	isc__mem_register();
+	isc__task_register();
+	isc__timer_register();
+	isc__socket_register();
 	isc_commandline_errprint = ISC_FALSE;
 
 	while ((c = isc_commandline_parse(argc, argv, "hn:")) != EOF) {
@@ -95,6 +99,7 @@ main(int argc, char **argv) {
 			if (isc_commandline_option != '?')
 				fprintf(stderr, "%s: invalid argument -%c\n",
 					program, isc_commandline_option);
+			/* FALLTHROUGH */
 		case 'h':
 			usage();
 

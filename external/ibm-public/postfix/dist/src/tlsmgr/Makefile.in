@@ -73,6 +73,7 @@ tlsmgr.o: ../../include/mail_server.h
 tlsmgr.o: ../../include/mail_version.h
 tlsmgr.o: ../../include/master_proto.h
 tlsmgr.o: ../../include/msg.h
+tlsmgr.o: ../../include/myflock.h
 tlsmgr.o: ../../include/mymalloc.h
 tlsmgr.o: ../../include/name_code.h
 tlsmgr.o: ../../include/name_mask.h
@@ -87,4 +88,5 @@ tlsmgr.o: ../../include/vbuf.h
 tlsmgr.o: ../../include/vstream.h
 tlsmgr.o: ../../include/vstring.h
 tlsmgr.o: ../../include/vstring_vstream.h
+tlsmgr.o: ../../include/warn_stat.h
 tlsmgr.o: tlsmgr.c

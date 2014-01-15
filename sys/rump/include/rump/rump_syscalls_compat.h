@@ -1,4 +1,4 @@
-/*	$NetBSD: rump_syscalls_compat.h,v 1.8 2012/07/20 09:10:23 pooka Exp $	*/
+/*	$NetBSD: rump_syscalls_compat.h,v 1.13 2013/08/15 21:29:04 pooka Exp $	*/
 
 /*-
  * Copyright (c) 2010, 2011 Antti Kantee.  All Rights Reserved.
@@ -25,8 +25,21 @@
  * SUCH DAMAGE.
  */
 
+#ifdef _KERNEL
+#error rump_syscalls_compat is not for kernel consumers
+#endif
+
 #ifndef _RUMP_RUMP_SYSCALLS_COMPAT_H_
 #define _RUMP_RUMP_SYSCALLS_COMPAT_H_
+
+/* should have a smaller hammer here */
+#ifndef RUMP_HOST_NOT_POSIX
+#include <sys/types.h> /* typedefs */
+#include <sys/select.h> /* typedefs */
+#include <sys/socket.h> /* typedefs */
+
+#include <signal.h> /* typedefs */
+#endif
 
 #ifdef __NetBSD__
 #include <sys/cdefs.h>
@@ -54,7 +67,11 @@
 #else /* !__NetBSD__ */
 
 #ifndef __RENAME
+#ifdef __ELF__
 #define __RUMPSTRINGIFY(x) #x
+#else
+#define __RUMPSTRINGIFY(x) "_"#x
+#endif /* __ELF__ */
 #define __RENAME(x) __asm(__RUMPSTRINGIFY(x))
 #endif /* __RENAME */
 

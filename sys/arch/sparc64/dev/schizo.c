@@ -1,4 +1,4 @@
-/*	$NetBSD: schizo.c,v 1.29 2012/03/25 03:13:08 mrg Exp $	*/
+/*	$NetBSD: schizo.c,v 1.31 2013/06/21 20:09:58 nakayama Exp $	*/
 /*	$OpenBSD: schizo.c,v 1.55 2008/08/18 20:29:37 brad Exp $	*/
 
 /*
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: schizo.c,v 1.29 2012/03/25 03:13:08 mrg Exp $");
+__KERNEL_RCSID(0, "$NetBSD: schizo.c,v 1.31 2013/06/21 20:09:58 nakayama Exp $");
 
 #include <sys/param.h>
 #include <sys/device.h>
@@ -112,7 +112,7 @@ static int schizo_dmamap_create(bus_dma_tag_t, bus_size_t, int, bus_size_t,
 	bus_size_t, int, bus_dmamap_t *);
 
 int
-schizo_match(struct device *parent, cfdata_t match, void *aux)
+schizo_match(device_t parent, cfdata_t match, void *aux)
 {
 	struct mainbus_attach_args *ma = aux;
 	char *str;
@@ -136,7 +136,7 @@ schizo_match(struct device *parent, cfdata_t match, void *aux)
 }
 
 void
-schizo_attach(struct device *parent, struct device *self, void *aux)
+schizo_attach(device_t parent, device_t self, void *aux)
 {
 	struct schizo_softc *sc = device_private(self);
 	struct mainbus_attach_args *ma = aux;
@@ -491,12 +491,23 @@ pcireg_t
 schizo_conf_read(pci_chipset_tag_t pc, pcitag_t tag, int reg)
 {
 	struct schizo_pbm *sp = pc->cookie;
+	struct cpu_info *ci = curcpu();
 	pcireg_t val = (pcireg_t)~0;
+	int s;
 
 	DPRINTF(SDB_CONF, ("%s: tag %lx reg %x ", __func__, (long)tag, reg));
-	if (PCITAG_NODE(tag) != -1)
+	if (PCITAG_NODE(tag) != -1) {
+		s = splhigh();
+		ci->ci_pci_probe = true;
+		membar_Sync();
 		val = bus_space_read_4(sp->sp_cfgt, sp->sp_cfgh,
 		    PCITAG_OFFSET(tag) + reg);
+		membar_Sync();
+		if (ci->ci_pci_fault)
+			val = (pcireg_t)~0;
+		ci->ci_pci_probe = ci->ci_pci_fault = false;
+		splx(s);
+	}
 	DPRINTF(SDB_CONF, (" returning %08x\n", (u_int)val));
 	return (val);
 }

@@ -1,4 +1,4 @@
-/*	$NetBSD: ifconfig.c,v 1.227 2012/01/28 15:01:44 mbalmer Exp $	*/
+/*	$NetBSD: ifconfig.c,v 1.231 2013/10/19 00:35:30 christos Exp $	*/
 
 /*-
  * Copyright (c) 1997, 1998, 2000 The NetBSD Foundation, Inc.
@@ -63,7 +63,7 @@
 #ifndef lint
 __COPYRIGHT("@(#) Copyright (c) 1983, 1993\
  The Regents of the University of California.  All rights reserved.");
-__RCSID("$NetBSD: ifconfig.c,v 1.227 2012/01/28 15:01:44 mbalmer Exp $");
+__RCSID("$NetBSD: ifconfig.c,v 1.231 2013/10/19 00:35:30 christos Exp $");
 #endif /* not lint */
 
 #include <sys/param.h>
@@ -621,7 +621,6 @@ main(int argc, char **argv)
 
 		case 'L':
 		case 'm':
-		case 'v':
 		case 'z':
 			if (start != &opt_family_only.pb_parser)
 				start = &iface_opt_family_only.pif_parser;
@@ -681,8 +680,12 @@ main(int argc, char **argv)
 	env = (nmatch > 0) ? match[(int)nmatch - 1].m_env : NULL;
 	if (env == NULL)
 		env = oenv;
-	else
+	else {
 		env = prop_dictionary_augment(env, oenv);
+		if (env == NULL)
+			err(EXIT_FAILURE, "%s: prop_dictionary_augment",
+			    __func__);
+	}
 
 	/* Process any media commands that may have been issued. */
 	process_media_commands(env);
@@ -898,12 +901,10 @@ setifaddr(prop_dictionary_t env, prop_dictionary_t oenv)
 static int
 setifnetmask(prop_dictionary_t env, prop_dictionary_t oenv)
 {
-	const struct paddr_prefix *pfx;
 	prop_data_t d;
 
 	d = (prop_data_t)prop_dictionary_get(env, "dstormask");
 	assert(d != NULL);
-	pfx = prop_data_data_nocopy(d);
 
 	if (!prop_dictionary_set(oenv, "netmask", (prop_object_t)d))
 		return -1;
@@ -914,7 +915,6 @@ setifnetmask(prop_dictionary_t env, prop_dictionary_t oenv)
 static int
 setifbroadaddr(prop_dictionary_t env, prop_dictionary_t oenv)
 {
-	const struct paddr_prefix *pfx;
 	prop_data_t d;
 	unsigned short flags;
 
@@ -926,7 +926,6 @@ setifbroadaddr(prop_dictionary_t env, prop_dictionary_t oenv)
 
 	d = (prop_data_t)prop_dictionary_get(env, "broadcast");
 	assert(d != NULL);
-	pfx = prop_data_data_nocopy(d);
 
 	if (!prop_dictionary_set(oenv, "broadcast", (prop_object_t)d))
 		return -1;
@@ -947,7 +946,6 @@ static int
 setifdstormask(prop_dictionary_t env, prop_dictionary_t oenv)
 {
 	const char *key;
-	const struct paddr_prefix *pfx;
 	prop_data_t d;
 	unsigned short flags;
 
@@ -956,7 +954,6 @@ setifdstormask(prop_dictionary_t env, prop_dictionary_t oenv)
 
 	d = (prop_data_t)prop_dictionary_get(env, "dstormask");
 	assert(d != NULL);
-	pfx = prop_data_data_nocopy(d);
 
 	if ((flags & IFF_BROADCAST) == 0) {
 		key = "dst";
@@ -1027,12 +1024,9 @@ static int
 setifcaps(prop_dictionary_t env, prop_dictionary_t oenv)
 {
 	int64_t ifcap;
-	int s;
 	bool rc;
 	prop_data_t capdata;
 	struct ifcapreq ifcr;
-
-	s = getsock(AF_INET);
 
 	rc = prop_dictionary_get_int64(env, "ifcap", &ifcap);
 	assert(rc);
@@ -1163,6 +1157,9 @@ print_human_bytes(bool humanize, uint64_t n)
  * Print the status of the interface.  If an address family was
  * specified, show it and it only; otherwise, show them all.
  */
+
+#define MAX_PRINT_LEN 58	/* XXX need a better way to determine this! */
+
 void
 status(const struct sockaddr *sdl, prop_dictionary_t env,
     prop_dictionary_t oenv)
@@ -1174,6 +1171,7 @@ status(const struct sockaddr *sdl, prop_dictionary_t env,
 	struct ifreq ifr;
 	struct ifdrv ifdrv;
 	char fbuf[BUFSIZ];
+	char *bp;
 	int af, s;
 	const char *ifname;
 	struct ifcapreq ifcr;
@@ -1193,8 +1191,12 @@ status(const struct sockaddr *sdl, prop_dictionary_t env,
 	if ((ifname = getifinfo(env, oenv, &flags)) == NULL)
 		err(EXIT_FAILURE, "%s: getifinfo", __func__);
 
-	(void)snprintb(fbuf, sizeof(fbuf), IFFBITS, flags);
-	printf("%s: flags=%s", ifname, &fbuf[2]);
+	(void)snprintb_m(fbuf, sizeof(fbuf), IFFBITS, flags, MAX_PRINT_LEN);
+	bp = fbuf;
+	while (*bp != '\0') {
+		printf("%s: flags=%s", ifname, &bp[2]);
+		bp += strlen(bp) + 1;
+	}
 
 	estrlcpy(ifr.ifr_name, ifname, sizeof(ifr.ifr_name));
 	if (prog_ioctl(s, SIOCGIFMETRIC, &ifr) == -1)
@@ -1211,12 +1213,20 @@ status(const struct sockaddr *sdl, prop_dictionary_t env,
 		err(EXIT_FAILURE, "%s: getifcaps", __func__);
 
 	if (ifcr.ifcr_capabilities != 0) {
-		(void)snprintb(fbuf, sizeof(fbuf), IFCAPBITS,
-		    ifcr.ifcr_capabilities);
-		printf("\tcapabilities=%s\n", &fbuf[2]);
-		(void)snprintb(fbuf, sizeof(fbuf), IFCAPBITS,
-		    ifcr.ifcr_capenable);
-		printf("\tenabled=%s\n", &fbuf[2]);
+		(void)snprintb_m(fbuf, sizeof(fbuf), IFCAPBITS,
+		    ifcr.ifcr_capabilities, MAX_PRINT_LEN);
+		bp = fbuf;
+		while (*bp != '\0') {
+			printf("\tcapabilities=%s\n", &bp[2]);
+			bp += strlen(bp) + 1;
+		}
+		(void)snprintb_m(fbuf, sizeof(fbuf), IFCAPBITS,
+		    ifcr.ifcr_capenable, MAX_PRINT_LEN);
+		bp = fbuf;
+		while (*bp != '\0') {
+			printf("\tenabled=%s\n", &bp[2]);
+			bp += strlen(bp) + 1;
+		}
 	}
 
 	SIMPLEQ_FOREACH(status_f, &status_funcs, f_next)

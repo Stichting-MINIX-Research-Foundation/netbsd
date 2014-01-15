@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.12 2012/09/23 17:22:25 joerg Exp $
+#	$NetBSD: Makefile,v 1.14 2013/10/14 01:37:39 joerg Exp $
 
 LIB=	clangStaticAnalyzerCore
 
@@ -19,6 +19,7 @@ SRCS+=	APSIntType.cpp \
 	CheckerHelpers.cpp \
 	CheckerManager.cpp \
 	CheckerRegistry.cpp \
+	CommonBugCategories.cpp \
 	ConstraintManager.cpp \
 	CoreEngine.cpp \
 	Environment.cpp \
@@ -42,8 +43,7 @@ SRCS+=	APSIntType.cpp \
 	SValBuilder.cpp \
 	SVals.cpp \
 	SubEngine.cpp \
-	SymbolManager.cpp \
-	TextPathDiagnostics.cpp
+	SymbolManager.cpp
 
 .if defined(HOSTLIB)
 .include <bsd.hostlib.mk>

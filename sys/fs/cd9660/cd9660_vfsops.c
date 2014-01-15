@@ -1,4 +1,4 @@
-/*	$NetBSD: cd9660_vfsops.c,v 1.75 2012/03/13 18:40:35 elad Exp $	*/
+/*	$NetBSD: cd9660_vfsops.c,v 1.80 2013/11/23 13:35:36 christos Exp $	*/
 
 /*-
  * Copyright (c) 1994
@@ -37,7 +37,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: cd9660_vfsops.c,v 1.75 2012/03/13 18:40:35 elad Exp $");
+__KERNEL_RCSID(0, "$NetBSD: cd9660_vfsops.c,v 1.80 2013/11/23 13:35:36 christos Exp $");
 
 #if defined(_KERNEL_OPT)
 #include "opt_compat_netbsd.h"
@@ -202,9 +202,7 @@ cd9660_mountroot(void)
 		vfs_destroy(mp);
 		return (error);
 	}
-	mutex_enter(&mountlist_lock);
-	CIRCLEQ_INSERT_TAIL(&mountlist, mp, mnt_list);
-	mutex_exit(&mountlist_lock);
+	mountlist_append(mp);
 	(void)cd9660_statvfs(mp, &mp->mnt_stat);
 	vfs_unbusy(mp, false, NULL);
 	return (0);
@@ -523,7 +521,7 @@ iso_mountfs(struct vnode *devvp, struct mount *mp, struct lwp *l,
 		supbp = NULL;
 	}
 
-	devvp->v_specmountpoint = mp;
+	spec_node_setmountedfs(devvp, mp);
 
 	return 0;
 out:
@@ -568,7 +566,7 @@ cd9660_unmount(struct mount *mp, int mntflags)
 	isomp = VFSTOISOFS(mp);
 
 	if (isomp->im_devvp->v_type != VBAD)
-		isomp->im_devvp->v_specmountpoint = NULL;
+		spec_node_setmountedfs(isomp->im_devvp, NULL);
 
 	vn_lock(isomp->im_devvp, LK_EXCLUSIVE | LK_RETRY);
 	error = VOP_CLOSE(isomp->im_devvp, FREAD, NOCRED);
@@ -759,14 +757,14 @@ cd9660_vget_internal(struct mount *mp, ino_t ino, struct vnode **vpp,
 	if (isodir == 0) {
 		int lbn, off;
 
-		lbn = lblkno(imp, ino);
+		lbn = cd9660_lblkno(imp, ino);
 		if (lbn >= imp->volume_space_size) {
 			vput(vp);
 			printf("fhtovp: lbn exceed volume space %d\n", lbn);
 			return (ESTALE);
 		}
 
-		off = blkoff(imp, ino);
+		off = cd9660_blkoff(imp, ino);
 		if (off + ISO_DIRECTORY_RECORD_SIZE > imp->logical_block_size) {
 			vput(vp);
 			printf("fhtovp: crosses block boundary %d\n",
@@ -779,7 +777,6 @@ cd9660_vget_internal(struct mount *mp, ino_t ino, struct vnode **vpp,
 			      imp->logical_block_size, NOCRED, 0, &bp);
 		if (error) {
 			vput(vp);
-			brelse(bp, 0);
 			printf("fhtovp: bread error %d\n",error);
 			return (error);
 		}

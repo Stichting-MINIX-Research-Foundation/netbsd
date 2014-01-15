@@ -1,4 +1,4 @@
-/*	$NetBSD: ufs_bmap.c,v 1.16 2005/10/08 03:21:17 chs Exp $	*/
+/*	$NetBSD: ufs_bmap.c,v 1.18 2013/06/19 17:51:27 dholland Exp $	*/
 /* From: NetBSD: ufs_bmap.c,v 1.14 2001/11/08 05:00:51 chs Exp */
 
 /*
@@ -43,7 +43,7 @@
 
 #include <sys/cdefs.h>
 #if defined(__RCSID) && !defined(__lint)
-__RCSID("$NetBSD: ufs_bmap.c,v 1.16 2005/10/08 03:21:17 chs Exp $");
+__RCSID("$NetBSD: ufs_bmap.c,v 1.18 2013/06/19 17:51:27 dholland Exp $");
 #endif	/* !__lint */
 
 #include <sys/param.h>
@@ -80,7 +80,7 @@ ufs_getlbns(struct inode *ip, daddr_t bn, struct indir *ap, int *nump)
 	int i, numlevels, off;
 	u_long lognindir;
 
-	lognindir = ffs(NINDIR(ip->i_fs)) - 1;
+	lognindir = ffs(FFS_NINDIR(ip->i_fs)) - 1;
 	if (nump)
 		*nump = 0;
 	numlevels = 0;
@@ -88,17 +88,17 @@ ufs_getlbns(struct inode *ip, daddr_t bn, struct indir *ap, int *nump)
 	if ((long)bn < 0)
 		bn = -(long)bn;
 
-	assert (bn >= NDADDR);
+	assert (bn >= UFS_NDADDR);
 
 	/* 
 	 * Determine the number of levels of indirection.  After this loop
 	 * is done, blockcnt indicates the number of data blocks possible
-	 * at the given level of indirection, and NIADDR - i is the number
+	 * at the given level of indirection, and UFS_NIADDR - i is the number
 	 * of levels of indirection needed to locate the requested block.
 	 */
 
-	bn -= NDADDR;
-	for (lbc = 0, i = NIADDR;; i--, bn -= blockcnt) {
+	bn -= UFS_NDADDR;
+	for (lbc = 0, i = UFS_NIADDR;; i--, bn -= blockcnt) {
 		if (i == 0)
 			return (EFBIG);
 
@@ -110,7 +110,7 @@ ufs_getlbns(struct inode *ip, daddr_t bn, struct indir *ap, int *nump)
 	}
 
 	/* Calculate the address of the first meta-block. */
-	metalbn = -((realbn >= 0 ? realbn : -realbn) - bn + NIADDR - i);
+	metalbn = -((realbn >= 0 ? realbn : -realbn) - bn + UFS_NIADDR - i);
 
 	/* 
 	 * At each iteration, off is the offset into the bap array which is
@@ -119,17 +119,17 @@ ufs_getlbns(struct inode *ip, daddr_t bn, struct indir *ap, int *nump)
 	 * into the argument array.
 	 */
 	ap->in_lbn = metalbn;
-	ap->in_off = off = NIADDR - i;
+	ap->in_off = off = UFS_NIADDR - i;
 	ap->in_exists = 0;
 	ap++;
-	for (++numlevels; i <= NIADDR; i++) {
+	for (++numlevels; i <= UFS_NIADDR; i++) {
 		/* If searching for a meta-data block, quit when found. */
 		if (metalbn == realbn)
 			break;
 
 		lbc -= lognindir;
 		blockcnt = (int64_t)1 << lbc;
-		off = (bn >> lbc) & (NINDIR(ip->i_fs) - 1);
+		off = (bn >> lbc) & (FFS_NINDIR(ip->i_fs) - 1);
 
 		++numlevels;
 		ap->in_lbn = metalbn;

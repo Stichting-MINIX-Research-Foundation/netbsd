@@ -1,4 +1,4 @@
-/*	$NetBSD: fat.h,v 1.4 2005/12/03 17:34:43 christos Exp $	*/
+/*	$NetBSD: fat.h,v 1.8 2013/01/26 00:21:49 christos Exp $	*/
 
 /*-
  * Copyright (C) 1994, 1997 Wolfgang Solfrank.
@@ -68,13 +68,13 @@
 
 /*
  * MSDOSFS:
- * Return true if filesystem uses 12 bit fats. Microsoft Programmer's
+ * Return true if filesystem uses 12 bit FATs. Microsoft Programmer's
  * Reference says if the maximum cluster number in a filesystem is greater
- * than 4078 ((CLUST_RSRVS - CLUST_FIRST) & FAT12_MASK) then we've got a
- * 16 bit fat filesystem. While mounting, the result of this test is stored
+ * than 4084 ((CLUST_RSRVD - CLUST_FIRST) & FAT12_MASK) then we've got a
+ * 16 bit FAT filesystem. While mounting, the result of this test is stored
  * in pm_fatentrysize.
  * GEMDOS-flavour (atari):
- * If the filesystem is on floppy we've got a 12 bit fat filesystem, otherwise
+ * If the filesystem is on floppy we've got a 12 bit FAT filesystem, otherwise
  * 16 bit. We check the d_type field in the disklabel struct while mounting
  * and store the result in the pm_fatentrysize. Note that this kind of
  * detection gets flakey when mounting a vnd-device.
@@ -92,13 +92,13 @@
 #define	MSDOSFSEOF(cn, fatmask)	\
 	(((cn) & CLUST_EOFS) == (CLUST_EOFS & (fatmask)))
 
-#ifdef _KERNEL
+#if defined(_KERNEL) || defined(MAKEFS)
 /*
  * These are the values for the function argument to the function
  * fatentry().
  */
-#define	FAT_GET		0x0001	/* get a fat entry */
-#define	FAT_SET		0x0002	/* set a fat entry */
+#define	FAT_GET		0x0001	/* get a FAT entry */
+#define	FAT_SET		0x0002	/* set a FAT entry */
 #define	FAT_GET_AND_SET	(FAT_GET | FAT_SET)
 
 /*
@@ -115,5 +115,5 @@ void fc_purge(struct denode *, u_int);
 void fc_lookup(struct denode *, u_long, u_long *, u_long *);
 int fillinusemap(struct msdosfsmount *);
 int freeclusterchain(struct msdosfsmount *, u_long);
-#endif	/* _KERNEL */
+#endif /* _KERNEL || MAKEFS */
 #endif /* _MSDOSFS_FAT_H_ */

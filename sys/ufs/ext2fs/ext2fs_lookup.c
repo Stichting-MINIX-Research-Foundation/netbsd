@@ -1,4 +1,4 @@
-/*	$NetBSD: ext2fs_lookup.c,v 1.70 2012/07/22 00:53:22 rmind Exp $	*/
+/*	$NetBSD: ext2fs_lookup.c,v 1.73 2013/01/22 09:39:15 dholland Exp $	*/
 
 /*
  * Modified for NetBSD 1.2E
@@ -48,7 +48,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ext2fs_lookup.c,v 1.70 2012/07/22 00:53:22 rmind Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ext2fs_lookup.c,v 1.73 2013/01/22 09:39:15 dholland Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -325,8 +325,10 @@ ext2fs_lookup(void *v)
 	 * check the name cache to see if the directory/name pair
 	 * we are looking for is known already.
 	 */
-	if ((error = cache_lookup(vdp, vpp, cnp)) >= 0)
-		return (error);
+	if (cache_lookup(vdp, cnp->cn_nameptr, cnp->cn_namelen,
+			 cnp->cn_nameiop, cnp->cn_flags, NULL, vpp)) {
+		return *vpp == NULLVP ? ENOENT : 0;
+	}
 
 	/*
 	 * Suppress search for slots unless creating
@@ -539,7 +541,8 @@ searchloop:
 	 * Insert name into cache (as non-existent) if appropriate.
 	 */
 	if (nameiop != CREATE) {
-		cache_enter(vdp, *vpp, cnp);
+		cache_enter(vdp, *vpp, cnp->cn_nameptr, cnp->cn_namelen,
+			    cnp->cn_flags);
 	}
 	return ENOENT;
 
@@ -699,7 +702,7 @@ found:
 	/*
 	 * Insert name into cache if appropriate.
 	 */
-	cache_enter(vdp, *vpp, cnp);
+	cache_enter(vdp, *vpp, cnp->cn_nameptr, cnp->cn_namelen, cnp->cn_flags);
 	return 0;
 }
 
@@ -1042,7 +1045,7 @@ ext2fs_checkpath(struct inode *source, struct inode *target,
 		error = EEXIST;
 		goto out;
 	}
-	rootino = ROOTINO;
+	rootino = UFS_ROOTINO;
 	error = 0;
 	if (target->i_number == rootino)
 		goto out;

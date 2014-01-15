@@ -1,4 +1,4 @@
-/* $NetBSD: nilfs_subr.c,v 1.8 2011/06/12 03:35:53 rmind Exp $ */
+/* $NetBSD: nilfs_subr.c,v 1.10 2013/10/18 19:57:28 christos Exp $ */
 
 /*
  * Copyright (c) 2008, 2009 Reinoud Zandijk
@@ -28,7 +28,7 @@
 
 #include <sys/cdefs.h>
 #ifndef lint
-__KERNEL_RCSID(0, "$NetBSD: nilfs_subr.c,v 1.8 2011/06/12 03:35:53 rmind Exp $");
+__KERNEL_RCSID(0, "$NetBSD: nilfs_subr.c,v 1.10 2013/10/18 19:57:28 christos Exp $");
 #endif /* not lint */
 
 #include <sys/param.h>
@@ -216,7 +216,6 @@ nilfs_btree_lookup_level(struct nilfs_node *node, uint64_t lblocknr,
 	/* get our block */
 	error = nilfs_dev_bread(nilfsdev, btree_blknr, NOCRED, 0, &bp);
 	if (error) {
-		brelse(bp, BC_AGE);
 		return error;
 	}
 
@@ -389,7 +388,6 @@ nilfs_vtop(struct nilfs_device *nilfsdev, uint64_t vblocknr, uint64_t *pblocknr)
 	error = nilfs_bread(nilfsdev->dat_node, ldatblknr, NOCRED, 0, &bp);
 	if (error) {
 		printf("vtop: can't read in DAT block %"PRIu64"!\n", ldatblknr);
-		brelse(bp, BC_AGE);
 		return error;
 	}
 
@@ -727,7 +725,6 @@ static void
 nilfs_register_node(struct nilfs_node *node)
 {
 	struct nilfs_mount *ump;
-	struct nilfs_node *chk;
 	uint32_t hashline;
 
 	ump = node->ump;
@@ -736,13 +733,12 @@ nilfs_register_node(struct nilfs_node *node)
 	/* add to our hash table */
 	hashline = nilfs_calchash(node->ino) & NILFS_INODE_HASHMASK;
 #ifdef DEBUG
+	struct nilfs_node *chk;
 	LIST_FOREACH(chk, &ump->nilfs_nodes[hashline], hashchain) {
 		assert(chk);
 		if (chk->ino == node->ino)
 			panic("Double node entered\n");
 	}
-#else
-	chk = NULL;
 #endif
 	LIST_INSERT_HEAD(&ump->nilfs_nodes[hashline], node, hashchain);
 

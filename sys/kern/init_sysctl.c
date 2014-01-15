@@ -1,4 +1,4 @@
-/*	$NetBSD: init_sysctl.c,v 1.192 2012/10/08 19:20:45 pooka Exp $ */
+/*	$NetBSD: init_sysctl.c,v 1.198 2013/09/14 13:18:02 joerg Exp $ */
 
 /*-
  * Copyright (c) 2003, 2007, 2008, 2009 The NetBSD Foundation, Inc.
@@ -30,12 +30,14 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: init_sysctl.c,v 1.192 2012/10/08 19:20:45 pooka Exp $");
+__KERNEL_RCSID(0, "$NetBSD: init_sysctl.c,v 1.198 2013/09/14 13:18:02 joerg Exp $");
 
 #include "opt_sysv.h"
 #include "opt_compat_netbsd.h"
 #include "opt_modular.h"
 #include "pty.h"
+
+#define SYSCTL_PRIVATE
 
 #include <sys/types.h>
 #include <sys/param.h>
@@ -67,10 +69,6 @@ __KERNEL_RCSID(0, "$NetBSD: init_sysctl.c,v 1.192 2012/10/08 19:20:45 pooka Exp 
 #include <sys/ktrace.h>
 #include <sys/ksem.h>
 
-#ifdef COMPAT_50
-#include <compat/sys/time.h>
-#endif
-
 #include <sys/cpu.h>
 
 int security_setidcore_dump;
@@ -78,45 +76,6 @@ char security_setidcore_path[MAXPATHLEN] = "/var/crash/%n.core";
 uid_t security_setidcore_owner = 0;
 gid_t security_setidcore_group = 0;
 mode_t security_setidcore_mode = (S_IRUSR|S_IWUSR);
-
-static const u_int sysctl_flagmap[] = {
-	PK_ADVLOCK, P_ADVLOCK,
-	PK_EXEC, P_EXEC,
-	PK_NOCLDWAIT, P_NOCLDWAIT,
-	PK_32, P_32,
-	PK_CLDSIGIGN, P_CLDSIGIGN,
-	PK_SUGID, P_SUGID,
-	0
-};
-
-static const u_int sysctl_sflagmap[] = {
-	PS_NOCLDSTOP, P_NOCLDSTOP,
-	PS_WEXIT, P_WEXIT,
-	PS_STOPFORK, P_STOPFORK,
-	PS_STOPEXEC, P_STOPEXEC,
-	PS_STOPEXIT, P_STOPEXIT,
-	0
-};
-
-static const u_int sysctl_slflagmap[] = {
-	PSL_TRACED, P_TRACED,
-	PSL_FSTRACE, P_FSTRACE,
-	PSL_CHTRACED, P_CHTRACED,
-	PSL_SYSCALL, P_SYSCALL,
-	0
-};
-
-static const u_int sysctl_lflagmap[] = {
-	PL_CONTROLT, P_CONTROLT,
-	PL_PPWAIT, P_PPWAIT,
-	0
-};
-
-static const u_int sysctl_stflagmap[] = {
-	PST_PROFIL, P_PROFIL,
-	0
-
-};
 
 static const u_int sysctl_lwpprflagmap[] = {
 	LPR_DETACHED, L_DETACHED,
@@ -326,17 +285,6 @@ SYSCTL_SETUP(sysctl_kern_setup, "sysctl kern subtree setup")
 		       SYSCTL_DESCR("System boot time"),
 		       NULL, 0, &boottime, sizeof(boottime),
 		       CTL_KERN, KERN_BOOTTIME, CTL_EOL);
-#ifdef COMPAT_50
-	{
-		extern struct timeval50 boottime50;
-		sysctl_createv(clog, 0, NULL, NULL,
-			       CTLFLAG_PERMANENT,
-			       CTLTYPE_STRUCT, "oboottime",
-			       SYSCTL_DESCR("System boot time"),
-			       NULL, 0, &boottime50, sizeof(boottime50),
-			       CTL_KERN, KERN_OBOOTTIME, CTL_EOL);
-	}
-#endif
 	sysctl_createv(clog, 0, NULL, NULL,
 		       CTLFLAG_PERMANENT|CTLFLAG_READWRITE,
 		       CTLTYPE_STRING, "domainname",
@@ -740,6 +688,12 @@ SYSCTL_SETUP(sysctl_kern_setup, "sysctl kern subtree setup")
 			SYSCTL_DESCR("Maximal number of semaphores"),
 			NULL, 0, &ksem_max, 0,
 			CTL_CREATE, CTL_EOL);
+	sysctl_createv(clog, 0, NULL, NULL,
+			CTLFLAG_PERMANENT,
+			CTLTYPE_STRING, "configname",
+			SYSCTL_DESCR("Name of config file"),
+			NULL, 0, __UNCONST(kernel_ident), 0,
+			CTL_KERN, CTL_CREATE, CTL_EOL);
 }
 
 SYSCTL_SETUP(sysctl_hw_setup, "sysctl hw subtree setup")
@@ -968,8 +922,9 @@ sysctl_kern_maxvnodes(SYSCTLFN_ARGS)
 	if (new_vnodes <= 0)
 		return (EINVAL);
 
-	/* Limits: 75% of KVA and physical memory. */
-	new_max = calc_cache_size(kernel_map, 75, 75) / VNODE_COST;
+	/* Limits: 75% of kmem and physical memory. */
+	new_max = calc_cache_size(vmem_size(kmem_arena, VMEM_FREE|VMEM_ALLOC),
+	    75, 75) / VNODE_COST;
 	if (new_vnodes > new_max)
 		new_vnodes = new_max;
 
@@ -1849,7 +1804,7 @@ sysctl_root_device(SYSCTLFN_ARGS)
 	struct sysctlnode node;
 
 	node = *rnode;
-	node.sysctl_data = root_device->dv_xname;
+	node.sysctl_data = __UNCONST(device_xname(root_device));
 	node.sysctl_size = strlen(device_xname(root_device)) + 1;
 	return (sysctl_lookup(SYSCTLFN_CALL(&node)));
 }

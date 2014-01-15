@@ -1,7 +1,7 @@
-/*	$NetBSD: if_virt.c,v 1.27 2012/09/14 16:29:22 pooka Exp $	*/
+/*	$NetBSD: if_virt.c,v 1.36 2013/07/04 11:46:51 pooka Exp $	*/
 
 /*
- * Copyright (c) 2008 Antti Kantee.  All Rights Reserved.
+ * Copyright (c) 2008, 2013 Antti Kantee.  All Rights Reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,7 +26,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_virt.c,v 1.27 2012/09/14 16:29:22 pooka Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_virt.c,v 1.36 2013/07/04 11:46:51 pooka Exp $");
 
 #include <sys/param.h>
 #include <sys/condvar.h>
@@ -49,18 +49,18 @@ __KERNEL_RCSID(0, "$NetBSD: if_virt.c,v 1.27 2012/09/14 16:29:22 pooka Exp $");
 #include <netinet/in_var.h>
 
 #include <rump/rump.h>
-#include <rump/rumpuser.h>
 
 #include "rump_private.h"
 #include "rump_net_private.h"
 
-/*
- * Virtual interface for userspace purposes.  Uses tap(4) to
- * interface with the kernel and just simply shovels data
- * to/from /dev/tap.
- */
+#include "if_virt.h"
+#include "rumpcomp_user.h"
 
-#define VIRTIF_BASE "virt"
+/*
+ * Virtual interface.  Uses hypercalls to shovel packets back
+ * and forth.  The exact method for shoveling depends on the
+ * hypercall implementation.
+ */
 
 static int	virtif_init(struct ifnet *);
 static int	virtif_ioctl(struct ifnet *, u_long, void *);
@@ -69,7 +69,7 @@ static void	virtif_stop(struct ifnet *, int);
 
 struct virtif_sc {
 	struct ethercom sc_ec;
-	int sc_tapfd;
+	struct virtif_user *sc_viu;
 	bool sc_dying;
 	struct lwp *sc_l_snd, *sc_l_rcv;
 	kmutex_t sc_mtx;
@@ -81,49 +81,45 @@ static void virtif_sender(void *);
 static int  virtif_clone(struct if_clone *, int);
 static int  virtif_unclone(struct ifnet *);
 
-struct if_clone virtif_cloner =
-    IF_CLONE_INITIALIZER(VIRTIF_BASE, virtif_clone, virtif_unclone);
+struct if_clone VIF_CLONER =
+    IF_CLONE_INITIALIZER(VIF_NAME, virtif_clone, virtif_unclone);
 
-int
-rump_virtif_create(int num)
+static int
+virtif_clone(struct if_clone *ifc, int num)
 {
 	struct virtif_sc *sc;
+	struct virtif_user *viu;
 	struct ifnet *ifp;
 	uint8_t enaddr[ETHER_ADDR_LEN] = { 0xb2, 0x0a, 0x00, 0x0b, 0x0e, 0x01 };
-	char tapdev[16];
-	int fd, error = 0;
+	int error = 0;
 
 	if (num >= 0x100)
 		return E2BIG;
 
-	snprintf(tapdev, sizeof(tapdev), "/dev/tap%d", num);
-	fd = rumpuser_open(tapdev, RUMPUSER_OPEN_RDWR, &error);
-	if (fd == -1) {
-		printf("virtif_create: can't open /dev/tap%d: %d\n",
-		    num, error);
+	if ((error = VIFHYPER_CREATE(num, &viu)) != 0)
 		return error;
-	}
+
 	enaddr[2] = cprng_fast32() & 0xff;
 	enaddr[5] = num;
 
 	sc = kmem_zalloc(sizeof(*sc), KM_SLEEP);
 	sc->sc_dying = false;
-	sc->sc_tapfd = fd;
+	sc->sc_viu = viu;
 
 	mutex_init(&sc->sc_mtx, MUTEX_DEFAULT, IPL_NONE);
-	cv_init(&sc->sc_cv, "virtsnd");
+	cv_init(&sc->sc_cv, VIF_NAME "snd");
 	ifp = &sc->sc_ec.ec_if;
-	sprintf(ifp->if_xname, "%s%d", VIRTIF_BASE, num);
+	sprintf(ifp->if_xname, "%s%d", VIF_NAME, num);
 	ifp->if_softc = sc;
 
 	if (rump_threads) {
 		if ((error = kthread_create(PRI_NONE, KTHREAD_MUSTJOIN, NULL,
-		    virtif_receiver, ifp, &sc->sc_l_rcv, "virtifr")) != 0)
+		    virtif_receiver, ifp, &sc->sc_l_rcv, VIF_NAME "ifr")) != 0)
 			goto out;
 
 		if ((error = kthread_create(PRI_NONE,
 		    KTHREAD_MUSTJOIN | KTHREAD_MPSAFE, NULL,
-		    virtif_sender, ifp, &sc->sc_l_snd, "virtifs")) != 0)
+		    virtif_sender, ifp, &sc->sc_l_snd, VIF_NAME "ifs")) != 0)
 			goto out;
 	} else {
 		printf("WARNING: threads not enabled, receive NOT working\n");
@@ -148,13 +144,6 @@ rump_virtif_create(int num)
 }
 
 static int
-virtif_clone(struct if_clone *ifc, int unit)
-{
-
-	return rump_virtif_create(unit);
-}
-
-static int
 virtif_unclone(struct ifnet *ifp)
 {
 	struct virtif_sc *sc = ifp->if_softc;
@@ -168,6 +157,8 @@ virtif_unclone(struct ifnet *ifp)
 	cv_broadcast(&sc->sc_cv);
 	mutex_exit(&sc->sc_mtx);
 
+	VIFHYPER_DYING(sc->sc_viu);
+
 	virtif_stop(ifp, 1);
 	if_down(ifp);
 
@@ -180,7 +171,7 @@ virtif_unclone(struct ifnet *ifp)
 		sc->sc_l_rcv = NULL;
 	}
 
-	rumpuser_close(sc->sc_tapfd, NULL);
+	VIFHYPER_DESTROY(sc->sc_viu);
 
 	mutex_destroy(&sc->sc_mtx);
 	cv_destroy(&sc->sc_cv);
@@ -220,7 +211,6 @@ virtif_ioctl(struct ifnet *ifp, u_long cmd, void *data)
 	return rv;
 }
 
-/* just send everything in-context */
 static void
 virtif_start(struct ifnet *ifp)
 {
@@ -252,36 +242,24 @@ virtif_receiver(void *arg)
 	struct virtif_sc *sc = ifp->if_softc;
 	struct mbuf *m;
 	size_t plen = ETHER_MAX_LEN_JUMBO+1;
-	struct pollfd pfd;
-	ssize_t n;
-	int error, rv;
-
-	pfd.fd = sc->sc_tapfd;
-	pfd.events = POLLIN;
+	size_t n;
+	int error;
 
 	for (;;) {
 		m = m_gethdr(M_WAIT, MT_DATA);
 		MEXTMALLOC(m, plen, M_WAIT);
 
  again:
-		/* poll, but periodically check if we should die */
-		rv = rumpuser_poll(&pfd, 1, POLLTIMO_MS, &error);
 		if (sc->sc_dying) {
 			m_freem(m);
 			break;
 		}
-		if (rv == 0)
-			goto again;
-
-		n = rumpuser_read(sc->sc_tapfd, mtod(m, void *), plen, &error);
-		KASSERT(n < ETHER_MAX_LEN_JUMBO);
-		if (__predict_false(n < 0)) {
-			if (n == -1 && error == EAGAIN) {
-				goto again;
-			}
-
-			printf("%s: read from /dev/tap failed. host is down?\n",
-			    ifp->if_xname);
+		
+		error = VIFHYPER_RECV(sc->sc_viu,
+		    mtod(m, void *), plen, &n);
+		if (error) {
+			printf("%s: read hypercall failed %d. host if down?\n",
+			    ifp->if_xname, error);
 			mutex_enter(&sc->sc_mtx);
 			/* could check if need go, done soon anyway */
 			cv_timedwait(&sc->sc_cv, &sc->sc_mtx, hz);
@@ -314,8 +292,8 @@ virtif_sender(void *arg)
 	struct ifnet *ifp = arg;
 	struct virtif_sc *sc = ifp->if_softc;
 	struct mbuf *m, *m0;
-	struct rumpuser_iovec io[LB_SH];
-	int i, error;
+	struct iovec io[LB_SH];
+	int i;
 
 	mutex_enter(&sc->sc_mtx);
 	KERNEL_LOCK(1, NULL);
@@ -341,11 +319,9 @@ virtif_sender(void *arg)
 		if (i == LB_SH)
 			panic("lazy bum");
 		bpf_mtap(ifp, m0);
-		KERNEL_UNLOCK_LAST(curlwp);
 
-		rumpuser_writev(sc->sc_tapfd, io, i, &error);
+		VIFHYPER_SEND(sc->sc_viu, io, i);
 
-		KERNEL_LOCK(1, NULL);
 		m_freem(m0);
 		mutex_enter(&sc->sc_mtx);
 	}
@@ -354,50 +330,4 @@ virtif_sender(void *arg)
 	mutex_exit(&sc->sc_mtx);
 
 	kthread_exit(0);
-}
-
-/*
- * dummyif is a nada-interface.
- * As it requires nothing external, it can be used for testing
- * interface configuration.
- */
-static int	dummyif_init(struct ifnet *);
-static void	dummyif_start(struct ifnet *);
-
-void
-rump_dummyif_create()
-{
-	struct ifnet *ifp;
-	struct ethercom *ec;
-	uint8_t enaddr[ETHER_ADDR_LEN] = { 0xb2, 0x0a, 0x00, 0x0b, 0x0e, 0x01 };
-
-	enaddr[2] = cprng_fast32() & 0xff;
-	enaddr[5] = cprng_fast32() & 0xff;
-
-	ec = kmem_zalloc(sizeof(*ec), KM_SLEEP);
-
-	ifp = &ec->ec_if;
-	strlcpy(ifp->if_xname, "dummy0", sizeof(ifp->if_xname));
-	ifp->if_softc = ifp;
-	ifp->if_flags = IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST;
-	ifp->if_init = dummyif_init;
-	ifp->if_ioctl = virtif_ioctl;
-	ifp->if_start = dummyif_start;
-
-	if_attach(ifp);
-	ether_ifattach(ifp, enaddr);
-}
-
-static int
-dummyif_init(struct ifnet *ifp)
-{
-
-	ifp->if_flags |= IFF_RUNNING;
-	return 0;
-}
-
-static void
-dummyif_start(struct ifnet *ifp)
-{
-
 }

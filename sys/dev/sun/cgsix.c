@@ -1,4 +1,4 @@
-/*	$NetBSD: cgsix.c,v 1.59 2012/07/18 02:31:46 macallan Exp $ */
+/*	$NetBSD: cgsix.c,v 1.62 2013/09/12 12:42:18 martin Exp $ */
 
 /*-
  * Copyright (c) 1998 The NetBSD Foundation, Inc.
@@ -78,7 +78,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: cgsix.c,v 1.59 2012/07/18 02:31:46 macallan Exp $");
+__KERNEL_RCSID(0, "$NetBSD: cgsix.c,v 1.62 2013/09/12 12:42:18 martin Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -285,12 +285,12 @@ int cgsix_use_rasterconsole = 1;
 /*
  * Run a blitter command
  */
-#define CG6_BLIT(f) { volatile uint32_t foo; foo = f->fbc_blit; }
+#define CG6_BLIT(f) { (void)f->fbc_blit; }
 
 /*
  * Run a drawing command
  */
-#define CG6_DRAW(f) { volatile uint32_t foo; foo = f->fbc_draw; }
+#define CG6_DRAW(f) { (void)f->fbc_draw; }
 
 /*
  * Wait for the whole engine to go idle.  This may not matter in our case;
@@ -598,7 +598,7 @@ cg6attach(struct cgsix_softc *sc, const char *name, int isconsole)
 	sc->sc_width = fb->fb_type.fb_width;
 	sc->sc_stride = fb->fb_type.fb_width;
 	sc->sc_height = fb->fb_type.fb_height;
-
+	
 	printf("%s: framebuffer size: %d MB\n", device_xname(sc->sc_dev), 
 	    sc->sc_ramsize >> 20);
 
@@ -634,14 +634,15 @@ cg6attach(struct cgsix_softc *sc, const char *name, int isconsole)
 		SCREEN_VISIBLE(&cg6_console_screen);
 		sc->vd.active = &cg6_console_screen;
 		wsdisplay_cnattach(&cgsix_defaultscreen, ri, 0, 0, defattr);
-		glyphcache_init(&sc->sc_gc, sc->sc_height + 5,
+		if (ri->ri_flg & RI_ENABLE_ALPHA) {
+			glyphcache_init(&sc->sc_gc, sc->sc_height + 5,
 				(sc->sc_ramsize / sc->sc_stride) - 
 				  sc->sc_height - 5,
 				sc->sc_width,
 				ri->ri_font->fontwidth,
 				ri->ri_font->fontheight,
 				defattr);
-		
+		}	
 		vcons_replay_msgbuf(&cg6_console_screen);
 	} else {
 		/*
@@ -652,14 +653,17 @@ cg6attach(struct cgsix_softc *sc, const char *name, int isconsole)
 			/* do some minimal setup to avoid weirdnesses later */
 			vcons_init_screen(&sc->vd, &cg6_console_screen, 1,
 			    &defattr);
-		}
-		glyphcache_init(&sc->sc_gc, sc->sc_height + 5,
+		} else
+			(*ri->ri_ops.allocattr)(ri, 0, 0, 0, &defattr);
+		if (ri->ri_flg & RI_ENABLE_ALPHA) {
+			glyphcache_init(&sc->sc_gc, sc->sc_height + 5,
 				(sc->sc_ramsize / sc->sc_stride) - 
 				  sc->sc_height - 5,
 				sc->sc_width,
 				ri->ri_font->fontwidth,
 				ri->ri_font->fontheight,
 				defattr);
+		}
 	}
 	cg6_setup_palette(sc);
 	
@@ -1280,13 +1284,17 @@ cgsix_init_screen(void *cookie, struct vcons_screen *scr,
 {
 	struct cgsix_softc *sc = cookie;
 	struct rasops_info *ri = &scr->scr_ri;
+	int av;
 
 	ri->ri_depth = 8;
 	ri->ri_width = sc->sc_width;
 	ri->ri_height = sc->sc_height;
 	ri->ri_stride = sc->sc_stride;
-	ri->ri_flg = RI_CENTER | RI_ENABLE_ALPHA | RI_8BIT_IS_RGB;
-
+	av = sc->sc_ramsize - (sc->sc_height * sc->sc_stride);
+	ri->ri_flg = RI_CENTER  | RI_8BIT_IS_RGB;
+	if (av > (128 * 1024)) {
+		ri->ri_flg |= RI_ENABLE_ALPHA;
+	}
 	ri->ri_bits = sc->sc_fb.fb_pixels;
 	
 	/* We need unaccelerated initial screen clear on old revisions */

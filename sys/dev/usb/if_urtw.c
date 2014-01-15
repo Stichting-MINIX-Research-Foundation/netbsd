@@ -1,4 +1,4 @@
-/*	$NetBSD: if_urtw.c,v 1.1 2012/05/29 14:06:23 christos Exp $	*/
+/*	$NetBSD: if_urtw.c,v 1.6 2013/10/16 18:55:31 christos Exp $	*/
 /*	$OpenBSD: if_urtw.c,v 1.39 2011/07/03 15:47:17 matthew Exp $	*/
 
 /*-
@@ -19,7 +19,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_urtw.c,v 1.1 2012/05/29 14:06:23 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_urtw.c,v 1.6 2013/10/16 18:55:31 christos Exp $");
 
 #include <sys/param.h>
 #include <sys/sockio.h>
@@ -60,10 +60,6 @@ __KERNEL_RCSID(0, "$NetBSD: if_urtw.c,v 1.1 2012/05/29 14:06:23 christos Exp $")
 #include <dev/usb/usbdevs.h>
 
 #include "if_urtwreg.h"
-
-#ifdef USB_DEBUG
-#define	URTW_DEBUG
-#endif
 
 #ifdef URTW_DEBUG
 #define	DPRINTF(x)	do { if (urtw_debug) printf x; } while (0)
@@ -685,8 +681,8 @@ urtw_attach(device_t parent, device_t self, void *aux)
 	/* XXX for what? */
 	sc->sc_preamble_mode = 2;
 
-	usb_init_task(&sc->sc_task, urtw_task, sc);
-	usb_init_task(&sc->sc_ledtask, urtw_ledusbtask, sc);
+	usb_init_task(&sc->sc_task, urtw_task, sc, 0);
+	usb_init_task(&sc->sc_ledtask, urtw_ledusbtask, sc, 0);
 	callout_init(&sc->scan_to, 0);
 	callout_setfunc(&sc->scan_to, urtw_next_scan, sc);
 	callout_init(&sc->sc_led_ch, 0);
@@ -1988,12 +1984,11 @@ usbd_status
 urtw_led_blink(struct urtw_softc *sc)
 {
 	uint8_t ing = 0;
-	usbd_status error;
 
 	if (sc->sc_gpio_blinkstate == URTW_LED_ON)
-		error = urtw_led_on(sc, URTW_LED_GPIO);
+		(void)urtw_led_on(sc, URTW_LED_GPIO);
 	else
-		error = urtw_led_off(sc, URTW_LED_GPIO);
+		(void)urtw_led_off(sc, URTW_LED_GPIO);
 	sc->sc_gpio_blinktime--;
 	if (sc->sc_gpio_blinktime == 0)
 		ing = 1;
@@ -2006,10 +2001,10 @@ urtw_led_blink(struct urtw_softc *sc)
 	if (ing == 1) {
 		if (sc->sc_gpio_ledstate == URTW_LED_ON &&
 		    sc->sc_gpio_ledon == 0)
-			error = urtw_led_on(sc, URTW_LED_GPIO);
+			(void)urtw_led_on(sc, URTW_LED_GPIO);
 		else if (sc->sc_gpio_ledstate == URTW_LED_OFF &&
 		    sc->sc_gpio_ledon == 1)
-			error = urtw_led_off(sc, URTW_LED_GPIO);
+			(void)urtw_led_off(sc, URTW_LED_GPIO);
 
 		sc->sc_gpio_blinktime = 0;
 		sc->sc_gpio_ledinprogress = 0;
@@ -2252,7 +2247,6 @@ urtw_init(struct ifnet *ifp)
 	struct urtw_rf *rf = &sc->sc_rf;
 	struct ieee80211com *ic = &sc->sc_ic;
 	usbd_status error;
-	int ret;
 
 	urtw_stop(ifp, 0);
 
@@ -2317,8 +2311,8 @@ urtw_init(struct ifnet *ifp)
 	if (!(sc->sc_flags & URTW_INIT_ONCE)) {
 		error = usbd_set_config_no(sc->sc_udev, URTW_CONFIG_NO, 0);
 		if (error != 0) {
-			printf("%s: could not set configuration no\n",
-			    device_xname(sc->sc_dev));
+			aprint_error_dev(sc->sc_dev, "failed to set configuration"
+			    ", err=%s\n", usbd_errstr(error));
 			goto fail;
 		}
 		/* get the first interface handle */
@@ -2332,10 +2326,10 @@ urtw_init(struct ifnet *ifp)
 		error = urtw_open_pipes(sc);
 		if (error != 0)
 			goto fail;
-		ret = urtw_alloc_rx_data_list(sc);
+		error = urtw_alloc_rx_data_list(sc);
 		if (error != 0)
 			goto fail;
-		ret = urtw_alloc_tx_data_list(sc);
+		error = urtw_alloc_tx_data_list(sc);
 		if (error != 0)
 			goto fail;
 		sc->sc_flags |= URTW_INIT_ONCE;
@@ -3063,7 +3057,7 @@ urtw_rxeof(usbd_xfer_handle xfer, usbd_private_handle priv, usbd_status status)
 	struct ieee80211_node *ni;
 	struct mbuf *m, *mnew;
 	uint8_t *desc, quality, rate;
-	int actlen, flen, len, nf, rssi, s;
+	int actlen, flen, len, rssi, s;
 
 	if (status != USBD_NORMAL_COMPLETION) {
 		if (status == USBD_NOT_STARTED || status == USBD_CANCELLED)
@@ -3164,8 +3158,6 @@ urtw_rxeof(usbd_xfer_handle xfer, usbd_private_handle priv, usbd_status status)
 			quality = 127 - quality;
 	} else
 		quality = (quality > 64) ? 0 : ((64 - quality) * 100) / 64;
-
-	nf = quality;
 
 	/* send the frame to the 802.11 layer */
 	ieee80211_input(ic, m, ni, rssi, 0);
@@ -3598,7 +3590,6 @@ urtw_8187b_init(struct ifnet *ifp)
 	struct urtw_softc *sc = ifp->if_softc;
 	struct urtw_rf *rf = &sc->sc_rf;
 	struct ieee80211com *ic = &sc->sc_ic;
-	int ret;
 	uint8_t data;
 	usbd_status error;
 
@@ -3686,8 +3677,9 @@ urtw_8187b_init(struct ifnet *ifp)
 	if (!(sc->sc_flags & URTW_INIT_ONCE)) {
 		error = usbd_set_config_no(sc->sc_udev, URTW_CONFIG_NO, 0);
 		if (error != 0) {
-			printf("%s: could not set configuration no\n",
-			    device_xname(sc->sc_dev));
+			aprint_error_dev(sc->sc_dev, "failed to set configuration"
+			    ", err=%s\n", usbd_errstr(error));
+
 			goto fail;
 		}
 		/* Get the first interface handle. */
@@ -3701,10 +3693,10 @@ urtw_8187b_init(struct ifnet *ifp)
 		error = urtw_open_pipes(sc);
 		if (error != 0)
 			goto fail;
-		ret = urtw_alloc_rx_data_list(sc);
+		error = urtw_alloc_rx_data_list(sc);
 		if (error != 0)
 			goto fail;
-		ret = urtw_alloc_tx_data_list(sc);
+		error = urtw_alloc_tx_data_list(sc);
 		if (error != 0)
 			goto fail;
 		sc->sc_flags |= URTW_INIT_ONCE;

@@ -1,4 +1,4 @@
-/*	$NetBSD: amdpmvar.h,v 1.8 2012/02/14 15:08:07 pgoyette Exp $	*/
+/*	$NetBSD: amdpmvar.h,v 1.10 2013/06/13 00:55:01 tls Exp $	*/
 
 /*-
  * Copyright (c) 2002 The NetBSD Foundation, Inc.
@@ -35,7 +35,7 @@
 #include <sys/mutex.h>
 
 struct amdpm_softc {
-	struct device sc_dev;
+	device_t sc_dev;
 
 	pci_chipset_tag_t sc_pc;
 	pcitag_t sc_tag;
@@ -53,6 +53,7 @@ struct amdpm_softc {
 
 	struct callout sc_rnd_ch;
 	krndsource_t sc_rnd_source;
+	int sc_rnd_need;
 #ifdef AMDPM_RND_COUNTERS
 	struct evcnt sc_rnd_hits;
 	struct evcnt sc_rnd_miss;

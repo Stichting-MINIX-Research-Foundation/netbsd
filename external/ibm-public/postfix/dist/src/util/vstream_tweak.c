@@ -1,4 +1,4 @@
-/*	$NetBSD: vstream_tweak.c,v 1.1.1.1 2009/06/23 10:09:01 tron Exp $	*/
+/*	$NetBSD: vstream_tweak.c,v 1.1.1.3 2013/09/25 19:06:38 tron Exp $	*/
 
 /*++
 /* NAME
@@ -42,6 +42,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <errno.h>
 
 /* Utility library. */
 
@@ -87,7 +88,7 @@ int     vstream_tweak_sock(VSTREAM *fp)
 int     vstream_tweak_tcp(VSTREAM *fp)
 {
     const char *myname = "vstream_tweak_tcp";
-    int     mss;
+    int     mss = 0;
     SOCKOPT_SIZE mss_len = sizeof(mss);
     int     err;
 
@@ -100,9 +101,15 @@ int     vstream_tweak_tcp(VSTREAM *fp)
      * Instead we ask the kernel what the current MSS is, and take appropriate
      * action. Linux <= 2.2 getsockopt(TCP_MAXSEG) always returns zero (or
      * whatever value was stored last with setsockopt()).
+     * 
+     * Some ancient FreeBSD kernels don't report 'host unreachable' errors with
+     * getsockopt(SO_ERROR), and then treat getsockopt(TCP_MAXSEG) as a NOOP,
+     * leaving the mss parameter value unchanged. To work around these two
+     * getsockopt() bugs we set mss = 0, which is a harmless value.
      */
     if ((err = getsockopt(vstream_fileno(fp), IPPROTO_TCP, TCP_MAXSEG,
-			  (char *) &mss, &mss_len)) < 0) {
+			  (char *) &mss, &mss_len)) < 0
+	&& errno != ECONNRESET) {
 	msg_warn("%s: getsockopt TCP_MAXSEG: %m", myname);
 	return (err);
     }
@@ -111,12 +118,20 @@ int     vstream_tweak_tcp(VSTREAM *fp)
 
     /*
      * Fix for recent Postfix versions: increase the VSTREAM buffer size if
-     * the VSTREAM buffer is smaller than the MSS. Note: the MSS may change
-     * when the route changes and IP path MTU discovery is turned on, so we
-     * choose a somewhat larger buffer.
+     * it is smaller than the MSS. Note: the MSS may change when the route
+     * changes and IP path MTU discovery is turned on, so we choose a
+     * somewhat larger buffer.
+     * 
+     * Note: as of 20120527, the VSTREAM_CTL_BUFSIZE request can reduce the
+     * stream buffer size to less than VSTREAM_BUFSIZE, when the request is
+     * made before the first stream read or write operation. We don't want to
+     * reduce the buffer size.
      */
+#define EFF_BUFFER_SIZE(fp) (vstream_req_bufsize(fp) ? \
+		vstream_req_bufsize(fp) : VSTREAM_BUFSIZE)
+
 #ifdef VSTREAM_CTL_BUFSIZE
-    if (mss > 0) {
+    if (mss > EFF_BUFFER_SIZE(fp) / 2) {
 	if (mss < INT_MAX / 2)
 	    mss *= 2;
 	vstream_control(fp,
@@ -133,7 +148,8 @@ int     vstream_tweak_tcp(VSTREAM *fp)
 	int     nodelay = 1;
 
 	if ((err = setsockopt(vstream_fileno(fp), IPPROTO_TCP, TCP_NODELAY,
-			      (char *) &nodelay, sizeof(nodelay))) < 0)
+			      (char *) &nodelay, sizeof(nodelay))) < 0
+	    && errno != ECONNRESET)
 	    msg_warn("%s: setsockopt TCP_NODELAY: %m", myname);
     }
 #endif

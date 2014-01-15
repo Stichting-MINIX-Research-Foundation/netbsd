@@ -1,4 +1,4 @@
-/*	$NetBSD: dispatcher.c,v 1.44 2012/08/16 09:25:43 manu Exp $	*/
+/*	$NetBSD: dispatcher.c,v 1.46 2013/11/06 19:56:38 christos Exp $	*/
 
 /*
  * Copyright (c) 2006, 2007, 2008 Antti Kantee.  All Rights Reserved.
@@ -31,7 +31,7 @@
 
 #include <sys/cdefs.h>
 #if !defined(lint)
-__RCSID("$NetBSD: dispatcher.c,v 1.44 2012/08/16 09:25:43 manu Exp $");
+__RCSID("$NetBSD: dispatcher.c,v 1.46 2013/11/06 19:56:38 christos Exp $");
 #endif /* !lint */
 
 #include <sys/types.h>

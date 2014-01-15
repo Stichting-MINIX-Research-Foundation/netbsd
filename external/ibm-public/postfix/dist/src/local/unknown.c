@@ -1,4 +1,4 @@
-/*	$NetBSD: unknown.c,v 1.3 2012/06/09 11:32:20 tron Exp $	*/
+/*	$NetBSD: unknown.c,v 1.5 2013/09/25 19:12:35 tron Exp $	*/
 
 /*++
 /* NAME
@@ -113,14 +113,13 @@ int     deliver_unknown(LOCAL_STATE state, USER_ATTR usr_attr)
 	transp_maps = maps_create(VAR_FBCK_TRANSP_MAPS, var_fbck_transp_maps,
 				  DICT_FLAG_LOCK | DICT_FLAG_NO_REGSUB);
     /* The -1 is a hint for the down-stream deliver_completed() function. */
-    dict_errno = 0;
-    if (*var_fbck_transp_maps
+    if (transp_maps
 	&& (map_transport = maps_find(transp_maps, state.msg_attr.user,
 				      DICT_FLAG_NONE)) != 0) {
 	state.msg_attr.rcpt.offset = -1L;
 	return (deliver_pass(MAIL_CLASS_PRIVATE, map_transport,
 			     state.request, &state.msg_attr.rcpt));
-    } else if (dict_errno != 0) {
+    } else if (transp_maps && transp_maps->error != 0) {
 	/* Details in the logfile. */
 	dsb_simple(state.msg_attr.why, "4.3.0", "table lookup failure");
 	return (defer_append(BOUNCE_FLAGS(state.request),
@@ -153,9 +152,9 @@ int     deliver_unknown(LOCAL_STATE state, USER_ATTR usr_attr)
      */
 #define STREQ(x,y) (strcasecmp(x,y) == 0)
 
-    if (STREQ(state.msg_attr.local, MAIL_ADDR_MAIL_DAEMON)
-	|| STREQ(state.msg_attr.local, MAIL_ADDR_POSTMASTER)) {
-	msg_warn("required alias not found: %s", state.msg_attr.local);
+    if (STREQ(state.msg_attr.user, MAIL_ADDR_MAIL_DAEMON)
+	|| STREQ(state.msg_attr.user, MAIL_ADDR_POSTMASTER)) {
+	msg_warn("required alias not found: %s", state.msg_attr.user);
 	dsb_simple(state.msg_attr.why, "2.0.0", "discarded");
 	return (sent(BOUNCE_FLAGS(state.request), SENT_ATTR(state.msg_attr)));
     }
@@ -164,7 +163,7 @@ int     deliver_unknown(LOCAL_STATE state, USER_ATTR usr_attr)
      * Bounce the message when no luser relay is specified.
      */
     dsb_simple(state.msg_attr.why, "5.1.1",
-	       "unknown user: \"%s\"", state.msg_attr.local);
+	       "unknown user: \"%s\"", state.msg_attr.user);
     return (bounce_append(BOUNCE_FLAGS(state.request),
 			  BOUNCE_ATTR(state.msg_attr)));
 }

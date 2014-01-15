@@ -1,4 +1,4 @@
-/* $NetBSD: mpls_routes.h,v 1.1 2010/12/08 07:20:15 kefren Exp $ */
+/* $NetBSD: mpls_routes.h,v 1.7 2013/08/02 16:51:25 martin Exp $ */
 
 /*-
  * Copyright (c) 2010 The NetBSD Foundation, Inc.
@@ -49,6 +49,7 @@
 union sockunion {
 	struct sockaddr sa;
 	struct sockaddr_in sin;
+	struct sockaddr_in6 sin6;
 	struct sockaddr_mpls smpls;
 	struct sockaddr_dl sdl;
 };
@@ -56,23 +57,25 @@ union sockunion {
 struct rt_msg {
 	struct rt_msghdr m_rtm;
 	char            m_space[512];
-}               __packed;
+};
 
-union sockunion *	make_inet_union(char *);
+union sockunion *	make_inet_union(const char *);
 union sockunion *	make_mpls_union(uint32_t);
 union sockunion	*	make_mplsinet_union(uint16_t peer, uint32_t label,
 						struct in_addr *addr);
-uint8_t	from_mask_to_cidr(char *);
+uint8_t	from_mask_to_cidr(const char *);
 void	from_cidr_to_mask(uint8_t, char *);
 int	add_route(union sockunion *, union sockunion *, union sockunion *,
-			union sockunion *, union sockunion *, int, int);
+		union sockunion *, union sockunion *, int, int);
 int	delete_route(union sockunion *, union sockunion *, int);
-int	get_route(struct rt_msg *, union sockunion *, union sockunion *, int);
+#if 0
+int	get_route(struct rt_msg *, const union sockunion *,
+		const union sockunion *, int);
+#endif
 int	bind_current_routes(void);
 int	flush_mpls_routes(void);
 int	check_route(struct rt_msg *, uint);
-char*	union_ntoa(union sockunion *);
-uint8_t	from_union_to_cidr(union sockunion *);
+uint8_t	from_union_to_cidr(const union sockunion *);
 union sockunion *	from_cidr_to_union(uint8_t);
 
 #endif	/* !_MPLS_ROUTES_H_ */

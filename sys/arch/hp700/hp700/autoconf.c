@@ -1,4 +1,4 @@
-/*	$NetBSD: autoconf.c,v 1.49 2012/10/10 15:46:34 skrll Exp $	*/
+/*	$NetBSD: autoconf.c,v 1.51 2013/10/19 13:21:43 skrll Exp $	*/
 
 /*	$OpenBSD: autoconf.c,v 1.15 2001/06/25 00:43:10 mickey Exp $	*/
 
@@ -86,7 +86,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: autoconf.c,v 1.49 2012/10/10 15:46:34 skrll Exp $");
+__KERNEL_RCSID(0, "$NetBSD: autoconf.c,v 1.51 2013/10/19 13:21:43 skrll Exp $");
 
 #include "opt_kgdb.h"
 #include "opt_useleds.h"
@@ -471,6 +471,8 @@ cpu_rootconf(void)
 	}
 	printf("dp_flags 0x%x pz_class 0x%x\n", PAGE0->mem_boot.pz_dp.dp_flags,
 	    PAGE0->mem_boot.pz_class);
+
+	hp700_pagezero_unmap(pagezero_cookie);
 #endif /* DEBUG */
 
 	if (boot_device != NULL)
@@ -478,11 +480,6 @@ cpu_rootconf(void)
 	booted_device = boot_device;
 	rootconf();
 }
-
-
-#ifdef RAMDISK_HOOKS
-/*static struct device fakerdrootdev = { DV_DISK, {}, NULL, 0, "rd0", NULL };*/
-#endif
 
 void
 hppa_walkbus(struct confargs *ca)

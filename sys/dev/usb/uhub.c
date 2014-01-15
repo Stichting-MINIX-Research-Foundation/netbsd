@@ -1,4 +1,4 @@
-/*	$NetBSD: uhub.c,v 1.118 2012/09/09 20:23:38 gsutre Exp $	*/
+/*	$NetBSD: uhub.c,v 1.124 2013/09/15 15:33:47 martin Exp $	*/
 /*	$FreeBSD: src/sys/dev/usb/uhub.c,v 1.18 1999/11/17 22:33:43 n_hibma Exp $	*/
 
 /*
@@ -36,9 +36,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: uhub.c,v 1.118 2012/09/09 20:23:38 gsutre Exp $");
-
-#include "opt_usb.h"
+__KERNEL_RCSID(0, "$NetBSD: uhub.c,v 1.124 2013/09/15 15:33:47 martin Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -189,7 +187,7 @@ uhub_attach(device_t parent, device_t self, void *aux)
 	USETW2(req.wValue, UDESC_HUB, 0);
 	USETW(req.wIndex, 0);
 	USETW(req.wLength, USB_HUB_DESCRIPTOR_SIZE);
-	DPRINTFN(1,("usb_init_hub: getting hub descriptor\n"));
+	DPRINTFN(1,("%s: getting hub descriptor\n", __func__));
 	err = usbd_do_request(dev, &req, &hubdesc);
 	nports = hubdesc.bNbrPorts;
 	if (!err && nports > 7) {
@@ -261,8 +259,9 @@ uhub_attach(device_t parent, device_t self, void *aux)
 	sc->sc_explorepending = 1;
 
 	err = usbd_open_pipe_intr(iface, ed->bEndpointAddress,
-		  USBD_SHORT_XFER_OK, &sc->sc_ipipe, sc, sc->sc_statusbuf,
-		  sc->sc_statuslen, uhub_intr, USBD_DEFAULT_INTERVAL);
+		  USBD_SHORT_XFER_OK|USBD_MPSAFE, &sc->sc_ipipe, sc,
+		  sc->sc_statusbuf, sc->sc_statuslen,
+		  uhub_intr, USBD_DEFAULT_INTERVAL);
 	if (err) {
 		aprint_error_dev(self, "cannot open interrupt pipe\n");
 		goto bad;
@@ -275,7 +274,7 @@ uhub_attach(device_t parent, device_t self, void *aux)
 
 	/*
 	 * To have the best chance of success we do things in the exact same
-	 * order as Windoze98.  This should not be necessary, but some
+	 * order as Windows 98.  This should not be necessary, but some
 	 * devices do not follow the USB specs to the letter.
 	 *
 	 * These are the events on the bus when a hub is attached:
@@ -642,13 +641,13 @@ uhub_rescan(device_t self, const char *ifattr, const int *locators)
 	struct uhub_softc *sc = device_private(self);
 	struct usbd_hub *hub = sc->sc_hub->hub;
 	usbd_device_handle dev;
-	int port, err;
+	int port;
 
 	for (port = 0; port < hub->hubdesc.bNbrPorts; port++) {
 		dev = hub->ports[port].device;
 		if (dev == NULL)
 			continue;
-		err = usbd_reattach_device(sc->sc_dev, dev, port, locators);
+		usbd_reattach_device(sc->sc_dev, dev, port, locators);
 	}
 	return 0;
 }

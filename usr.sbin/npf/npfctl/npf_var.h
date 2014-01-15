@@ -1,4 +1,4 @@
-/*	$NetBSD: npf_var.h,v 1.4 2012/09/16 13:47:41 rmind Exp $	*/
+/*	$NetBSD: npf_var.h,v 1.8 2013/11/19 00:28:41 rmind Exp $	*/
 
 /*-
  * Copyright (c) 2011-2012 The NetBSD Foundation, Inc.
@@ -48,32 +48,34 @@
 #define	NPFVAR_PROC_PARAM	8
 #define	NPFVAR_TCPFLAG		9
 #define	NPFVAR_ICMP		10
-#define	NPFVAR_ICMP6		11
+#define	NPFVAR_INTERFACE	11
 
 #ifdef _NPFVAR_PRIVATE
 static const char *npfvar_types[ ] = {
 	[NPFVAR_STRING]		= "string",
 	[NPFVAR_IDENTIFIER]	= "identifier",
-	[NPFVAR_VAR_ID]		= "var_id",
-	[NPFVAR_NUM]		= "num",
+	[NPFVAR_VAR_ID]		= "variable-id",
+	[NPFVAR_NUM]		= "number",
 	[NPFVAR_PORT_RANGE]	= "port-range",
 	[NPFVAR_TABLE]		= "table",
-	[NPFVAR_FAM]		= "fam",
-	[NPFVAR_PROC]		= "proc",
-	[NPFVAR_PROC_PARAM]	= "proc_param",
-	[NPFVAR_TCPFLAG]	= "tcpflag",
+	[NPFVAR_FAM]		= "family-address-mask",
+	[NPFVAR_PROC]		= "procedure",
+	[NPFVAR_PROC_PARAM]	= "procedure-parameter",
+	[NPFVAR_TCPFLAG]	= "tcp-flag",
 	[NPFVAR_ICMP]		= "icmp",
-	[NPFVAR_ICMP6]		= "icmp6"
+	[NPFVAR_INTERFACE]	= "interface-address"
 };
 #endif
 
 struct npfvar;
 typedef struct npfvar npfvar_t;
 
-npfvar_t *	npfvar_create(const char *);
+npfvar_t *	npfvar_create(void);
+npfvar_t *	npfvar_create_element(int, const void *, size_t);
+npfvar_t *	npfvar_create_from_string(int, const char *);
 npfvar_t *	npfvar_lookup(const char *);
 const char *	npfvar_type(size_t);
-void		npfvar_add(npfvar_t *);
+void		npfvar_add(npfvar_t *, const char *);
 npfvar_t *	npfvar_add_element(npfvar_t *, int, const void *, size_t);
 npfvar_t *	npfvar_add_elements(npfvar_t *, npfvar_t *);
 void		npfvar_destroy(npfvar_t *);

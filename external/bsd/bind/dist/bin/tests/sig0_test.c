@@ -1,7 +1,7 @@
-/*	$NetBSD: sig0_test.c,v 1.3 2012/06/05 00:39:26 christos Exp $	*/
+/*	$NetBSD: sig0_test.c,v 1.5 2013/07/27 19:23:10 christos Exp $	*/
 
 /*
- * Copyright (C) 2004, 2005, 2007-2009  Internet Systems Consortium, Inc. ("ISC")
+ * Copyright (C) 2004, 2005, 2007-2009, 2012  Internet Systems Consortium, Inc. ("ISC")
  * Copyright (C) 2000, 2001  Internet Software Consortium.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
@@ -216,6 +216,10 @@ main(int argc, char *argv[]) {
 	isc_result_t result;
 	in_port_t port = 53;
 
+	isc__mem_register();
+	isc__task_register();
+	isc__timer_register();
+	isc__socket_register();
 	RUNTIME_CHECK(isc_app_start() == ISC_R_SUCCESS);
 
 	RUNTIME_CHECK(isc_mutex_init(&lock) == ISC_R_SUCCESS);
@@ -263,7 +267,7 @@ main(int argc, char *argv[]) {
 
 	dns_fixedname_init(&fname);
 	name = dns_fixedname_name(&fname);
-	isc_buffer_init(&b, "child.example.", strlen("child.example."));
+	isc_buffer_constinit(&b, "child.example.", strlen("child.example."));
 	isc_buffer_add(&b, strlen("child.example."));
 	result = dns_name_fromtext(name, &b, dns_rootname, 0, NULL);
 	CHECK("dns_name_fromtext", result);

@@ -1,4 +1,4 @@
-/*	$NetBSD: ieee80211_proto.h,v 1.18 2011/02/21 23:50:08 jmcneill Exp $	*/
+/*	$NetBSD: ieee80211_proto.h,v 1.22 2013/03/30 15:12:28 christos Exp $	*/
 /*-
  * Copyright (c) 2001 Atsushi Onoe
  * Copyright (c) 2002-2005 Sam Leffler, Errno Consulting
@@ -82,7 +82,7 @@ struct mbuf *ieee80211_get_rts(struct ieee80211com *,
 		const struct ieee80211_frame *, uint16_t);
 struct mbuf *ieee80211_get_cts_to_self(struct ieee80211com *,
 		uint16_t);
-void	ieee80211_pwrsave(struct ieee80211com *, struct ieee80211_node *, 
+void	ieee80211_pwrsave(struct ieee80211com *, struct ieee80211_node *,
 		struct mbuf *);
 
 void	ieee80211_reset_erp(struct ieee80211com *);
@@ -106,7 +106,7 @@ ieee80211_hdrsize(const void *data)
 		("%s: control frame", __func__));
 	if ((wh->i_fc[1] & IEEE80211_FC1_DIR_MASK) == IEEE80211_FC1_DIR_DSTODS)
 		size += IEEE80211_ADDR_LEN;
-	if (IEEE80211_QOS_HAS_SEQ(wh))
+	if (ieee80211_has_qos(wh))
 		size += sizeof(u_int16_t);
 	return size;
 }
@@ -176,10 +176,10 @@ void	ieee80211_aclator_unregister(const struct ieee80211_aclator *);
 const struct ieee80211_aclator *ieee80211_aclator_get(const char *name);
 
 /* flags for ieee80211_fix_rate() */
-#define	IEEE80211_F_DOSORT	0x00000001	/* sort rate list */
-#define	IEEE80211_F_DOFRATE	0x00000002	/* use fixed rate */
-#define	IEEE80211_F_DONEGO	0x00000004	/* calc negotiated rate */
-#define	IEEE80211_F_DODEL	0x00000008	/* delete ignore rate */
+#define	IEEE80211_R_DOSORT	0x00000001	/* sort rate list */
+#define	IEEE80211_R_DOFRATE	0x00000002	/* use fixed rate */
+#define	IEEE80211_R_DONEGO	0x00000004	/* calc negotiated rate */
+#define	IEEE80211_R_DODEL	0x00000008	/* delete ignore rate */
 int	ieee80211_fix_rate(struct ieee80211_node *, int);
 
 /*
@@ -223,7 +223,7 @@ void	ieee80211_wme_updateparams_locked(struct ieee80211com *);
 
 #define	ieee80211_new_state(_ic, _nstate, _arg) \
 	(((_ic)->ic_newstate)((_ic), (_nstate), (_arg)))
-extern	int ieee80211_compute_duration(const struct ieee80211_frame_min *,
+int	ieee80211_compute_duration(const struct ieee80211_frame_min *,
 		const struct ieee80211_key *, int,
 		uint32_t, int, int, struct ieee80211_duration *,
 		struct ieee80211_duration *, int *, int);
@@ -263,4 +263,5 @@ void	ieee80211_notify_node_join(struct ieee80211com *,
 void	ieee80211_notify_node_leave(struct ieee80211com *,
 		struct ieee80211_node *);
 void	ieee80211_notify_scan_done(struct ieee80211com *);
+
 #endif /* !_NET80211_IEEE80211_PROTO_H_ */

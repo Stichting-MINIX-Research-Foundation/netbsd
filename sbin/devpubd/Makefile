@@ -1,9 +1,8 @@
-# $NetBSD: Makefile,v 1.2 2011/09/06 21:30:12 riz Exp $
+# $NetBSD: Makefile,v 1.4 2013/08/11 06:04:38 dholland Exp $
 
 PROG=		devpubd
 SRCS=		devpubd.c
 MAN=		devpubd.8
-WARNS=		4
 
 BINDIR?=	/sbin
 
@@ -13,7 +12,7 @@ SCRIPTS=	devpubd-run-hooks
 SCRIPTSDIR_devpubd-run-hooks=	/libexec
 
 .PATH: ${.CURDIR}/hooks
-HOOKS=		01-makedev
+HOOKS=		01-makedev 02-wedgenames
 SCRIPTS+=	${HOOKS:C,^,hooks/,}
 .for f in ${HOOKS}
 SCRIPTSDIR_hooks/${f}=	/libexec/devpubd-hooks

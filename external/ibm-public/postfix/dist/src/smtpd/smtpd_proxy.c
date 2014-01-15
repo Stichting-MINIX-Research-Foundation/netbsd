@@ -1,4 +1,4 @@
-/*	$NetBSD: smtpd_proxy.c,v 1.1.1.5 2011/10/28 07:10:08 tron Exp $	*/
+/*	$NetBSD: smtpd_proxy.c,v 1.1.1.7 2013/09/25 19:06:36 tron Exp $	*/
 
 /*++
 /* NAME
@@ -436,7 +436,7 @@ static int smtpd_proxy_connect(SMTPD_STATE *state)
 					      FORWARD_HELO(state)))
 	     || ((server_xforward_features & SMTPD_PROXY_XFORWARD_IDENT)
 		 && smtpd_proxy_xforward_send(state, buf, XFORWARD_IDENT,
-				  IS_AVAIL_CLIENT_IDENT(FORWARD_IDENT(state)),
+				IS_AVAIL_CLIENT_IDENT(FORWARD_IDENT(state)),
 					      FORWARD_IDENT(state)))
 	     || ((server_xforward_features & SMTPD_PROXY_XFORWARD_PROTO)
 		 && smtpd_proxy_xforward_send(state, buf, XFORWARD_PROTO,
@@ -583,6 +583,21 @@ static int smtpd_proxy_replay_send(SMTPD_STATE *state)
      * Replay the speed-match log. We do sanity check record content, but we
      * don't implement a protocol state engine here, since we are reading
      * from a file that we just wrote ourselves.
+     * 
+     * This is different than the MailChannels patented solution that
+     * multiplexes a large number of slowed-down inbound connections over a
+     * small number of fast connections to a local MTA.
+     * 
+     * - MailChannels receives mail directly from the Internet. It uses one
+     * connection to the local MTA to reject invalid recipients before
+     * receiving the entire email message at reduced bit rates, and then uses
+     * a different connection to quickly deliver the message to the local
+     * MTA.
+     * 
+     * - Postfix receives mail directly from the Internet. The Postfix SMTP
+     * server rejects invalid recipients before receiving the entire message
+     * over the Internet, and then delivers the message quickly to a local
+     * SMTP-based content filter.
      */
     if (replay_buf == 0)
 	replay_buf = vstring_alloc(100);
@@ -766,12 +781,16 @@ static int smtpd_proxy_cmd(SMTPD_STATE *state, int expect, const char *fmt,...)
     /*
      * Censor out non-printable characters in server responses and save
      * complete multi-line responses if possible.
+     * 
+     * We can't parse or store input that exceeds var_line_limit, so we just
+     * skip over it to simplify the remainder of the code below.
      */
     VSTRING_RESET(proxy->buffer);
     if (buffer == 0)
 	buffer = vstring_alloc(10);
     for (;;) {
-	last_char = smtp_get(buffer, proxy->service_stream, var_line_limit);
+	last_char = smtp_get(buffer, proxy->service_stream, var_line_limit,
+			     SMTP_GET_FLAG_SKIP);
 	printable(STR(buffer), '?');
 	if (last_char != '\n')
 	    msg_warn("%s: response longer than %d: %.30s...",

@@ -1,5 +1,5 @@
-/*	$NetBSD: jpake.c,v 1.6 2011/07/25 03:03:10 christos Exp $	*/
-/* $OpenBSD: jpake.c,v 1.6 2010/09/20 04:54:07 djm Exp $ */
+/*	$NetBSD: jpake.c,v 1.8 2013/11/08 19:18:25 christos Exp $	*/
+/* $OpenBSD: jpake.c,v 1.8 2013/05/17 00:13:13 djm Exp $ */
 /*
  * Copyright (c) 2008 Damien Miller.  All rights reserved.
  *
@@ -26,7 +26,7 @@
  * http://grouper.ieee.org/groups/1363/Research/contributions/hao-ryan-2008.pdf
  */
 #include "includes.h"
-__RCSID("$NetBSD: jpake.c,v 1.6 2011/07/25 03:03:10 christos Exp $");
+__RCSID("$NetBSD: jpake.c,v 1.8 2013/11/08 19:18:25 christos Exp $");
 
 #include <sys/types.h>
 
@@ -107,7 +107,7 @@ jpake_free(struct jpake_ctx *pctx)
 	do {					\
 		if ((v) != NULL) {		\
 			bzero((v), (l));	\
-			xfree(v);		\
+			free(v);		\
 			(v) = NULL;		\
 			(l) = 0;		\
 		}				\
@@ -134,8 +134,8 @@ jpake_free(struct jpake_ctx *pctx)
 #undef JPAKE_BN_CLEAR_FREE
 #undef JPAKE_BUF_CLEAR_FREE
 
-	bzero(pctx, sizeof(pctx));
-	xfree(pctx);
+	bzero(pctx, sizeof(*pctx));
+	free(pctx);
 }
 
 /* dump entire jpake_ctx. NB. includes private values! */
@@ -446,7 +446,7 @@ jpake_check_confirm(const BIGNUM *k,
 	    expected_confirm_hash_len) == 0)
 		success = 1;
 	bzero(expected_confirm_hash, expected_confirm_hash_len);
-	xfree(expected_confirm_hash);
+	free(expected_confirm_hash);
 	debug3("%s: success = %d", __func__, success);
 	return success;
 }

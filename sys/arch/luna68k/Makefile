@@ -1,8 +1,8 @@
-#	$NetBSD: Makefile,v 1.3 2008/10/25 22:27:37 apb Exp $
+#	$NetBSD: Makefile,v 1.5 2013/11/17 04:45:35 nisimura Exp $
 
 # Makefile for luna68k tags file
 
-# Find where mips source files are for inclusion in tags
+# Find where m68k source files are for inclusion in tags
 .include <../m68k/Makefile.inc>
 
 TLUNA68K=	../luna68k/tags
@@ -27,6 +27,6 @@ links:
 	-for i in ${DLUNA68K}; do \
 	    cd $$i && rm -f tags; ln -s ../tags tags; done
 
-SUBDIR=	compile include
+SUBDIR=	compile include stand
 
 .include <bsd.subdir.mk>

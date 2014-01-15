@@ -1,4 +1,4 @@
-/*	$NetBSD: mem.c,v 1.3 2012/06/05 00:42:29 christos Exp $	*/
+/*	$NetBSD: mem.c,v 1.6 2013/07/27 19:23:13 christos Exp $	*/
 
 /*
  * Copyright (C) 2004-2010, 2012  Internet Systems Consortium, Inc. ("ISC")
@@ -204,6 +204,7 @@ struct isc__mempool {
 #if ! ISC_MEM_TRACKLINES
 #define ADD_TRACE(a, b, c, d, e)
 #define DELETE_TRACE(a, b, c, d, e)
+#define ISC_MEMFUNC_SCOPE
 #else
 #define ADD_TRACE(a, b, c, d, e) \
 	do { \
@@ -221,11 +222,7 @@ print_active(isc__mem_t *ctx, FILE *out);
  * The following can be either static or public, depending on build environment.
  */
 
-#ifdef BIND9
-#define ISC_MEMFUNC_SCOPE
-#else
 #define ISC_MEMFUNC_SCOPE static
-#endif
 
 ISC_MEMFUNC_SCOPE isc_result_t
 isc__mem_createx(size_t init_max_size, size_t target_size,
@@ -254,8 +251,6 @@ ISC_MEMFUNC_SCOPE void *
 isc___mem_get(isc_mem_t *ctx, size_t size FLARG);
 ISC_MEMFUNC_SCOPE void
 isc___mem_put(isc_mem_t *ctx, void *ptr, size_t size FLARG);
-ISC_MEMFUNC_SCOPE void
-isc__mem_stats(isc_mem_t *ctx, FILE *out);
 ISC_MEMFUNC_SCOPE void *
 isc___mem_allocate(isc_mem_t *ctx, size_t size FLARG);
 ISC_MEMFUNC_SCOPE void *
@@ -313,16 +308,14 @@ ISC_MEMFUNC_SCOPE void
 isc__mempool_setfillcount(isc_mempool_t *mpctx, unsigned int limit);
 ISC_MEMFUNC_SCOPE unsigned int
 isc__mempool_getfillcount(isc_mempool_t *mpctx);
-#ifdef BIND9
 ISC_MEMFUNC_SCOPE void
 isc__mem_printactive(isc_mem_t *ctx0, FILE *file);
 ISC_MEMFUNC_SCOPE void
 isc__mem_printallactive(FILE *file);
-ISC_MEMFUNC_SCOPE void
-isc__mem_checkdestroyed(FILE *file);
-ISC_MEMFUNC_SCOPE unsigned int
+
+unsigned int
 isc__mem_references(isc_mem_t *ctx0);
-#endif
+#endif /* ISC_MEM_TRACKLINES */
 
 static struct isc__memmethods {
 	isc_memmethods_t methods;
@@ -330,10 +323,9 @@ static struct isc__memmethods {
 	/*%
 	 * The following are defined just for avoiding unused static functions.
 	 */
-#ifndef BIND9
-	void *createx, *create, *create2, *ondestroy, *stats,
-		*setquota, *getquota, *setname, *getname, *gettag;
-#endif
+	void *createx, *create, *create2, *ondestroy,
+		*setquota, *getquota, *setname, *getname, *gettag,
+		*printactive, *printallactive;
 } memmethods = {
 	{
 		isc__mem_attach,
@@ -352,15 +344,15 @@ static struct isc__memmethods {
 		isc__mem_inuse,
 		isc__mem_isovermem,
 		isc__mempool_create
-	}
-#ifndef BIND9
-	,
+	},
 	(void *)isc__mem_createx, (void *)isc__mem_create,
 	(void *)isc__mem_create2, (void *)isc__mem_ondestroy,
-	(void *)isc__mem_stats, (void *)isc__mem_setquota,
+	(void *)isc__mem_setquota,
 	(void *)isc__mem_getquota, (void *)isc__mem_setname,
-	(void *)isc__mem_getname, (void *)isc__mem_gettag
-#endif
+	(void *)isc__mem_getname, (void *)isc__mem_gettag,
+	(void *)isc__mem_printactive,
+	(void *)isc__mem_printallactive,
+
 };
 
 static struct isc__mempoolmethods {
@@ -369,9 +361,7 @@ static struct isc__mempoolmethods {
 	/*%
 	 * The following are defined just for avoiding unused static functions.
 	 */
-#ifndef BIND9
 	void *getfreemax, *getfreecount, *getmaxalloc, *getfillcount;
-#endif
 } mempoolmethods = {
 	{
 		isc__mempool_destroy,
@@ -383,14 +373,12 @@ static struct isc__mempoolmethods {
 		isc__mempool_setname,
 		isc__mempool_associatelock,
 		isc__mempool_setfillcount
-	}
-#ifndef BIND9
-	,
+	},
 	(void *)isc__mempool_getfreemax, (void *)isc__mempool_getfreecount,
 	(void *)isc__mempool_getmaxalloc, (void *)isc__mempool_getfillcount
-#endif
 };
 
+#if ISC_MEM_TRACKLINES
 /*!
  * mctx must be locked.
  */
@@ -867,16 +855,16 @@ mem_putstats(isc__mem_t *ctx, void *ptr, size_t size) {
  * Private.
  */
 
-static void *
-default_memalloc(void *arg, size_t size) {
+void *
+isc_default_memalloc(void *arg, size_t size) {
 	UNUSED(arg);
 	if (size == 0U)
 		size = 1;
 	return (malloc(size));
 }
 
-static void
-default_memfree(void *arg, void *ptr) {
+void
+isc_default_memfree(void *arg, void *ptr) {
 	UNUSED(arg);
 	free(ptr);
 }
@@ -1039,8 +1027,8 @@ isc__mem_createx2(size_t init_max_size, size_t target_size,
 ISC_MEMFUNC_SCOPE isc_result_t
 isc__mem_create(size_t init_max_size, size_t target_size, isc_mem_t **ctxp) {
 	return (isc__mem_createx2(init_max_size, target_size,
-				  default_memalloc, default_memfree, NULL,
-				  ctxp, ISC_MEMFLAG_DEFAULT));
+				  isc_default_memalloc, isc_default_memfree,
+				  NULL, ctxp, ISC_MEMFLAG_DEFAULT));
 }
 
 ISC_MEMFUNC_SCOPE isc_result_t
@@ -1048,8 +1036,8 @@ isc__mem_create2(size_t init_max_size, size_t target_size,
 		 isc_mem_t **ctxp, unsigned int flags)
 {
 	return (isc__mem_createx2(init_max_size, target_size,
-				  default_memalloc, default_memfree, NULL,
-				  ctxp, flags));
+				  isc_default_memalloc, isc_default_memfree,
+				  NULL, ctxp, flags));
 }
 
 static void
@@ -1193,7 +1181,7 @@ isc___mem_putanddetach(isc_mem_t **ctxp, void *ptr, size_t size FLARG) {
 				oldsize -= ALIGNMENT_SIZE;
 			INSIST(oldsize == size);
 		}
-		isc_mem_free((isc_mem_t *)ctx, ptr);
+		isc__mem_free((isc_mem_t *)ctx, ptr FLARG_PASS);
 
 		MCTXLOCK(ctx, &ctx->lock);
 		ctx->references--;
@@ -1329,7 +1317,7 @@ isc___mem_put(isc_mem_t *ctx0, void *ptr, size_t size FLARG) {
 				oldsize -= ALIGNMENT_SIZE;
 			INSIST(oldsize == size);
 		}
-		isc_mem_free((isc_mem_t *)ctx, ptr);
+		isc__mem_free((isc_mem_t *)ctx, ptr FLARG_PASS);
 		return;
 	}
 
@@ -1422,8 +1410,8 @@ print_active(isc__mem_t *mctx, FILE *out) {
 /*
  * Print the stats[] on the stream "out" with suitable formatting.
  */
-ISC_MEMFUNC_SCOPE void
-isc__mem_stats(isc_mem_t *ctx0, FILE *out) {
+void
+isc_mem_stats(isc_mem_t *ctx0, FILE *out) {
 	isc__mem_t *ctx = (isc__mem_t *)ctx0;
 	size_t i;
 	const struct stats *s;
@@ -1480,7 +1468,12 @@ isc__mem_stats(isc_mem_t *ctx0, FILE *out) {
 	}
 	while (pool != NULL) {
 		fprintf(out, "%15s %10lu %10u %10u %10u %10u %10u %10u %s\n",
-			pool->name, (unsigned long) pool->size, pool->maxalloc,
+#if ISC_MEMPOOL_NAMES
+			pool->name,
+#else
+			"(not tracked)",
+#endif
+			(unsigned long) pool->size, pool->maxalloc,
 			pool->allocated, pool->freecount, pool->freemax,
 			pool->fillcount, pool->gets,
 			(pool->lock == NULL ? "N" : "Y"));
@@ -1594,7 +1587,11 @@ isc___mem_reallocate(isc_mem_t *ctx0, void *ptr, size_t size FLARG) {
 			oldsize = (((size_info *)ptr)[-1]).u.size;
 			INSIST(oldsize >= ALIGNMENT_SIZE);
 			oldsize -= ALIGNMENT_SIZE;
-			copysize = oldsize > size ? size : oldsize;
+			if ((isc_mem_debugging & ISC_MEM_DEBUGCTX) != 0) {
+				INSIST(oldsize >= ALIGNMENT_SIZE);
+				oldsize -= ALIGNMENT_SIZE;
+			}
+			copysize = (oldsize > size) ? size : oldsize;
 			memcpy(new_ptr, ptr, copysize);
 			isc__mem_free(ctx0, ptr FLARG_PASS);
 		}
@@ -2248,26 +2245,23 @@ isc__mempool_getfillcount(isc_mempool_t *mpctx0) {
 	return (fillcount);
 }
 
-#ifdef USE_MEMIMPREGISTER
 isc_result_t
 isc__mem_register() {
-	return (isc_mem_register(isc__mem_create2));
+	return (isc_mem_register(isc__mem_createx2));
 }
-#endif
 
-#ifdef BIND9
 ISC_MEMFUNC_SCOPE void
 isc__mem_printactive(isc_mem_t *ctx0, FILE *file) {
+#if ISC_MEM_TRACKLINES
 	isc__mem_t *ctx = (isc__mem_t *)ctx0;
 
 	REQUIRE(VALID_CONTEXT(ctx));
 	REQUIRE(file != NULL);
 
-#if !ISC_MEM_TRACKLINES
-	UNUSED(ctx);
-	UNUSED(file);
-#else
 	print_active(ctx, file);
+#else
+	UNUSED(ctx0);
+	UNUSED(file);
 #endif
 }
 
@@ -2291,8 +2285,11 @@ isc__mem_printallactive(FILE *file) {
 #endif
 }
 
-ISC_MEMFUNC_SCOPE void
-isc__mem_checkdestroyed(FILE *file) {
+void
+isc_mem_checkdestroyed(FILE *file) {
+#if !ISC_MEM_TRACKLINES
+	UNUSED(file);
+#endif
 
 	RUNTIME_CHECK(isc_once_do(&once, initialize_action) == ISC_R_SUCCESS);
 
@@ -2314,7 +2311,7 @@ isc__mem_checkdestroyed(FILE *file) {
 	UNLOCK(&lock);
 }
 
-ISC_MEMFUNC_SCOPE unsigned int
+unsigned int
 isc_mem_references(isc_mem_t *ctx0) {
 	isc__mem_t *ctx = (isc__mem_t *)ctx0;
 	unsigned int references;
@@ -2337,24 +2334,26 @@ typedef struct summarystat {
 	isc_uint64_t	contextsize;
 } summarystat_t;
 
-static void
+#define TRY0(a) do { xmlrc = (a); if (xmlrc < 0) goto error; } while(0)
+static int
 renderctx(isc__mem_t *ctx, summarystat_t *summary, xmlTextWriterPtr writer) {
+	int xmlrc;
+
 	REQUIRE(VALID_CONTEXT(ctx));
 
-	xmlTextWriterStartElement(writer, ISC_XMLCHAR "context");
+	MCTXLOCK(ctx, &ctx->lock);
 
-	xmlTextWriterStartElement(writer, ISC_XMLCHAR "id");
-	xmlTextWriterWriteFormatString(writer, "%p", ctx);
-	xmlTextWriterEndElement(writer); /* id */
+	TRY0(xmlTextWriterStartElement(writer, ISC_XMLCHAR "context"));
+
+	TRY0(xmlTextWriterStartElement(writer, ISC_XMLCHAR "id"));
+	TRY0(xmlTextWriterWriteFormatString(writer, "%p", ctx));
+	TRY0(xmlTextWriterEndElement(writer)); /* id */
 
 	if (ctx->name[0] != 0) {
-		xmlTextWriterStartElement(writer, ISC_XMLCHAR "name");
-		xmlTextWriterWriteFormatString(writer, "%s", ctx->name);
-		xmlTextWriterEndElement(writer); /* name */
+		TRY0(xmlTextWriterStartElement(writer, ISC_XMLCHAR "name"));
+		TRY0(xmlTextWriterWriteFormatString(writer, "%s", ctx->name));
+		TRY0(xmlTextWriterEndElement(writer)); /* name */
 	}
-
-	REQUIRE(VALID_CONTEXT(ctx));
-	MCTXLOCK(ctx, &ctx->lock);
 
 	summary->contextsize += sizeof(*ctx) +
 		(ctx->max_size + 1) * sizeof(struct stats) +
@@ -2367,70 +2366,79 @@ renderctx(isc__mem_t *ctx, summarystat_t *summary, xmlTextWriterPtr writer) {
 			ctx->debuglistcnt * sizeof(debuglink_t);
 	}
 #endif
-	xmlTextWriterStartElement(writer, ISC_XMLCHAR "references");
-	xmlTextWriterWriteFormatString(writer, "%d", ctx->references);
-	xmlTextWriterEndElement(writer); /* references */
+	TRY0(xmlTextWriterStartElement(writer, ISC_XMLCHAR "references"));
+	TRY0(xmlTextWriterWriteFormatString(writer, "%d", ctx->references));
+	TRY0(xmlTextWriterEndElement(writer)); /* references */
 
 	summary->total += ctx->total;
-	xmlTextWriterStartElement(writer, ISC_XMLCHAR "total");
-	xmlTextWriterWriteFormatString(writer, "%" ISC_PRINT_QUADFORMAT "u",
-				       (isc_uint64_t)ctx->total);
-	xmlTextWriterEndElement(writer); /* total */
+	TRY0(xmlTextWriterStartElement(writer, ISC_XMLCHAR "total"));
+	TRY0(xmlTextWriterWriteFormatString(writer,
+					    "%" ISC_PRINT_QUADFORMAT "u",
+					    (isc_uint64_t)ctx->total));
+	TRY0(xmlTextWriterEndElement(writer)); /* total */
 
 	summary->inuse += ctx->inuse;
-	xmlTextWriterStartElement(writer, ISC_XMLCHAR "inuse");
-	xmlTextWriterWriteFormatString(writer, "%" ISC_PRINT_QUADFORMAT "u",
-				       (isc_uint64_t)ctx->inuse);
-	xmlTextWriterEndElement(writer); /* inuse */
+	TRY0(xmlTextWriterStartElement(writer, ISC_XMLCHAR "inuse"));
+	TRY0(xmlTextWriterWriteFormatString(writer,
+					    "%" ISC_PRINT_QUADFORMAT "u",
+					    (isc_uint64_t)ctx->inuse));
+	TRY0(xmlTextWriterEndElement(writer)); /* inuse */
 
-	xmlTextWriterStartElement(writer, ISC_XMLCHAR "maxinuse");
-	xmlTextWriterWriteFormatString(writer, "%" ISC_PRINT_QUADFORMAT "u",
-				       (isc_uint64_t)ctx->maxinuse);
-	xmlTextWriterEndElement(writer); /* maxinuse */
+	TRY0(xmlTextWriterStartElement(writer, ISC_XMLCHAR "maxinuse"));
+	TRY0(xmlTextWriterWriteFormatString(writer,
+					    "%" ISC_PRINT_QUADFORMAT "u",
+					    (isc_uint64_t)ctx->maxinuse));
+	TRY0(xmlTextWriterEndElement(writer)); /* maxinuse */
 
-	xmlTextWriterStartElement(writer, ISC_XMLCHAR "blocksize");
+	TRY0(xmlTextWriterStartElement(writer, ISC_XMLCHAR "blocksize"));
 	if ((ctx->flags & ISC_MEMFLAG_INTERNAL) != 0) {
 		summary->blocksize += ctx->basic_table_count *
 			NUM_BASIC_BLOCKS * ctx->mem_target;
-		xmlTextWriterWriteFormatString(writer,
+		TRY0(xmlTextWriterWriteFormatString(writer,
 					       "%" ISC_PRINT_QUADFORMAT "u",
 					       (isc_uint64_t)
 					       ctx->basic_table_count *
 					       NUM_BASIC_BLOCKS *
-					       ctx->mem_target);
+					       ctx->mem_target));
 	} else
-		xmlTextWriterWriteFormatString(writer, "%s", "-");
-	xmlTextWriterEndElement(writer); /* blocksize */
+		TRY0(xmlTextWriterWriteFormatString(writer, "%s", "-"));
+	TRY0(xmlTextWriterEndElement(writer)); /* blocksize */
 
-	xmlTextWriterStartElement(writer, ISC_XMLCHAR "pools");
-	xmlTextWriterWriteFormatString(writer, "%u", ctx->poolcnt);
-	xmlTextWriterEndElement(writer); /* pools */
+	TRY0(xmlTextWriterStartElement(writer, ISC_XMLCHAR "pools"));
+	TRY0(xmlTextWriterWriteFormatString(writer, "%u", ctx->poolcnt));
+	TRY0(xmlTextWriterEndElement(writer)); /* pools */
 	summary->contextsize += ctx->poolcnt * sizeof(isc_mempool_t);
 
-	xmlTextWriterStartElement(writer, ISC_XMLCHAR "hiwater");
-	xmlTextWriterWriteFormatString(writer, "%" ISC_PRINT_QUADFORMAT "u",
-				       (isc_uint64_t)ctx->hi_water);
-	xmlTextWriterEndElement(writer); /* hiwater */
+	TRY0(xmlTextWriterStartElement(writer, ISC_XMLCHAR "hiwater"));
+	TRY0(xmlTextWriterWriteFormatString(writer,
+					    "%" ISC_PRINT_QUADFORMAT "u",
+					    (isc_uint64_t)ctx->hi_water));
+	TRY0(xmlTextWriterEndElement(writer)); /* hiwater */
 
-	xmlTextWriterStartElement(writer, ISC_XMLCHAR "lowater");
-	xmlTextWriterWriteFormatString(writer, "%" ISC_PRINT_QUADFORMAT "u",
-				       (isc_uint64_t)ctx->lo_water);
-	xmlTextWriterEndElement(writer); /* lowater */
+	TRY0(xmlTextWriterStartElement(writer, ISC_XMLCHAR "lowater"));
+	TRY0(xmlTextWriterWriteFormatString(writer,
+					    "%" ISC_PRINT_QUADFORMAT "u",
+					    (isc_uint64_t)ctx->lo_water));
+	TRY0(xmlTextWriterEndElement(writer)); /* lowater */
 
+	TRY0(xmlTextWriterEndElement(writer)); /* context */
+
+ error:
 	MCTXUNLOCK(ctx, &ctx->lock);
 
-	xmlTextWriterEndElement(writer); /* context */
+	return (xmlrc);
 }
 
-void
+int
 isc_mem_renderxml(xmlTextWriterPtr writer) {
 	isc__mem_t *ctx;
 	summarystat_t summary;
 	isc_uint64_t lost;
+	int xmlrc;
 
 	memset(&summary, 0, sizeof(summary));
 
-	xmlTextWriterStartElement(writer, ISC_XMLCHAR "contexts");
+	TRY0(xmlTextWriterStartElement(writer, ISC_XMLCHAR "contexts"));
 
 	RUNTIME_CHECK(isc_once_do(&once, initialize_action) == ISC_R_SUCCESS);
 
@@ -2439,41 +2447,51 @@ isc_mem_renderxml(xmlTextWriterPtr writer) {
 	for (ctx = ISC_LIST_HEAD(contexts);
 	     ctx != NULL;
 	     ctx = ISC_LIST_NEXT(ctx, link)) {
-		renderctx(ctx, &summary, writer);
+		xmlrc = renderctx(ctx, &summary, writer);
+		if (xmlrc < 0) {
+			UNLOCK(&lock);
+			goto error;
+		}
 	}
 	UNLOCK(&lock);
 
-	xmlTextWriterEndElement(writer); /* contexts */
+	TRY0(xmlTextWriterEndElement(writer)); /* contexts */
 
-	xmlTextWriterStartElement(writer, ISC_XMLCHAR "summary");
+	TRY0(xmlTextWriterStartElement(writer, ISC_XMLCHAR "summary"));
 
-	xmlTextWriterStartElement(writer, ISC_XMLCHAR "TotalUse");
-	xmlTextWriterWriteFormatString(writer, "%" ISC_PRINT_QUADFORMAT "u",
-				       summary.total);
-	xmlTextWriterEndElement(writer); /* TotalUse */
+	TRY0(xmlTextWriterStartElement(writer, ISC_XMLCHAR "TotalUse"));
+	TRY0(xmlTextWriterWriteFormatString(writer,
+					    "%" ISC_PRINT_QUADFORMAT "u",
+					    summary.total));
+	TRY0(xmlTextWriterEndElement(writer)); /* TotalUse */
 
-	xmlTextWriterStartElement(writer, ISC_XMLCHAR "InUse");
-	xmlTextWriterWriteFormatString(writer, "%" ISC_PRINT_QUADFORMAT "u",
-				       summary.inuse);
-	xmlTextWriterEndElement(writer); /* InUse */
+	TRY0(xmlTextWriterStartElement(writer, ISC_XMLCHAR "InUse"));
+	TRY0(xmlTextWriterWriteFormatString(writer,
+					    "%" ISC_PRINT_QUADFORMAT "u",
+					    summary.inuse));
+	TRY0(xmlTextWriterEndElement(writer)); /* InUse */
 
-	xmlTextWriterStartElement(writer, ISC_XMLCHAR "BlockSize");
-	xmlTextWriterWriteFormatString(writer, "%" ISC_PRINT_QUADFORMAT "u",
-				       summary.blocksize);
-	xmlTextWriterEndElement(writer); /* BlockSize */
+	TRY0(xmlTextWriterStartElement(writer, ISC_XMLCHAR "BlockSize"));
+	TRY0(xmlTextWriterWriteFormatString(writer,
+					    "%" ISC_PRINT_QUADFORMAT "u",
+					    summary.blocksize));
+	TRY0(xmlTextWriterEndElement(writer)); /* BlockSize */
 
-	xmlTextWriterStartElement(writer, ISC_XMLCHAR "ContextSize");
-	xmlTextWriterWriteFormatString(writer, "%" ISC_PRINT_QUADFORMAT "u",
-				       summary.contextsize);
-	xmlTextWriterEndElement(writer); /* ContextSize */
+	TRY0(xmlTextWriterStartElement(writer, ISC_XMLCHAR "ContextSize"));
+	TRY0(xmlTextWriterWriteFormatString(writer,
+					    "%" ISC_PRINT_QUADFORMAT "u",
+					    summary.contextsize));
+	TRY0(xmlTextWriterEndElement(writer)); /* ContextSize */
 
-	xmlTextWriterStartElement(writer, ISC_XMLCHAR "Lost");
-	xmlTextWriterWriteFormatString(writer, "%" ISC_PRINT_QUADFORMAT "u",
-				       lost);
-	xmlTextWriterEndElement(writer); /* Lost */
+	TRY0(xmlTextWriterStartElement(writer, ISC_XMLCHAR "Lost"));
+	TRY0(xmlTextWriterWriteFormatString(writer,
+					    "%" ISC_PRINT_QUADFORMAT "u",
+					    lost));
+	TRY0(xmlTextWriterEndElement(writer)); /* Lost */
 
-	xmlTextWriterEndElement(writer); /* summary */
+	TRY0(xmlTextWriterEndElement(writer)); /* summary */
+ error:
+	return (xmlrc);
 }
 
 #endif /* HAVE_LIBXML2 */
-#endif /* BIND9 */

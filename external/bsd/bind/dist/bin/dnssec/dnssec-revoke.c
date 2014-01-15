@@ -1,7 +1,7 @@
-/*	$NetBSD: dnssec-revoke.c,v 1.3 2012/06/05 00:38:56 christos Exp $	*/
+/*	$NetBSD: dnssec-revoke.c,v 1.5 2013/07/27 19:23:09 christos Exp $	*/
 
 /*
- * Copyright (C) 2009-2011  Internet Systems Consortium, Inc. ("ISC")
+ * Copyright (C) 2009-2012  Internet Systems Consortium, Inc. ("ISC")
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -22,7 +22,6 @@
 
 #include <config.h>
 
-#include <libgen.h>
 #include <stdlib.h>
 #include <unistd.h>
 
@@ -99,6 +98,7 @@ main(int argc, char **argv) {
 	if (argc == 1)
 		usage();
 
+	isc__mem_register();
 	result = isc_mem_create(0, 0, &mctx);
 	if (result != ISC_R_SUCCESS)
 		fatal("Out of memory");

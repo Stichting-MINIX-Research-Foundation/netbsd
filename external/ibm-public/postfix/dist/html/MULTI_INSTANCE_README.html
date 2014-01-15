@@ -374,6 +374,8 @@ post-filter re-injection SMTP service. Typical additions include: </p>
     # With multiple instances, rarely need "-o param=value" overrides
     # in <a href="master.5.html">master.cf</a>, each instance gets its own <a href="postconf.5.html">main.cf</a> file.
     #
+    # Postfix 2.10 and later: specify empty <a href="postconf.5.html#smtpd_relay_restrictions">smtpd_relay_restrictions</a>.
+    <a href="postconf.5.html#smtpd_relay_restrictions">smtpd_relay_restrictions</a> =
     <a href="postconf.5.html#smtpd_recipient_restrictions">smtpd_recipient_restrictions</a> = <a href="postconf.5.html#permit_mynetworks">permit_mynetworks</a>, reject
 
     # Tolerate occasional high latency in the  content filter.
@@ -620,7 +622,7 @@ $<a href="postconf.5.html#daemon_directory">daemon_directory</a>. </p>
 $<a href="postconf.5.html#manpage_directory">manpage_directory</a> and $<a href="postconf.5.html#readme_directory">readme_directory</a>. </p>
 
 <li><p> Entries in /etc/passwd and /etc/group for the $<a href="postconf.5.html#mail_owner">mail_owner</a> user and
-$<a href="postconf.5.html#setgid_group">setgid_group</a> group. The the $<a href="postconf.5.html#mail_owner">mail_owner</a> user provides the mail system
+$<a href="postconf.5.html#setgid_group">setgid_group</a> group. The $<a href="postconf.5.html#mail_owner">mail_owner</a> user provides the mail system
 with a protected (non-root) execution context. The $<a href="postconf.5.html#setgid_group">setgid_group</a> group
 is used exclusively to support the setgid <a href="postdrop.1.html">postdrop(1)</a> and <a href="postqueue.1.html">postqueue(1)</a>
 utilities (it <b>must not</b> be the primary group or secondary group

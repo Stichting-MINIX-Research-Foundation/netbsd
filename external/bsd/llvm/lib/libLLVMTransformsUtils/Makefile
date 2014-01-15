@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.9 2012/09/23 17:22:24 joerg Exp $
+#	$NetBSD: Makefile,v 1.13 2013/10/30 20:27:39 joerg Exp $
 
 LIB=	LLVMTransformsUtils
 
@@ -6,8 +6,7 @@ LIB=	LLVMTransformsUtils
 
 .PATH: ${LLVM_SRCDIR}/lib/Transforms/Utils
 
-SRCS+=	AddrModeMatcher.cpp \
-	BasicBlockUtils.cpp \
+SRCS+=	BasicBlockUtils.cpp \
 	BreakCriticalEdges.cpp \
 	BuildLibCalls.cpp \
 	BypassSlowDivision.cpp \
@@ -16,6 +15,8 @@ SRCS+=	AddrModeMatcher.cpp \
 	CmpInstAnalysis.cpp \
 	CodeExtractor.cpp \
 	DemoteRegToStack.cpp \
+	FlattenCFG.cpp \
+	GlobalStatus.cpp \
 	InlineFunction.cpp \
 	InstructionNamer.cpp \
 	IntegerDivision.cpp \
@@ -35,6 +36,8 @@ SRCS+=	AddrModeMatcher.cpp \
 	SimplifyCFG.cpp \
 	SimplifyIndVar.cpp \
 	SimplifyInstructions.cpp \
+	SimplifyLibCalls.cpp \
+	SpecialCaseList.cpp \
 	UnifyFunctionExitNodes.cpp \
 	Utils.cpp \
 	ValueMapper.cpp

@@ -1,4 +1,4 @@
-/*	$NetBSD: makemandb.c,v 1.15 2012/10/06 15:33:59 wiz Exp $	*/
+/*	$NetBSD: makemandb.c,v 1.20 2013/11/13 18:46:33 wiz Exp $	*/
 /*
  * Copyright (c) 2011 Abhinav Upadhyay <er.abhinav.upadhyay@gmail.com>
  * Copyright (c) 2011 Kristaps Dzonsons <kristaps@bsd.lv>
@@ -17,7 +17,7 @@
  */
 
 #include <sys/cdefs.h>
-__RCSID("$NetBSD: makemandb.c,v 1.15 2012/10/06 15:33:59 wiz Exp $");
+__RCSID("$NetBSD: makemandb.c,v 1.20 2013/11/13 18:46:33 wiz Exp $");
 
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -36,9 +36,9 @@ __RCSID("$NetBSD: makemandb.c,v 1.15 2012/10/06 15:33:59 wiz Exp $");
 #include <util.h>
 
 #include "apropos-utils.h"
-#include "man.h"
-#include "mandoc.h"
-#include "mdoc.h"
+#include "dist/man.h"
+#include "dist/mandoc.h"
+#include "dist/mdoc.h"
 #include "sqlite3.h"
 
 #define BUFLEN 1024
@@ -108,7 +108,7 @@ static void pmdoc_Nd(const struct mdoc_node *, mandb_rec *);
 static void pmdoc_Sh(const struct mdoc_node *, mandb_rec *);
 static void pmdoc_Xr(const struct mdoc_node *, mandb_rec *);
 static void pmdoc_Pp(const struct mdoc_node *, mandb_rec *);
-static void pmdoc_macro_handler(const struct mdoc_node *, mandb_rec *, 
+static void pmdoc_macro_handler(const struct mdoc_node *, mandb_rec *,
 				enum mdoct);
 static void pman_node(const struct man_node *n, mandb_rec *);
 static void pman_parse_node(const struct man_node *, secbuff *);
@@ -349,8 +349,12 @@ main(int argc, char *argv[])
 		manconf = MANCONF;
 	}
 
-	if (mflags.recreate)
-		remove(get_dbpath(manconf));
+	if (mflags.recreate) {
+		char *dbp = get_dbpath(manconf);
+		/* No error here, it will fail in init_db in the same call */
+		if (dbp != NULL)
+			remove(dbp);
+	}
 
 	if ((db = init_db(MANDB_CREATE, manconf)) == NULL)
 		exit(EXIT_FAILURE);
@@ -387,7 +391,7 @@ main(int argc, char *argv[])
 		free(errmsg);
 		exit(EXIT_FAILURE);
 	}
-		
+
 	sqlstr = "CREATE TABLE metadb.file_cache(device, inode, mtime, parent,"
 		 " file PRIMARY KEY);"
 		 "CREATE UNIQUE INDEX metadb.index_file_cache_dev"
@@ -464,13 +468,7 @@ traversedir(const char *parent, const char *file, sqlite3 *db,
 			warn("stat failed: %s", file);
 		return;
 	}
-	
-	/* If it is a regular file or a symlink, pass it to build_cache() */
-	if (S_ISREG(sb.st_mode) || S_ISLNK(sb.st_mode)) {
-		build_file_cache(db, parent, file, &sb);
-		return;
-	}
-	
+
 	/* If it is a directory, traverse it recursively */
 	if (S_ISDIR(sb.st_mode)) {
 		if ((dp = opendir(file)) == NULL) {
@@ -478,7 +476,7 @@ traversedir(const char *parent, const char *file, sqlite3 *db,
 				warn("opendir error: %s", file);
 			return;
 		}
-		
+
 		while ((dirp = readdir(dp)) != NULL) {
 			/* Avoid . and .. entries in a directory */
 			if (strncmp(dirp->d_name, ".", 1)) {
@@ -489,6 +487,16 @@ traversedir(const char *parent, const char *file, sqlite3 *db,
 		}
 		closedir(dp);
 	}
+
+	if (!S_ISREG(sb.st_mode) && !S_ISLNK(sb.st_mode))
+		return;
+
+	if (sb.st_size == 0) {
+		if (mflags.verbosity)
+			warnx("Empty file: %s", file);
+		return;
+	}
+	build_file_cache(db, parent, file, &sb);
 }
 
 /* build_file_cache --
@@ -784,7 +792,7 @@ update_db(sqlite3 *db, struct mparse *mp, mandb_rec *rec)
 	free(buf);
 
 	sqlite3_finalize(stmt);
-	
+
 	if (mflags.verbosity == 2) {
 		printf("Total Number of new or updated pages encountered = %d\n"
 			"Total number of (hard or symbolic) links found = %d\n"
@@ -1179,7 +1187,7 @@ pman_node(const struct man_node *n, mandb_rec *rec)
 	pman_node(n->next, rec);
 }
 
-/* 
+/*
  * pman_parse_name --
  *  Parses the NAME section and puts the complete content in the name_desc
  *  variable.
@@ -1212,7 +1220,7 @@ pman_block(const struct man_node *n, mandb_rec *rec)
 {
 }
 
-/* 
+/*
  * pman_sh --
  * This function does one of the two things:
  *  1. If the present section is NAME, then it will:
@@ -1277,11 +1285,13 @@ pman_sh(const struct man_node *n, mandb_rec *rec)
 		pman_parse_name(n, rec);
 
 		name_desc = rec->name_desc;
+		if (name_desc == NULL)
+			return;
 
 		/* Remove any leading spaces. */
 		while (name_desc[0] == ' ')
 			name_desc++;
-			
+
 		/* If the line begins with a "\&", avoid those */
 		if (name_desc[0] == '\\' && name_desc[1] == '&')
 			name_desc += 2;
@@ -1373,7 +1383,7 @@ pman_sh(const struct man_node *n, mandb_rec *rec)
 
 /*
  * pman_parse_node --
- *  Generic function to iterate through a node. Usually called from 
+ *  Generic function to iterate through a node. Usually called from
  *  man_parse_section to parse a particular section of the man page.
  */
 static void
@@ -1384,14 +1394,14 @@ pman_parse_node(const struct man_node *n, secbuff *s)
 
 	if (n->type == MAN_TEXT)
 		append(s, n->string);
-		
+
 	pman_parse_node(n->child, s);
 	pman_parse_node(n->next, s);
 }
 
 /*
  * man_parse_section --
- *  Takes two parameters: 
+ *  Takes two parameters:
  *   sec: Tells which section we are present in
  *   n: Is the present node of the AST.
  * Depending on the section, we call pman_parse_node to parse that section and
@@ -1462,12 +1472,12 @@ insert_into_db(sqlite3 *db, mandb_rec *rec)
 	char *ln = NULL;
 	char *errmsg = NULL;
 	long int mandb_rowid;
-	
+
 	/*
 	 * At the very minimum we want to make sure that we store
 	 * the following data:
 	 *   Name, one line description, and the MD5 hash
-	 */		
+	 */
 	if (rec->name == NULL || rec->name_desc == NULL ||
 	    rec->md5_hash == NULL) {
 		cleanup(rec);
@@ -1599,14 +1609,14 @@ insert_into_db(sqlite3 *db, mandb_rec *rec)
 		sqlite3_finalize(stmt);
 		goto Out;
 	}
-	
+
 	idx = sqlite3_bind_parameter_index(stmt, ":md5_hash");
 	rc = sqlite3_bind_text(stmt, idx, rec->md5_hash, -1, NULL);
 	if (rc != SQLITE_OK) {
 		sqlite3_finalize(stmt);
 		goto Out;
 	}
-	
+
 	idx = sqlite3_bind_parameter_index(stmt, ":machine");
 	if (rec->machine)
 		rc = sqlite3_bind_text(stmt, idx, rec->machine, -1, NULL);
@@ -1624,10 +1634,10 @@ insert_into_db(sqlite3 *db, mandb_rec *rec)
 	}
 
 	sqlite3_finalize(stmt);
-	
+
 	/* Get the row id of the last inserted row */
 	mandb_rowid = sqlite3_last_insert_rowid(db);
-		
+
 /*------------------------Populate the mandb_meta table-----------------------*/
 	sqlstr = "INSERT INTO mandb_meta VALUES (:device, :inode, :mtime,"
 		 " :file, :md5_hash, :id)";
@@ -1750,7 +1760,7 @@ insert_into_db(sqlite3 *db, mandb_rec *rec)
 
 /*------------------------ Populate the mandb_links table---------------------*/
 	char *str = NULL;
-	char *links;	
+	char *links;
 	if (rec->links && strlen(rec->links)) {
 		links = rec->links;
 		for(ln = strtok(links, " "); ln; ln = strtok(NULL, " ")) {
@@ -1758,7 +1768,7 @@ insert_into_db(sqlite3 *db, mandb_rec *rec)
 				ln++;
 			if(ln[strlen(ln) - 1] == ',')
 				ln[strlen(ln) - 1] = 0;
-			
+
 			str = sqlite3_mprintf("INSERT INTO mandb_links"
 					      " VALUES (%Q, %Q, %Q, %Q, %Q)",
 					      ln, rec->name, rec->section,
@@ -1837,7 +1847,7 @@ check_md5(const char *file, sqlite3 *db, const char *table, char **md5sum,
 	}
 
 	if (sqlite3_step(stmt) == SQLITE_ROW) {
-		sqlite3_finalize(stmt);	
+		sqlite3_finalize(stmt);
 		free(sqlstr);
 		return 0;
 	}
@@ -1867,7 +1877,7 @@ optimize(sqlite3 *db)
 	}
 }
 
-/* 
+/*
  * cleanup --
  *  cleans up the global buffers
  */
@@ -2016,7 +2026,7 @@ parse_escape(const char *str)
 	} while (backslash != NULL);
 	if (last_backslash != NULL)
 		strcpy(iter, last_backslash);
-	
+
 	replace_hyph(result);
 	return result;
 }

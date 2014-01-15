@@ -1,4 +1,4 @@
-.\"	$NetBSD: ddb.4,v 1.149 2012/02/12 12:43:51 sborrill Exp $
+.\"	$NetBSD: ddb.4,v 1.154 2013/05/15 05:22:43 msaitoh Exp $
 .\"
 .\" Copyright (c) 1997 - 2009 The NetBSD Foundation, Inc.
 .\" All rights reserved.
@@ -56,7 +56,7 @@
 .\" any improvements or extensions that they make and grant Carnegie Mellon
 .\" the rights to redistribute these changes.
 .\"
-.Dd February 12, 2012
+.Dd May 15, 2013
 .Dt DDB 4
 .Os
 .Sh NAME
@@ -698,6 +698,8 @@ Print the vm_page at
 If
 .Cm /f
 is specified, the complete page is printed.
+.It Ic show panic
+Print the current "panic" string.
 .It Ic show pool Ns Oo Cm /clp Oc Ar address
 Print the pool at
 .Ar address .
@@ -746,9 +748,11 @@ queue, the queue index will be prefixed with a
 .Sq \&! .
 .It Ic show uvmexp
 Print a selection of UVM counters and statistics.
-.It Ic show uvmhist
-Dumps the UVM histories.
+.It Ic show kernhist
+Dumps the kernel histories.
 This command is available only if a kernel is compiled with
+.Cd options KERNHIST
+or
 .Cd options UVMHIST .
 .It Ic show vnode Ns Oo Cm /f Oc Ar address
 Print the vnode at
@@ -814,7 +818,7 @@ On machines with software-emulated single-stepping (e.g., pmax),
 stepping through code executed by interrupt handlers will probably
 do the wrong thing.
 .It Ic sync
-Force a crash dump, and then reboot.
+Sync the disks, force a crash dump, and then reboot.
 .It Ic trace Ns Oo Cm /u Ns Oo Cm l Oc Oc Oo Ar frame-address Oc Ns \
 Oo Cm , Ns Ar count Oc
 Stack trace from
@@ -970,8 +974,6 @@ modifier to write two bytes.
 Given a trap frame address, print out the trap frame.
 .It Ic irqstat
 Display the IRQ statistics
-.It Ic panic
-Print the current "panic" string.
 .El
 .Ss ALPHA
 .Bl -tag -width "traptrace" -compact
@@ -991,8 +993,6 @@ Switch to another cpu.
 .Bl -tag -width "traptrace" -compact
 .It Ic frame
 Given a trap frame address, print out the trap frame.
-.It Ic panic
-Print the current "panic" string.
 .El
 .Ss HP700
 .Bl -tag -width "traptrace" -compact

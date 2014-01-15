@@ -1,4 +1,4 @@
-/*	$NetBSD: machdep.c,v 1.190 2012/09/03 05:01:44 cherry Exp $	*/
+/*	$NetBSD: machdep.c,v 1.200 2013/12/01 01:05:16 christos Exp $	*/
 
 /*-
  * Copyright (c) 1996, 1997, 1998, 2000, 2006, 2007, 2008, 2011
@@ -111,7 +111,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.190 2012/09/03 05:01:44 cherry Exp $");
+__KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.200 2013/12/01 01:05:16 christos Exp $");
 
 /* #define XENDEBUG_LOW  */
 
@@ -238,7 +238,7 @@ int	cpu_class;
 int	use_pae;
 
 #ifndef NO_SPARSE_DUMP
-int sparse_dump = 0;
+int sparse_dump = 1;
 
 paddr_t max_paddr = 0;
 unsigned char *sparse_dump_physmap;
@@ -291,10 +291,6 @@ void (*initclock_func)(void) = xen_initclocks;
 #endif
 
 
-#ifdef MTRR
-struct mtrr_funcs *mtrr_funcs;
-#endif
-
 /*
  * Size of memory segments, before any memory is stolen.
  */
@@ -317,7 +313,7 @@ int dump_seg_iter(int (*)(paddr_t, paddr_t));
 
 #ifndef NO_SPARSE_DUMP
 void sparse_dump_reset(void);
-void sparse_dump_mark(vaddr_t, vaddr_t, int);
+void sparse_dump_mark(void);
 void cpu_dump_prep_sparse(void);
 #endif
 
@@ -515,65 +511,10 @@ cpu_init_tss(struct cpu_info *ci)
 	ci->ci_tss_sel = tss_alloc(tss);
 }
 
-/*  
- * machine dependent system variables.
- */ 
-static int
-sysctl_machdep_booted_kernel(SYSCTLFN_ARGS)
-{
-	struct btinfo_bootpath *bibp;
-	struct sysctlnode node;
-
-	bibp = lookup_bootinfo(BTINFO_BOOTPATH);
-	if(!bibp)
-		return(ENOENT); /* ??? */
-
-	node = *rnode;
-	node.sysctl_data = bibp->bootpath;
-	node.sysctl_size = sizeof(bibp->bootpath);
-	return (sysctl_lookup(SYSCTLFN_CALL(&node)));
-}
-
-static int
-sysctl_machdep_diskinfo(SYSCTLFN_ARGS)
-{
-        struct sysctlnode node;
-
-	if (x86_alldisks == NULL)
-		return (ENOENT);
-
-        node = *rnode;
-        node.sysctl_data = x86_alldisks;
-        node.sysctl_size = sizeof(struct disklist) +
-	    (x86_ndisks - 1) * sizeof(struct nativedisk_info);
-        return (sysctl_lookup(SYSCTLFN_CALL(&node)));
-}
-
 SYSCTL_SETUP(sysctl_machdep_setup, "sysctl machdep subtree setup")
 {
-	extern uint64_t tsc_freq;
+	x86_sysctl_machdep_setup(clog);
 
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
-		       CTLTYPE_NODE, "machdep", NULL,
-		       NULL, 0, NULL, 0,
-		       CTL_MACHDEP, CTL_EOL);
-
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
-		       CTLTYPE_STRUCT, "console_device", NULL,
-		       sysctl_consdev, 0, NULL, sizeof(dev_t),
-		       CTL_MACHDEP, CPU_CONSDEV, CTL_EOL);
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
-		       CTLTYPE_STRING, "booted_kernel", NULL,
-		       sysctl_machdep_booted_kernel, 0, NULL, 0,
-		       CTL_MACHDEP, CPU_BOOTED_KERNEL, CTL_EOL);
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
-		       CTLTYPE_STRUCT, "diskinfo", NULL,
-		       sysctl_machdep_diskinfo, 0, NULL, 0,
-		       CTL_MACHDEP, CPU_DISKINFO, CTL_EOL);
 	sysctl_createv(clog, 0, NULL, NULL,
 		       CTLFLAG_PERMANENT | CTLFLAG_IMMEDIATE,
 		       CTLTYPE_INT, "fpu_present", NULL,
@@ -589,25 +530,6 @@ SYSCTL_SETUP(sysctl_machdep_setup, "sysctl machdep subtree setup")
 		       CTLTYPE_INT, "sse2", NULL,
 		       NULL, 1, NULL, 0,
 		       CTL_MACHDEP, CPU_SSE2, CTL_EOL);
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
-		       CTLTYPE_QUAD, "tsc_freq", NULL,
-		       NULL, 0, &tsc_freq, 0,
-		       CTL_MACHDEP, CTL_CREATE, CTL_EOL);
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
-		       CTLTYPE_INT, "pae",
-		       SYSCTL_DESCR("Whether the kernel uses PAE"),
-		       NULL, 0, &use_pae, 0,
-		       CTL_MACHDEP, CTL_CREATE, CTL_EOL);
-#ifndef NO_SPARSE_DUMP
-	/* XXXjld Does this really belong under machdep, and not e.g. kern? */
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT|CTLFLAG_READWRITE,
-		       CTLTYPE_INT, "sparse_dump", NULL,
-		       NULL, 0, &sparse_dump, 0,
-		       CTL_MACHDEP, CTL_CREATE, CTL_EOL);
-#endif
 }
 
 void
@@ -732,6 +654,7 @@ cpu_reboot(int howto, char *bootstr)
 {
 	static bool syncdone = false;
 	int s = IPL_NONE;
+	__USE(s);	/* ugly otherwise */
 
 	if (cold) {
 		howto |= RB_HALT;
@@ -821,7 +744,7 @@ haltsys:
  * XXXfvdl share dumpcode.
  */
 
- /*
+/*
  * Perform assorted dump-related initialization tasks.  Assumes that
  * the maximum physical memory address will not increase afterwards.
  */
@@ -873,34 +796,39 @@ sparse_dump_reset(void)
 }
 
 /*
- * Include or exclude pages in a sparse dump, by half-open virtual
- * address interval (which may wrap around the end of the space).
+ * Include or exclude pages in a sparse dump.
  */
 void
-sparse_dump_mark(vaddr_t vbegin, vaddr_t vend, int includep)
+sparse_dump_mark(void)
 {
-	pmap_t pmap;
-	paddr_t p;
-	vaddr_t v;
+	paddr_t p, pstart, pend;
+	struct vm_page *pg;
+	int i;
 
 	/*
-	 * If a partial page is called for, the whole page must be included.
+	 * Mark all memory pages, then unmark pages that are uninteresting.
+	 * Dereferenceing pg->uobject might crash again if another CPU
+	 * frees the object out from under us, but we can't lock anything
+	 * so it's a risk we have to take.
 	 */
-	if (includep) {
-		vbegin = rounddown(vbegin, PAGE_SIZE);
-		vend = roundup(vend, PAGE_SIZE);
-	} else {
-		vbegin = roundup(vbegin, PAGE_SIZE);
-		vend = rounddown(vend, PAGE_SIZE);
-	}
 
-	pmap = pmap_kernel();
-	for (v = vbegin; v != vend; v += PAGE_SIZE) {
-		if (pmap_extract(pmap, v, &p)) {
-			if (includep)
-				setbit(sparse_dump_physmap, p/PAGE_SIZE);
-			else
-				clrbit(sparse_dump_physmap, p/PAGE_SIZE);
+	for (i = 0; i < mem_cluster_cnt; ++i) {
+		pstart = mem_clusters[i].start / PAGE_SIZE;
+		pend = pstart + mem_clusters[i].size / PAGE_SIZE;
+
+		for (p = pstart; p < pend; p++) {
+			setbit(sparse_dump_physmap, p);
+		}
+	}
+	for (i = 0; i < vm_nphysseg; i++) {
+		struct vm_physseg *seg = VM_PHYSMEM_PTR(i);
+
+		for (pg = seg->pgs; pg < seg->lastpg; pg++) {
+			if (pg->uanon || (pg->pqflags & PQ_FREE) ||
+			    (pg->uobject && pg->uobject->pgops)) {
+				p = VM_PAGE_TO_PHYS(pg) / PAGE_SIZE;
+				clrbit(sparse_dump_physmap, p);
+			}
 		}
 	}
 }
@@ -914,7 +842,7 @@ cpu_dump_prep_sparse(void)
 {
 	sparse_dump_reset();
 	/* XXX could the alternate recursive page table be skipped? */
-	sparse_dump_mark((vaddr_t)PTE_BASE, (vaddr_t)KERN_BASE, 1);
+	sparse_dump_mark();
 	/* Memory for I/O buffers could be unmarked here, for example. */
 	/* The kernel text could also be unmarked, but gdb would be upset. */
 }
@@ -1124,7 +1052,6 @@ cpu_dump_mempagecnt(void)
 int
 cpu_dump(void)
 {
-	int (*dump)(dev_t, daddr_t, void *, size_t);
 	kcore_seg_t seg;
 	cpu_kcore_hdr_t cpuhdr;
 	const struct bdevsw *bdev;
@@ -1132,8 +1059,6 @@ cpu_dump(void)
 	bdev = bdevsw_lookup(dumpdev);
 	if (bdev == NULL)
 		return (ENXIO);
-
-	dump = bdev->d_dump;
 
 	/*
 	 * Generate a segment header.
@@ -1192,7 +1117,7 @@ dumpsys_seg(paddr_t maddr, paddr_t bytes)
 	for (i = 0; i < bytes; i += n, dump_totalbytesleft -= n) {
 		/* Print out how many MBs we have left to go. */
 		if ((dump_totalbytesleft % (1024*1024)) == 0)
-			printf("%lu ", (unsigned long)
+			printf_nolog("%lu ", (unsigned long)
 			    (dump_totalbytesleft / (1024 * 1024)));
 
 		/* Limit size for next transfer. */
@@ -1206,6 +1131,7 @@ dumpsys_seg(paddr_t maddr, paddr_t bytes)
 		pmap_update(pmap_kernel());
 
 		error = (*dump)(dumpdev, blkno, (void *)dumpspace, n);
+		pmap_kremove_local(dumpspace, n);
 		if (error)
 			return error;
 		maddr += n;
@@ -1408,7 +1334,10 @@ setregs(struct lwp *l, struct exec_package *pack, vaddr_t stack)
 
 	l->l_md.md_flags &= ~MDL_USEDFPU;
 	pcb->pcb_flags = 0;
-	pcb->pcb_savefpu.fp_fxsave.fx_fcw = __NetBSD_NPXCW__;
+	if (pack->ep_osversion >= 699002600)
+		pcb->pcb_savefpu.fp_fxsave.fx_fcw = __NetBSD_NPXCW__;
+	else
+		pcb->pcb_savefpu.fp_fxsave.fx_fcw = __NetBSD_COMPAT_NPXCW__;
 	pcb->pcb_savefpu.fp_fxsave.fx_mxcsr = __INITIAL_MXCSR__;
 	pcb->pcb_savefpu.fp_fxsave.fx_mxcsr_mask = __INITIAL_MXCSR_MASK__;
 
@@ -1639,7 +1568,6 @@ init_x86_64(paddr_t first_avail)
 	extern void consinit(void);
 	struct region_descriptor region;
 	struct mem_segment_descriptor *ldt_segp;
-	struct pcb *pcb;
 	int x;
 #ifndef XEN
 	int ist;
@@ -1660,11 +1588,11 @@ init_x86_64(paddr_t first_avail)
 
 	cpu_init_msrs(&cpu_info_primary, true);
 
-	pcb = lwp_getpcb(&lwp0);
 
 	use_pae = 1; /* PAE always enabled in long mode */
 
 #ifdef XEN
+	struct pcb *pcb = lwp_getpcb(&lwp0);
 	mutex_init(&pte_lock, MUTEX_DEFAULT, IPL_VM);
 	pcb->pcb_cr3 = xen_start_info.pt_base - KERNBASE;
 	__PRINTK(("pcb_cr3 0x%lx\n", xen_start_info.pt_base - KERNBASE));

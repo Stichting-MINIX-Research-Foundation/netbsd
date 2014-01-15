@@ -1,4 +1,4 @@
-/*	$NetBSD: arm_machdep.c,v 1.36 2012/08/31 23:59:51 matt Exp $	*/
+/*	$NetBSD: arm_machdep.c,v 1.39 2013/11/06 02:34:10 christos Exp $	*/
 
 /*
  * Copyright (c) 2001 Wasabi Systems, Inc.
@@ -78,7 +78,7 @@
 
 #include <sys/param.h>
 
-__KERNEL_RCSID(0, "$NetBSD: arm_machdep.c,v 1.36 2012/08/31 23:59:51 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: arm_machdep.c,v 1.39 2013/11/06 02:34:10 christos Exp $");
 
 #include <sys/exec.h>
 #include <sys/proc.h>
@@ -94,7 +94,7 @@ __KERNEL_RCSID(0, "$NetBSD: arm_machdep.c,v 1.36 2012/08/31 23:59:51 matt Exp $"
 #include <sys/exec_aout.h>
 #endif
 
-#include <arm/cpufunc.h>
+#include <arm/locore.h>
 
 #include <machine/vmparam.h>
 
@@ -187,7 +187,7 @@ setregs(struct lwp *l, struct exec_package *pack, vaddr_t stack)
 		l->l_md.md_flags |= MDLWP_NOALIGNFLT;
 #endif
 #ifdef FPU_VFP
-	vfp_discardcontext();
+	vfp_discardcontext(false);
 #endif
 }
 
@@ -201,7 +201,7 @@ startlwp(void *arg)
 {
 	ucontext_t *uc = arg; 
 	lwp_t *l = curlwp;
-	int error;
+	int error __diagused;
 
 	error = cpu_setmcontext(l, &uc->uc_mcontext, uc->uc_flags);
 	KASSERT(error == 0);

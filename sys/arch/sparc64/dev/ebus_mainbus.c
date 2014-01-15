@@ -1,4 +1,4 @@
-/*	$NetBSD: ebus_mainbus.c,v 1.9 2012/03/18 05:26:58 mrg Exp $	*/
+/*	$NetBSD: ebus_mainbus.c,v 1.11 2013/09/12 19:51:09 martin Exp $	*/
 /*	$OpenBSD: ebus_mainbus.c,v 1.7 2010/11/11 17:58:23 miod Exp $	*/
 
 /*
@@ -18,7 +18,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ebus_mainbus.c,v 1.9 2012/03/18 05:26:58 mrg Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ebus_mainbus.c,v 1.11 2013/09/12 19:51:09 martin Exp $");
 
 #ifdef DEBUG
 #define	EDB_PROM	0x01
@@ -73,7 +73,7 @@ static void ebus_mainbus_intr_ack(struct intrhand *);
 #endif
 
 int
-ebus_mainbus_match(struct device *parent, cfdata_t cf, void *aux)
+ebus_mainbus_match(device_t parent, cfdata_t cf, void *aux)
 {
 	struct mainbus_attach_args *ma = aux;
 
@@ -83,7 +83,7 @@ ebus_mainbus_match(struct device *parent, cfdata_t cf, void *aux)
 }
 
 void
-ebus_mainbus_attach(struct device *parent, struct device *self, void *aux)
+ebus_mainbus_attach(device_t parent, device_t self, void *aux)
 {
 	struct ebus_softc *sc = device_private(self);
 	struct mainbus_attach_args *ma = aux;
@@ -208,7 +208,10 @@ ebus_mainbus_bus_map(bus_space_tag_t t, bus_addr_t offset, bus_size_t size,
 	struct ebus_softc *sc = t->cookie;
 	struct ebus_mainbus_ranges *range;
 	bus_addr_t hi, lo;
-	int i, ss;
+	int i;
+#if 0
+	int ss;
+#endif
 
 	DPRINTF(EDB_BUSMAP,
 	    ("\n_ebus_mainbus_bus_map: off %016llx sz %x flags %d",
@@ -252,8 +255,6 @@ ebus_mainbus_bus_map(bus_space_tag_t t, bus_addr_t offset, bus_size_t size,
 			panic("ebus_mainbus_bus_map: illegal space %x", ss);
 			break;
 		}
-#else
-ss = 0;
 #endif
 
 		addr = ((bus_addr_t)range[i].phys_hi << 32UL) |

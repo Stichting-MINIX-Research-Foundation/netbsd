@@ -1,4 +1,4 @@
-/*	$NetBSD: machdep.c,v 1.32 2012/07/28 19:08:24 matt Exp $	*/
+/*	$NetBSD: machdep.c,v 1.34 2013/01/06 11:29:35 kiyohara Exp $	*/
 
 /*-
  * Copyright (c) 2003,2004 Marcel Moolenaar
@@ -221,7 +221,6 @@ cpu_startup(void)
 	 * information.
 	 */
 	ia64_probe_sapics();
-	/*XXX: ia64_mca_init();*/
 }
 
 void
@@ -664,11 +663,6 @@ ia64_init(void)
 	if (boothowto & RB_KDB)
 		Debugger();
 #endif
-
-	extern void main(void);
-	main();
-
-	panic("Wheeee!!! main() returned!!! \n");
 }
 
 uint64_t
@@ -782,6 +776,12 @@ cpu_getmcontext(struct lwp *l, mcontext_t *mcp, unsigned int *flags)
 
 int
 cpu_setmcontext(struct lwp *l, const mcontext_t *mcp, unsigned int flags)
+{
+	return EINVAL;
+}
+
+int
+cpu_mcontext_validate(struct lwp *l, const mcontext_t *mcp)
 {
 	return EINVAL;
 }

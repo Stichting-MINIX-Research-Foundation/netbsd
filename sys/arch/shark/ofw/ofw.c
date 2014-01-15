@@ -1,4 +1,4 @@
-/*	$NetBSD: ofw.c,v 1.60 2012/09/22 00:33:41 matt Exp $	*/
+/*	$NetBSD: ofw.c,v 1.62 2013/11/06 02:41:12 christos Exp $	*/
 
 /*
  * Copyright 1997
@@ -41,7 +41,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ofw.c,v 1.60 2012/09/22 00:33:41 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ofw.c,v 1.62 2013/11/06 02:41:12 christos Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -49,6 +49,8 @@ __KERNEL_RCSID(0, "$NetBSD: ofw.c,v 1.60 2012/09/22 00:33:41 matt Exp $");
 #include <sys/kernel.h>
 #include <sys/reboot.h>
 #include <sys/mbuf.h>
+#include <sys/cpu.h>
+#include <sys/intr.h>
 
 #include <uvm/uvm.h>
 
@@ -56,10 +58,10 @@ __KERNEL_RCSID(0, "$NetBSD: ofw.c,v 1.60 2012/09/22 00:33:41 matt Exp $");
 
 #define	_ARM32_BUS_DMA_PRIVATE
 #include <sys/bus.h>
-#include <machine/frame.h>
+
+#include <arm/locore.h>
+
 #include <machine/bootconfig.h>
-#include <machine/cpu.h>
-#include <machine/intr.h>
 #include <machine/irqhandler.h>
 
 #include <dev/ofw/openfirm.h>
@@ -1200,7 +1202,6 @@ ofw_callbackhandler(void *v)
 		args->nreturns = 1;
 	} else if (strcmp(name, "claim-virt") == 0) {
 		vaddr_t va;
-		vsize_t size;
 		vaddr_t align;
 
 		/* XXX - notyet */
@@ -1218,7 +1219,6 @@ ofw_callbackhandler(void *v)
 		args_n_results[nargs] =	0;	/* properly formatted request */
 
 		/* Allocate size bytes with specified alignment. */
-		size = (vsize_t)args_n_results[0];
 		align = (vaddr_t)args_n_results[1];
 		if (align % PAGE_SIZE != 0) {
 			args_n_results[nargs + 1] = -1;
@@ -1237,8 +1237,6 @@ ofw_callbackhandler(void *v)
 			args->nreturns = 3;
 		}
 	} else if (strcmp(name, "release-virt") == 0) {
-		vaddr_t va;
-		vsize_t size;
 
 		/* XXX - notyet */
 		printf("unimplemented ofw callback - %s\n", name);
@@ -1253,10 +1251,6 @@ ofw_callbackhandler(void *v)
 			return;
 		}
 		args_n_results[nargs] =	0;	/* properly formatted request */
-
-		/* Release bytes. */
-		va = (vaddr_t)args_n_results[0];
-		size = (vsize_t)args_n_results[1];
 
 		args->nreturns = 1;
 	} else {

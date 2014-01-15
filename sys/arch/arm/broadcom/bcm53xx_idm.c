@@ -35,7 +35,7 @@
 
 #include <sys/cdefs.h>
 
-__KERNEL_RCSID(1, "$NetBSD: bcm53xx_idm.c,v 1.1 2012/09/01 00:04:44 matt Exp $");
+__KERNEL_RCSID(1, "$NetBSD: bcm53xx_idm.c,v 1.3 2012/12/12 00:01:28 matt Exp $");
 
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -64,15 +64,44 @@ bcmeth_unreset(bus_space_tag_t bst, bus_space_handle_t bsh,
 	 * To enable any GMAC, we must enable all off them.
 	 */
 	static const bus_size_t regoff[] = {
-		IDM_BASE + IDM_AMAC0_BASE + IDM_RESET_CONTROL,
-		IDM_BASE + IDM_AMAC1_BASE + IDM_RESET_CONTROL,
-		IDM_BASE + IDM_AMAC2_BASE + IDM_RESET_CONTROL,
-		IDM_BASE + IDM_AMAC3_BASE + IDM_RESET_CONTROL,
+		IDM_BASE + IDM_AMAC0_BASE,
+		IDM_BASE + IDM_AMAC1_BASE,
+		IDM_BASE + IDM_AMAC2_BASE,
+		IDM_BASE + IDM_AMAC3_BASE,
 	};
 	static bool bcmeth_init_done;
 	if (!bcmeth_init_done) {
 		for (size_t idx = 0; idx < __arraycount(regoff); idx++) {
-			bus_space_write_4(bst, bsh, regoff[idx], 0);
+			const bus_size_t off = regoff[idx];
+			bus_space_write_4(bst, bsh, off + IDM_RESET_CONTROL, 0);
+			uint32_t v = bus_space_read_4(bst, bsh,
+			    off + IDM_IO_CONTROL_DIRECT);
+			/*
+			 * Clear read-allocate and write-allocate bits from
+			 * ACP cache access so we don't pollute the caches with
+			 * DMA traffic.
+			 */
+			v &= ~IO_CONTROL_DIRECT_ARCACHE;
+			v &= ~IO_CONTROL_DIRECT_AWCACHE;
+#if 0
+			v |= __SHIFTIN(AXCACHE_WA, IO_CONTROL_DIRECT_ARCACHE);
+			v |= __SHIFTIN(AXCACHE_RA, IO_CONTROL_DIRECT_AWCACHE);
+#endif
+			v |= __SHIFTIN(AXCACHE_C|AXCACHE_B, IO_CONTROL_DIRECT_ARCACHE);
+			v |= __SHIFTIN(AXCACHE_C|AXCACHE_B, IO_CONTROL_DIRECT_AWCACHE);
+			/*
+			 * These are the default but make sure they are
+			 * properly set.
+			 */
+			v |= __SHIFTIN(0x1F, IO_CONTROL_DIRECT_ARUSER);
+			v |= __SHIFTIN(0x1F, IO_CONTROL_DIRECT_AWUSER);
+			v |= IO_CONTROL_DIRECT_CLK_250_SEL;
+			v |= IO_CONTROL_DIRECT_DIRECT_GMII_MODE;
+			v |= IO_CONTROL_DIRECT_SOURCE_SYNC_MODE_EN;
+			v |= IO_CONTROL_DIRECT_CLK_GATING_EN;
+
+			bus_space_write_4(bst, bsh, off + IDM_IO_CONTROL_DIRECT,
+			    v);
 		}
 		bcmeth_init_done = true;
 	}

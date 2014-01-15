@@ -1,4 +1,4 @@
-/*	$NetBSD: acpi_wakeup.c,v 1.32 2012/08/26 01:04:03 jakllsch Exp $	*/
+/*	$NetBSD: acpi_wakeup.c,v 1.34 2013/12/01 01:05:16 christos Exp $	*/
 
 /*-
  * Copyright (c) 2002, 2011 The NetBSD Foundation, Inc.
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: acpi_wakeup.c,v 1.32 2012/08/26 01:04:03 jakllsch Exp $");
+__KERNEL_RCSID(0, "$NetBSD: acpi_wakeup.c,v 1.34 2013/12/01 01:05:16 christos Exp $");
 
 /*-
  * Copyright (c) 2001 Takanori Watanabe <takawata@jp.freebsd.org>
@@ -62,7 +62,7 @@ __KERNEL_RCSID(0, "$NetBSD: acpi_wakeup.c,v 1.32 2012/08/26 01:04:03 jakllsch Ex
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: acpi_wakeup.c,v 1.32 2012/08/26 01:04:03 jakllsch Exp $");
+__KERNEL_RCSID(0, "$NetBSD: acpi_wakeup.c,v 1.34 2013/12/01 01:05:16 christos Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>

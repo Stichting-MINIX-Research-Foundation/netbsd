@@ -1,4 +1,4 @@
-/*	$NetBSD: vfs_bio.c,v 1.239 2012/06/03 16:23:44 dsl Exp $	*/
+/*	$NetBSD: vfs_bio.c,v 1.248 2013/10/25 20:36:08 martin Exp $	*/
 
 /*-
  * Copyright (c) 2007, 2008, 2009 The NetBSD Foundation, Inc.
@@ -123,7 +123,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: vfs_bio.c,v 1.239 2012/06/03 16:23:44 dsl Exp $");
+__KERNEL_RCSID(0, "$NetBSD: vfs_bio.c,v 1.248 2013/10/25 20:36:08 martin Exp $");
 
 #include "opt_bufcache.h"
 
@@ -396,6 +396,7 @@ u_long
 buf_memcalc(void)
 {
 	u_long n;
+	vsize_t mapsz = 0;
 
 	/*
 	 * Determine the upper bound of memory to use for buffers.
@@ -417,7 +418,9 @@ buf_memcalc(void)
 			printf("forcing bufcache %d -> 95", bufcache);
 			bufcache = 95;
 		}
-		n = calc_cache_size(buf_map, bufcache,
+		if (buf_map != NULL)
+			mapsz = vm_map_max(buf_map) - vm_map_min(buf_map);
+		n = calc_cache_size(mapsz, bufcache,
 		    (buf_map != kernel_map) ? 100 : BUFCACHE_VA_MAXPCT)
 		    / PAGE_SIZE;
 	}
@@ -662,11 +665,13 @@ bio_doread(struct vnode *vp, daddr_t blkno, int size, kauth_cred_t cred,
 
 	bp = getblk(vp, blkno, size, 0, 0);
 
-#ifdef DIAGNOSTIC
+	/*
+	 * getblk() may return NULL if we are the pagedaemon.
+	 */
 	if (bp == NULL) {
-		panic("bio_doread: no such buf");
+		KASSERT(curlwp == uvm.pagedaemon_lwp);
+		return NULL;
 	}
-#endif
 
 	/*
 	 * If buffer does not have data valid, start a read.
@@ -688,7 +693,7 @@ bio_doread(struct vnode *vp, daddr_t blkno, int size, kauth_cred_t cred,
 		brelse(bp, 0);
 
 	if (vp->v_type == VBLK)
-		mp = vp->v_specmountpoint;
+		mp = spec_node_getmountedfs(vp);
 	else
 		mp = vp->v_mount;
 
@@ -720,11 +725,17 @@ bread(struct vnode *vp, daddr_t blkno, int size, kauth_cred_t cred,
 
 	/* Get buffer for block. */
 	bp = *bpp = bio_doread(vp, blkno, size, cred, 0);
+	if (bp == NULL)
+		return ENOMEM;
 
 	/* Wait for the read to complete, and return result. */
 	error = biowait(bp);
 	if (error == 0 && (flags & B_MODIFY) != 0)
 		error = fscow_run(bp, true);
+	if (error) {
+		brelse(bp, 0);
+		*bpp = NULL;
+	}
 
 	return error;
 }
@@ -741,6 +752,8 @@ breadn(struct vnode *vp, daddr_t blkno, int size, daddr_t *rablks,
 	int error, i;
 
 	bp = *bpp = bio_doread(vp, blkno, size, cred, 0);
+	if (bp == NULL)
+		return ENOMEM;
 
 	/*
 	 * For each of the read-ahead blocks, start a read, if necessary.
@@ -762,6 +775,11 @@ breadn(struct vnode *vp, daddr_t blkno, int size, daddr_t *rablks,
 	error = biowait(bp);
 	if (error == 0 && (flags & B_MODIFY) != 0)
 		error = fscow_run(bp, true);
+	if (error) {
+		brelse(bp, 0);
+		*bpp = NULL;
+	}
+
 	return error;
 }
 
@@ -782,7 +800,7 @@ bwrite(buf_t *bp)
 	if (vp != NULL) {
 		KASSERT(bp->b_objlock == vp->v_interlock);
 		if (vp->v_type == VBLK)
-			mp = vp->v_specmountpoint;
+			mp = spec_node_getmountedfs(vp);
 		else
 			mp = vp->v_mount;
 	} else {
@@ -957,6 +975,7 @@ brelsel(buf_t *bp, int set)
 	struct bqueue *bufq;
 	struct vnode *vp;
 
+	KASSERT(bp != NULL);
 	KASSERT(mutex_owned(&bufcache_lock));
 	KASSERT(!cv_has_waiters(&bp->b_done));
 	KASSERT(bp->b_refcnt > 0);
@@ -1192,7 +1211,7 @@ buf_t *
 geteblk(int size)
 {
 	buf_t *bp;
-	int error;
+	int error __diagused;
 
 	mutex_enter(&bufcache_lock);
 	while ((bp = getnewbuf(0, 0, 0)) == NULL)
@@ -1417,7 +1436,7 @@ static int
 buf_trim(void)
 {
 	buf_t *bp;
-	long size = 0;
+	long size;
 
 	KASSERT(mutex_owned(&bufcache_lock));
 
@@ -1574,9 +1593,8 @@ int
 buf_syncwait(void)
 {
 	buf_t *bp;
-	int iter, nbusy, nbusy_prev = 0, dcount, ihash;
+	int iter, nbusy, nbusy_prev = 0, ihash;
 
-	dcount = 10000;
 	for (iter = 0; iter < 20;) {
 		mutex_enter(&bufcache_lock);
 		nbusy = 0;

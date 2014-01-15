@@ -1,4 +1,4 @@
-/* $NetBSD: ieee80211_netbsd.c,v 1.21 2012/06/02 21:36:47 dsl Exp $ */
+/* $NetBSD: ieee80211_netbsd.c,v 1.24 2013/06/27 17:47:18 christos Exp $ */
 /*-
  * Copyright (c) 2003-2005 Sam Leffler, Errno Consulting
  * All rights reserved.
@@ -30,7 +30,7 @@
 #ifdef __FreeBSD__
 __FBSDID("$FreeBSD: src/sys/net80211/ieee80211_freebsd.c,v 1.8 2005/08/08 18:46:35 sam Exp $");
 #else
-__KERNEL_RCSID(0, "$NetBSD: ieee80211_netbsd.c,v 1.21 2012/06/02 21:36:47 dsl Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ieee80211_netbsd.c,v 1.24 2013/06/27 17:47:18 christos Exp $");
 #endif
 
 /*
@@ -80,6 +80,10 @@ static int
 ieee80211_init0(void)
 {
 	ieee80211_setup_func * const *ieee80211_setup, f;
+
+	if (max_linkhdr < ALIGN(sizeof(struct ieee80211_qosframe_addr4))) {
+		max_linkhdr = ALIGN(sizeof(struct ieee80211_qosframe_addr4));
+	}
 
         __link_set_foreach(ieee80211_setup, ieee80211_funcs) {
 		f = (void*)*ieee80211_setup;
@@ -531,71 +535,6 @@ if_printf(struct ifnet *ifp, const char *fmt, ...)
 	return;
 }
 
-/*
- * Set the m_data pointer of a newly-allocated mbuf
- * to place an object of the specified size at the
- * end of the mbuf, longword aligned.
- */
-void
-m_align(struct mbuf *m, int len)
-{
-       int adjust;
-
-       if (m->m_flags & M_EXT)
-	       adjust = m->m_ext.ext_size - len;
-       else if (m->m_flags & M_PKTHDR)
-	       adjust = MHLEN - len;
-       else
-	       adjust = MLEN - len;
-       m->m_data += adjust &~ (sizeof(long)-1);
-}
-
-/*
- * Append the specified data to the indicated mbuf chain,
- * Extend the mbuf chain if the new data does not fit in
- * existing space.
- *
- * Return 1 if able to complete the job; otherwise 0.
- */
-int
-m_append(struct mbuf *m0, int len, const void *cpv)
-{
-	struct mbuf *m, *n;
-	int remainder, space;
-	const char *cp = cpv;
-
-	for (m = m0; m->m_next != NULL; m = m->m_next)
-		continue;
-	remainder = len;
-	space = M_TRAILINGSPACE(m);
-	if (space > 0) {
-		/*
-		 * Copy into available space.
-		 */
-		if (space > remainder)
-			space = remainder;
-		memmove(mtod(m, char *) + m->m_len, cp, space);
-		m->m_len += space;
-		cp = cp + space, remainder -= space;
-	}
-	while (remainder > 0) {
-		/*
-		 * Allocate a new mbuf; could check space
-		 * and allocate a cluster instead.
-		 */
-		n = m_get(M_DONTWAIT, m->m_type);
-		if (n == NULL)
-			break;
-		n->m_len = min(MLEN, remainder);
-		memmove(mtod(n, void *), cp, n->m_len);
-		cp += n->m_len, remainder -= n->m_len;
-		m->m_next = n;
-		m = n;
-	}
-	if (m0->m_flags & M_PKTHDR)
-		m0->m_pkthdr.len += len - remainder;
-	return (remainder == 0);
-}
 
 /*
  * Allocate and setup a management frame of the specified
@@ -651,8 +590,8 @@ ieee80211_notify_node_join(struct ieee80211com *ic, struct ieee80211_node *ni, i
 	struct ifnet *ifp = ic->ic_ifp;
 	struct ieee80211_join_event iev;
 
-	IEEE80211_DPRINTF(ic, IEEE80211_MSG_NODE, "%s: %snode %s join\n",
-	    ifp->if_xname, (ni == ic->ic_bss) ? "bss " : "",
+	IEEE80211_DPRINTF(ic, IEEE80211_MSG_NODE, "%snode %s join\n",
+	    (ni == ic->ic_bss) ? "bss " : "",
 	    ether_sprintf(ni->ni_macaddr));
 
 	memset(&iev, 0, sizeof(iev));
@@ -676,8 +615,8 @@ ieee80211_notify_node_leave(struct ieee80211com *ic, struct ieee80211_node *ni)
 	struct ifnet *ifp = ic->ic_ifp;
 	struct ieee80211_leave_event iev;
 
-	IEEE80211_DPRINTF(ic, IEEE80211_MSG_NODE, "%s: %snode %s leave\n",
-	    ifp->if_xname, (ni == ic->ic_bss) ? "bss " : "",
+	IEEE80211_DPRINTF(ic, IEEE80211_MSG_NODE, "%snode %s leave\n",
+	    (ni == ic->ic_bss) ? "bss " : "",
 	    ether_sprintf(ni->ni_macaddr));
 
 	if (ni == ic->ic_bss) {
@@ -697,7 +636,7 @@ ieee80211_notify_scan_done(struct ieee80211com *ic)
 	struct ifnet *ifp = ic->ic_ifp;
 
 	IEEE80211_DPRINTF(ic, IEEE80211_MSG_SCAN,
-		"%s: notify scan done\n", ic->ic_ifp->if_xname);
+		"%s", "notify scan done\n");
 
 	/* dispatch wireless event indicating scan completed */
 	rt_ieee80211msg(ifp, RTM_IEEE80211_SCAN, NULL, 0);

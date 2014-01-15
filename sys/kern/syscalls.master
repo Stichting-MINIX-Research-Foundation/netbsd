@@ -1,4 +1,4 @@
-	$NetBSD: syscalls.master,v 1.261 2012/10/02 01:44:28 christos Exp $
+	$NetBSD: syscalls.master,v 1.264 2013/10/17 18:01:11 njoly Exp $
 
 ;	@(#)syscalls.master	8.2 (Berkeley) 1/13/94
 
@@ -834,7 +834,7 @@
 433	STD MODULAR	{ ssize_t|sys|50|mq_timedreceive(mqd_t mqdes, \
 			    char *msg_ptr, size_t msg_len, unsigned *msg_prio, \
 			    const struct timespec *abs_timeout); }
-434	STD 		{ int|sys|50|_lwp_park(const struct timespec *ts, \
+434	COMPAT_60 MODULAR { int|sys||_lwp_park(const struct timespec *ts, \
 				lwpid_t unpark, const void *hint, \
 				const void *unparkhint); }
 435	STD	RUMP	{ int|sys|50|kevent(int fd, \
@@ -902,7 +902,7 @@
 459	STD  RUMP	{ int|sys||mkfifoat(int fd, const char *path, \
 			    mode_t mode); }
 460	STD  RUMP	{ int|sys||mknodat(int fd, const char *path, \
-			    mode_t mode, uint32_t dev); }
+			    mode_t mode, int PAD, dev_t dev); }
 461	STD  RUMP	{ int|sys||mkdirat(int fd, const char *path, \
 			    mode_t mode); }
 462	STD  RUMP	{ int|sys||faccessat(int fd, const char *path, \
@@ -911,7 +911,7 @@
 			    mode_t mode, int flag); }
 464	STD  RUMP	{ int|sys||fchownat(int fd, const char *path, \
 			    uid_t owner, gid_t group, int flag); }
-465	STD  RUMP	{ int|sys||fexecve(int fd, \
+465	STD  		{ int|sys||fexecve(int fd, \
 			    char * const *argp, char * const *envp); }
 466	STD  RUMP	{ int|sys||fstatat(int fd, const char *path, \
 			    struct stat *buf, int flag); }
@@ -933,11 +933,14 @@
 			    const struct posix_spawn_file_actions *file_actions, \
 			    const struct posix_spawnattr *attrp, \
 			    char *const *argv, char *const *envp); }
-475	STD		{ int|sys||recvmmsg(int s, struct mmsghdr *mmsg, \
+475	STD  RUMP	{ int|sys||recvmmsg(int s, struct mmsghdr *mmsg, \
 			    unsigned int vlen, unsigned int flags, \
 			    struct timespec *timeout); }
-476	STD		{ int|sys||sendmmsg(int s, struct mmsghdr *mmsg, \
+476	STD  RUMP	{ int|sys||sendmmsg(int s, struct mmsghdr *mmsg, \
 			    unsigned int vlen, unsigned int flags); }
 477	STD 		{ int|sys||clock_nanosleep(clockid_t clock_id, \
 			    int flags, const struct timespec *rqtp, \
 			    struct timespec *rmtp); }
+478	STD 		{ int|sys|60|_lwp_park(clockid_t clock_id, int flags, \
+			    const struct timespec *ts, lwpid_t unpark, \
+			    const void *hint, const void *unparkhint); }

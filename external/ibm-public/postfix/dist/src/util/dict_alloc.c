@@ -1,4 +1,4 @@
-/*	$NetBSD: dict_alloc.c,v 1.1.1.1 2009/06/23 10:08:58 tron Exp $	*/
+/*	$NetBSD: dict_alloc.c,v 1.1.1.3 2013/09/25 19:06:36 tron Exp $	*/
 
 /*++
 /* NAME
@@ -24,6 +24,14 @@
 /*	ones that it supports.
 /*	The purpose of the default methods is to trap an attempt to
 /*	invoke an unsupported method.
+/*
+/*	One exception is the default lock function.  When the
+/*	dictionary provides a file handle for locking, the default
+/*	lock function returns the result from myflock(), otherwise
+/*	it returns 0. Presently, the lock function is used only to
+/*	implement the DICT_FLAG_OPEN_LOCK feature (lock the database
+/*	exclusively after it is opened) for databases that are not
+/*	multi-writer safe.
 /*
 /*	dict_free() releases memory and cleans up after dict_alloc().
 /*	It is up to the caller to dispose of any memory that was allocated
@@ -61,22 +69,23 @@
 
 #include "msg.h"
 #include "mymalloc.h"
+#include "myflock.h"
 #include "dict.h"
 
 /* dict_default_lookup - trap unimplemented operation */
 
 static const char *dict_default_lookup(DICT *dict, const char *unused_key)
 {
-    msg_fatal("%s table %s: lookup operation is not supported",
+    msg_fatal("table %s:%s: lookup operation is not supported",
 	      dict->type, dict->name);
 }
 
 /* dict_default_update - trap unimplemented operation */
 
-static void dict_default_update(DICT *dict, const char *unused_key,
-				        const char *unused_value)
+static int dict_default_update(DICT *dict, const char *unused_key,
+			               const char *unused_value)
 {
-    msg_fatal("%s table %s: update operation is not supported",
+    msg_fatal("table %s:%s: update operation is not supported",
 	      dict->type, dict->name);
 }
 
@@ -84,7 +93,7 @@ static void dict_default_update(DICT *dict, const char *unused_key,
 
 static int dict_default_delete(DICT *dict, const char *unused_key)
 {
-    msg_fatal("%s table %s: delete operation is not supported",
+    msg_fatal("table %s:%s: delete operation is not supported",
 	      dict->type, dict->name);
 }
 
@@ -93,15 +102,26 @@ static int dict_default_delete(DICT *dict, const char *unused_key)
 static int dict_default_sequence(DICT *dict, int unused_function,
 		         const char **unused_key, const char **unused_value)
 {
-    msg_fatal("%s table %s: sequence operation is not supported",
+    msg_fatal("table %s:%s: sequence operation is not supported",
 	      dict->type, dict->name);
 }
 
+/* dict_default_lock - default lock handler */
+
+static int dict_default_lock(DICT *dict, int operation)
+{
+    if (dict->lock_fd >= 0) {
+	return (myflock(dict->lock_fd, INTERNAL_LOCK, operation));
+    } else {
+	return (0);
+    }
+}
+ 
 /* dict_default_close - trap unimplemented operation */
 
 static void dict_default_close(DICT *dict)
 {
-    msg_fatal("%s table %s: close operation is not supported",
+    msg_fatal("table %s:%s: close operation is not supported",
 	      dict->type, dict->name);
 }
 
@@ -119,10 +139,14 @@ DICT   *dict_alloc(const char *dict_type, const char *dict_name, ssize_t size)
     dict->delete = dict_default_delete;
     dict->sequence = dict_default_sequence;
     dict->close = dict_default_close;
+    dict->lock = dict_default_lock;
     dict->lock_fd = -1;
     dict->stat_fd = -1;
     dict->mtime = 0;
     dict->fold_buf = 0;
+    dict->owner.status = DICT_OWNER_UNKNOWN;
+    dict->owner.uid = ~0;
+    dict->error = DICT_ERR_NONE;
     return dict;
 }
 

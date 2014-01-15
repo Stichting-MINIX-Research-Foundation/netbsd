@@ -1,0 +1,24 @@
+#	$NetBSD: std.n900,v 1.4 2013/11/01 18:41:06 skrll Exp $
+#
+# standard NetBSD/evbarm for N900 options
+
+machine	evbarm arm
+include 	"arch/evbarm/conf/std.evbarm"
+
+# Pull in N900 config definitions.
+include		"arch/evbarm/conf/files.n900"
+
+# To support easy transit to ../arch/arm/arm32
+options 	__HAVE_CPU_COUNTER
+options 	CORTEX_PMC
+options 	__HAVE_FAST_SOFTINTS		# should be in types.h
+options 	TPIDRPRW_IS_CURCPU
+options 	KERNEL_BASE_EXT=0x80000000
+options 	FPU_VFP
+
+makeoptions	LOADADDRESS="0x80300000"
+makeoptions	BOARDTYPE="n900"
+makeoptions	BOARDMKFRAG="${THISARM}/conf/mk.beagle"
+
+options 	ARM_INTR_IMPL="<arch/arm/omap/omap2_intr.h>"
+options		ARM_GENERIC_TODR

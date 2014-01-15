@@ -1,4 +1,4 @@
-/*	$NetBSD: pxa2x0_pcic.c,v 1.10 2011/07/26 22:52:48 dyoung Exp $	*/
+/*	$NetBSD: pxa2x0_pcic.c,v 1.12 2013/10/13 06:55:34 riz Exp $	*/
 /*	$OpenBSD: pxa2x0_pcic.c,v 1.17 2005/12/14 15:08:51 uwe Exp $	*/
 
 /*
@@ -18,7 +18,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: pxa2x0_pcic.c,v 1.10 2011/07/26 22:52:48 dyoung Exp $");
+__KERNEL_RCSID(0, "$NetBSD: pxa2x0_pcic.c,v 1.12 2013/10/13 06:55:34 riz Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -44,7 +44,7 @@ __KERNEL_RCSID(0, "$NetBSD: pxa2x0_pcic.c,v 1.10 2011/07/26 22:52:48 dyoung Exp 
 
 static int	pxapcic_print(void *, const char *);
 
-static void	pxapcic_doattach(struct device *);
+static void	pxapcic_doattach(device_t);
 
 static void	pxapcic_event_thread(void *);
 static void	pxapcic_event_process(struct pxapcic_socket *);
@@ -396,7 +396,7 @@ pxapcic_attach_common(struct pxapcic_softc *sc,
 }
 
 void
-pxapcic_doattach(struct device *self)
+pxapcic_doattach(device_t self)
 {
 	struct pxapcic_softc *sc = device_private(self);
 	struct pxapcic_socket *sock;
@@ -417,7 +417,7 @@ pxapcic_doattach(struct device *self)
 	for (i = 0; i < sc->sc_nslots; i++) {
 		sock = &sc->sc_socket[s[i]];
 
-		config_pending_incr();
+		config_pending_incr(self);
 
 		/* If there's a card there, attach it. */
 		cs = (*sock->pcictag->read)(sock, PXAPCIC_CARD_STATUS);
@@ -455,7 +455,7 @@ pxapcic_event_thread(void *arg)
 	u_int cs;
 	int present;
 
-	config_pending_decr();
+	config_pending_decr(sock->sc->sc_dev);
 
 	while (sock->sc->sc_shutdown == 0) {
 		(void) tsleep(sock, PWAIT, "pxapcicev", 0);

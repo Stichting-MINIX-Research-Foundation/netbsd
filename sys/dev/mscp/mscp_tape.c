@@ -1,4 +1,4 @@
-/*	$NetBSD: mscp_tape.c,v 1.38 2009/05/12 14:37:59 cegger Exp $ */
+/*	$NetBSD: mscp_tape.c,v 1.40 2013/10/25 16:00:35 martin Exp $ */
 /*
  * Copyright (c) 1996 Ludd, University of Lule}, Sweden.
  * All rights reserved.
@@ -41,7 +41,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: mscp_tape.c,v 1.38 2009/05/12 14:37:59 cegger Exp $");
+__KERNEL_RCSID(0, "$NetBSD: mscp_tape.c,v 1.40 2013/10/25 16:00:35 martin Exp $");
 
 #include <sys/param.h>
 #include <sys/device.h>
@@ -69,7 +69,7 @@ __KERNEL_RCSID(0, "$NetBSD: mscp_tape.c,v 1.38 2009/05/12 14:37:59 cegger Exp $"
  * Drive status, per drive
  */
 struct mt_softc {
-	struct	device mt_dev;	/* Autoconf struct */
+	device_t mt_dev;	/* Autoconf struct */
 	int	mt_state;	/* open/closed state */
 	int	mt_hwunit;	/* Hardware unit number */
 	int	mt_inuse;	/* Locks the tape drive for others */
@@ -110,7 +110,7 @@ struct	mscp_device mt_device = {
 #define mtnorewind(dev) (dev & T_NOREWIND)
 #define mthdensity(dev) (dev & T_1600BPI)
 
-CFATTACH_DECL(mt, sizeof(struct mt_softc),
+CFATTACH_DECL_NEW(mt, sizeof(struct mt_softc),
     mtmatch, mtattach, NULL, NULL);
 
 extern struct cfdriver mt_cd;
@@ -159,8 +159,9 @@ mtattach(device_t parent, device_t self, void *aux)
 	struct	mt_softc *mt = device_private(self);
 	struct	drive_attach_args *da = aux;
 	struct	mscp *mp = da->da_mp;
-	struct	mscp_softc *mi = (void *)parent;
+	struct	mscp_softc *mi = device_private(parent);
 
+	mt->mt_dev = self;
 	mt->mt_hwunit = mp->mscp_unit;
 	mi->mi_dp[mp->mscp_unit] = self;
 
@@ -176,8 +177,7 @@ mt_putonline(struct mt_softc *mt)
 {
 	struct	mscp *mp;
 	struct	mscp_softc *mi =
-	    (struct mscp_softc *)device_parent(&mt->mt_dev);
-	volatile int i;
+	    device_private(device_parent(mt->mt_dev));
 
 	((volatile struct mt_softc *) mt)->mt_state = MT_OFFLINE;
 	mp = mscp_getcp(mi, MSCP_WAIT);
@@ -187,7 +187,7 @@ mt_putonline(struct mt_softc *mt)
 	*mp->mscp_addr |= MSCP_OWN | MSCP_INT;
 
 	/* Poll away */
-	i = bus_space_read_2(mi->mi_iot, mi->mi_iph, 0);
+	bus_space_read_2(mi->mi_iot, mi->mi_iph, 0);
 	if (tsleep(&mt->mt_state, PRIBIO, "mtonline", 240 * hz))
 		return MSCP_FAILED;
 
@@ -267,7 +267,7 @@ mtstrategy(struct buf *bp)
 	}
 
 	mt->mt_waswrite = bp->b_flags & B_READ ? 0 : 1;
-	mscp_strategy(bp, device_parent(&mt->mt_dev));
+	mscp_strategy(bp, device_parent(mt->mt_dev));
 	return;
 }
 
@@ -382,10 +382,10 @@ mtioerror(device_t usc, struct mscp *mp, struct buf *bp)
 		mt->mt_serex = 2;
 	else {
 		if (st && st < 17)
-			printf("%s: error %d (%s)\n", device_xname(&mt->mt_dev), st,
+			printf("%s: error %d (%s)\n", device_xname(mt->mt_dev), st,
 			    mt_ioerrs[st-1]);
 		else
-			printf("%s: error %d\n", device_xname(&mt->mt_dev), st);
+			printf("%s: error %d\n", device_xname(mt->mt_dev), st);
 		bp->b_error = EROFS;
 	}
 
@@ -447,8 +447,7 @@ int
 mtcmd(struct mt_softc *mt, int cmd, int count, int complete)
 {
 	struct mscp *mp;
-	struct mscp_softc *mi = (void *)device_parent(&mt->mt_dev);
-	volatile int i;
+	struct mscp_softc *mi = device_private(device_parent(mt->mt_dev));
 
 	mp = mscp_getcp(mi, MSCP_WAIT);
 
@@ -507,7 +506,7 @@ mtcmd(struct mt_softc *mt, int cmd, int count, int complete)
 		break;
 	}
 
-	i = bus_space_read_2(mi->mi_iot, mi->mi_iph, 0);
+	bus_space_read_2(mi->mi_iot, mi->mi_iph, 0);
 	tsleep(&mt->mt_inuse, PRIBIO, "mtioctl", 0);
 	return mt->mt_ioctlerr;
 }
@@ -522,7 +521,7 @@ mtcmddone(device_t usc, struct mscp *mp)
 
 	if (mp->mscp_status) {
 		mt->mt_ioctlerr = EIO;
-		printf("%s: bad status %x\n", device_xname(&mt->mt_dev),
+		printf("%s: bad status %x\n", device_xname(mt->mt_dev),
 		    mp->mscp_status);
 	}
 	wakeup(&mt->mt_inuse);

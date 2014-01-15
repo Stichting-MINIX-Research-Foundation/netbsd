@@ -1,4 +1,4 @@
-/*	$NetBSD: npf_state.c,v 1.12 2012/08/15 19:47:38 rmind Exp $	*/
+/*	$NetBSD: npf_state.c,v 1.15 2013/11/04 22:17:21 rmind Exp $	*/
 
 /*-
  * Copyright (c) 2010-2012 The NetBSD Foundation, Inc.
@@ -34,7 +34,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: npf_state.c,v 1.12 2012/08/15 19:47:38 rmind Exp $");
+__KERNEL_RCSID(0, "$NetBSD: npf_state.c,v 1.15 2013/11/04 22:17:21 rmind Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -46,7 +46,7 @@ __KERNEL_RCSID(0, "$NetBSD: npf_state.c,v 1.12 2012/08/15 19:47:38 rmind Exp $")
 /*
  * Generic session states and timeout table.
  *
- * Note: used for connnection-less protocols.
+ * Note: used for connection-less protocols.
  */
 
 #define	NPF_ANY_SESSION_CLOSED		0
@@ -54,7 +54,7 @@ __KERNEL_RCSID(0, "$NetBSD: npf_state.c,v 1.12 2012/08/15 19:47:38 rmind Exp $")
 #define	NPF_ANY_SESSION_ESTABLISHED	2
 #define	NPF_ANY_SESSION_NSTATES		3
 
-static const int npf_generic_fsm[NPF_ANY_SESSION_NSTATES][2] = {
+static const uint8_t npf_generic_fsm[NPF_ANY_SESSION_NSTATES][2] = {
 	[NPF_ANY_SESSION_CLOSED] = {
 		[NPF_FLOW_FORW]		= NPF_ANY_SESSION_NEW,
 	},
@@ -92,9 +92,9 @@ static void (*npf_state_sample)(npf_state_t *, bool) = NULL;
  * success and false otherwise (e.g. if protocol is not supported).
  */
 bool
-npf_state_init(const npf_cache_t *npc, nbuf_t *nbuf, npf_state_t *nst)
+npf_state_init(npf_cache_t *npc, nbuf_t *nbuf, npf_state_t *nst)
 {
-	const int proto = npf_cache_ipproto(npc);
+	const int proto = npc->npc_proto;
 	bool ret;
 
 	KASSERT(npf_iscached(npc, NPC_IP46));
@@ -124,7 +124,6 @@ npf_state_init(const npf_cache_t *npc, nbuf_t *nbuf, npf_state_t *nst)
 void
 npf_state_destroy(npf_state_t *nst)
 {
-
 	nst->nst_state = 0;
 	mutex_destroy(&nst->nst_lock);
 }
@@ -136,10 +135,10 @@ npf_state_destroy(npf_state_t *nst)
  * the packet belongs to the tracked connection) and false otherwise.
  */
 bool
-npf_state_inspect(const npf_cache_t *npc, nbuf_t *nbuf,
+npf_state_inspect(npf_cache_t *npc, nbuf_t *nbuf,
     npf_state_t *nst, const bool forw)
 {
-	const int proto = npf_cache_ipproto(npc);
+	const int proto = npc->npc_proto;
 	const int di = forw ? NPF_FLOW_FORW : NPF_FLOW_BACK;
 	bool ret;
 
@@ -170,7 +169,7 @@ npf_state_inspect(const npf_cache_t *npc, nbuf_t *nbuf,
 int
 npf_state_etime(const npf_state_t *nst, const int proto)
 {
-	const int state = nst->nst_state;
+	const u_int state = nst->nst_state;
 	int timeout = 0;
 
 	switch (proto) {

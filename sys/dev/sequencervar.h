@@ -1,4 +1,4 @@
-/*	$NetBSD: sequencervar.h,v 1.14 2011/11/23 23:07:31 jmcneill Exp $	*/
+/*	$NetBSD: sequencervar.h,v 1.16 2013/04/27 22:12:42 christos Exp $	*/
 
 /*
  * Copyright (c) 1998, 2008 The NetBSD Foundation, Inc.
@@ -74,8 +74,6 @@ struct midi_dev {
 };
 
 struct sequencer_softc {
-	struct	device dev;
-	struct	device *sc_dev;	/* Hardware device struct */
 	callout_t sc_callout;
 	kmutex_t lock;
 	kcondvar_t wchan;
@@ -106,6 +104,8 @@ struct sequencer_softc {
 
 	struct	sequencer_queue inq; /* input event queue */
 	u_long	input_stamp;
+	int	sc_unit;
+	LIST_ENTRY(sequencer_softc) sc_link;
 };
 
 void seq_event_intr(void *, seq_event_t *);

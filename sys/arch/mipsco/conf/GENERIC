@@ -1,4 +1,4 @@
-# $NetBSD: GENERIC,v 1.79 2012/03/10 21:51:54 joerg Exp $
+# $NetBSD: GENERIC,v 1.84 2013/06/30 21:38:57 rmind Exp $
 #
 # GENERIC machine description file
 # 
@@ -67,6 +67,7 @@ options 	COMPAT_20		# NetBSD 2.0 binary compatibility
 options 	COMPAT_30		# NetBSD 3.0 compatibility.
 options 	COMPAT_40		# NetBSD 4.0 compatibility.
 options 	COMPAT_50		# NetBSD 5.0 compatibility.
+options 	COMPAT_60	# NetBSD 6.0 compatibility.
 #options 	EXEC_AOUT		# exec a.out binaries
 #options 	EXEC_ECOFF		# exec ecoff binaries
 #options 	TCP_COMPAT_42	# 4.2BSD TCP/IP bug compat. Not recommended.
@@ -100,13 +101,10 @@ options 	INET		# Internet protocols
 #options 	GATEWAY		# IP packet forwarding
 #options 	MROUTING	# packet forwarding of multicast packets
 #options 	PIM		# Protocol Independent Multicast
-#options 	ISO,TPIP	# OSI networking
-#options 	EON		# OSI tunneling over IP
 #options 	NETATALK	# AppleTalk (over Ethernet) protocol
 #options 	PPP_BSDCOMP	# BSD-Compress compression support for PPP
 #options 	PPP_DEFLATE	# Deflate compression support for PPP
 #options 	PPP_FILTER	# Active filter support for PPP (requires bpf)
-#options 	PFIL_HOOKS	# pfil(9) packet filter hooks
 #options 	IPFILTER_LOG	# ipmon(8) log support
 #options 	IPFILTER_LOOKUP	# ippool(8) support
 #options 	IPFILTER_DEFAULT_BLOCK	# block all packets by default
@@ -174,9 +172,9 @@ pseudo-device	bpfilter		# Berkeley Packet Filter
 #pseudo-device	carp			# Common Address Redundancy Protocol
 #pseudo-device	vnd			# disk-like interface to files
 #options 	VND_COMPRESSION		# compressed vnd(4)
-#pseudo-device	ccd		4	# concatenated and striped disks
-#pseudo-device	cgd		4	# cryptographic disks
-#pseudo-device	raid		8	# RAIDframe disk driver
+#pseudo-device	ccd			# concatenated and striped disks
+#pseudo-device	cgd			# cryptographic disks
+#pseudo-device	raid			# RAIDframe disk driver
 # Options to enable various other RAIDframe RAID types.
 # options	RF_INCLUDE_EVENODD=1
 # options	RF_INCLUDE_RAID5_RS=1
@@ -203,7 +201,7 @@ pseudo-device	ksyms			# /dev/ksyms
 # Veriexec
 #
 # a pseudo device needed for veriexec
-#pseudo-device	veriexec		1
+#pseudo-device	veriexec
 #
 # Uncomment the fingerprint methods below that are desired. Note that
 # removing fingerprint methods will have almost no impact on the kernel

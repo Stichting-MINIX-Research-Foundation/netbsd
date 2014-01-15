@@ -1,4 +1,4 @@
-/*	$NetBSD: powernow.c,v 1.6 2012/07/18 21:55:05 joerg Exp $ */
+/*	$NetBSD: powernow.c,v 1.8 2013/11/15 08:47:55 msaitoh Exp $ */
 /*	$OpenBSD: powernow-k8.c,v 1.8 2006/06/16 05:58:50 gwk Exp $ */
 
 /*-
@@ -57,7 +57,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: powernow.c,v 1.6 2012/07/18 21:55:05 joerg Exp $");
+__KERNEL_RCSID(0, "$NetBSD: powernow.c,v 1.8 2013/11/15 08:47:55 msaitoh Exp $");
 
 #include <sys/param.h>
 #include <sys/device.h>
@@ -153,7 +153,7 @@ powernow_match(device_t parent, cfdata_t cf, void *aux)
 	if (cpu_vendor != CPUVENDOR_AMD)
 		return 0;
 
-	family = CPUID2FAMILY(ci->ci_signature);
+	family = CPUID_TO_BASEFAMILY(ci->ci_signature);
 
 	if (family != 0x06 && family != 0x0f)
 		return 0;
@@ -190,7 +190,7 @@ powernow_attach(device_t parent, device_t self, void *aux)
 	sc->sc_state = NULL;
 	sc->sc_freqs = NULL;
 
-	family = CPUID2FAMILY(ci->ci_signature);
+	family = CPUID_TO_BASEFAMILY(ci->ci_signature);
 
 	switch (family) {
 
@@ -342,7 +342,7 @@ powernow_sysctl_helper(SYSCTLFN_ARGS)
 	if (error || newp == NULL)
 		return error;
 
-	family = CPUID2FAMILY(sc->sc_ci->ci_signature);
+	family = CPUID_TO_BASEFAMILY(sc->sc_ci->ci_signature);
 
 	if (rnode->sysctl_num == sc->sc_node_target && fq != oldfq) {
 
@@ -378,7 +378,7 @@ powernow_k7_init(device_t self)
 	struct powernow_softc *sc = device_private(self);
 	uint32_t currentfid, maxfid, mhz, startvid;
 	uint64_t status;
-	int i, rv, len;
+	int i, rv;
 	char tmp[6];
 
 	sc->sc_state = kmem_alloc(sizeof(*sc->sc_state), KM_SLEEP);
@@ -428,7 +428,7 @@ powernow_k7_init(device_t self)
 			sc->sc_state->state_table[i].fid,
 			sc->sc_state->state_table[i].vid));
 
-		len += snprintf(tmp, sizeof(tmp), "%d%s",
+		snprintf(tmp, sizeof(tmp), "%d%s",
 		    sc->sc_state->state_table[i].freq,
 		    i < sc->sc_state->n_states - 1 ? " " : "");
 

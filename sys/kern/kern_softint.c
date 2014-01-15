@@ -1,4 +1,4 @@
-/*	$NetBSD: kern_softint.c,v 1.38 2011/09/27 01:02:38 jym Exp $	*/
+/*	$NetBSD: kern_softint.c,v 1.40 2013/09/07 03:34:59 matt Exp $	*/
 
 /*-
  * Copyright (c) 2007, 2008 The NetBSD Foundation, Inc.
@@ -176,7 +176,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: kern_softint.c,v 1.38 2011/09/27 01:02:38 jym Exp $");
+__KERNEL_RCSID(0, "$NetBSD: kern_softint.c,v 1.40 2013/09/07 03:34:59 matt Exp $");
 
 #include <sys/param.h>
 #include <sys/proc.h>
@@ -186,6 +186,7 @@ __KERNEL_RCSID(0, "$NetBSD: kern_softint.c,v 1.38 2011/09/27 01:02:38 jym Exp $"
 #include <sys/evcnt.h>
 #include <sys/cpu.h>
 #include <sys/xcall.h>
+#include <sys/pserialize.h>
 
 #include <net/netisr.h>
 
@@ -402,7 +403,8 @@ softint_disestablish(void *arg)
 	u_int flags;
 
 	offset = (uintptr_t)arg;
-	KASSERT(offset != 0 && offset < softint_bytes);
+	KASSERTMSG(offset != 0 && offset < softint_bytes, "%"PRIuPTR" %u",
+	    offset, softint_bytes);
 
 	/*
 	 * Run a cross call so we see up to date values of sh_flags from
@@ -461,7 +463,8 @@ softint_schedule(void *arg)
 
 	/* Find the handler record for this CPU. */
 	offset = (uintptr_t)arg;
-	KASSERT(offset != 0 && offset < softint_bytes);
+	KASSERTMSG(offset != 0 && offset < softint_bytes, "%"PRIuPTR" %u",
+	    offset, softint_bytes);
 	sh = (softhand_t *)((uint8_t *)curcpu()->ci_data.cpu_softcpu + offset);
 
 	/* If it's already pending there's nothing to do. */
@@ -827,6 +830,9 @@ softint_dispatch(lwp_t *pinned, int s)
 		updatertime(l, &now);
 		l->l_pflag &= ~LP_TIMEINTR;
 	}
+
+	/* Indicate a soft-interrupt switch. */
+	pserialize_switchpoint();
 
 	/*
 	 * If we blocked while handling the interrupt, the pinned LWP is

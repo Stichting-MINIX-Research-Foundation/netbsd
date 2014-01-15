@@ -1,4 +1,4 @@
-/*	$NetBSD: rumpuser_pth_dummy.c,v 1.2 2011/05/23 20:49:08 joerg Exp $	*/
+/*	$NetBSD: rumpuser_pth_dummy.c,v 1.16 2013/05/15 14:52:49 pooka Exp $	*/
 
 /*
  * Copyright (c) 2009 Antti Kantee.  All Rights Reserved.
@@ -25,9 +25,11 @@
  * SUCH DAMAGE.
  */
 
+#include "rumpuser_port.h"
+
 #include <sys/cdefs.h>
 #if !defined(lint)
-__RCSID("$NetBSD: rumpuser_pth_dummy.c,v 1.2 2011/05/23 20:49:08 joerg Exp $");
+__RCSID("$NetBSD: rumpuser_pth_dummy.c,v 1.16 2013/05/15 14:52:49 pooka Exp $");
 #endif /* !lint */
 
 #include <sys/time.h>
@@ -38,54 +40,36 @@ __RCSID("$NetBSD: rumpuser_pth_dummy.c,v 1.2 2011/05/23 20:49:08 joerg Exp $");
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
+#include <time.h>
 
 #include <rump/rumpuser.h>
 
 #include "rumpuser_int.h"
 
+static struct lwp *curlwp;
+
 struct rumpuser_cv {};
 
 struct rumpuser_mtx {
 	int v;
+	struct lwp *o;
 };
 
 struct rumpuser_rw {
 	int v;
 };
 
-struct rumpuser_mtx rumpuser_aio_mtx;
-struct rumpuser_cv rumpuser_aio_cv;
-int rumpuser_aio_head, rumpuser_aio_tail;
-struct rumpuser_aio rumpuser_aios[N_AIOS];
-
-void donada(int);
-/*ARGSUSED*/
-void donada(int arg) {}
-void dounnada(int, int *);
-/*ARGSUSED*/
-void dounnada(int arg, int *ap) {}
-kernel_lockfn   rumpuser__klock = donada;
-kernel_unlockfn rumpuser__kunlock = dounnada;
-
-/*ARGSUSED*/
 void
-rumpuser_thrinit(kernel_lockfn lockfn, kernel_unlockfn unlockfn, int threads)
+rumpuser__thrinit(void)
 {
 
-}
-
-/*ARGSUSED*/
-void
-rumpuser_biothread(void *arg)
-{
-
-	fprintf(stderr, "rumpuser: threads not available\n");
-	abort();
+	return;
 }
 
 /*ARGSUSED*/
 int
-rumpuser_thread_create(void *(*f)(void *), void *arg, const char *thrname)
+rumpuser_thread_create(void *(*f)(void *), void *arg, const char *thrname,
+	int joinable, int pri, int cpuidx, void **tptr)
 {
 
 	fprintf(stderr, "rumpuser: threads not available\n");
@@ -101,18 +85,18 @@ rumpuser_thread_exit(void)
 	abort();
 }
 
-void
-rumpuser_mutex_init(struct rumpuser_mtx **mtx)
+int
+rumpuser_thread_join(void *p)
 {
 
-	*mtx = calloc(1, sizeof(struct rumpuser_mtx));
+	return 0;
 }
 
 void
-rumpuser_mutex_recursive_init(struct rumpuser_mtx **mtx)
+rumpuser_mutex_init(struct rumpuser_mtx **mtx, int flgas)
 {
 
-	rumpuser_mutex_init(mtx);
+	*mtx = calloc(1, sizeof(struct rumpuser_mtx));
 }
 
 void
@@ -120,6 +104,14 @@ rumpuser_mutex_enter(struct rumpuser_mtx *mtx)
 {
 
 	mtx->v++;
+	mtx->o = curlwp;
+}
+
+void
+rumpuser_mutex_enter_nowrap(struct rumpuser_mtx *mtx)
+{
+
+	rumpuser_mutex_enter(mtx);
 }
 
 int
@@ -127,14 +119,16 @@ rumpuser_mutex_tryenter(struct rumpuser_mtx *mtx)
 {
 
 	mtx->v++;
-	return 1;
+	return 0;
 }
 
 void
 rumpuser_mutex_exit(struct rumpuser_mtx *mtx)
 {
 
-	mtx->v--;
+	assert(mtx->v > 0);
+	if (--mtx->v == 0)
+		mtx->o = NULL;
 }
 
 void
@@ -144,11 +138,11 @@ rumpuser_mutex_destroy(struct rumpuser_mtx *mtx)
 	free(mtx);
 }
 
-int
-rumpuser_mutex_held(struct rumpuser_mtx *mtx)
+void
+rumpuser_mutex_owner(struct rumpuser_mtx *mtx, struct lwp **lp)
 {
 
-	return mtx->v;
+	*lp = mtx->o;
 }
 
 void
@@ -159,24 +153,28 @@ rumpuser_rw_init(struct rumpuser_rw **rw)
 }
 
 void
-rumpuser_rw_enter(struct rumpuser_rw *rw, int write)
+rumpuser_rw_enter(int enum_rumprwlock, struct rumpuser_rw *rw)
 {
+	enum rumprwlock lk = enum_rumprwlock;
 
-	if (write) {
+	switch (lk) {
+	case RUMPUSER_RW_WRITER:
 		rw->v++;
 		assert(rw->v == 1);
-	} else {
+		break;
+	case RUMPUSER_RW_READER:
 		assert(rw->v <= 0);
 		rw->v--;
+		break;
 	}
 }
 
 int
-rumpuser_rw_tryenter(struct rumpuser_rw *rw, int write)
+rumpuser_rw_tryenter(int enum_rumprwlock, struct rumpuser_rw *rw)
 {
 
-	rumpuser_rw_enter(rw, write);
-	return 1;
+	rumpuser_rw_enter(enum_rumprwlock, rw);
+	return 0;
 }
 
 void
@@ -198,25 +196,39 @@ rumpuser_rw_destroy(struct rumpuser_rw *rw)
 	free(rw);
 }
 
-int
-rumpuser_rw_held(struct rumpuser_rw *rw)
+void
+rumpuser_rw_held(int enum_rumprwlock, struct rumpuser_rw *rw, int *rvp)
+{
+	enum rumprwlock lk = enum_rumprwlock;
+
+	switch (lk) {
+	case RUMPUSER_RW_WRITER:
+		*rvp = rw->v > 0;
+		break;
+	case RUMPUSER_RW_READER:
+		*rvp = rw->v < 0;
+		break;
+	}
+}
+
+void
+rumpuser_rw_downgrade(struct rumpuser_rw *rw)
 {
 
-	return rw->v != 0;
+	assert(rw->v == 1);
+	rw->v = -1;
 }
 
 int
-rumpuser_rw_rdheld(struct rumpuser_rw *rw)
+rumpuser_rw_tryupgrade(struct rumpuser_rw *rw)
 {
 
-	return rw->v < 0;
-}
+	if (rw->v == -1) {
+		rw->v = 1;
+		return 0;
+	}
 
-int
-rumpuser_rw_wrheld(struct rumpuser_rw *rw)
-{
-
-	return rw->v > 0;
+	return EBUSY;
 }
 
 /*ARGSUSED*/
@@ -236,6 +248,13 @@ rumpuser_cv_destroy(struct rumpuser_cv *cv)
 /*ARGSUSED*/
 void
 rumpuser_cv_wait(struct rumpuser_cv *cv, struct rumpuser_mtx *mtx)
+{
+
+}
+
+/*ARGSUSED*/
+void
+rumpuser_cv_wait_nowrap(struct rumpuser_cv *cv, struct rumpuser_mtx *mtx)
 {
 
 }
@@ -271,27 +290,38 @@ rumpuser_cv_broadcast(struct rumpuser_cv *cv)
 }
 
 /*ARGSUSED*/
-int
-rumpuser_cv_has_waiters(struct rumpuser_cv *cv)
+void
+rumpuser_cv_has_waiters(struct rumpuser_cv *cv, int *rvp)
 {
 
-	return 0;
+	*rvp = 0;
 }
 
 /*
  * curlwp
  */
 
-static struct lwp *curlwp;
 void
-rumpuser_set_curlwp(struct lwp *l)
+rumpuser_curlwpop(int enum_rumplwpop, struct lwp *l)
 {
+	enum rumplwpop op = enum_rumplwpop;
 
-	curlwp = l;
+	switch (op) {
+	case RUMPUSER_LWP_CREATE:
+	case RUMPUSER_LWP_DESTROY:
+		break;
+	case RUMPUSER_LWP_SET:
+		curlwp = l;
+		break;
+	case RUMPUSER_LWP_CLEAR:
+		assert(curlwp == l);
+		curlwp = NULL;
+		break;
+	}
 }
 
 struct lwp *
-rumpuser_get_curlwp(void)
+rumpuser_curlwp(void)
 {
 
 	return curlwp;

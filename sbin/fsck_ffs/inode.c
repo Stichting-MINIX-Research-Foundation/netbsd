@@ -1,4 +1,4 @@
-/*	$NetBSD: inode.c,v 1.64 2011/03/06 17:08:16 bouyer Exp $	*/
+/*	$NetBSD: inode.c,v 1.69 2013/06/23 22:03:34 dholland Exp $	*/
 
 /*
  * Copyright (c) 1980, 1986, 1993
@@ -34,7 +34,7 @@
 #if 0
 static char sccsid[] = "@(#)inode.c	8.8 (Berkeley) 4/28/95";
 #else
-__RCSID("$NetBSD: inode.c,v 1.64 2011/03/06 17:08:16 bouyer Exp $");
+__RCSID("$NetBSD: inode.c,v 1.69 2013/06/23 22:03:34 dholland Exp $");
 #endif
 #endif /* not lint */
 
@@ -93,11 +93,11 @@ ckinode(union dinode *dp, struct inodesc *idesc)
 	else
 		dino.dp1 = dp->dp1;
 	ndb = howmany(iswap64(DIP(&dino, size)), sblock->fs_bsize);
-	for (i = 0; i < NDADDR; i++) {
+	for (i = 0; i < UFS_NDADDR; i++) {
 		if (--ndb == 0 &&
-		    (offset = blkoff(sblock, iswap64(DIP(&dino, size)))) != 0)
+		    (offset = ffs_blkoff(sblock, iswap64(DIP(&dino, size)))) != 0)
 			idesc->id_numfrags =
-				numfrags(sblock, fragroundup(sblock, offset));
+				ffs_numfrags(sblock, ffs_fragroundup(sblock, offset));
 		else
 			idesc->id_numfrags = sblock->fs_frag;
 		if (DIP(&dino, db[i]) == 0) {
@@ -132,9 +132,9 @@ ckinode(union dinode *dp, struct inodesc *idesc)
 			return (ret);
 	}
 	idesc->id_numfrags = sblock->fs_frag;
-	remsize = iswap64(DIP(&dino, size)) - sblock->fs_bsize * NDADDR;
+	remsize = iswap64(DIP(&dino, size)) - sblock->fs_bsize * UFS_NDADDR;
 	sizepb = sblock->fs_bsize;
-	for (i = 0; i < NIADDR; i++) {
+	for (i = 0; i < UFS_NIADDR; i++) {
 		if (DIP(&dino, ib[i])) {
 			if (is_ufs2)
 				idesc->id_blkno = iswap64(dino.dp2.di_ib[i]);
@@ -165,7 +165,7 @@ ckinode(union dinode *dp, struct inodesc *idesc)
 				}
 			}
 		}
-		sizepb *= NINDIR(sblock);
+		sizepb *= FFS_NINDIR(sblock);
 		remsize -= sizepb;
 	}
 	return (KEEPON);
@@ -192,9 +192,9 @@ iblock(struct inodesc *idesc, long ilevel, u_int64_t isize)
 	bp = getdatablk(idesc->id_blkno, sblock->fs_bsize);
 	ilevel--;
 	for (sizepb = sblock->fs_bsize, i = 0; i < ilevel; i++)
-		sizepb *= NINDIR(sblock);
-	if (howmany(isize, sizepb) > (size_t)NINDIR(sblock))
-		nif = NINDIR(sblock);
+		sizepb *= FFS_NINDIR(sblock);
+	if (howmany(isize, sizepb) > (size_t)FFS_NINDIR(sblock))
+		nif = FFS_NINDIR(sblock);
 	else
 		nif = howmany(isize, sizepb);
 	if (do_blkswap) { /* swap byte order of the whole blk */
@@ -210,8 +210,8 @@ iblock(struct inodesc *idesc, long ilevel, u_int64_t isize)
 		dirty(bp);
 		flush(fswritefd, bp);
 	}
-	if (idesc->id_func == pass1check && nif < NINDIR(sblock)) {
-		for (i = nif; i < NINDIR(sblock); i++) {
+	if (idesc->id_func == pass1check && nif < FFS_NINDIR(sblock)) {
+		for (i = nif; i < FFS_NINDIR(sblock); i++) {
 			if (IBLK(bp, i) == 0)
 				continue;
 			(void)snprintf(buf, sizeof(buf),
@@ -281,10 +281,10 @@ chkrange(daddr_t blk, int cnt)
 	    cnt - 1 > maxfsblock - blk)
 		return (1);
 	if (cnt > sblock->fs_frag ||
-	    fragnum(sblock, blk) + cnt > sblock->fs_frag) {
+	    ffs_fragnum(sblock, blk) + cnt > sblock->fs_frag) {
 		if (debug)
 			printf("bad size: blk %lld, offset %d, size %d\n",
-			    (long long)blk, (int)fragnum(sblock, blk), cnt);
+			    (long long)blk, (int)ffs_fragnum(sblock, blk), cnt);
 	}
 	c = dtog(sblock, blk);
 	if (blk < cgdmin(sblock, c)) {
@@ -323,22 +323,22 @@ ginode(ino_t inumber)
 	daddr_t iblk;
 	int blkoff;
 
-	if (inumber < ROOTINO || inumber > maxino)
+	if (inumber < UFS_ROOTINO || inumber > maxino)
 		errexit("bad inode number %llu to ginode",
 		    (unsigned long long)inumber);
 	if (startinum == 0 ||
-	    inumber < startinum || inumber >= startinum + INOPB(sblock)) {
+	    inumber < startinum || inumber >= startinum + FFS_INOPB(sblock)) {
 		iblk = ino_to_fsba(sblock, inumber);
 		if (pbp != 0)
 			pbp->b_flags &= ~B_INUSE;
 		pbp = getdatablk(iblk, sblock->fs_bsize);
-		startinum = (inumber / INOPB(sblock)) * INOPB(sblock);
+		startinum = (inumber / FFS_INOPB(sblock)) * FFS_INOPB(sblock);
 	}
 	if (is_ufs2) {
-		blkoff = (inumber % INOPB(sblock)) * DINODE2_SIZE;
+		blkoff = (inumber % FFS_INOPB(sblock)) * DINODE2_SIZE;
 		return ((union dinode *)((caddr_t)pbp->b_un.b_buf + blkoff));
 	}
-	blkoff = (inumber % INOPB(sblock)) * DINODE1_SIZE;
+	blkoff = (inumber % FFS_INOPB(sblock)) * DINODE1_SIZE;
 	return ((union dinode *)((caddr_t)pbp->b_un.b_buf + blkoff));
 }
 
@@ -358,7 +358,7 @@ swap_dinode1(union dinode *dp, int n)
 		    doinglevel2 ||
 		    (maxsymlinklen < 0) ||
 		    (iswap64(dp1->di_size) > (uint64_t)maxsymlinklen)) {
-			for (j = 0; j < (NDADDR + NIADDR); j++)
+			for (j = 0; j < (UFS_NDADDR + UFS_NIADDR); j++)
 			    dp1->di_db[j] = bswap32(dp1->di_db[j]);
 		}
 	}
@@ -374,7 +374,7 @@ swap_dinode2(union dinode *dp, int n)
 	for (i = 0; i < n; i++, dp2++) {
 		ffs_dinode2_swap(dp2, dp2);
 		if ((iswap16(dp2->di_mode) & IFMT) != IFLNK) {
-			for (j = 0; j < (NDADDR + NIADDR + NXADDR); j++)
+			for (j = 0; j < (UFS_NDADDR + UFS_NIADDR + UFS_NXADDR); j++)
 				dp2->di_extb[j] = bswap64(dp2->di_extb[j]);
 		}
 	}
@@ -402,7 +402,7 @@ getnextinode(ino_t inumber)
 
 	if (inumber >= lastinum) {
 		readcnt++;
-		dblk = fsbtodb(sblock, ino_to_fsba(sblock, lastinum));
+		dblk = FFS_FSBTODB(sblock, ino_to_fsba(sblock, lastinum));
 		if (readcnt % readpercg == 0) {
 			size = partialsize;
 			lastinum += partialcnt;
@@ -441,7 +441,7 @@ setinodebuf(ino_t inum)
 	readcnt = 0;
 	if (inodebuf != NULL)
 		return;
-	inobufsize = blkroundup(sblock, INOBUFSIZE);
+	inobufsize = ffs_blkroundup(sblock, INOBUFSIZE);
 	fullcnt = inobufsize / (is_ufs2 ? DINODE2_SIZE : DINODE1_SIZE);
 	readpercg = sblock->fs_ipg / fullcnt;
 	partialcnt = sblock->fs_ipg % fullcnt;
@@ -483,8 +483,8 @@ cacheino(union dinode *dp, ino_t inumber)
 
 	size = iswap64(DIP(dp, size));
 	blks = howmany(size, sblock->fs_bsize);
-	if (blks > NDADDR)
-		blks = NDADDR + NIADDR;
+	if (blks > UFS_NDADDR)
+		blks = UFS_NDADDR + UFS_NIADDR;
 	if (blks > 0)
 		extra = (blks - 1) * sizeof (int64_t);
 	else
@@ -496,19 +496,19 @@ cacheino(union dinode *dp, ino_t inumber)
 	inp->i_nexthash = *inpp;
 	*inpp = inp;
 	inp->i_child = inp->i_sibling = 0;
-	if (inumber == ROOTINO)
-		inp->i_parent = ROOTINO;
+	if (inumber == UFS_ROOTINO)
+		inp->i_parent = UFS_ROOTINO;
 	else
 		inp->i_parent = (ino_t)0;
 	inp->i_dotdot = (ino_t)0;
 	inp->i_number = inumber;
 	inp->i_isize = size;
 	inp->i_numblks = blks;
-	for (i = 0; i < (blks < NDADDR ? blks : NDADDR); i++)
+	for (i = 0; i < (blks < UFS_NDADDR ? blks : UFS_NDADDR); i++)
 		inp->i_blks[i] = DIP(dp, db[i]);
-	if (blks > NDADDR)
-		for (i = 0; i < NIADDR; i++)
-			inp->i_blks[NDADDR + i] = DIP(dp, ib[i]);
+	if (blks > UFS_NDADDR)
+		for (i = 0; i < UFS_NIADDR; i++)
+			inp->i_blks[UFS_NDADDR + i] = DIP(dp, ib[i]);
 	if (inplast == listmax) {
 		ninpsort = (struct inoinfo **)realloc((char *)inpsort,
 		    (unsigned)(listmax + 100) * sizeof(struct inoinfo *));
@@ -620,7 +620,7 @@ findino(struct inodesc *idesc)
 	if (dirp->d_ino == 0)
 		return (KEEPON);
 	if (strcmp(dirp->d_name, idesc->id_name) == 0 &&
-	    iswap32(dirp->d_ino) >= ROOTINO && iswap32(dirp->d_ino) <= maxino) {
+	    iswap32(dirp->d_ino) >= UFS_ROOTINO && iswap32(dirp->d_ino) <= maxino) {
 		idesc->id_parent = iswap32(dirp->d_ino);
 		return (STOP|FOUND);
 	}
@@ -647,7 +647,7 @@ pinode(ino_t ino)
 	struct passwd *pw;
 
 	printf(" I=%llu ", (unsigned long long)ino);
-	if (ino < ROOTINO || ino > maxino)
+	if (ino < UFS_ROOTINO || ino > maxino)
 		return;
 	dp = ginode(ino);
 	printf(" OWNER=");
@@ -709,7 +709,7 @@ allocino(ino_t request, int type)
 	int nfrags;
 
 	if (request == 0)
-		request = ROOTINO;
+		request = UFS_ROOTINO;
 	else if (inoinfo(request)->ino_state != USTATE)
 		return (0);
 	for (ino = request; ino < maxino; ino++) {
@@ -786,8 +786,8 @@ allocino(ino_t request, int type)
 		(void)time(&t);
 		dp2->di_atime = iswap64(t);
 		dp2->di_mtime = dp2->di_ctime = dp2->di_atime;
-		dp2->di_size = iswap64(lfragtosize(sblock, nfrags));
-		dp2->di_blocks = iswap64(btodb(lfragtosize(sblock, nfrags)));
+		dp2->di_size = iswap64(ffs_lfragtosize(sblock, nfrags));
+		dp2->di_blocks = iswap64(btodb(ffs_lfragtosize(sblock, nfrags)));
 	} else {
 		dp1 = &dp->dp1;
 		dp1->di_db[0] = iswap32(allocblk(nfrags));
@@ -800,8 +800,8 @@ allocino(ino_t request, int type)
 		(void)time(&t);
 		dp1->di_atime = iswap32(t);
 		dp1->di_mtime = dp1->di_ctime = dp1->di_atime;
-		dp1->di_size = iswap64(lfragtosize(sblock, nfrags));
-		dp1->di_blocks = iswap32(btodb(lfragtosize(sblock, nfrags)));
+		dp1->di_size = iswap64(ffs_lfragtosize(sblock, nfrags));
+		dp1->di_blocks = iswap32(btodb(ffs_lfragtosize(sblock, nfrags)));
 	}
 	n_files++;
 	inodirty();
@@ -863,7 +863,7 @@ freeino(ino_t ino)
 ssize_t
 readblk(union dinode *dp, off_t offset, struct bufarea **bp)
 {
-	daddr_t blkno = lblkno(sblock, offset);
+	daddr_t blkno = ffs_lblkno(sblock, offset);
 	daddr_t iblkno;
 	int type = IFMT & iswap16(DIP(dp, mode));
 	ssize_t filesize = iswap64(DIP(dp, size));
@@ -880,7 +880,7 @@ readblk(union dinode *dp, off_t offset, struct bufarea **bp)
 		return 0;
 	if (offset >= filesize)
 		return 0; /* short read */
-	if (blkno < NDADDR) {
+	if (blkno < UFS_NDADDR) {
 		blkno = is_ufs2 ? iswap64(dp->dp2.di_db[blkno]) :
 		    iswap32(dp->dp1.di_db[blkno]);
 		if (blkno == 0)
@@ -888,17 +888,17 @@ readblk(union dinode *dp, off_t offset, struct bufarea **bp)
 		*bp = getdatablk(blkno, sblock->fs_bsize);
 		return (bp != NULL) ? sblock->fs_bsize : 0;
 	}
-	blkno -= NDADDR;
+	blkno -= UFS_NDADDR;
 	/* find indir level */
 	for (ilevel = 1, nblks = naddrperblk;
-	     ilevel <= NIADDR;
+	     ilevel <= UFS_NIADDR;
 	     ilevel++, nblks *= naddrperblk) {
 		if (blkno < nblks)
 			break;
 		else
 			blkno -= nblks;
 	}
-	if (ilevel > NIADDR) 
+	if (ilevel > UFS_NIADDR) 
 		errexit("bad ofsset %" PRIu64 " to readblk", offset);
 
 	/* get the first indirect block */
@@ -952,9 +952,9 @@ expandfile(union dinode *dp)
 	di_blocks = is_ufs2 ? iswap64(dp->dp2.di_blocks) :
 	    iswap32(dp->dp1.di_blocks);
 	/* compute location of new block */
-	blkno = lblkno(sblock, filesize);
+	blkno = ffs_lblkno(sblock, filesize);
 
-	if (blkno < NDADDR) {
+	if (blkno < UFS_NDADDR) {
 		/* easy way: allocate a direct block */
 		if ((bp = getnewblk(&newblk)) == NULL) {
 			return NULL;
@@ -968,17 +968,17 @@ expandfile(union dinode *dp)
 		}
 		goto out;
 	}
-	blkno -= NDADDR;
+	blkno -= UFS_NDADDR;
 	/* find indir level */
 	for (ilevel = 1, nblks = naddrperblk;
-	     ilevel <= NIADDR;
+	     ilevel <= UFS_NIADDR;
 	     ilevel++, nblks *= naddrperblk) {
 		if (blkno < nblks)
 			break;
 		else
 			blkno -= nblks;
 	}
-	if (ilevel > NIADDR) 
+	if (ilevel > UFS_NIADDR) 
 		errexit("bad filesize %" PRIu64 " to expandfile", filesize);
 
 	/* get the first indirect block, allocating if needed */

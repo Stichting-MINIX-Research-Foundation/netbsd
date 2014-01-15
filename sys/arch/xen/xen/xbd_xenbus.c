@@ -1,4 +1,4 @@
-/*      $NetBSD: xbd_xenbus.c,v 1.57 2012/05/25 15:03:38 elric Exp $      */
+/*      $NetBSD: xbd_xenbus.c,v 1.61 2013/11/06 06:23:15 mrg Exp $      */
 
 /*
  * Copyright (c) 2006 Manuel Bouyer.
@@ -50,7 +50,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: xbd_xenbus.c,v 1.57 2012/05/25 15:03:38 elric Exp $");
+__KERNEL_RCSID(0, "$NetBSD: xbd_xenbus.c,v 1.61 2013/11/06 06:23:15 mrg Exp $");
 
 #include "opt_xen.h"
 
@@ -246,7 +246,7 @@ xbd_xenbus_attach(device_t parent, device_t self, void *aux)
 	int err;
 #endif
 
-	config_pending_incr();
+	config_pending_incr(self);
 	aprint_normal(": Xen Virtual Block Device Interface\n");
 
 	dk_sc_init(&sc->sc_dksc, device_xname(self));
@@ -512,8 +512,7 @@ abort_transaction:
 static void xbd_backend_changed(void *arg, XenbusState new_state)
 {
 	struct xbd_xenbus_softc *sc = device_private((device_t)arg);
-	struct dk_geom *pdg;
-	prop_dictionary_t disk_info, odisk_info, geom;
+	struct disk_geom *dg;
 
 	char buf[9];
 	int s;
@@ -554,12 +553,15 @@ static void xbd_backend_changed(void *arg, XenbusState new_state)
 
 		sc->sc_xbdsize =
 		    sc->sc_sectors * (uint64_t)sc->sc_secsize / DEV_BSIZE;
-		sc->sc_dksc.sc_size = sc->sc_xbdsize;
-		pdg = &sc->sc_dksc.sc_geom;
-		pdg->pdg_secsize = DEV_BSIZE;
-		pdg->pdg_ntracks = 1;
-		pdg->pdg_nsectors = 1024 * (1024 / pdg->pdg_secsize);
-		pdg->pdg_ncylinders = sc->sc_dksc.sc_size / pdg->pdg_nsectors;
+		dg = &sc->sc_dksc.sc_dkdev.dk_geom;
+		memset(dg, 0, sizeof(*dg));	
+
+		dg->dg_secperunit = sc->sc_xbdsize;
+		dg->dg_secsize = DEV_BSIZE;
+		dg->dg_ntracks = 1;
+		// XXX: Ok to hard-code DEV_BSIZE?
+		dg->dg_nsectors = 1024 * (1024 / dg->dg_secsize);
+		dg->dg_ncylinders = dg->dg_secperunit / dg->dg_nsectors;
 
 		bufq_alloc(&sc->sc_dksc.sc_bufq, "fcfs", 0);
 		sc->sc_dksc.sc_flags |= DKF_INITED;
@@ -572,37 +574,14 @@ static void xbd_backend_changed(void *arg, XenbusState new_state)
 		format_bytes(buf, sizeof(buf), sc->sc_sectors * sc->sc_secsize);
 		aprint_verbose_dev(sc->sc_dksc.sc_dev,
 				"%s, %d bytes/sect x %" PRIu64 " sectors\n",
-				buf, (int)pdg->pdg_secsize, sc->sc_xbdsize);
+				buf, (int)dg->dg_secsize, sc->sc_xbdsize);
 		/* Discover wedges on this disk. */
 		dkwedge_discover(&sc->sc_dksc.sc_dkdev);
 
-		disk_info = prop_dictionary_create();
-		geom = prop_dictionary_create();
-		prop_dictionary_set_uint64(geom, "sectors-per-unit",
-		    sc->sc_dksc.sc_size);
-		prop_dictionary_set_uint32(geom, "sector-size",
-		    pdg->pdg_secsize);
-		prop_dictionary_set_uint16(geom, "sectors-per-track",
-		    pdg->pdg_nsectors);
-		prop_dictionary_set_uint16(geom, "tracks-per-cylinder",
-		    pdg->pdg_ntracks);
-		prop_dictionary_set_uint64(geom, "cylinders-per-unit",
-		    pdg->pdg_ncylinders);
-		prop_dictionary_set(disk_info, "geometry", geom);
-		prop_object_release(geom);
-		prop_dictionary_set(device_properties(sc->sc_dksc.sc_dev),
-		    "disk-info", disk_info);
-		/*
-		 * Don't release disk_info here; we keep a reference to it.
-		 * disk_detach() will release it when we go away.
-		 */
-		odisk_info = sc->sc_dksc.sc_dkdev.dk_info;
-		sc->sc_dksc.sc_dkdev.dk_info = disk_info;
-		if (odisk_info)
-			prop_object_release(odisk_info);
+		disk_set_info(sc->sc_dksc.sc_dev, &sc->sc_dksc.sc_dkdev, NULL);
 
 		/* the disk should be working now */
-		config_pending_decr();
+		config_pending_decr(sc->sc_dksc.sc_dev);
 		break;
 	default:
 		panic("bad backend state %d", new_state);
@@ -842,7 +821,6 @@ xbdioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 	    device_lookup_private(&xbd_cd, DISKUNIT(dev));
 	struct	dk_softc *dksc;
 	int	error;
-	struct	disk *dk;
 	int s;
 	struct xbd_req *xbdreq;
 	blkif_request_t *req;
@@ -851,7 +829,6 @@ xbdioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 	DPRINTF(("xbdioctl(%d, %08lx, %p, %d, %p)\n",
 	    dev, cmd, data, flag, l));
 	dksc = &sc->sc_dksc;
-	dk = &dksc->sc_dkdev;
 
 	error = disk_ioctl(&sc->sc_dksc.sc_dkdev, cmd, data, flag, l);
 	if (error != EPASSTHROUGH)

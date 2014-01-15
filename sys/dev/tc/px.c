@@ -1,4 +1,4 @@
-/* 	$NetBSD: px.c,v 1.38 2010/11/06 10:58:12 uebayasi Exp $	*/
+/* 	$NetBSD: px.c,v 1.40 2013/11/04 16:53:09 christos Exp $	*/
 
 /*-
  * Copyright (c) 1999, 2000, 2001 The NetBSD Foundation, Inc.
@@ -34,7 +34,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: px.c,v 1.38 2010/11/06 10:58:12 uebayasi Exp $");
+__KERNEL_RCSID(0, "$NetBSD: px.c,v 1.40 2013/11/04 16:53:09 christos Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -131,7 +131,7 @@ px_attach(device_t parent, device_t self, void *aux)
 	u_long v;
 
 	px = device_private(self);
-	ta = (struct tc_attach_args *)aux;
+	ta = aux;
 
 	px->px_dev = self;
 
@@ -239,7 +239,7 @@ px_intr(void *cookie)
 	int state;
 
 	si = cookie;
-	px = (struct px_softc *)si->si_dv;
+	px = device_private(si->si_dv);
 	sr = si->si_stic;
 	state = sr->sr_ipdvint;
 	sxc = si->si_sxc;
@@ -344,6 +344,7 @@ px_pbuf_post(struct stic_info *si, uint32_t *buf)
 			sr->sr_ipdvint = STIC_INT_P_WE;
 			tc_wmb();
 			junk = *poll;
+			__USE(junk);
 			return (0);
 		}
 		DELAY(STAMP_DELAY);

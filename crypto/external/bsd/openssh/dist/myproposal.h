@@ -1,5 +1,5 @@
-/*	$NetBSD: myproposal.h,v 1.5 2011/09/07 17:49:19 christos Exp $	*/
-/* $OpenBSD: myproposal.h,v 1.28 2011/08/02 01:22:11 djm Exp $ */
+/*	$NetBSD: myproposal.h,v 1.7 2013/03/29 16:19:45 christos Exp $	*/
+/* $OpenBSD: myproposal.h,v 1.32 2013/01/08 18:49:04 markus Exp $ */
 
 /*
  * Copyright (c) 2000 Markus Friedl.  All rights reserved.
@@ -51,6 +51,7 @@
 #define	KEX_DEFAULT_ENCRYPT \
 	"aes128-ctr,aes192-ctr,aes256-ctr," \
 	"arcfour256,arcfour128," \
+	"aes128-gcm@openssh.com,aes256-gcm@openssh.com," \
 	"aes128-cbc,3des-cbc,blowfish-cbc,cast128-cbc," \
 	"aes192-cbc,aes256-cbc,arcfour,rijndael-cbc@lysator.liu.se"
 #define KEX_ENCRYPT_INCLUDE_NONE KEX_DEFAULT_ENCRYPT \
@@ -58,13 +59,21 @@
 
 #ifdef UMAC_HAS_BEEN_UNBROKEN
 #define	KEX_DEFAULT_MAC \
+	"hmac-md5-etm@openssh.com," \
+	"hmac-sha1-etm@openssh.com," \
+	"umac-64-etm@openssh.com," \
+	"umac-128-etm@openssh.com," \
+	"hmac-sha2-256-etm@openssh.com," \
+	"hmac-sha2-512-etm@openssh.com," \
+	"hmac-ripemd160-etm@openssh.com," \
+	"hmac-sha1-96-etm@openssh.com," \
+	"hmac-md5-96-etm@openssh.com," \
 	"hmac-md5," \
 	"hmac-sha1," \
 	"umac-64@openssh.com," \
+	"umac-128@openssh.com," \
 	"hmac-sha2-256," \
-	"hmac-sha2-256-96," \
 	"hmac-sha2-512," \
-	"hmac-sha2-512-96," \
 	"hmac-ripemd160," \
 	"hmac-ripemd160@openssh.com," \
 	"hmac-sha1-96,hmac-md5-96"

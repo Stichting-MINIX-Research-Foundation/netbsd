@@ -1,4 +1,4 @@
-/*	$NetBSD: pl310.c,v 1.6 2012/09/22 00:33:37 matt Exp $	*/
+/*	$NetBSD: pl310.c,v 1.12 2013/06/17 05:13:07 matt Exp $	*/
 
 /*-
  * Copyright (c) 2012 The NetBSD Foundation, Inc.
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: pl310.c,v 1.6 2012/09/22 00:33:37 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: pl310.c,v 1.12 2013/06/17 05:13:07 matt Exp $");
 
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -67,8 +67,8 @@ __CTASSERT(offsetof(struct arml2cc_softc, sc_ev_wbinv.ev_count) % 8 == 0);
 CFATTACH_DECL_NEW(arml2cc, sizeof(struct arml2cc_softc),
     arml2cc_match, arml2cc_attach, NULL, NULL);
 
-static void arml2cc_disable(struct arml2cc_softc *);
-static void arml2cc_enable(struct arml2cc_softc *);
+static inline void arml2cc_disable(struct arml2cc_softc *);
+static inline void arml2cc_enable(struct arml2cc_softc *);
 static void arml2cc_sdcache_wb_range(vaddr_t, paddr_t, psize_t);
 static void arml2cc_sdcache_inv_range(vaddr_t, paddr_t, psize_t);
 static void arml2cc_sdcache_wbinv_range(vaddr_t, paddr_t, psize_t);
@@ -191,15 +191,20 @@ arml2cc_attach(device_t parent, device_t self, void *aux)
 		sc->sc_enabled = true;
 	}
 
-	KASSERT(arm_pcache.dcache_line_size == arm_scache.dcache_line_size);
+	KASSERTMSG(arm_pcache.dcache_line_size == arm_scache.dcache_line_size,
+	    "pcache %u scache %u",
+	    arm_pcache.dcache_line_size, arm_scache.dcache_line_size);
 }
 
 static inline void
-arml2cc_cache_op(struct arml2cc_softc *sc, bus_size_t off, uint32_t val)
+arml2cc_cache_op(struct arml2cc_softc *sc, bus_size_t off, uint32_t val,
+    bool wait)
 {
 	arml2cc_write_4(sc, off, val);
-	while (arml2cc_read_4(sc, off) & 1) {
-		/* spin */
+	if (wait) {
+		while (arml2cc_read_4(sc, off) & 1) {
+			/* spin */
+		}
 	}
 }
 
@@ -215,7 +220,7 @@ arml2cc_cache_way_op(struct arml2cc_softc *sc, bus_size_t off, uint32_t way_mask
 static inline void
 arml2cc_cache_sync(struct arml2cc_softc *sc)
 {
-	arml2cc_cache_op(sc, L2C_CACHE_SYNC, 0);
+	arml2cc_cache_op(sc, L2C_CACHE_SYNC, 0, true);
 }
 
 static inline void
@@ -237,7 +242,7 @@ arml2cc_enable(struct arml2cc_softc *sc)
 
 	arml2cc_write_4(sc, L2C_CTL, 1);	// turn it on
 
-	//arml2cc_cache_way_op(sc, L2C_INV_WAY, sc->sc_waymask);
+	arml2cc_cache_way_op(sc, L2C_INV_WAY, sc->sc_waymask);
 	arml2cc_cache_sync(sc);
 
 	mutex_spin_exit(&sc->sc_lock);
@@ -284,18 +289,16 @@ arml2cc_cache_range_op(paddr_t pa, psize_t len, bus_size_t cache_op)
 		pa -= off;
 	}
 	len = roundup2(len, line_size);
-	off = pa & PAGE_MASK;
-	for (const paddr_t endpa = pa + len; pa < endpa; off = 0) {
-		psize_t seglen = min(len, PAGE_SIZE - off);
-
-		mutex_spin_enter(&sc->sc_lock);
-		if (!sc->sc_enabled)
-			return;
-		for (paddr_t segend = pa + seglen; pa < segend; pa += line_size) {
-			arml2cc_cache_op(sc, cache_op, pa);
-		}
+	mutex_spin_enter(&sc->sc_lock);
+	if (__predict_false(!sc->sc_enabled)) {
 		mutex_spin_exit(&sc->sc_lock);
+		return;
 	}
+	for (const paddr_t endpa = pa + len; pa < endpa; pa += line_size) {
+		arml2cc_cache_op(sc, cache_op, pa, false);
+	}
+	arml2cc_cache_sync(sc);
+	mutex_spin_exit(&sc->sc_lock);
 }
 
 static void

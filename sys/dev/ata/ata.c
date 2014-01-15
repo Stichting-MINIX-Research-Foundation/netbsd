@@ -1,4 +1,4 @@
-/*	$NetBSD: ata.c,v 1.125 2012/08/04 21:21:09 bouyer Exp $	*/
+/*	$NetBSD: ata.c,v 1.129 2013/10/12 16:49:00 christos Exp $	*/
 
 /*
  * Copyright (c) 1998, 2001 Manuel Bouyer.  All rights reserved.
@@ -25,7 +25,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ata.c,v 1.125 2012/08/04 21:21:09 bouyer Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ata.c,v 1.129 2013/10/12 16:49:00 christos Exp $");
 
 #include "opt_ata.h"
 
@@ -70,7 +70,10 @@ __KERNEL_RCSID(0, "$NetBSD: ata.c,v 1.125 2012/08/04 21:21:09 bouyer Exp $");
 #define DEBUG_DETACH 0x20
 #define	DEBUG_XFERS  0x40
 #ifdef ATADEBUG
-int atadebug_mask = 0;
+#ifndef ATADEBUG_MASK
+#define ATADEBUG_MASK 0
+#endif
+int atadebug_mask = ATADEBUG_MASK;
 #define ATADEBUG_PRINT(args, level) \
 	if (atadebug_mask & (level)) \
 		printf args
@@ -264,7 +267,7 @@ atabusconfig(struct atabus_softc *atabus_sc)
 
 	ata_delref(chp);
 
-	config_pending_decr();
+	config_pending_decr(atac->atac_dev);
 }
 
 /*
@@ -391,7 +394,7 @@ atabusconfig_thread(void *arg)
 
 	ata_delref(chp);
 
-	config_pending_decr();
+	config_pending_decr(atac->atac_dev);
 	kthread_exit(0);
 }
 
@@ -515,7 +518,7 @@ atabus_attach(device_t parent, device_t self, void *aux)
 	initq = malloc(sizeof(*initq), M_DEVBUF, M_WAITOK);
 	initq->atabus_sc = sc;
 	TAILQ_INSERT_TAIL(&atabus_initq_head, initq, atabus_initq);
-	config_pending_incr();
+	config_pending_incr(sc->sc_dev);
 
 	if ((error = kthread_create(PRI_NONE, 0, NULL, atabus_thread, sc,
 	    &chp->ch_thread, "%s", device_xname(self))) != 0)
@@ -1675,7 +1678,10 @@ atabus_resume(device_t dv, const pmf_qual_t *qual)
 	KASSERT(chp->ch_queue->queue_freeze > 0);
 	/* unfreeze the queue and reset drives */
 	chp->ch_queue->queue_freeze--;
-	ata_reset_channel(chp, AT_WAIT);
+
+	/* reset channel only if there are drives attached */
+	if (chp->ch_ndrives > 0)
+		ata_reset_channel(chp, AT_WAIT);
 	splx(s);
 
 	return true;
@@ -1709,10 +1715,24 @@ atabus_rescan(device_t self, const char *ifattr, const int *locators)
 	initq = malloc(sizeof(*initq), M_DEVBUF, M_WAITOK);
 	initq->atabus_sc = sc;
 	TAILQ_INSERT_TAIL(&atabus_initq_head, initq, atabus_initq);
-	config_pending_incr();
+	config_pending_incr(sc->sc_dev);
 
 	chp->ch_flags |= ATACH_TH_RESCAN;
 	wakeup(&chp->ch_thread);
 
 	return 0;
+}
+
+void
+ata_delay(int ms, const char *msg, int flags)
+{
+	if ((flags & (AT_WAIT | AT_POLL)) == AT_POLL) {
+		/*
+		 * can't use tsleep(), we may be in interrupt context
+		 * or taking a crash dump
+		 */
+		delay(ms * 1000);
+	} else {
+		kpause(msg, false, mstohz(ms), NULL);
+	}
 }

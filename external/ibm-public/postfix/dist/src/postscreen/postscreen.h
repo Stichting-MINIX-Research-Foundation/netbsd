@@ -1,4 +1,4 @@
-/*	$NetBSD: postscreen.h,v 1.1.1.1 2011/03/02 19:32:26 tron Exp $	*/
+/*	$NetBSD: postscreen.h,v 1.1.1.3 2013/09/25 19:06:33 tron Exp $	*/
 
 /*++
 /* NAME
@@ -22,6 +22,7 @@
 #include <vstring.h>
 #include <events.h>
 #include <htable.h>
+#include <myaddrinfo.h>
 
  /*
   * Global library.
@@ -29,6 +30,7 @@
 #include <addr_match_list.h>
 #include <string_list.h>
 #include <maps.h>
+#include <server_acl.h>
 
  /*
   * Preliminary stuff, to be fixed.
@@ -45,6 +47,8 @@ typedef struct {
     int     smtp_server_fd;		/* real SMTP server */
     char   *smtp_client_addr;		/* client address */
     char   *smtp_client_port;		/* client port */
+    char   *smtp_server_addr;		/* server address */
+    char   *smtp_server_port;		/* server port */
     int     client_concurrency;		/* per-client */
     const char *final_reply;		/* cause for hanging up */
     VSTRING *send_buf;			/* pending output */
@@ -71,6 +75,7 @@ typedef struct {
     /* smtpd(8) compatibility */
     int     ehlo_discard_mask;		/* EHLO filter */
     VSTRING *expand_buf;		/* macro expansion */
+    const char *where;			/* SMTP protocol state */
 } PSC_STATE;
 
 #define PSC_TIME_STAMP_NEW		(0)	/* test was never passed */
@@ -83,7 +88,8 @@ typedef struct {
 #define PSC_STATE_FLAG_NEW		(1<<3)	/* some test was never passed */
 #define PSC_STATE_FLAG_BLIST_FAIL	(1<<4)	/* blacklisted */
 #define PSC_STATE_FLAG_HANGUP		(1<<5)	/* NOT a test failure */
-#define PSC_STATE_FLAG_CACHE_EXPIRED	(1<<6)	/* cache retention expired */
+#define PSC_STATE_FLAG_SMTPD_X21	(1<<6)	/* hang up after command */
+#define PSC_STATE_FLAG_WLIST_FAIL	(1<<7)	/* do not whitelist */
 
  /*
   * Important: every MUMBLE_TODO flag must have a MUMBLE_PASS flag, such that
@@ -192,7 +198,8 @@ typedef struct {
   */
 #define PSC_STATE_MASK_ANY_FAIL \
 	(PSC_STATE_FLAG_BLIST_FAIL | PSC_STATE_FLAG_PENAL_FAIL | \
-	PSC_STATE_MASK_EARLY_FAIL | PSC_STATE_MASK_SMTPD_FAIL)
+	PSC_STATE_MASK_EARLY_FAIL | PSC_STATE_MASK_SMTPD_FAIL | \
+	PSC_STATE_FLAG_WLIST_FAIL)
 
 #define PSC_STATE_MASK_ANY_PASS \
 	(PSC_STATE_MASK_EARLY_PASS | PSC_STATE_MASK_SMTPD_PASS)
@@ -205,6 +212,13 @@ typedef struct {
 
 #define PSC_STATE_MASK_ANY_UPDATE \
 	(PSC_STATE_MASK_ANY_PASS | PSC_STATE_FLAG_PENAL_UPDATE)
+
+ /*
+  * Meta-commands for state->where that reflect the initial command processor
+  * state and commands that aren't implemented.
+  */
+#define PSC_SMTPD_CMD_CONNECT		"CONNECT"
+#define PSC_SMTPD_CMD_UNIMPL		"UNIMPLEMENTED"
 
  /*
   * See log_adhoc.c for discussion.
@@ -378,7 +392,7 @@ extern HTABLE *psc_client_concurrency;	/* per-client concurrency */
 	(state)->smtp_client_stream = 0; \
 	psc_check_queue_length--; \
     } while (0)
-extern PSC_STATE *psc_new_session_state(VSTREAM *, const char *, const char *);
+extern PSC_STATE *psc_new_session_state(VSTREAM *, const char *, const char *, const char *, const char *);
 extern void psc_free_session_state(PSC_STATE *);
 extern const char *psc_print_state_flags(int, const char *);
 
@@ -406,6 +420,7 @@ extern int psc_dnsbl_request(const char *, void (*) (int, char *), char *);
 	(dst)->pregr_stamp = PSC_TIME_STAMP_INVALID; \
 	(dst)->dnsbl_stamp = PSC_TIME_STAMP_INVALID; \
 	(dst)->pipel_stamp = PSC_TIME_STAMP_INVALID; \
+	(dst)->nsmtp_stamp = PSC_TIME_STAMP_INVALID; \
 	(dst)->barlf_stamp = PSC_TIME_STAMP_INVALID; \
 	(dst)->penal_stamp = PSC_TIME_STAMP_INVALID; \
     } while (0)
@@ -435,6 +450,12 @@ extern void psc_smtpd_tests(PSC_STATE *);
 extern void psc_smtpd_init(void);
 extern void psc_smtpd_pre_jail_init(void);
 
+#define PSC_SMTPD_X21(state, reply) do { \
+	(state)->flags |= PSC_STATE_FLAG_SMTPD_X21; \
+	(state)->final_reply = (reply); \
+	psc_smtpd_tests(state); \
+    } while (0)
+
  /*
   * postscreen_misc.c
   */
@@ -462,16 +483,24 @@ extern void psc_expand_init(void);
 extern const char *psc_expand_lookup(const char *, int, char *);
 
  /*
-  * postscreen_access.c
+  * postscreen_endpt.c
   */
-#define PSC_ACL_ACT_WHITELIST	1
-#define PSC_ACL_ACT_DUNNO	0
-#define PSC_ACL_ACT_BLACKLIST	(-1)
-#define PSC_ACL_ACT_ERROR	(-2)
+typedef void (*PSC_ENDPT_LOOKUP_FN) (int, VSTREAM *,
+			             MAI_HOSTADDR_STR *, MAI_SERVPORT_STR *,
+			            MAI_HOSTADDR_STR *, MAI_SERVPORT_STR *);
+extern void psc_endpt_lookup(VSTREAM *, PSC_ENDPT_LOOKUP_FN);
 
-extern void psc_acl_pre_jail_init(void);
-extern ARGV *psc_acl_parse(const char *, const char *);
-extern int psc_acl_eval(PSC_STATE *, ARGV *, const char *);
+ /*
+  * postscreen_access emulation.
+  */
+#define PSC_ACL_ACT_WHITELIST	SERVER_ACL_ACT_PERMIT
+#define PSC_ACL_ACT_DUNNO	SERVER_ACL_ACT_DUNNO
+#define PSC_ACL_ACT_BLACKLIST	SERVER_ACL_ACT_REJECT
+#define PSC_ACL_ACT_ERROR	SERVER_ACL_ACT_ERROR
+
+#define psc_acl_pre_jail_init	server_acl_pre_jail_init
+#define psc_acl_parse		server_acl_parse
+#define psc_acl_eval(s,a,p)	server_acl_eval((s)->smtp_client_addr, (a), (p))
 
 /* LICENSE
 /* .ad

@@ -82,6 +82,7 @@ qmgr.o: ../../include/mail_server.h
 qmgr.o: ../../include/mail_version.h
 qmgr.o: ../../include/master_proto.h
 qmgr.o: ../../include/msg.h
+qmgr.o: ../../include/myflock.h
 qmgr.o: ../../include/recipient_list.h
 qmgr.o: ../../include/scan_dir.h
 qmgr.o: ../../include/sys_defs.h
@@ -114,6 +115,7 @@ qmgr_active.o: ../../include/trace.h
 qmgr_active.o: ../../include/vbuf.h
 qmgr_active.o: ../../include/vstream.h
 qmgr_active.o: ../../include/vstring.h
+qmgr_active.o: ../../include/warn_stat.h
 qmgr_active.o: qmgr.h
 qmgr_active.o: qmgr_active.c
 qmgr_bounce.o: ../../include/attr.h

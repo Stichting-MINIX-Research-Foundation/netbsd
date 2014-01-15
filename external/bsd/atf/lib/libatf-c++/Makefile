@@ -1,25 +1,20 @@
-# $NetBSD: Makefile,v 1.16 2012/07/15 00:05:51 abs Exp $
+# $NetBSD: Makefile,v 1.20 2013/09/12 17:14:20 joerg Exp $
 
 NOLINT=		# defined
 
-.include <bsd.own.mk>
+.include <bsd.init.mk>
 
 LIB=		atf-c++
 LIBISCXX=	yes
 
 LIBDPLIBS+=     atf-c	${.CURDIR}/../libatf-c
-.if ${HAVE_GCC} == 4
-LIBDPLIBS+=     stdc++	${.CURDIR}/../../../../../gnu/lib/libstdc++-v3_4
-.else
-LIBDPLIBS+=     stdc++	${.CURDIR}/../../../../../external/gpl3/gcc/lib/libstdc++-v3
-.endif
 LIBDPLIBS+=     m	${.CURDIR}/../../../../../lib/libm
 
 
-SRCDIR=		${NETBSDSRCDIR}/external/bsd/atf/dist
 .PATH:		${SRCDIR}
 .PATH:		${SRCDIR}/atf-c++
 .PATH:		${SRCDIR}/atf-c++/detail
+.PATH:		${TOPDIR}/lib/libatf-c  # For bconfig.h
 
 CPPFLAGS+=	-I${.CURDIR}/../libatf-c
 CPPFLAGS+=	-I.
@@ -40,12 +35,14 @@ SRCS=		application.cpp \
 		process.cpp \
 		tests.cpp \
 		text.cpp \
-		ui.cpp
+		ui.cpp \
+		utils.cpp
 
 INCS=		build.hpp \
 		check.hpp \
 		config.hpp \
 		macros.hpp \
+		noncopyable.hpp \
 		tests.hpp \
 		utils.hpp
 INCSDIR=	/usr/include/atf-c++
@@ -60,8 +57,8 @@ FILES+=		atf-c++.pc
 FILESDIR=	/usr/lib/pkgconfig
 
 realall: atf-c++.pc
-atf-c++.pc: Makefile atf-c++.pc.in
-	${TOOL_SED} -e 's,__ATF_VERSION__,0.16,g' \
+atf-c++.pc: Makefile atf-c++.pc.in bconfig.h
+	${TOOL_SED} -e 's,__ATF_VERSION__,${ATF_VERSION},g' \
 	    -e 's,__CXX__,g++,g' \
 	    -e 's,__INCLUDEDIR__,/usr/include,g' \
 	    -e 's,__LIBDIR__,/usr/lib,g' \

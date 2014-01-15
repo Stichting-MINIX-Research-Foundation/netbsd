@@ -1,4 +1,4 @@
-# $NetBSD: Makefile,v 1.1 2011/10/13 21:40:28 joerg Exp $
+# $NetBSD: Makefile,v 1.3 2013/02/15 07:59:36 martin Exp $
 
 LIB=		sqlite3
 INCS=		sqlite3.h sqlite3ext.h

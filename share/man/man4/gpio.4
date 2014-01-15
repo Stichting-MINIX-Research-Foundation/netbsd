@@ -1,4 +1,4 @@
-.\" $NetBSD: gpio.4,v 1.23 2011/11/13 17:00:04 mbalmer Exp $
+.\" $NetBSD: gpio.4,v 1.27 2013/07/20 21:39:58 wiz Exp $
 .\"	$OpenBSD: gpio.4,v 1.5 2004/11/23 09:39:29 reyk Exp $
 .\"
 .\" Copyright (c) 2004 Alexander Yurchenko <grange@openbsd.org>
@@ -15,7 +15,7 @@
 .\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 .\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
-.Dd November 13, 2011
+.Dd June 10, 2013
 .Dt GPIO 4
 .Os
 .Sh NAME
@@ -29,7 +29,9 @@
 .Cd "gpio* at gscpcib?"
 .Cd "gpio* at ichlpcib?"
 .Cd "gpio* at nsclpcsio?"
+.Cd "gpio* at soekrisgpio?"
 .Cd "gpio* at ppbus?"
+.Cd "gpio* at ptcd?"
 .Pp
 .In sys/types.h
 .In sys/gpio.h
@@ -223,13 +225,13 @@ and
 The
 .Nm
 driver was written by
-.An Alexander Yurchenko Aq grange@openbsd.org .
+.An Alexander Yurchenko Aq Mt grange@openbsd.org .
 .Nm
 and was ported to
 .Nx
 by
-.An Jared D. McNeill Aq jmcneill@NetBSD.org .
+.An Jared D. McNeill Aq Mt jmcneill@NetBSD.org .
 Runtime device attachment was added by
-.An Marc Balmer Aq marc@msys.ch .
+.An Marc Balmer Aq Mt marc@msys.ch .
 .Sh BUGS
 Event capabilities are not supported.

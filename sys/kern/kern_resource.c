@@ -1,4 +1,4 @@
-/*	$NetBSD: kern_resource.c,v 1.169 2012/06/09 02:31:15 christos Exp $	*/
+/*	$NetBSD: kern_resource.c,v 1.172 2013/01/07 16:54:54 chs Exp $	*/
 
 /*-
  * Copyright (c) 1982, 1986, 1991, 1993
@@ -37,7 +37,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: kern_resource.c,v 1.169 2012/06/09 02:31:15 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: kern_resource.c,v 1.172 2013/01/07 16:54:54 chs Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -171,7 +171,7 @@ sys_getpriority(struct lwp *l, const struct sys_getpriority_args *uap,
 	mutex_enter(proc_lock);
 	switch (SCARG(uap, which)) {
 	case PRIO_PROCESS:
-		p = who ? proc_find(who) : curp;;
+		p = who ? proc_find(who) : curp;
 		if (p != NULL)
 			low = p->p_nice;
 		break;
@@ -409,20 +409,21 @@ dosetrlimit(struct lwp *l, struct proc *p, int which, struct rlimit *limp)
 			vaddr_t addr;
 			vsize_t size;
 			vm_prot_t prot;
+			char *base, *tmp;
 
+			base = p->p_vmspace->vm_minsaddr;
 			if (limp->rlim_cur > alimp->rlim_cur) {
 				prot = VM_PROT_READ | VM_PROT_WRITE;
 				size = limp->rlim_cur - alimp->rlim_cur;
-				addr = (vaddr_t)p->p_vmspace->vm_minsaddr -
-				    limp->rlim_cur;
+				tmp = STACK_GROW(base, alimp->rlim_cur);
 			} else {
 				prot = VM_PROT_NONE;
 				size = alimp->rlim_cur - limp->rlim_cur;
-				addr = (vaddr_t)p->p_vmspace->vm_minsaddr -
-				     alimp->rlim_cur;
+				tmp = STACK_GROW(base, limp->rlim_cur);
 			}
+			addr = (vaddr_t)STACK_ALLOC(tmp, size);
 			(void) uvm_map_protect(&p->p_vmspace->vm_map,
-			    addr, addr+size, prot, false);
+			    addr, addr + size, prot, false);
 		}
 		break;
 
@@ -558,29 +559,38 @@ sys___getrusage50(struct lwp *l, const struct sys___getrusage50_args *uap,
 		syscallarg(int) who;
 		syscallarg(struct rusage *) rusage;
 	} */
+	int error;
 	struct rusage ru;
 	struct proc *p = l->l_proc;
 
-	switch (SCARG(uap, who)) {
+	error = getrusage1(p, SCARG(uap, who), &ru);
+	if (error != 0)
+		return error;
+
+	return copyout(&ru, SCARG(uap, rusage), sizeof(ru));
+}
+
+int
+getrusage1(struct proc *p, int who, struct rusage *ru) {
+
+	switch (who) {
 	case RUSAGE_SELF:
 		mutex_enter(p->p_lock);
-		memcpy(&ru, &p->p_stats->p_ru, sizeof(ru));
-		calcru(p, &ru.ru_utime, &ru.ru_stime, NULL, NULL);
-		rulwps(p, &ru);
+		memcpy(ru, &p->p_stats->p_ru, sizeof(*ru));
+		calcru(p, &ru->ru_utime, &ru->ru_stime, NULL, NULL);
+		rulwps(p, ru);
 		mutex_exit(p->p_lock);
 		break;
-
 	case RUSAGE_CHILDREN:
 		mutex_enter(p->p_lock);
-		memcpy(&ru, &p->p_stats->p_cru, sizeof(ru));
+		memcpy(ru, &p->p_stats->p_cru, sizeof(*ru));
 		mutex_exit(p->p_lock);
 		break;
-
 	default:
 		return EINVAL;
 	}
 
-	return copyout(&ru, SCARG(uap, rusage), sizeof(ru));
+	return 0;
 }
 
 void

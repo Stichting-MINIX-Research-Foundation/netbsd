@@ -1,4 +1,4 @@
-/*	$NetBSD: linux_machdep.c,v 1.151 2011/11/18 04:07:44 christos Exp $	*/
+/*	$NetBSD: linux_machdep.c,v 1.153 2013/12/01 01:05:16 christos Exp $	*/
 
 /*-
  * Copyright (c) 1995, 2000, 2008, 2009 The NetBSD Foundation, Inc.
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: linux_machdep.c,v 1.151 2011/11/18 04:07:44 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: linux_machdep.c,v 1.153 2013/12/01 01:05:16 christos Exp $");
 
 #if defined(_KERNEL_OPT)
 #include "opt_vm86.h"

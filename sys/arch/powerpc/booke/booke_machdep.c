@@ -1,4 +1,4 @@
-/*	$NetBSD: booke_machdep.c,v 1.16 2012/08/01 21:30:21 matt Exp $	*/
+/*	$NetBSD: booke_machdep.c,v 1.18 2013/07/17 23:27:02 matt Exp $	*/
 /*-
  * Copyright (c) 2010, 2011 The NetBSD Foundation, Inc.
  * All rights reserved.
@@ -38,7 +38,7 @@
 #define	_POWERPC_BUS_DMA_PRIVATE
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: booke_machdep.c,v 1.16 2012/08/01 21:30:21 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: booke_machdep.c,v 1.18 2013/07/17 23:27:02 matt Exp $");
 
 #include "opt_modular.h"
 
@@ -54,7 +54,6 @@ __KERNEL_RCSID(0, "$NetBSD: booke_machdep.c,v 1.16 2012/08/01 21:30:21 matt Exp 
 
 #include <uvm/uvm_extern.h>
 
-#include <powerpc/cpuset.h>
 #include <powerpc/pcb.h>
 #include <powerpc/spr.h>
 #include <powerpc/booke/spr.h>
@@ -85,7 +84,11 @@ struct powerpc_bus_dma_tag booke_bus_dma_tag = {
 	._dmamap_load_uio = _bus_dmamap_load_uio,
 	._dmamap_load_raw = _bus_dmamap_load_raw,
 	._dmamap_unload = _bus_dmamap_unload,
-	._dmamap_sync = _bus_dmamap_sync,
+	/*
+	 * The caches on BookE are coherent so we don't need to do any special
+	 * cache synchronization.
+	 */
+	//._dmamap_sync = _bus_dmamap_sync,
 	._dmamem_alloc = _bus_dmamem_alloc,
 	._dmamem_free = _bus_dmamem_free,
 	._dmamem_map = _bus_dmamem_map,
@@ -218,6 +221,12 @@ booke_cpu_startup(const char *model)
 		ci->ci_idepth = -1;
 		ci->ci_pmap_kern_segtab = curcpu()->ci_pmap_kern_segtab;
 	}
+
+	kcpuset_create(&cpuset_info.cpus_running, true);
+	kcpuset_create(&cpuset_info.cpus_hatched, true);
+	kcpuset_create(&cpuset_info.cpus_paused, true);
+	kcpuset_create(&cpuset_info.cpus_resumed, true);
+	kcpuset_create(&cpuset_info.cpus_halted, true);
 #endif /* MULTIPROCESSOR */
 }
 
@@ -454,18 +463,18 @@ cpu_evcnt_attach(struct cpu_info *ci)
 register_t
 cpu_hatch(void)
 {
-	volatile struct cpuset_info * const csi = &cpuset_info;
+	struct cpuset_info * const csi = &cpuset_info;
 	const size_t id = cpu_number();
 
 	/*
 	 * We've hatched so tell the spinup code.
 	 */
-	CPUSET_ADD(csi->cpus_hatched, id);
+	kcpuset_set(csi->cpus_hatched, id);
 
 	/*
 	 * Loop until running bit for this cpu is set.
 	 */
-	while (!CPUSET_HAS_P(csi->cpus_running, id)) {
+	while (!kcpuset_isset(csi->cpus_running, id)) {
 		continue;
 	}
 
@@ -486,24 +495,27 @@ cpu_boot_secondary_processors(void)
 	volatile struct cpuset_info * const csi = &cpuset_info;
 	CPU_INFO_ITERATOR cii;
 	struct cpu_info *ci;
-	__cpuset_t running = CPUSET_NULLSET;
+	kcpuset_t *running;
+
+	kcpuset_create(&running, true);
 
 	for (CPU_INFO_FOREACH(cii, ci)) {
 		/*
 		 * Skip this CPU if it didn't sucessfully hatch.
 		 */
-		if (! CPUSET_HAS_P(csi->cpus_hatched, cpu_index(ci)))
+		if (!kcpuset_isset(csi->cpus_hatched, cpu_index(ci)))
 			continue;
 
 		KASSERT(!CPU_IS_PRIMARY(ci));
 		KASSERT(ci->ci_data.cpu_idlelwp);
 
-		CPUSET_ADD(running, cpu_index(ci));
+		kcpuset_set(running, cpu_index(ci));
 	}
-	KASSERT(CPUSET_EQUAL_P(csi->cpus_hatched, running));
-	if (!CPUSET_EMPTY_P(running)) {
-		CPUSET_ADDSET(csi->cpus_running, running);
+	KASSERT(kcpuset_match(csi->cpus_hatched, running));
+	if (!kcpuset_iszero(running)) {
+		kcpuset_merge(csi->cpus_running, running);
 	}
+	kcpuset_destroy(running);
 }
 #endif
 

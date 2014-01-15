@@ -1,4 +1,4 @@
-/*	$NetBSD: linux32_machdep.c,v 1.31 2012/07/15 15:17:56 dsl Exp $ */
+/*	$NetBSD: linux32_machdep.c,v 1.33 2013/12/01 01:05:16 christos Exp $ */
 
 /*-
  * Copyright (c) 2006 Emmanuel Dreyfus, all rights reserved.
@@ -31,7 +31,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: linux32_machdep.c,v 1.31 2012/07/15 15:17:56 dsl Exp $");
+__KERNEL_RCSID(0, "$NetBSD: linux32_machdep.c,v 1.33 2013/12/01 01:05:16 christos Exp $");
 
 #include <sys/param.h>
 #include <sys/proc.h>

@@ -1,4 +1,4 @@
-/*	$NetBSD: fstat.c,v 1.97 2012/09/26 23:01:04 christos Exp $	*/
+/*	$NetBSD: fstat.c,v 1.103 2013/10/19 15:56:05 christos Exp $	*/
 
 /*-
  * Copyright (c) 1988, 1993
@@ -39,7 +39,7 @@ __COPYRIGHT("@(#) Copyright (c) 1988, 1993\
 #if 0
 static char sccsid[] = "@(#)fstat.c	8.3 (Berkeley) 5/2/95";
 #else
-__RCSID("$NetBSD: fstat.c,v 1.97 2012/09/26 23:01:04 christos Exp $");
+__RCSID("$NetBSD: fstat.c,v 1.103 2013/10/19 15:56:05 christos Exp $");
 #endif
 #endif /* not lint */
 
@@ -88,6 +88,7 @@ __RCSID("$NetBSD: fstat.c,v 1.97 2012/09/26 23:01:04 christos Exp $");
 
 #ifdef INET6
 #include <netinet/ip6.h>
+#include <netinet6/in6.h>
 #include <netinet6/ip6_var.h>
 #include <netinet6/in6_pcb.h>
 #endif
@@ -170,13 +171,14 @@ static const char *inet6_addrstr(char *, size_t, const struct in6_addr *,
 #endif
 static const char *at_addrstr(char *, size_t, const struct sockaddr_at *);
 static void	socktrans(struct socket *, int);
-static void	misctrans(struct file *);
+static void	misctrans(struct file *, int);
 static int	ufs_filestat(struct vnode *, struct filestat *);
 static void	usage(void) __dead;
 static const char   *vfilestat(struct vnode *, struct filestat *);
 static void	vtrans(struct vnode *, int, int);
 static void	ftrans(fdfile_t *, int);
 static void	ptrans(struct file *, struct pipe *, int);
+static void	kdriver_init(void);
 
 int
 main(int argc, char **argv)
@@ -233,6 +235,8 @@ main(int argc, char **argv)
 		default:
 			usage();
 		}
+
+	kdriver_init();
 
 	if (*(argv += optind)) {
 		for (; *argv; ++argv) {
@@ -313,6 +317,89 @@ pid_t	Pid;
 		(void)printf(" %4d", i); \
 		break; \
 	}
+
+static struct kinfo_drivers *kdriver;
+static size_t kdriverlen;
+
+static int
+kdriver_comp(const void *a, const void *b)
+{
+	const struct kinfo_drivers *ka = a;
+	const struct kinfo_drivers *kb = b;
+	int kac = ka->d_cmajor == -1 ? 0 : ka->d_cmajor;
+	int kbc = kb->d_cmajor == -1 ? 0 : kb->d_cmajor;
+	int kab = ka->d_bmajor == -1 ? 0 : ka->d_bmajor;
+	int kbb = kb->d_bmajor == -1 ? 0 : kb->d_bmajor;
+	int c = kac - kbc;
+	if (c == 0)
+		return kab - kbb;
+	else
+		return c;
+}
+
+static const char *
+kdriver_search(int type, dev_t num)
+{
+	struct kinfo_drivers k, *kp;
+	static char buf[64];
+
+	if (nflg)
+		goto out;
+
+	if (type == VBLK) {
+		k.d_bmajor = num;
+		k.d_cmajor = -1;
+	} else {
+		k.d_bmajor = -1;
+		k.d_cmajor = num;
+	}
+	kp = bsearch(&k, kdriver, kdriverlen, sizeof(*kdriver), kdriver_comp);
+	if (kp)
+		return kp->d_name;
+out:	
+	snprintf(buf, sizeof(buf), "%llu", (unsigned long long)num);
+	return buf;
+}
+
+
+static void
+kdriver_init(void)
+{
+	size_t sz;
+	int error;
+	static const int name[2] = { CTL_KERN, KERN_DRIVERS };
+
+	error = sysctl(name, __arraycount(name), NULL, &sz, NULL, 0);
+	if (error == -1) {
+		warn("sysctl kern.drivers");
+		return;
+	}
+
+	if (sz % sizeof(*kdriver)) {
+		warnx("bad size %zu for kern.drivers", sz);
+		return;
+	}
+
+	kdriver = malloc(sz);
+	if (kdriver == NULL) {
+		warn("malloc");
+		return;
+	}
+
+	error = sysctl(name, __arraycount(name), kdriver, &sz, NULL, 0);
+	if (error == -1) {
+		warn("sysctl kern.drivers");
+		return;
+	}
+
+	kdriverlen = sz / sizeof(*kdriver);
+	qsort(kdriver, kdriverlen, sizeof(*kdriver), kdriver_comp);
+#ifdef DEBUG
+	for (size_t i = 0; i < kdriverlen; i++)
+		printf("%d %d %s\n", kdriver[i].d_cmajor, kdriver[i].d_bmajor,
+		    kdriver[i].d_name);
+#endif
+}
 
 /*
  * print open files attributed to this process
@@ -399,8 +486,11 @@ ftrans(fdfile_t *fp, int i)
 		    i, fp, Pid);
 		return;
 	}
-	if (fdfile.ff_file == NULL)
+	if (fdfile.ff_file == NULL) {
+		dprintf("null ff_file for %d at %p for pid %d",
+		    i, fp, Pid);
 		return;
+	}
 	if (!KVM_READ(fdfile.ff_file, &file, sizeof(file))) {
 		dprintf("can't read file %d at %p for pid %d",
 		    i, fdfile.ff_file, Pid);
@@ -424,7 +514,7 @@ ftrans(fdfile_t *fp, int i)
 	case DTYPE_MQUEUE:
 	case DTYPE_SEM:
 		if (checkfile == 0)
-			misctrans(&file);
+			misctrans(&file, i);
 		break;
 	default:
 		dprintf("unknown file type %d for file %d of pid %d",
@@ -559,8 +649,8 @@ vtrans(struct vnode *vp, int i, int flag)
 
 		if (nflg || ((name = devname(fst.rdev, vn.v_type == VCHR ? 
 		    S_IFCHR : S_IFBLK)) == NULL))
-			(void)printf("  %2llu,%-2llu",
-			    (unsigned long long)major(fst.rdev),
+			(void)printf("  %s,%-2llu",
+			    kdriver_search(vn.v_type, major(fst.rdev)),
 			    (unsigned long long)minor(fst.rdev));
 		else
 			(void)printf(" %6s", name);
@@ -814,14 +904,7 @@ inet6_addrstr(char *buf, size_t len, const struct in6_addr *a, uint16_t p)
 	sin6.sin6_addr = *a;
 	sin6.sin6_port = htons(p);
 
-	if (IN6_IS_ADDR_LINKLOCAL(a) &&
-	    *(u_int16_t *)&sin6.sin6_addr.s6_addr[2] != 0) {
-		sin6.sin6_scope_id =
-			ntohs(*(uint16_t *)&sin6.sin6_addr.s6_addr[2]);
-		sin6.sin6_addr.s6_addr[2] = 0;
-		sin6.sin6_addr.s6_addr[3] = 0;
-	}
-
+	inet6_getscopeid(&sin6, INET6_IS_ADDR_LINKLOCAL);
 	serv[0] = '\0';
 
 	if (getnameinfo((struct sockaddr *)&sin6, sin6.sin6_len,
@@ -1000,12 +1083,10 @@ socktrans(struct socket *sock, int i)
 		/* print address of pcb and connected pcb */
 		if (so.so_pcb) {
 			char shoconn[4], *cp;
+			void *pcb[2];
+			size_t p = 0;
 
-			if (kvm_read(kd, (u_long)so.so_pcb, (char *)&unpcb,
-			    sizeof(struct unpcb)) != sizeof(struct unpcb)){
-				dprintf("can't read unpcb at %p", so.so_pcb);
-				goto bad;
-			}
+			pcb[0] = so.so_pcb;
 
 			cp = shoconn;
 			if (!(so.so_state & SS_CANTRCVMORE))
@@ -1014,6 +1095,13 @@ socktrans(struct socket *sock, int i)
 			if (!(so.so_state & SS_CANTSENDMORE))
 				*cp++ = '>';
 			*cp = '\0';
+again:
+			if (kvm_read(kd, (u_long)pcb[p], (char *)&unpcb,
+			    sizeof(struct unpcb)) != sizeof(struct unpcb)){
+				dprintf("can't read unpcb at %p", so.so_pcb);
+				goto bad;
+			}
+
 			if (unpcb.unp_addr) {
 				struct sockaddr_un *sun = 
 					malloc(unpcb.unp_addrlen);
@@ -1027,15 +1115,22 @@ socktrans(struct socket *sock, int i)
 					    unpcb.unp_addr);
 					free(sun);
 				} else {
-					snprintf(fbuf, sizeof(fbuf), " %s %s",
-					    shoconn, sun->sun_path);
+					snprintf(fbuf, sizeof(fbuf), " %s %s %s",
+					    shoconn, sun->sun_path,
+					    p == 0 ? "[creat]" : "[using]");
 					free(sun);
 					break;
 				}
 			}
-			if (unpcb.unp_conn)
-				snprintf(fbuf, sizeof(fbuf), " %s %lx", shoconn,
-				    (long)unpcb.unp_conn);
+			if (unpcb.unp_conn) {
+				if (p == 0) {
+					pcb[++p] = unpcb.unp_conn;
+					goto again;
+				} else
+					snprintf(fbuf, sizeof(fbuf),
+					    " %p %s %p", pcb[0], shoconn,
+					    pcb[1]);
+			}
 		}
 		break;
 	case AF_APPLETALK:
@@ -1094,10 +1189,10 @@ bad:
 }
 
 static void
-misctrans(struct file *file)
+misctrans(struct file *file, int i)
 {
 
-	PREFIX((int)file->f_type);
+	PREFIX(i);
 	pmisc(file, dtypes[file->f_type]);
 }
 

@@ -1,4 +1,4 @@
-#	$NetBSD: INSTALL,v 1.63 2012/08/17 20:11:41 abs Exp $
+#	$NetBSD: INSTALL,v 1.67 2013/11/09 21:32:55 christos Exp $
 #
 # INSTALL kernel; all supported devices but nothing fancy.
 #
@@ -33,7 +33,7 @@ maxusers	8
 options 	MEMORY_DISK_HOOKS
 options 	MEMORY_DISK_IS_ROOT	# force root on memory disk
 options 	MEMORY_DISK_SERVER=0	# no userspace memory disk support
-options 	MEMORY_DISK_ROOT_SIZE=3328	# size of memory disk, in blocks
+options 	MEMORY_DISK_ROOT_SIZE=4000	# size of memory disk, in blocks
 options 	MEMORY_DISK_RBFLAGS=RB_SINGLE	# boot in single-user mode
 
 # Kernel compiled-in symbolic debugger & system call tracer
@@ -105,6 +105,7 @@ options 	COMPAT_20
 options 	COMPAT_30	# NetBSD 3.0 compatibility.
 options 	COMPAT_40	# NetBSD 4.0 compatibility.
 options 	COMPAT_50	# NetBSD 5.0 compatibility.
+options 	COMPAT_60	# NetBSD 6.0 compatibility.
 #options 	COMPAT_ULTRIX
 options		COMPAT_BSDPTY	# /dev/[pt]ty?? ptys.
 
@@ -245,14 +246,14 @@ wskbd*		at lkkbd? console ?
 #pseudo-device   accf_data		# "dataready" accept filter
 #pseudo-device   accf_http		# "httpready" accept filter
 
-pseudo-device	loop	1
-pseudo-device	pty		2	# pseudo-terminals (Sysinst needs two)
+pseudo-device	loop	
+pseudo-device	pty			# pseudo-terminals
 pseudo-device	bpfilter
 #pseudo-device	tun	
 #pseudo-device	gre			# generic L3 over IP tunnel
 #pseudo-device	vnd	
-#pseudo-device	ccd	4
-pseudo-device	raid	8		# RAIDframe disk driver
+#pseudo-device	ccd	
+pseudo-device	raid			# RAIDframe disk driver
 #pseudo-device	fss			# file system snapshot device
 
 pseudo-device	md	

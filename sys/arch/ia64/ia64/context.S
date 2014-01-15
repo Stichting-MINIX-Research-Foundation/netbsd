@@ -1,5 +1,5 @@
-/*	$NetBSD: context.S,v 1.3 2009/11/27 03:23:10 rmind Exp $	*/
-	
+/*	$NetBSD: context.S,v 1.5 2013/03/24 06:06:19 kiyohara Exp $	*/
+
 /*
  * Copyright (c) 2003 Marcel Moolenaar
  * All rights reserved.
@@ -28,7 +28,6 @@
  * $FreeBSD: src/sys/ia64/ia64/context.S,v 1.3 2003/07/02 12:57:07 ru Exp $
  */
 
-#include <sys/cdefs.h>
 #include <machine/asm.h>
 #include "assym.h"
 
@@ -658,7 +657,7 @@ ENTRY(restore_high_fp, 1)
 	ldf.fill	f32=[r32],32
 	;;
 	ldf.fill	f33=[r31],32
-	ldf.fill	f34=[r32],32	
+	ldf.fill	f34=[r32],32
 	;;
 	ldf.fill	f35=[r31],32
 	ldf.fill	f36=[r32],32
@@ -831,13 +830,19 @@ ENTRY(cpu_switchto, 3)
 	mov		loc1=rp			// save rp (loc1 = rp)
 	;;
 }
+{	.mmi
+	st8		[r14]=in1		// ci->ci_curlwp = newlwp
+	mov		r9=in0			// r9 = oldlwp
+	nop		0
+	;;
+}
 {	.mmb
+	nop		0
 	/*
 	 * Switch to new context, if p6 == true.
 	 * We assum to return to restorectx_return_here for swapped context.
 	 */
-(p6)	ld8		out0=[r3]		// if (p6) out0 = pcb of &newlwp
-	xchg8		r9=[r14],in1		// ci->ci_curlwp = newlwp
+(p6)	ld8		out0=[r3]		// out0 = pcb of &newlwp
 (p6)	br.call.sptk.many rp=restorectx		// if (p6) restorectx(out0)
 	;;
 }

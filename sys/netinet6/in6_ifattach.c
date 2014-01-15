@@ -1,4 +1,4 @@
-/*	$NetBSD: in6_ifattach.c,v 1.87 2011/12/31 20:41:59 christos Exp $	*/
+/*	$NetBSD: in6_ifattach.c,v 1.89 2013/10/25 15:44:39 martin Exp $	*/
 /*	$KAME: in6_ifattach.c,v 1.124 2001/07/18 08:32:51 jinmei Exp $	*/
 
 /*
@@ -31,7 +31,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: in6_ifattach.c,v 1.87 2011/12/31 20:41:59 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: in6_ifattach.c,v 1.89 2013/10/25 15:44:39 martin Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -527,7 +527,7 @@ success:
 static int
 in6_ifattach_linklocal(struct ifnet *ifp, struct ifnet *altifp)
 {
-	struct in6_ifaddr *ia;
+	struct in6_ifaddr *ia __diagused;
 	struct in6_aliasreq ifra;
 	struct nd_prefixctl pr0;
 	int i, error;
@@ -588,12 +588,7 @@ in6_ifattach_linklocal(struct ifnet *ifp, struct ifnet *altifp)
 	}
 
 	ia = in6ifa_ifpforlinklocal(ifp, 0); /* ia must not be NULL */
-#ifdef DIAGNOSTIC
-	if (!ia) {
-		panic("ia == NULL in in6_ifattach_linklocal");
-		/* NOTREACHED */
-	}
-#endif
+	KASSERTMSG(ia, "ia == NULL in in6_ifattach_linklocal");
 
 	/*
 	 * Make the link-local prefix (fe80::/64%link) as on-link.

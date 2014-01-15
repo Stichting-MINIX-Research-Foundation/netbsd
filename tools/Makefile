@@ -1,12 +1,34 @@
-#	$NetBSD: Makefile,v 1.157 2012/09/20 15:50:20 pooka Exp $
+#	$NetBSD: Makefile,v 1.170 2013/09/02 14:34:57 joerg Exp $
 
 .include <bsd.own.mk>
+.include <bsd.endian.mk>
 
-.if defined(HAVE_GCC) || defined(HAVE_PCC)
+# Make sure that the ordered build/install processing applies when using
+# plain make.
+.MAIN: build_install
+
+# TOOLDIR must be valid, unless MKTOOLS=no
+.if ${MKTOOLS:Uyes} != "no"
+.if "${TOOLDIR}" == ""
+.error "TOOLDIR is undefined or empty"
+.elif "${TOOLDIR:tW:M/*}" == ""
+.error "TOOLDIR is not an absolute path: ${TOOLDIR}"
+#.elif !exists(TOOLDIR) # XXX .exists fails for directories
+#.error "TOOLDIR does not exist: ${TOOLDIR}"
+.endif
+.endif # MKTOOLS != no
+
+# TOOLS_BUILDRUMP == yes builds only the subset of the tools required
+# for building rump kernels and the hypervisor.  It is typically used
+# when building rump kernels targeted for non-NetBSD systems (via
+# buildrump.sh), and should not be set for a regular "make build".
+TOOLS_BUILDRUMP?=no
+
+.if ${TOOLCHAIN_MISSING} == "no"
+.if defined(HAVE_GCC)
 TOOLCHAIN_BITS= gmake .WAIT
 .endif
 
-.if ${TOOLCHAIN_MISSING} == "no"
 .if defined(HAVE_GCC)
 .if ${HAVE_GCC} >= 45
 TOOLCHAIN_BITS+= gmp .WAIT
@@ -23,7 +45,7 @@ TOOLCHAIN_BITS+= binutils .WAIT
 .if defined(HAVE_GCC)
 .if ${TOOLCHAIN_MISSING} == "no"
 TOOLCHAIN_BITS+= gcc
-.  if ${MKCROSSGDB:Uno} != "no"
+.  if ${MKCROSSGDB:Uno} != "no" || make(obj)
 TOOLCHAIN_BITS+= gdb
 .  endif
 TOOLCHAIN_BITS+= .WAIT
@@ -46,7 +68,7 @@ DTRACE_BITS=
 .if ${MKDTRACE} != "no"
 DTRACE_BITS+= .WAIT libelf
 DTRACE_BITS+= .WAIT libdwarf
-DTRACE_BITS+= .WAIT libctf 
+DTRACE_BITS+= .WAIT libctf
 DTRACE_BITS+= .WAIT ctfconvert ctfmerge
 .endif
 
@@ -55,22 +77,43 @@ LINT_BITS=
 LINT_BITS= lint lint2
 .endif
 
+# All of host-mkdep, compat, and binstall are needed before anything
+# else.  Within this group, they must be built in a specific order, and
+# all of them must be built before any of them is installed.  They may
+# be installed in any order.  This can't be expressed using the .WAIT
+# notation inside the SUBDIR list.
+#
+# XXX .ORDER does not work when multiple targets are passed on the
+# make command line without "-j", so use dependencies in addition to .ORDER.
+#
+.ORDER: dependall-host-mkdep dependall-compat dependall-binstall
+.if make(dependall-host-mkdep) && make(dependall-compat)
+dependall-compat: dependall-host-mkdep
+.endif
+.if make(dependall-compat) && make(dependall-binstall)
+dependall-binstall: dependall-compat
+.endif
+
 # Dependencies in SUBDIR below ordered to maximize parallel ability.
-SUBDIR=	host-mkdep .WAIT compat .WAIT \
-	binstall .WAIT mktemp .WAIT sed .WAIT \
-		cap_mkdb crunchgen ctags genassym gencat hexdump join \
+# See above for special treatment for host-mkdep, compat, and binstall.
+#
+SUBDIR=	host-mkdep compat binstall \
+	.WAIT mktemp .WAIT sed .WAIT
+.if ${TOOLS_BUILDRUMP} == "no"
+SUBDIR+= cap_mkdb crunchgen ctags genassym gencat hexdump \
 		${LINT_BITS} \
-		lorder makewhatis mkdep mtree nbperf .WAIT rpcgen tsort \
-		uudecode m4 \
-	.WAIT texinfo \
-	.WAIT yacc \
-	.WAIT awk \
+		makewhatis mtree nbperf .WAIT rpcgen uudecode
+.endif
+
+SUBDIR+= join lorder m4 mkdep tsort .WAIT yacc .WAIT awk .WAIT lex
+
+.if ${TOOLS_BUILDRUMP} == "no"
+SUBDIR += .WAIT texinfo \
 	.WAIT tic \
-	.WAIT lex \
 	.WAIT pax \
 	.WAIT ${TOOLCHAIN_BITS} \
 	${DTRACE_BITS} \
-		asn1_compile cat cksum compile_et config db \
+		asn1_compile cat cksum compile_et db \
 		file lint1 slc \
 		makefs .WAIT menuc mkcsmapper mkesdb mklocale mknod msgc \
 		.WAIT disklabel \
@@ -78,17 +121,23 @@ SUBDIR=	host-mkdep .WAIT compat .WAIT \
 		.WAIT fdisk \
 		.WAIT installboot \
 		pwd_mkdb stat strfile sunlabel zic
+.endif
+SUBDIR+= .WAIT config
 
 .if ${MKLLVM} != "no"
-# .WAIT between llvm-tblgen and llvm-clang-tblgen ensures install
-# rules works correctly
 SUBDIR+= \
 	llvm .WAIT \
 	llvm-lib/libLLVMSupport llvm-lib/libLLVMTableGen .WAIT \
-	llvm-tblgen .WAIT llvm-clang-tblgen .WAIT \
+	llvm-tblgen llvm-clang-tblgen .WAIT \
 	llvm-include .WAIT \
 	llvm-lib .WAIT \
 	llvm-clang
+.if ${MKLLD} != "no"
+SUBDIR+=	llvm-lld
+.endif
+.if ${MKMCLINKER} != "no"
+SUBDIR+=	llvm-mcld
+.endif
 .endif
 
 .if ${MKMAN} != "no" || ${MKDOC} != "no" || ${MKHTML} != "no"
@@ -97,6 +146,8 @@ SUBDIR+=	groff
 .  endif
 SUBDIR+=	mandoc
 .endif
+
+.if ${TOOLS_BUILDRUMP} == "no"
 
 .if ${MKMAINTAINERTOOLS:Uno} != "no"
 SUBDIR+=	autoconf .WAIT gettext
@@ -152,10 +203,18 @@ SUBDIR+=	amiga-txlt
 SUBDIR+=	hp300-mkboot
 .endif
 
+.if ${MACHINE} == "evbarm" \
+    && ${MACHINE_CPU} == "arm" \
+    && ${TARGET_ENDIANNESS} == "1234"
+SUBDIR+=	elftosb
+.endif
+
 .if ${MACHINE} == "evbarm" || ${MACHINE} == "evbmips" || \
     ${MACHINE} == "evbppc" || ${MACHINE} == "sandpoint"
 SUBDIR+=	mkubootimage
 .endif
+
+.endif # TOOLCHAIN_BUILDRUMP
 
 check_MKTOOLS: .PHONY .NOTMAIN
 .if ${MKTOOLS:Uyes} == "no"
@@ -166,22 +225,19 @@ check_MKTOOLS: .PHONY .NOTMAIN
 .endif
 
 .if ${MKTOOLS:Uyes} == "no" || ${USETOOLS} != "yes"	# {
+SUBDIR= # empty
 realall realdepend install: check_MKTOOLS
-
-.for dir in ${SUBDIR:N.WAIT}
-all-${dir} depend-${dir} dependall-${dir} install-${dir}:
-	@true
-.endfor
 .endif							# }
 
 .include <bsd.subdir.mk>
+.include <bsd.buildinstall.mk>
 .include <bsd.obj.mk>
 
 .if !defined(PREVIOUSTOOLDIR)
 .  if exists(PREVIOUSTOOLDIR)
 PREVIOUSTOOLDIR!=	cat PREVIOUSTOOLDIR
 .  else
-PREVIOUSTOOLDIR=	
+PREVIOUSTOOLDIR=
 .  endif
 .endif
 
@@ -197,60 +253,6 @@ realall realdepend: .MAKE
 	(cd ${.CURDIR} && ${MAKE} PREVIOUSTOOLDIR=${TOOLDIR} cleandir)
 .endif
 	echo ${TOOLDIR} >PREVIOUSTOOLDIR
-
-# For each .WAIT point, make sure the immediately preceding target is
-# installed before building anything after that point.
-# (dsl: which means that with: 'a b .WAIT c' the build of 'c' waits for the
-# install of 'b', but not the install of 'a'.)
-#
-# We use the "internal" targets and dependencies generated by <bsd.subdir.mk>
-# to achieve this. These targets look like:
-#	subdir-all:	all-dir1     [.WAIT] all-dir2     etc..
-#	subdir-install:	install-dir1 [.WAIT] install-dir2 etc..
-# and so on for each element in ${TARGETS}, with .WAIT sources inserted at
-# places corresponding to the .WAITs in our $SUBDIR variable.
-#
-# Also, since we're now mixing `install' with `all' and `depend' targets
-# an order relationship between those in each individual subdirectory
-# must be established.
-#
-_deps:=
-_prev:=
-
-.for d in ${SUBDIR}				# {
-_this:=		${d}
-
-.if ${_this} == ".WAIT"				# {
-
-# setup dependency to apply to all/depend targets in the next group
-_deps:=		${_deps} ${_prev:S/^/install-/}
-
-# if we're building *only* individual targets (i.e. "dependall-yacc"),
-# make sure prerequisite tools build before installing
-# XXX: dsl: this is likely to generate a dependency loop since there is
-# a .ORDER releation between the nodes as well.
-.if !make(all) && !make(dependall) && !make(install)
-install-${_prev}: dependall-${_prev}
-.endif
-
-.else # ${_this} != ".WAIT"			# } {
-
-# order depend/all/install targets for ${d} subdir.
-.ORDER: depend-${d} all-${d} dependall-${d} install-${d}
-
-# prevent cleandir in real{all,depend} from interfering with subdir makes
-.ORDER: realdepend dependall-${d}
-.ORDER: realdepend depend-${d}
-.ORDER: realall all-${d}
-
-# make all/depend-${d} dependent on list of install targets
-depend-${d} all-${d} dependall-${d}: ${_deps}
-
-.endif # ${_this} != ".WAIT"			# }
-
-# stash current name in case the next entry is .WAIT
-_prev:=		${d}
-.endfor						# }
 
 cleandir:
 	rm -f ${CLEANFILES}

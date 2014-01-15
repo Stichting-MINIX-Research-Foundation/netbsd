@@ -1,4 +1,4 @@
-/*	$NetBSD: empbvar.h,v 1.2 2012/06/04 12:56:49 rkujawa Exp $ */
+/*	$NetBSD: empbvar.h,v 1.3 2013/01/28 14:44:37 rkujawa Exp $ */
 
 /*-
  * Copyright (c) 2012 The NetBSD Foundation, Inc.
@@ -56,6 +56,8 @@ struct empb_dmamemdev_entry {
 
 struct empb_softc {
 	device_t			sc_dev;
+
+	uint16_t			model;
 
 	struct bus_space_tag		setup_area;
 	bus_space_tag_t			setup_area_t;

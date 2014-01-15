@@ -1,4 +1,4 @@
-/*	$NetBSD: wd.c,v 1.400 2012/07/31 15:50:34 bouyer Exp $ */
+/*	$NetBSD: wd.c,v 1.406 2013/10/30 15:41:14 drochner Exp $ */
 
 /*
  * Copyright (c) 1998, 2001 Manuel Bouyer.  All rights reserved.
@@ -54,7 +54,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: wd.c,v 1.400 2012/07/31 15:50:34 bouyer Exp $");
+__KERNEL_RCSID(0, "$NetBSD: wd.c,v 1.406 2013/10/30 15:41:14 drochner Exp $");
 
 #include "opt_ata.h"
 
@@ -178,6 +178,7 @@ void  wdrestart(void *);
 void  wddone(void *);
 int   wd_get_params(struct wd_softc *, u_int8_t, struct ataparams *);
 int   wd_flushcache(struct wd_softc *, int);
+int   wd_trim(struct wd_softc *, int, struct disk_discard_range *);
 bool  wd_shutdown(device_t, int);
 
 int   wd_getcache(struct wd_softc *, int *);
@@ -404,8 +405,14 @@ wd_suspend(device_t dv, const pmf_qual_t *qual)
 {
 	struct wd_softc *sc = device_private(dv);
 
+	/* the adapter needs to be enabled */
+	if (sc->atabus->ata_addref(sc->drvp))
+		return true; /* no need to complain */
+
 	wd_flushcache(sc, AT_WAIT);
 	wd_standby(sc, AT_WAIT);
+
+	sc->atabus->ata_delref(sc->drvp);
 	return true;
 }
 
@@ -1168,7 +1175,7 @@ wdioctl(dev_t dev, u_long xfer, void *addr, int flag, struct lwp *l)
 {
 	struct wd_softc *wd =
 	    device_lookup_private(&wd_cd, WDUNIT(dev));
-	int error = 0, s;
+	int error, s;
 #ifdef __HAVE_OLD_DISKLABEL
 	struct disklabel *newlabel = NULL;
 #endif
@@ -1182,6 +1189,7 @@ wdioctl(dev_t dev, u_long xfer, void *addr, int flag, struct lwp *l)
 	if (error != EPASSTHROUGH)
 		return (error);
 
+	error = 0;
 	switch (xfer) {
 #ifdef HAS_BAD144_HANDLING
 	case DIOCSBAD:
@@ -1526,6 +1534,20 @@ wdioctl(dev_t dev, u_long xfer, void *addr, int flag, struct lwp *l)
 		return 0;
 	    }
 
+	case DIOCGDISCARDPARAMS: {
+		struct disk_discard_params * tp;
+
+		if (!(wd->sc_params.atap_ata_major & WDC_VER_ATA7)
+		    || !(wd->sc_params.support_dsm & ATA_SUPPORT_DSM_TRIM))
+			return ENOTTY;
+		tp = (struct disk_discard_params *)addr;
+		tp->maxsize = 0xffff; /*wd->sc_params.max_dsm_blocks*/
+		aprint_debug_dev(wd->sc_dev, "TRIM maxsize %ld\n", tp->maxsize);
+		return 0;
+	}
+	case DIOCDISCARD:
+		return wd_trim(wd, WDPART(dev), (struct disk_discard_range *)addr);
+
 	default:
 		return ENOTTY;
 	}
@@ -1712,56 +1734,22 @@ bad144intern(struct wd_softc *wd)
 static void
 wd_params_to_properties(struct wd_softc *wd, struct ataparams *params)
 {
-	prop_dictionary_t disk_info, odisk_info, geom;
-	const char *cp;
+	struct disk_geom *dg = &wd->sc_dk.dk_geom;
 
-	disk_info = prop_dictionary_create();
+	memset(dg, 0, sizeof(*dg));
 
-	if (strcmp(wd->sc_params.atap_model, "ST506") == 0)
-		cp = "ST506";
-	else {
-		/* XXX Should have a case for ATA here, too. */
-		cp = "ESDI";
-	}
-	prop_dictionary_set_cstring_nocopy(disk_info, "type", cp);
+	dg->dg_secperunit = wd->sc_capacity;
+	dg->dg_secsize = DEV_BSIZE /* XXX 512? */;
+	dg->dg_nsectors = wd->sc_params.atap_sectors;
+	dg->dg_ntracks = wd->sc_params.atap_heads;
+	if ((wd->sc_flags & WDF_LBA) == 0)
+		dg->dg_ncylinders = wd->sc_params.atap_cylinders;
 
-	geom = prop_dictionary_create();
+	/* XXX Should have a case for ATA here, too. */
+	const char *cp = strcmp(wd->sc_params.atap_model, "ST506") ?
+	    "ST506" : "ESDI";
 
-	prop_dictionary_set_uint64(geom, "sectors-per-unit", wd->sc_capacity);
-
-	prop_dictionary_set_uint32(geom, "sector-size",
-				   DEV_BSIZE /* XXX 512? */);
-
-	prop_dictionary_set_uint16(geom, "sectors-per-track",
-				   wd->sc_params.atap_sectors);
-
-	prop_dictionary_set_uint16(geom, "tracks-per-cylinder",
-				   wd->sc_params.atap_heads);
-
-	if (wd->sc_flags & WDF_LBA)
-		prop_dictionary_set_uint64(geom, "cylinders-per-unit",
-					   wd->sc_capacity /
-					       (wd->sc_params.atap_heads *
-					        wd->sc_params.atap_sectors));
-	else
-		prop_dictionary_set_uint16(geom, "cylinders-per-unit",
-					   wd->sc_params.atap_cylinders);
-
-	prop_dictionary_set(disk_info, "geometry", geom);
-	prop_object_release(geom);
-
-	prop_dictionary_set(device_properties(wd->sc_dev),
-			    "disk-info", disk_info);
-
-	/*
-	 * Don't release disk_info here; we keep a reference to it.
-	 * disk_detach() will release it when we go away.
-	 */
-
-	odisk_info = wd->sc_dk.dk_info;
-	wd->sc_dk.dk_info = disk_info;
-	if (odisk_info)
-		prop_object_release(odisk_info);
+	disk_set_info(wd->sc_dev, &wd->sc_dk, cp);
 }
 
 int
@@ -1928,6 +1916,57 @@ wd_flushcache(struct wd_softc *wd, int flags)
 		char sbuf[sizeof(at_errbits) + 64];
 		snprintb(sbuf, sizeof(sbuf), at_errbits, ata_c.flags);
 		aprint_error_dev(wd->sc_dev, "wd_flushcache: status=%s\n",
+		    sbuf);
+		return EIO;
+	}
+	return 0;
+}
+
+int
+wd_trim(struct wd_softc *wd, int part, struct disk_discard_range *tr)
+{
+	struct ata_command ata_c;
+	unsigned char *req;
+	daddr_t bno = tr->bno;
+
+	if (part != RAW_PART)
+		bno += wd->sc_dk.dk_label->d_partitions[part].p_offset;;
+
+	req = kmem_zalloc(512, KM_SLEEP);
+	req[0] = bno & 0xff;
+	req[1] = (bno >> 8) & 0xff;
+	req[2] = (bno >> 16) & 0xff;
+	req[3] = (bno >> 24) & 0xff;
+	req[4] = (bno >> 32) & 0xff;
+	req[5] = (bno >> 40) & 0xff;
+	req[6] = tr->size & 0xff;
+	req[7] = (tr->size >> 8) & 0xff;
+
+	memset(&ata_c, 0, sizeof(struct ata_command));
+	ata_c.r_command = ATA_DATA_SET_MANAGEMENT;
+	ata_c.r_count = 1;
+	ata_c.r_features = ATA_SUPPORT_DSM_TRIM;
+	ata_c.r_st_bmask = WDCS_DRDY;
+	ata_c.r_st_pmask = WDCS_DRDY;
+	ata_c.timeout = 30000; /* 30s timeout */
+	ata_c.data = req;
+	ata_c.bcount = 512;
+	ata_c.flags |= AT_WRITE | AT_WAIT;
+	if (wd->atabus->ata_exec_command(wd->drvp, &ata_c) != ATACMD_COMPLETE) {
+		aprint_error_dev(wd->sc_dev,
+		    "trim command didn't complete\n");
+		kmem_free(req, 512);
+		return EIO;
+	}
+	kmem_free(req, 512);
+	if (ata_c.flags & AT_ERROR) {
+		if (ata_c.r_error == WDCE_ABRT) /* command not supported */
+			return ENODEV;
+	}
+	if (ata_c.flags & (AT_ERROR | AT_TIMEOU | AT_DF)) {
+		char sbuf[sizeof(at_errbits) + 64];
+		snprintb(sbuf, sizeof(sbuf), at_errbits, ata_c.flags);
+		aprint_error_dev(wd->sc_dev, "wd_trim: status=%s\n",
 		    sbuf);
 		return EIO;
 	}
@@ -2129,5 +2168,6 @@ wdioctlstrategy(struct buf *bp)
 	return;
 bad:
 	bp->b_error = error;
+	bp->b_resid = bp->b_bcount;
 	biodone(bp);
 }

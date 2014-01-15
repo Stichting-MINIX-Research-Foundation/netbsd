@@ -1,4 +1,4 @@
-/*	$NetBSD: disks.c,v 1.126 2012/06/23 14:06:02 christos Exp $ */
+/*	$NetBSD: disks.c,v 1.129 2013/10/30 15:37:49 drochner Exp $ */
 
 /*
  * Copyright 1997 Piermont Information Systems Inc.
@@ -259,7 +259,8 @@ get_descr_ata(struct disk_desc *dd, int fd)
 	 * Mitsumi ATAPI devices
 	 */
 
-	if (!((inqbuf->atap_config & WDC_CFG_ATAPI_MASK) == WDC_CFG_ATAPI &&
+	if (!(inqbuf->atap_config != WDC_CFG_CFA_MAGIC &&
+	      (inqbuf->atap_config & WDC_CFG_ATAPI) &&
 	      ((inqbuf->atap_model[0] == 'N' &&
 		  inqbuf->atap_model[1] == 'E') ||
 	       (inqbuf->atap_model[0] == 'F' &&
@@ -377,6 +378,14 @@ get_disks(struct disk_desc *dd)
 					break;
 				continue;
 			}
+
+			/*
+			 * Exclude a disk mounted as root partition,
+			 * in case of install-image on a USB memstick.
+			 */
+			if (is_active_rootpart(dd->dd_name, 0))
+				continue;
+
 			dd->dd_cyl = l.d_ncylinders;
 			dd->dd_head = l.d_ntracks;
 			dd->dd_sec = l.d_nsectors;
@@ -486,13 +495,11 @@ fmt_fspart(menudesc *m, int ptn, void *arg)
 {
 	unsigned int poffset, psize, pend;
 	const char *desc;
-	static const char *Yes, *No;
+	static const char *Yes;
 	partinfo *p = bsdlabel + ptn;
 
-	if (Yes == NULL) {
+	if (Yes == NULL)
 		Yes = msg_string(MSG_Yes);
-		No = msg_string(MSG_No);
-	}
 
 	poffset = p->pi_offset / sizemult;
 	psize = p->pi_size / sizemult;

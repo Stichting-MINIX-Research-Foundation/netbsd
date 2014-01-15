@@ -1,4 +1,4 @@
-/*	$NetBSD: cleanup.c,v 1.3 2010/06/17 18:18:15 tron Exp $	*/
+/*	$NetBSD: cleanup.c,v 1.5 2013/09/25 19:12:35 tron Exp $	*/
 
 /*++
 /* NAME
@@ -70,7 +70,7 @@
 /* COMPATIBILITY CONTROLS
 /* .ad
 /* .fi
-/* .IP "\fBundisclosed_recipients_header (To: undisclosed-recipients:;)\fR"
+/* .IP "\fBundisclosed_recipients_header (see 'postconf -d' output)\fR"
 /*	Message header that the Postfix \fBcleanup\fR(8) server inserts when a
 /*	message contains no To: or Cc: message header.
 /* .PP
@@ -86,6 +86,10 @@
 /* .IP "\fBalways_add_missing_headers (no)\fR"
 /*	Always add (Resent-) From:, To:, Date: or Message-ID: headers
 /*	when not present.
+/* .PP
+/*	Available in Postfix version 2.9 and later:
+/* .IP "\fBenable_long_queue_ids (no)\fR"
+/*	Enable long, non-repeating, queue IDs (queue file names).
 /* BUILT-IN CONTENT FILTERING CONTROLS
 /* .ad
 /* .fi
@@ -323,8 +327,8 @@
 /*	The maximal number of digits after the decimal point when logging
 /*	sub-second delay values.
 /* .IP "\fBdelay_warning_time (0h)\fR"
-/*	The time after which the sender receives the message headers of
-/*	mail that is still queued.
+/*	The time after which the sender receives a copy of the message
+/*	headers of mail that is still queued.
 /* .IP "\fBipc_timeout (3600s)\fR"
 /*	The time limit for sending or receiving information over an internal
 /*	communication channel.
@@ -488,8 +492,15 @@ static void cleanup_service(VSTREAM *src, char *unused_service, char **argv)
      */
     if (CLEANUP_OUT_OK(state) == 0 && type > 0) {
 	while (type != REC_TYPE_END
-	       && (type = rec_get(src, buf, 0)) > 0)
-	     /* void */ ;
+	       && (type = rec_get(src, buf, 0)) > 0) {
+	    if (type == REC_TYPE_MILT_COUNT) {
+		int     milter_count = atoi(vstring_str(buf));
+
+		/* Avoid deadlock. */
+		if (milter_count >= 0)
+		    cleanup_milter_receive(state, milter_count);
+	    }
+	}
     }
 
     /*

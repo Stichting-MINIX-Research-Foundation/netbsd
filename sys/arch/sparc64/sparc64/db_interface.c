@@ -1,4 +1,4 @@
-/*	$NetBSD: db_interface.c,v 1.130 2012/02/18 15:56:30 christos Exp $ */
+/*	$NetBSD: db_interface.c,v 1.132 2013/09/12 19:38:59 martin Exp $ */
 
 /*
  * Copyright (c) 1996-2002 Eduardo Horvath.  All rights reserved.
@@ -34,7 +34,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: db_interface.c,v 1.130 2012/02/18 15:56:30 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: db_interface.c,v 1.132 2013/09/12 19:38:59 martin Exp $");
 
 #ifdef _KERNEL_OPT
 #include "opt_ddb.h"
@@ -358,10 +358,7 @@ db_read_bytes(db_addr_t addr, size_t size, char *data)
 
 	src = (char *)(uintptr_t)addr;
 	while (size-- > 0) {
-		if (src >= (char *)VM_MIN_KERNEL_ADDRESS)
-			*data++ = probeget((paddr_t)(u_long)src++, ASI_P, 1);
-		else
-			*data++ = fubyte(src++);
+		*data++ = probeget((paddr_t)(u_long)src++, ASI_P, 1);
 	}
 }
 
@@ -374,17 +371,16 @@ db_write_bytes(db_addr_t addr, size_t size, const char *data)
 {
 	char *dst;
 	extern paddr_t pmap_kextract(vaddr_t va);
+	extern vaddr_t ektext;
 
 	dst = (char *)(uintptr_t)addr;
 	while (size-- > 0) {
-		if ((dst >= (char *)VM_MIN_KERNEL_ADDRESS+0x400000))
-			*dst = *data;
-		else if ((dst >= (char *)VM_MIN_KERNEL_ADDRESS) &&
-			 (dst < (char *)VM_MIN_KERNEL_ADDRESS+0x400000))
+		if ((dst >= (char *)VM_MIN_KERNEL_ADDRESS) &&
+			 (dst < (char *)ektext))
 			/* Read Only mapping -- need to do a bypass access */
 			stba(pmap_kextract((vaddr_t)dst), ASI_PHYS_CACHED, *data);
 		else
-			subyte(dst, *data);
+			*dst = *data;
 		dst++, data++;
 	}
 
@@ -491,10 +487,9 @@ void
 db_dump_pmap(struct pmap *pm)
 {
 	/* print all valid pages in the kernel pmap */
-	unsigned long long i, j, k, n, data0, data1;
+	unsigned long long i, j, k, data0, data1;
 	paddr_t *pdir, *ptbl;
 	
-	n = 0;
 	for (i = 0; i < STSZ; i++) {
 		pdir = (paddr_t *)(u_long)ldxa((vaddr_t)&pm->pm_segs[i], ASI_PHYS_CACHED);
 		if (!pdir) {
@@ -791,7 +786,7 @@ db_dump_pcb(db_expr_t addr, bool have_addr, db_expr_t count, const char *modif)
 void
 db_setpcb(db_expr_t addr, bool have_addr, db_expr_t count, const char *modif)
 {
-	struct proc *p, *pp;
+	struct proc *p;
 	int ctx;
 
 	if (!have_addr) {
@@ -800,7 +795,6 @@ db_setpcb(db_expr_t addr, bool have_addr, db_expr_t count, const char *modif)
 	}
 
 	LIST_FOREACH(p, &allproc, p_list) {
-		pp = p->p_pptr;
 		if (p->p_stat && p->p_pid == addr) {
 			if (p->p_vmspace->vm_map.pmap == pmap_kernel()) {
 				db_printf("PID %ld has a kernel context.\n",

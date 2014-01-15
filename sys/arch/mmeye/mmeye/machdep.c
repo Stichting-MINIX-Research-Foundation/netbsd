@@ -1,4 +1,4 @@
-/*	$NetBSD: machdep.c,v 1.55 2011/02/19 10:46:29 kiyohara Exp $	*/
+/*	$NetBSD: machdep.c,v 1.57 2013/11/08 02:24:53 christos Exp $	*/
 
 /*-
  * Copyright (c) 1996, 1997, 1998 The NetBSD Foundation, Inc.
@@ -65,7 +65,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.55 2011/02/19 10:46:29 kiyohara Exp $");
+__KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.57 2013/11/08 02:24:53 christos Exp $");
 
 #include "opt_ddb.h"
 #include "opt_memsize.h"
@@ -243,7 +243,6 @@ initSH3(void *pc, u_int bim, int32_t bip)	/* XXX return address */
 	struct btinfo_howto *bi_howto;
 	size_t symbolsize;
 	vaddr_t kernend;
-	int i;
 	const char *bi_msg;
 
 	/* Clear bss */
@@ -272,6 +271,7 @@ initSH3(void *pc, u_int bim, int32_t bip)	/* XXX return address */
 	if (memcmp(&end, ELFMAG, SELFMAG) == 0) {
 		Elf_Ehdr *eh = (void *)end;
 		Elf_Shdr *sh = (void *)(end + eh->e_shoff);
+		int i;
 		for (i = 0; i < eh->e_shnum; i++, sh++)
 			if (sh->sh_offset > 0 &&
 			    (sh->sh_offset + sh->sh_size) > symbolsize)
@@ -648,7 +648,7 @@ void
 intc_intr(int ssr, int spc, int ssp)
 {
 	struct intc_intrhand *ih;
-	int s, evtcode;
+	int evtcode;
 
 	curcpu()->ci_data.cpu_nintr++;
 
@@ -662,7 +662,7 @@ intc_intr(int ssr, int spc, int ssp)
 	 * SH3 may or may not cause TLB miss when access stack.)
 	 * Enable higher level interrupt here.
 	 */
-	s = _cpu_intr_resume(ih->ih_level);
+	(void)_cpu_intr_resume(ih->ih_level);
 
 	if (evtcode == SH_INTEVT_TMU0_TUNI0) {	/* hardclock */
 		struct clockframe cf;

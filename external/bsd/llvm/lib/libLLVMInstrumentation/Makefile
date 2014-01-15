@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.7 2012/09/23 17:22:23 joerg Exp $
+#	$NetBSD: Makefile,v 1.12 2013/10/14 21:19:16 joerg Exp $
 
 LIB=	LLVMInstrumentation
 
@@ -7,14 +7,12 @@ LIB=	LLVMInstrumentation
 .PATH: ${LLVM_SRCDIR}/lib/Transforms/Instrumentation
 
 SRCS+=	AddressSanitizer.cpp \
-	BlackList.cpp \
 	BoundsChecking.cpp \
-	EdgeProfiling.cpp \
+	DataFlowSanitizer.cpp \
+	DebugIR.cpp \
 	GCOVProfiling.cpp \
 	Instrumentation.cpp \
-	OptimalEdgeProfiling.cpp \
-	PathProfiling.cpp \
-	ProfilingUtils.cpp \
+	MemorySanitizer.cpp \
 	ThreadSanitizer.cpp
 
 .if defined(HOSTLIB)

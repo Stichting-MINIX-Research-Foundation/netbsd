@@ -1,4 +1,4 @@
-/*	$NetBSD: undefined.c,v 1.47 2012/08/16 17:35:01 matt Exp $	*/
+/*	$NetBSD: undefined.c,v 1.50 2013/08/18 08:08:15 matt Exp $	*/
 
 /*
  * Copyright (c) 2001 Ben Harris.
@@ -54,7 +54,7 @@
 #include <sys/kgdb.h>
 #endif
 
-__KERNEL_RCSID(0, "$NetBSD: undefined.c,v 1.47 2012/08/16 17:35:01 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: undefined.c,v 1.50 2013/08/18 08:08:15 matt Exp $");
 
 #include <sys/kmem.h>
 #include <sys/queue.h>
@@ -71,11 +71,11 @@ __KERNEL_RCSID(0, "$NetBSD: undefined.c,v 1.47 2012/08/16 17:35:01 matt Exp $");
 
 #include <uvm/uvm_extern.h>
 
-#include <machine/frame.h>
+#include <arm/locore.h>
+#include <arm/undefined.h>
+
 #include <machine/pcb.h>
 #include <machine/trap.h>
-
-#include <arm/undefined.h>
 
 #include <arch/arm/arm/disassem.h>
 
@@ -132,7 +132,7 @@ cp15_trapper(u_int addr, u_int insn, struct trapframe *frame, int code)
 {
 	struct lwp * const l = curlwp;
 
-#ifdef THUMB_CODE
+#if defined(THUMB_CODE) && !defined(CPU_ARMV7)
 	if (frame->tf_spsr & PSR_T_bit)
 		return 1;
 #endif
@@ -201,7 +201,7 @@ gdb_trapper(u_int addr, u_int insn, struct trapframe *frame, int code)
 				KSI_INIT_TRAP(&ksi);
 				ksi.ksi_signo = SIGTRAP;
 				ksi.ksi_code = TRAP_BRKPT;
-				ksi.ksi_addr = (u_int32_t *)addr;
+				ksi.ksi_addr = (uint32_t *)addr;
 				ksi.ksi_trap = 0;
 				trapsignal(l, &ksi);
 				return 0;
@@ -303,7 +303,18 @@ undefinedinstruction(trapframe_t *frame)
 
 #ifdef THUMB_CODE
 	if (frame->tf_spsr & PSR_T_bit) {
-		fault_instruction = fusword((void *)(fault_pc & ~1));
+		const uint16_t * const pc = (const uint16_t *)(fault_pc & ~1);
+		fault_instruction = pc[0];
+#if defined(__ARMEB__) && defined(_ARM_ARCH_7)
+		fault_instruction = le16toh(fault_instruction);
+#endif
+		if (fault_instruction >= 0xe000) {
+			uint16_t tmp = pc[1];
+#if defined(__ARMEB__) && defined(_ARM_ARCH_7)
+			tmp = le16toh(tmp);
+#endif
+			fault_instruction = (fault_instruction << 16) | tmp;
+		}
 	}
 	else
 #endif
@@ -318,7 +329,7 @@ undefinedinstruction(trapframe_t *frame)
 			KSI_INIT_TRAP(&ksi);
 			ksi.ksi_signo = SIGILL;
 			ksi.ksi_code = ILL_ILLOPC;
-			ksi.ksi_addr = (u_int32_t *)(intptr_t) fault_pc;
+			ksi.ksi_addr = (uint32_t *)(intptr_t) fault_pc;
 			trapsignal(l, &ksi);
 			userret(l);
 			return;
@@ -332,14 +343,17 @@ undefinedinstruction(trapframe_t *frame)
 		 * not really matter does it ?
 		 */
 
-		fault_instruction = *(u_int32_t *)fault_pc;
+		fault_instruction = *(const uint32_t *)fault_pc;
+#if defined(__ARMEB__) && defined(_ARM_ARCH_7)
+		fault_instruction = le32toh(fault_instruction);
+#endif
 	}
 
 	/* Update vmmeter statistics */
 	curcpu()->ci_data.cpu_ntrap++;
 
 #ifdef THUMB_CODE
-	if (frame->tf_spsr & PSR_T_bit) {
+	if ((frame->tf_spsr & PSR_T_bit) && !CPU_IS_ARMV7_P()) {
 		coprocessor = THUMB_UNKNOWN_HANDLER;
 	}
 	else
@@ -358,10 +372,15 @@ undefinedinstruction(trapframe_t *frame)
 		 */
 
 		if ((fault_instruction & (1 << 27)) != 0
-		    && (fault_instruction & 0xf0000000) != 0xf0000000)
+		    && (fault_instruction & 0xf0000000) != 0xf0000000) {
 			coprocessor = (fault_instruction >> 8) & 0x0f;
-		else
+#ifdef THUMB_CODE
+		} else if ((frame->tf_spsr & PSR_T_bit) && !CPU_IS_ARMV7_P()) {
+			coprocessor = THUMB_UNKNOWN_HANDLER;
+#endif
+		} else {
 			coprocessor = CORE_UNKNOWN_HANDLER;
+		}
 	}
 
 	if (user) {
@@ -416,7 +435,7 @@ undefinedinstruction(trapframe_t *frame)
 		KSI_INIT_TRAP(&ksi);
 		ksi.ksi_signo = SIGILL;
 		ksi.ksi_code = ILL_ILLOPC;
-		ksi.ksi_addr = (u_int32_t *)fault_pc;
+		ksi.ksi_addr = (uint32_t *)fault_pc;
 		ksi.ksi_trap = fault_instruction;
 		trapsignal(l, &ksi);
 	}

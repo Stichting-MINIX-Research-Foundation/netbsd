@@ -1,4 +1,4 @@
-/*	$NetBSD: sdhcvar.h,v 1.8 2012/07/21 16:14:05 skrll Exp $	*/
+/*	$NetBSD: sdhcvar.h,v 1.13 2013/01/10 17:19:33 jmcneill Exp $	*/
 /*	$OpenBSD: sdhcvar.h,v 1.3 2007/09/06 08:01:01 jsg Exp $	*/
 
 /*
@@ -45,16 +45,26 @@ struct sdhc_softc {
 #define	SDHC_FLAG_HAVE_CGM	0x0080	/* Netlogic XLP */
 #define	SDHC_FLAG_NO_LED_ON	0x0100	/* LED_ON unsupported in HOST_CTL */
 #define	SDHC_FLAG_HOSTCAPS	0x0200	/* No device provided capabilities */
+#define	SDHC_FLAG_RSP136_CRC	0x0400	/* Resp 136 with CRC and end-bit */
+#define	SDHC_FLAG_SINGLE_ONLY	0x0800	/* Single transfer only */
+#define	SDHC_FLAG_WAIT_RESET	0x1000	/* Wait for soft resets to start */
+#define	SDHC_FLAG_NO_HS_BIT	0x2000	/* Don't set SDHC_HIGH_SPEED bit */
 
 	uint32_t		sc_clkbase;
+	int			sc_clkmsk;	/* Mask for SDCLK */
 	uint32_t		sc_caps;/* attachment provided capabilities */
+
+	int (*sc_vendor_rod)(struct sdhc_softc *, int);
+	int (*sc_vendor_write_protect)(struct sdhc_softc *);
+	int (*sc_vendor_card_detect)(struct sdhc_softc *);
+	int (*sc_vendor_bus_clock)(struct sdhc_softc *, int);
 };
 
 /* Host controller functions called by the attachment driver. */
 int	sdhc_host_found(struct sdhc_softc *, bus_space_tag_t,
 	    bus_space_handle_t, bus_size_t);
 int	sdhc_intr(void *);
-int	sdhc_detach(device_t, int);
+int	sdhc_detach(struct sdhc_softc *, int);
 bool	sdhc_suspend(device_t, const pmf_qual_t *);
 bool	sdhc_resume(device_t, const pmf_qual_t *);
 bool	sdhc_shutdown(device_t, int);

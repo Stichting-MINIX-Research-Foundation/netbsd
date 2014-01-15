@@ -1,4 +1,4 @@
-/*	$NetBSD: bsddisklabel.c,v 1.56 2011/05/30 14:20:48 joerg Exp $	*/
+/*	$NetBSD: bsddisklabel.c,v 1.59 2013/11/04 20:07:49 christos Exp $	*/
 
 /*
  * Copyright 1997 Piermont Information Systems Inc.
@@ -126,9 +126,8 @@ save_ptn(int ptn, daddr_t start, daddr_t size, int fstype, const char *mountpt)
 		}
 		strlcpy(p->pi_mount, mountpt, sizeof p->pi_mount);
 		p->pi_flags |= PIF_MOUNT;
-		/* Default to logging, UFS2. */
+		/* Default to UFS2. */
 		if (p->pi_fstype == FS_BSDFFS) {
-			p->pi_flags |= PIF_LOG;
 #ifdef DEFAULT_UFS2
 #ifndef HAVE_UFS2_BOOT
 			if (strcmp(mountpt, "/") != 0)
@@ -544,6 +543,7 @@ make_bsd_partitions(void)
 	 * Initialize global variables that track space used on this disk.
 	 * Standard 4.4BSD 8-partition labels always cover whole disk.
 	 */
+	if (logfp) fprintf(logfp, "dlsize=%" PRId64 " ptsize=%" PRId64 " ptstart=%" PRId64 "\n", dlsize,ptsize,ptstart);
 	if (ptsize == 0)
 		ptsize = dlsize - ptstart;
 	if (dlsize == 0)
@@ -605,7 +605,11 @@ make_bsd_partitions(void)
 #endif
 #elif defined(PART_BOOT)
 	if (bootsize != 0) {
+#if defined(PART_BOOT_MSDOS)
+		bsdlabel[PART_BOOT].pi_fstype = FS_MSDOS;
+#else
 		bsdlabel[PART_BOOT].pi_fstype = FS_BOOT;
+#endif
 		bsdlabel[PART_BOOT].pi_size = bootsize;
 		bsdlabel[PART_BOOT].pi_offset = bootstart;
 #if defined(PART_BOOT_PI_FLAGS)
@@ -739,8 +743,9 @@ check_partitions(void)
 	if (bootxx != NULL) {
 		rv = access(bootxx, R_OK);
 		free(bootxx);
-	}
-	if (bootxx == NULL || rv != 0) {
+	} else
+		rv = -1;
+	if (rv != 0) {
 		process_menu(MENU_ok, deconst(MSG_No_Bootcode));
 		return 0;
 	}

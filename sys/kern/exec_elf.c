@@ -1,4 +1,4 @@
-/*	$NetBSD: exec_elf.c,v 1.43 2012/08/05 01:43:58 matt Exp $	*/
+/*	$NetBSD: exec_elf.c,v 1.51 2013/11/14 12:07:11 martin Exp $	*/
 
 /*-
  * Copyright (c) 1994, 2000, 2005 The NetBSD Foundation, Inc.
@@ -57,7 +57,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(1, "$NetBSD: exec_elf.c,v 1.43 2012/08/05 01:43:58 matt Exp $");
+__KERNEL_RCSID(1, "$NetBSD: exec_elf.c,v 1.51 2013/11/14 12:07:11 martin Exp $");
 
 #ifdef _KERNEL_OPT
 #include "opt_pax.h"
@@ -280,7 +280,7 @@ elf_copyargs(struct lwp *l, struct exec_package *pack,
 /*
  * elf_check_header():
  *
- * Check header for validity; return 0 of ok ENOEXEC if error
+ * Check header for validity; return 0 if ok, ENOEXEC if error
  */
 int
 elf_check_header(Elf_Ehdr *eh, int type)
@@ -422,14 +422,15 @@ elf_load_file(struct lwp *l, struct exec_package *epp, char *path,
 	p = l->l_proc;
 
 	KASSERT(p->p_vmspace);
-	if (__predict_true(p->p_vmspace != proc0.p_vmspace))
+	if (__predict_true(p->p_vmspace != proc0.p_vmspace)) {
 		use_topdown = p->p_vmspace->vm_map.flags & VM_MAP_TOPDOWN;
-	else
+	} else {
 #ifdef __USING_TOPDOWN_VM
-		use_topdown = true;
+		use_topdown = epp->ep_flags & EXEC_TOPDOWN_VM;
 #else
 		use_topdown = false;
 #endif
+	}
 
 	/*
 	 * 1. open file
@@ -493,7 +494,7 @@ elf_load_file(struct lwp *l, struct exec_package *epp, char *path,
 	if ((error = elf_check_header(&eh, ET_DYN)) != 0)
 		goto bad;
 
-	if (eh.e_phnum > MAXPHNUM || eh.e_phnum == 0) {
+	if (eh.e_phnum == 0) {
 		error = ENOEXEC;
 		goto bad;
 	}
@@ -665,7 +666,6 @@ exec_elf_makecmds(struct lwp *l, struct exec_package *epp)
 	int error, i, nload;
 	char *interp = NULL;
 	u_long phsize;
-	struct proc *p;
 	struct elf_args *ap = NULL;
 	bool is_dyn;
 
@@ -677,10 +677,10 @@ exec_elf_makecmds(struct lwp *l, struct exec_package *epp)
 	 * XXX allow for executing shared objects. It seems silly
 	 * but other ELF-based systems allow it as well.
 	 */
-	if (elf_check_header(eh, ET_EXEC) != 0 && !is_dyn)
+	if (!is_dyn && elf_check_header(eh, ET_EXEC) != 0)
 		return ENOEXEC;
 
-	if (eh->e_phnum > MAXPHNUM || eh->e_phnum == 0)
+	if (eh->e_phnum == 0)
 		return ENOEXEC;
 
 	error = vn_marktext(epp->ep_vp);
@@ -691,7 +691,6 @@ exec_elf_makecmds(struct lwp *l, struct exec_package *epp)
 	 * Allocate space to hold all the program headers, and read them
 	 * from the file
 	 */
-	p = l->l_proc;
 	phsize = eh->e_phnum * sizeof(Elf_Phdr);
 	ph = kmem_alloc(phsize, KM_SLEEP);
 
@@ -738,7 +737,7 @@ exec_elf_makecmds(struct lwp *l, struct exec_package *epp)
 	}
 
 #if defined(PAX_MPROTECT) || defined(PAX_SEGVGUARD) || defined(PAX_ASLR)
-	p->p_pax = epp->ep_pax_flags;
+	l->l_proc->p_pax = epp->ep_pax_flags;
 #endif /* PAX_MPROTECT || PAX_SEGVGUARD || PAX_ASLR */
 
 	if (is_dyn)
@@ -904,6 +903,9 @@ netbsd_elf_signature(struct lwp *l, struct exec_package *epp,
 			    np->n_descsz == ELF_NOTE_NETBSD_DESCSZ &&
 			    memcmp(ndata, ELF_NOTE_NETBSD_NAME,
 			    ELF_NOTE_NETBSD_NAMESZ) == 0) {
+				memcpy(&epp->ep_osversion,
+				    ndata + ELF_NOTE_NETBSD_NAMESZ + 1,
+				    ELF_NOTE_NETBSD_DESCSZ);
 				isnetbsd = 1;
 				break;
 			}
@@ -946,6 +948,34 @@ bad:
 			(void)memcpy(&epp->ep_pax_flags,
 			    ndata + ELF_NOTE_PAX_NAMESZ,
 			    sizeof(epp->ep_pax_flags));
+			break;
+
+		case ELF_NOTE_TYPE_MARCH_TAG:
+			/*
+			 * Copy the machine arch into the package.
+			 */
+			if (np->n_namesz == ELF_NOTE_MARCH_NAMESZ
+			    && memcmp(ndata, ELF_NOTE_MARCH_NAME,
+				    ELF_NOTE_MARCH_NAMESZ) == 0) {
+				strlcpy(epp->ep_machine_arch,
+				    ndata + roundup(ELF_NOTE_MARCH_NAMESZ, 4),
+				    sizeof(epp->ep_machine_arch));
+				break;
+			}
+		case ELF_NOTE_TYPE_MCMODEL_TAG:
+			/*
+			 * arch specific check for code model
+			 */
+#ifdef ELF_MD_MCMODEL_CHECK
+			if (np->n_namesz == ELF_NOTE_MCMODEL_NAMESZ
+			    && memcmp(ndata, ELF_NOTE_MCMODEL_NAME,
+				    ELF_NOTE_MCMODEL_NAMESZ) == 0) {
+				ELF_MD_MCMODEL_CHECK(epp, 
+				    ndata + roundup(ELF_NOTE_MCMODEL_NAMESZ, 4),
+				    np->n_descsz);
+				break;
+			}
+#endif
 			break;
 
 		case ELF_NOTE_TYPE_SUSE_VERSION_TAG:

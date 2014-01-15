@@ -1,4 +1,4 @@
-/*	$NetBSD: ping.c,v 1.103 2012/09/18 04:07:44 msaitoh Exp $	*/
+/*	$NetBSD: ping.c,v 1.107 2013/10/19 01:08:25 christos Exp $	*/
 
 /*
  * Copyright (c) 1989, 1993
@@ -58,7 +58,7 @@
 
 #include <sys/cdefs.h>
 #ifndef lint
-__RCSID("$NetBSD: ping.c,v 1.103 2012/09/18 04:07:44 msaitoh Exp $");
+__RCSID("$NetBSD: ping.c,v 1.107 2013/10/19 01:08:25 christos Exp $");
 #endif
 
 #include <stdio.h>
@@ -467,9 +467,9 @@ main(int argc, char *argv[])
 		phdrlen = PHDR_LEN;
 	} else
 		phdrlen = 0;
-	datalen -= phdrlen;
 
 	packlen = datalen + 60 + 76;	/* MAXIP + MAXICMP */
+	datalen -= phdrlen;
 	if ((packet = malloc(packlen)) == NULL)
 		err(1, "Out of memory");
 
@@ -637,7 +637,7 @@ main(int argc, char *argv[])
 #endif /*IPSEC*/
 
 	(void)printf("PING %s (%s): %d data bytes\n", hostname,
-		     inet_ntoa(whereto.sin_addr), datalen);
+		     inet_ntoa(whereto.sin_addr), datalen + phdrlen);
 
 	/* When pinging the broadcast address, you can get a lot
 	 * of answers.  Doing something so evil is useful if you
@@ -857,7 +857,7 @@ pinger(void)
 			       (char *)&sw,sizeof(sw)) < 0)
 			err(1, "Can't turn off special IP header");
 		if (prog_sendto(sloop, (char *) &opack_icmp,
-			   phdrlen, MSG_DONTROUTE,
+			   ICMP_MINLEN, MSG_DONTROUTE,
 			   (struct sockaddr *)&loc_addr,
 			   sizeof(struct sockaddr_in)) < 0) {
 			/*
@@ -887,7 +887,7 @@ pinger(void)
 	} else if (pingflags & F_TIMING64)
 		(void) memcpy(&opack_icmp.icmp_data[0], &now, sizeof(now));
 
-	cc = datalen + phdrlen;
+	cc = MAX(datalen, ICMP_MINLEN) + phdrlen;
 	opack_icmp.icmp_cksum = 0;
 	opack_icmp.icmp_cksum = in_cksum((u_int16_t *)&opack_icmp, cc);
 
@@ -953,8 +953,11 @@ pr_pack_sub(int cc,
 	if (dupflag)
 		(void)printf(" DUP!");
 	(void)printf(" ttl=%d", ttl);
-	if (pingflags & (F_TIMING|F_TIMING64))
-		(void)printf(" time=%.3f ms", triptime*1000.0);
+	if (pingflags & (F_TIMING|F_TIMING64)) {
+		const unsigned int prec = (pingflags & F_TIMING64) != 0 ? 6 : 3;
+
+		(void)printf(" time=%.*f ms", prec, triptime*1000.0);
+	}
 
 	/*
 	 * Send beep to stderr, since that's more likely than stdout
@@ -1008,7 +1011,6 @@ pr_pack(u_char *buf,
 	icp = (struct icmp *)(buf + hlen);
 	if (icp->icmp_type == ICMP_ECHOREPLY
 	    && icp->icmp_id == ident) {
-		struct timespec tv;
 
 		if (icp->icmp_seq == htons((u_int16_t)(ntransmitted-1)))
 			lastrcvd = 1;
@@ -1016,16 +1018,20 @@ pr_pack(u_char *buf,
 		if (first_rx.tv_sec == 0)
 			first_rx = last_rx;
 		nreceived++;
-		if (pingflags & F_TIMING) {
-			struct tv32 tv32;
-
-			(void) memcpy(&tv32, icp->icmp_data, sizeof(tv32));
-			tv.tv_sec = (uint32_t)ntohl(tv32.tv32_sec);
-			tv.tv_nsec = ntohl(tv32.tv32_usec) * 1000;
-		} else if (pingflags & F_TIMING64) 
-			(void) memcpy(&tv, icp->icmp_data, sizeof(tv));
-
 		if (pingflags & (F_TIMING|F_TIMING64)) {
+			struct timespec tv;
+
+			if (pingflags & F_TIMING) {
+				struct tv32 tv32;
+
+				(void)memcpy(&tv32, icp->icmp_data, sizeof(tv32));
+				tv.tv_sec = (uint32_t)ntohl(tv32.tv32_sec);
+				tv.tv_nsec = ntohl(tv32.tv32_usec) * 1000;
+			} else if (pingflags & F_TIMING64) 
+				(void)memcpy(&tv, icp->icmp_data, sizeof(tv));
+			else
+				memset(&tv, 0, sizeof(tv));	/* XXX: gcc */
+
 			triptime = diffsec(&last_rx, &tv);
 			tsum += triptime;
 			tsumsq += triptime * triptime;
@@ -1096,7 +1102,8 @@ pr_pack(u_char *buf,
 			PR_PACK_SUB();
 
 		/* check the data */
-		if (datalen > phdrlen
+		if ((size_t)(tot_len - hlen) >
+		    offsetof(struct icmp, icmp_data) + datalen
 		    && !(pingflags & F_PING_RANDOM)
 		    && memcmp(icp->icmp_data + phdrlen,
 			    opack_icmp.icmp_data + phdrlen,
@@ -1112,7 +1119,7 @@ pr_pack(u_char *buf,
 				     (u_char)opack_icmp.icmp_data[i],
 				     (u_char)icp->icmp_data[i]);
 			for (i = phdrlen; i < datalen; i++) {
-				if ((i % 16) == phdrlen)
+				if ((i % 16) == 0)
 					(void)printf("\n\t");
 				(void)printf("%2x ",(u_char)icp->icmp_data[i]);
 			}
@@ -1339,13 +1346,16 @@ summary(int header)
 		double n = nreceived + nrepeats;
 		double avg = (tsum / n);
 		double variance = 0.0;
+		const unsigned int prec = (pingflags & F_TIMING64) != 0 ? 6 : 3;
 		if (n>1)
 			variance = (tsumsq - n*avg*avg) /(n-1);
 
 		printf("round-trip min/avg/max/stddev = "
-			"%.3f/%.3f/%.3f/%.3f ms\n",
-			tmin * 1000.0, avg * 1000.0,
-			tmax * 1000.0, sqrt(variance) * 1000.0);
+			"%.*f/%.*f/%.*f/%.*f ms\n",
+			prec, tmin * 1000.0,
+			prec, avg * 1000.0,
+			prec, tmax * 1000.0,
+			prec, sqrt(variance) * 1000.0);
 		if (pingflags & F_FLOOD) {
 			double r = diffsec(&last_rx, &first_rx);
 			double t = diffsec(&last_tx, &first_tx);

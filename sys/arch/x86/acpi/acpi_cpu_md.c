@@ -1,4 +1,4 @@
-/* $NetBSD: acpi_cpu_md.c,v 1.71 2012/02/11 22:09:47 jruoho Exp $ */
+/* $NetBSD: acpi_cpu_md.c,v 1.74 2013/11/20 13:52:30 jruoho Exp $ */
 
 /*-
  * Copyright (c) 2010, 2011 Jukka Ruohonen <jruohonen@iki.fi>
@@ -27,7 +27,7 @@
  * SUCH DAMAGE.
  */
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: acpi_cpu_md.c,v 1.71 2012/02/11 22:09:47 jruoho Exp $");
+__KERNEL_RCSID(0, "$NetBSD: acpi_cpu_md.c,v 1.74 2013/11/20 13:52:30 jruoho Exp $");
 
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -243,14 +243,17 @@ acpicpu_md_flags(void)
 
 		x86_cpuid(0x80000007, regs);
 
-		family = CPUID2FAMILY(ci->ci_signature);
-
-		if (family == 0xf)
-			family += CPUID2EXTFAMILY(ci->ci_signature);
+		family = CPUID_TO_FAMILY(ci->ci_signature);
 
     		switch (family) {
 
 		case 0x0f:
+
+			/*
+			 * Disable C1E if present.
+			 */
+			if (rdmsr_safe(MSR_CMPHALT, &msr) != EFAULT)
+				val |= ACPICPU_FLAG_C_C1E;
 
 			/*
 			 * Evaluate support for the "FID/VID
@@ -268,6 +271,9 @@ acpicpu_md_flags(void)
 		case 0x10:
 		case 0x11:
 
+			/*
+			 * Disable C1E if present.
+			 */
 			if (rdmsr_safe(MSR_CMPHALT, &msr) != EFAULT)
 				val |= ACPICPU_FLAG_C_C1E;
 
@@ -538,10 +544,7 @@ acpicpu_md_pstate_init(struct acpicpu_softc *sc)
 		if ((sc->sc_flags & ACPICPU_FLAG_P_FIDVID) != 0)
 			msr.ps_flags |= ACPICPU_FLAG_P_FIDVID;
 
-		family = CPUID2FAMILY(ci->ci_signature);
-
-		if (family == 0xf)
-			family += CPUID2EXTFAMILY(ci->ci_signature);
+		family = CPUID_TO_FAMILY(ci->ci_signature);
 
 		switch (family) {
 
@@ -983,7 +986,7 @@ acpicpu_md_tstate_set(struct acpicpu_tstate *ts)
 	uint8_t i;
 
 	val = ts->ts_control;
-	val = val & __BITS(1, 4);
+	val = val & __BITS(0, 4);
 
 	wrmsr(MSR_THERM_CONTROL, val);
 

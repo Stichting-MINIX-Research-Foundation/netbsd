@@ -1,4 +1,4 @@
-/*	$NetBSD: multi_server.c,v 1.1.1.3 2011/03/02 19:32:21 tron Exp $	*/
+/*	$NetBSD: multi_server.c,v 1.1.1.5 2013/09/25 19:06:32 tron Exp $	*/
 
 /*++
 /* NAME
@@ -37,6 +37,9 @@
 /*	function is run after the program has optionally dropped its
 /*	privileges. This function should not attempt to preserve state
 /*	across calls. The stream initial state is non-blocking mode.
+/*	Optional connection attributes are provided as a hash that
+/*	is attached as stream context. NOTE: the attributes are
+/*	destroyed after this function is called.
 /*	The service name argument corresponds to the service name in the
 /*	master.cf file.
 /*	The argv argument specifies command-line arguments left over
@@ -45,6 +48,11 @@
 /*	Optional arguments are specified as a null-terminated (key, value)
 /*	list. Keys and expected values are:
 /* .IP "MAIL_SERVER_INT_TABLE (CONFIG_INT_TABLE *)"
+/*	A table with configurable parameters, to be loaded from the
+/*	global Postfix configuration file. Tables are loaded in the
+/*	order as specified, and multiple instances of the same type
+/*	are allowed.
+/* .IP "MAIL_SERVER_LONG_TABLE (CONFIG_LONG_TABLE *)"
 /*	A table with configurable parameters, to be loaded from the
 /*	global Postfix configuration file. Tables are loaded in the
 /*	order as specified, and multiple instances of the same type
@@ -211,6 +219,7 @@
 #include <timed_ipc.h>
 #include <resolve_local.h>
 #include <mail_flow.h>
+#include <mail_version.h>
 
 /* Process manager. */
 
@@ -237,6 +246,7 @@ static VSTREAM *multi_server_lock;
 static int multi_server_in_flow_delay;
 static unsigned multi_server_generation;
 static void (*multi_server_pre_disconn) (VSTREAM *, char *, char **);
+static int multi_server_saved_flags;
 
 /* multi_server_exit - normal termination */
 
@@ -318,6 +328,8 @@ void    multi_server_disconnect(VSTREAM *stream)
 static void multi_server_execute(int unused_event, char *context)
 {
     VSTREAM *stream = (VSTREAM *) context;
+    HTABLE *attr = (vstream_flags(stream) == multi_server_saved_flags ?
+		    (HTABLE *) vstream_context(stream) : 0);
 
     if (multi_server_lock != 0
 	&& myflock(vstream_fileno(multi_server_lock), INTERNAL_LOCK,
@@ -338,6 +350,8 @@ static void multi_server_execute(int unused_event, char *context)
     } else {
 	multi_server_disconnect(stream);
     }
+    if (attr)
+	htable_free(attr, myfree);
 }
 
 /* multi_server_enable_read - enable read events */
@@ -351,7 +365,7 @@ static void multi_server_enable_read(int unused_event, char *context)
 
 /* multi_server_wakeup - wake up application */
 
-static void multi_server_wakeup(int fd)
+static void multi_server_wakeup(int fd, HTABLE *attr)
 {
     VSTREAM *stream;
     char   *tmp;
@@ -380,9 +394,13 @@ static void multi_server_wakeup(int fd)
     client_count++;
     stream = vstream_fdopen(fd, O_RDWR);
     tmp = concatenate(multi_server_name, " socket", (char *) 0);
-    vstream_control(stream, VSTREAM_CTL_PATH, tmp, VSTREAM_CTL_END);
+    vstream_control(stream,
+                    VSTREAM_CTL_PATH, tmp,
+                    VSTREAM_CTL_CONTEXT, (char *) attr,
+                    VSTREAM_CTL_END);
     myfree(tmp);
     timed_ipc_setup(stream);
+    multi_server_saved_flags = vstream_flags(stream);
     if (multi_server_in_flow_delay && mail_flow_get(1) < 0)
 	event_request_timer(multi_server_enable_read, (char *) stream,
 			    var_in_flow_delay);
@@ -422,7 +440,7 @@ static void multi_server_accept_local(int unused_event, char *context)
 	    event_request_timer(multi_server_timeout, (char *) 0, time_left);
 	return;
     }
-    multi_server_wakeup(fd);
+    multi_server_wakeup(fd, (HTABLE *) 0);
 }
 
 #ifdef MASTER_XPORT_NAME_PASS
@@ -434,6 +452,7 @@ static void multi_server_accept_pass(int unused_event, char *context)
     int     listen_fd = CAST_CHAR_PTR_TO_INT(context);
     int     time_left = -1;
     int     fd;
+    HTABLE *attr = 0;
 
     /*
      * Be prepared for accept() to fail because some other process already
@@ -447,7 +466,7 @@ static void multi_server_accept_pass(int unused_event, char *context)
 
     if (multi_server_pre_accept)
 	multi_server_pre_accept(multi_server_name, multi_server_argv);
-    fd = PASS_ACCEPT(listen_fd);
+    fd = pass_accept_attr(listen_fd, &attr);
     if (multi_server_lock != 0
 	&& myflock(vstream_fileno(multi_server_lock), INTERNAL_LOCK,
 		   MYFLOCK_OP_NONE) < 0)
@@ -459,7 +478,7 @@ static void multi_server_accept_pass(int unused_event, char *context)
 	    event_request_timer(multi_server_timeout, (char *) 0, time_left);
 	return;
     }
-    multi_server_wakeup(fd);
+    multi_server_wakeup(fd, attr);
 }
 
 #endif
@@ -496,7 +515,7 @@ static void multi_server_accept_inet(int unused_event, char *context)
 	    event_request_timer(multi_server_timeout, (char *) 0, time_left);
 	return;
     }
-    multi_server_wakeup(fd);
+    multi_server_wakeup(fd, (HTABLE *) 0);
 }
 
 /* multi_server_main - the real main program */
@@ -571,6 +590,11 @@ NORETURN multi_server_main(int argc, char **argv, MULTI_SERVER_FN service,...)
 	msg_info("daemon started");
 
     /*
+     * Check the Postfix library version as soon as we enable logging.
+     */
+    MAIL_VERSION_CHECK;
+
+    /*
      * Initialize from the configuration file. Allow command-line options to
      * override compiled-in defaults or configured parameter values.
      */
@@ -580,6 +604,12 @@ NORETURN multi_server_main(int argc, char **argv, MULTI_SERVER_FN service,...)
      * Register dictionaries that use higher-level interfaces and protocols.
      */
     mail_dict_init();
+ 
+    /*
+     * After database open error, continue execution with reduced
+     * functionality.
+     */
+    dict_allow_surrogate = 1;
 
     /*
      * Pick up policy settings from master process. Shut up error messages to
@@ -670,6 +700,9 @@ NORETURN multi_server_main(int argc, char **argv, MULTI_SERVER_FN service,...)
 	switch (key) {
 	case MAIL_SERVER_INT_TABLE:
 	    get_mail_conf_int_table(va_arg(ap, CONFIG_INT_TABLE *));
+	    break;
+	case MAIL_SERVER_LONG_TABLE:
+	    get_mail_conf_long_table(va_arg(ap, CONFIG_LONG_TABLE *));
 	    break;
 	case MAIL_SERVER_STR_TABLE:
 	    get_mail_conf_str_table(va_arg(ap, CONFIG_STR_TABLE *));

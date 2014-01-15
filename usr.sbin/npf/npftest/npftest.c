@@ -1,4 +1,4 @@
-/*	$NetBSD: npftest.c,v 1.8 2012/09/14 15:37:03 joerg Exp $	*/
+/*	$NetBSD: npftest.c,v 1.13 2013/11/08 00:38:26 rmind Exp $	*/
 
 /*
  * NPF testing framework.
@@ -52,7 +52,7 @@ __dead static void
 describe_tests(void)
 {
 	printf(	"nbuf\tbasic npf mbuf handling\n"
-		"processor\tncode processing\n"
+		"bpf\tBPF coprocessor\n"
 		"table\ttable handling\n"
 		"state\tstate handling and processing\n"
 		"rule\trule processing\n"
@@ -75,19 +75,15 @@ result(const char *testcase, bool ok)
 static void
 load_npf_config_ifs(prop_dictionary_t dbg_dict)
 {
+	prop_array_t iflist = prop_dictionary_get(dbg_dict, "interfaces");
+	prop_object_iterator_t it = prop_array_iterator(iflist);
 	prop_dictionary_t ifdict;
-	prop_object_iterator_t it;
-	prop_array_t iflist;
 
-	iflist = prop_dictionary_get(dbg_dict, "interfaces");
-	it = prop_array_iterator(iflist);
 	while ((ifdict = prop_object_iterator_next(it)) != NULL) {
-		const char *ifname;
-		unsigned if_idx;
+		const char *ifname = NULL;
 
 		prop_dictionary_get_cstring_nocopy(ifdict, "name", &ifname);
-		prop_dictionary_get_uint32(ifdict, "idx", &if_idx);
-		(void)rumpns_npf_test_addif(ifname, if_idx, verbose);
+		(void)rumpns_npf_test_addif(ifname, true, verbose);
 	}
 	prop_object_iterator_release(it);
 }
@@ -137,11 +133,13 @@ arc4random(void)
 int
 main(int argc, char **argv)
 {
-	bool benchmark, test, ok, fail, tname_matched;
-	char *config, *interface, *stream, *testname;
-	int idx = -1, ch;
+	bool test, ok, fail, tname_matched;
+	char *benchmark, *config, *interface, *stream, *testname;
+	unsigned nthreads = 0;
+	ifnet_t *ifp = NULL;
+	int ch;
 
-	benchmark = false;
+	benchmark = NULL;
 	test = false;
 
 	tname_matched = false;
@@ -153,10 +151,10 @@ main(int argc, char **argv)
 	verbose = false;
 	quiet = false;
 
-	while ((ch = getopt(argc, argv, "bqvc:i:s:tT:L")) != -1) {
+	while ((ch = getopt(argc, argv, "b:qvc:i:s:tT:Lp:")) != -1) {
 		switch (ch) {
 		case 'b':
-			benchmark = true;
+			benchmark = optarg;
 			break;
 		case 'q':
 			quiet = true;
@@ -182,17 +180,33 @@ main(int argc, char **argv)
 			break;
 		case 'L':
 			describe_tests();
+			break;
+		case 'p':
+			/* Note: RUMP_NCPU must be high enough. */
+			if ((nthreads = atoi(optarg)) > 0 &&
+			    getenv("RUMP_NCPU") == NULL) {
+				char *val;
+				asprintf(&val, "%u", nthreads + 1);
+				setenv("RUMP_NCPU", val, 1);
+				free(val);
+			}
+			break;
 		default:
 			usage();
 		}
 	}
 
 	/*
-	 * Either benchmark or test.  If stream analysis, then the interface
-	 * is needed as well.
+	 * Either benchmark or test.  If stream analysis, then the
+	 * interface should be specified.  If benchmark, then the
+	 * config should be loaded.
 	 */
-	if (benchmark == test && (stream && !interface)) {
+	if ((benchmark != NULL) == test && (stream && !interface)) {
 		usage();
+	}
+	if (benchmark && (!config || !nthreads)) {
+		errx(EXIT_FAILURE, "missing config for the benchmark or "
+		    "invalid thread count");
 	}
 
 	/* XXX rn_init */
@@ -207,7 +221,7 @@ main(int argc, char **argv)
 	if (config) {
 		load_npf_config(config);
 	}
-	if (interface && (idx = rumpns_npf_test_getif(interface)) == 0) {
+	if (interface && (ifp = rumpns_npf_test_getif(interface)) == 0) {
 		errx(EXIT_FAILURE, "failed to find the interface");
 	}
 
@@ -221,9 +235,9 @@ main(int argc, char **argv)
 			tname_matched = true;
 		}
 
-		if (!testname || strcmp("processor", testname) == 0) {
-			ok = rumpns_npf_processor_test(verbose);
-			fail |= result("processor", ok);
+		if (!testname || strcmp("bpf", testname) == 0) {
+			ok = rumpns_npf_bpf_test(verbose);
+			fail |= result("bpf", ok);
 			tname_matched = true;
 		}
 
@@ -255,7 +269,16 @@ main(int argc, char **argv)
 	}
 
 	if (stream) {
-		process_stream(stream, NULL, idx);
+		process_stream(stream, NULL, ifp);
+	}
+
+	if (benchmark) {
+		if (strcmp("rule", benchmark) == 0) {
+			rumpns_npf_test_conc(false, nthreads);
+		}
+		if (strcmp("state", benchmark) == 0) {
+			rumpns_npf_test_conc(true, nthreads);
+		}
 	}
 
 	rump_unschedule();

@@ -1,4 +1,4 @@
-/* 	$NetBSD: rasops8.c,v 1.32 2012/01/25 20:18:04 macallan Exp $	*/
+/* 	$NetBSD: rasops8.c,v 1.34 2013/09/15 09:41:55 martin Exp $	*/
 
 /*-
  * Copyright (c) 1999 The NetBSD Foundation, Inc.
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: rasops8.c,v 1.32 2012/01/25 20:18:04 macallan Exp $");
+__KERNEL_RCSID(0, "$NetBSD: rasops8.c,v 1.34 2013/09/15 09:41:55 martin Exp $");
 
 #include "opt_rasops.h"
 
@@ -76,7 +76,7 @@ void
 rasops8_init(struct rasops_info *ri)
 {
 
-	if FONT_IS_ALPHA(ri->ri_font) {
+	if (FONT_IS_ALPHA(ri->ri_font)) {
 		ri->ri_ops.putchar = rasops8_putchar_aa;
 	} else {
 		switch (ri->ri_font->fontwidth) {
@@ -193,15 +193,15 @@ rasops8_putchar(void *cookie, int row, int col, u_int uc, long attr)
 static void
 rasops8_putchar_aa(void *cookie, int row, int col, u_int uc, long attr)
 {
-	int width, height, fs;
-	u_char *dp, *rp, *hp, *hrp, *fr, bg, fg, pixel;
+	int width, height;
+	u_char *rp, *hrp, *fr, bg, fg, pixel;
 	struct rasops_info *ri = (struct rasops_info *)cookie;
 	struct wsdisplay_font *font = PICK_FONT(ri, uc);
 	int x, y, r, g, b, aval;
 	int r1, g1, b1, r0, g0, b0, fgo, bgo;
 	uint8_t scanline[32] __attribute__ ((aligned(8)));
 
-	hp = hrp = NULL;
+	hrp = NULL;
 
 	if (!CHAR_IN_FONT(uc, font))
 		return;
@@ -236,7 +236,6 @@ rasops8_putchar_aa(void *cookie, int row, int col, u_int uc, long attr)
 		}
 	} else {
 		fr = WSFONT_GLYPH(uc, font);
-		fs = font->stride;
 		/*
 		 * we need the RGB colours here, get offsets into rasops_cmap
 		 */
@@ -251,7 +250,6 @@ rasops8_putchar_aa(void *cookie, int row, int col, u_int uc, long attr)
 		b1 = rasops_cmap[fgo + 2];
 
 		for (y = 0; y < height; y++) {
-			dp = rp;
 			for (x = 0; x < width; x++) {
 				aval = *fr;
 				fr++;

@@ -1,4 +1,4 @@
-/*	$NetBSD: satalink.c,v 1.48 2012/07/31 15:50:36 bouyer Exp $	*/
+/*	$NetBSD: satalink.c,v 1.51 2013/10/07 19:51:55 jakllsch Exp $	*/
 
 /*-
  * Copyright (c) 2003 The NetBSD Foundation, Inc.
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: satalink.c,v 1.48 2012/07/31 15:50:36 bouyer Exp $");
+__KERNEL_RCSID(0, "$NetBSD: satalink.c,v 1.51 2013/10/07 19:51:55 jakllsch Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -260,7 +260,7 @@ static int  satalink_match(device_t, cfdata_t, void *);
 static void satalink_attach(device_t, device_t, void *);
 
 CFATTACH_DECL_NEW(satalink, sizeof(struct pciide_softc),
-    satalink_match, satalink_attach, NULL, NULL);
+    satalink_match, satalink_attach, pciide_detach, NULL);
 
 static void sii3112_chip_map(struct pciide_softc*,
     const struct pci_attach_args*);
@@ -795,7 +795,7 @@ sii3112_drv_probe(struct ata_channel *chp)
 	struct pciide_softc *sc = CHAN_TO_PCIIDE(chp);
 	struct wdc_regs *wdr = CHAN_TO_WDC_REGS(chp);
 	uint32_t scontrol, sstatus;
-	uint8_t scnt, sn, cl, ch;
+	uint8_t /* scnt, sn, */ cl, ch;
 	int s;
 
 	/*
@@ -825,7 +825,7 @@ sii3112_drv_probe(struct ata_channel *chp)
 
 	sstatus = BA5_READ_4(sc, chp->ch_channel, ba5_SStatus);
 #if 0
-	aprint_normal_dev(&sc->sc_wdcdev.sc_atac.atac_dev,
+	aprint_normal_dev(sc->sc_wdcdev.sc_atac.atac_dev,
 	    "port %d: SStatus=0x%08x, SControl=0x%08x\n",
 	    chp->ch_channel, sstatus,
 	    BA5_READ_4(sc, chp->ch_channel, ba5_SControl));
@@ -857,17 +857,19 @@ sii3112_drv_probe(struct ata_channel *chp)
 		    WDSD_IBM | (0 << 4));
 		delay(10);	/* 400ns delay */
 		/* Save register contents. */
+#if 0
 		scnt = bus_space_read_1(wdr->cmd_iot,
 				        wdr->cmd_iohs[wd_seccnt], 0);
 		sn = bus_space_read_1(wdr->cmd_iot,
 				      wdr->cmd_iohs[wd_sector], 0);
+#endif
 		cl = bus_space_read_1(wdr->cmd_iot,
 				      wdr->cmd_iohs[wd_cyl_lo], 0);
 		ch = bus_space_read_1(wdr->cmd_iot,
 				      wdr->cmd_iohs[wd_cyl_hi], 0);
 #if 0
 		printf("%s: port %d: scnt=0x%x sn=0x%x cl=0x%x ch=0x%x\n",
-		    device_xname(&sc->sc_wdcdev.sc_atac.atac_dev), chp->ch_channel,
+		    device_xname(sc->sc_wdcdev.sc_atac.atac_dev), chp->ch_channel,
 		    scnt, sn, cl, ch);
 #endif
 		if (atabus_alloc_drives(chp, 1) != 0)

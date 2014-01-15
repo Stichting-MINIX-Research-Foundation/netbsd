@@ -45,7 +45,7 @@ int	gdium_revision = 0;
 static pcireg_t fb_addr = 0;
 
 void	gdium_attach_hook(device_t, device_t, struct pcibus_attach_args *);
-void	gdium_device_register(struct device *, void *);
+void	gdium_device_register(device_t, void *);
 int	gdium_intr_map(int, int, int, pci_intr_handle_t *);
 void	gdium_powerdown(void);
 void	gdium_reset(void);
@@ -234,13 +234,27 @@ extern struct cfdriver sd_cd;
 #include <dev/usb/usbdi.h>
 
 void
-gdium_device_register(struct device *dev, void *aux)
+gdium_device_register(device_t dev, void *aux)
 {
 	prop_dictionary_t dict;
 	static int gkey_chain_pos = 0;
-	static struct device *lastparent = NULL;
+	static device_t lastparent = NULL;
 
-	if (dev->dv_parent != lastparent && gkey_chain_pos != 0)
+	if (device_is_a(dev, "genfb") || device_is_a(dev, "voyagerfb")) {
+		dict = device_properties(dev);
+		/*
+		 * this is a hack
+		 * is_console needs to be checked against reality
+		 */
+		prop_dictionary_set_bool(dict, "is_console", 1);
+		prop_dictionary_set_uint32(dict, "width", 1024);
+		prop_dictionary_set_uint32(dict, "height", 600);
+		prop_dictionary_set_uint32(dict, "depth", 16);
+		prop_dictionary_set_uint32(dict, "linebytes", 2048);
+		if (fb_addr != 0)
+			prop_dictionary_set_uint32(dict, "address", fb_addr);
+	}
+	if (device_parent(dev) != lastparent && gkey_chain_pos != 0)
 		return;
 
 	switch (gkey_chain_pos) {
@@ -282,21 +296,6 @@ gdium_device_register(struct device *dev, void *aux)
 		if (booted_device == NULL)
 			booted_device = dev;
 		break;
-	}
-
-	if (device_is_a(dev, "genfb") || device_is_a(dev, "voyagerfb")) {
-		dict = device_properties(dev);
-		/*
-		 * this is a hack
-		 * is_console needs to be checked against reality
-		 */
-		prop_dictionary_set_bool(dict, "is_console", 1);
-		prop_dictionary_set_uint32(dict, "width", 1024);
-		prop_dictionary_set_uint32(dict, "height", 600);
-		prop_dictionary_set_uint32(dict, "depth", 16);
-		prop_dictionary_set_uint32(dict, "linebytes", 2048);
-		if (fb_addr != 0)
-			prop_dictionary_set_uint32(dict, "address", fb_addr);
 	}
 
 	return;

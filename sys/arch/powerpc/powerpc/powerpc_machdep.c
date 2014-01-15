@@ -1,4 +1,4 @@
-/*	$NetBSD: powerpc_machdep.c,v 1.64 2012/03/16 07:41:55 matt Exp $	*/
+/*	$NetBSD: powerpc_machdep.c,v 1.66 2013/11/08 04:32:58 nisimura Exp $	*/
 
 /*
  * Copyright (C) 1995, 1996 Wolfgang Solfrank.
@@ -32,7 +32,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: powerpc_machdep.c,v 1.64 2012/03/16 07:41:55 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: powerpc_machdep.c,v 1.66 2013/11/08 04:32:58 nisimura Exp $");
 
 #include "opt_altivec.h"
 #include "opt_modular.h"
@@ -90,7 +90,7 @@ const pcu_ops_t * const pcu_ops_md_defs[PCU_UNIT_COUNT] = {
 };
 
 #ifdef MULTIPROCESSOR
-volatile struct cpuset_info cpuset_info;
+struct cpuset_info cpuset_info;
 #endif
 
 /*
@@ -319,7 +319,7 @@ startlwp(void *arg)
 	ucontext_t * const uc = arg;
 	lwp_t * const l = curlwp;
 	struct trapframe * const tf = l->l_md.md_utf;
-	int error;
+	int error __diagused;
 
 	error = cpu_setmcontext(l, &uc->uc_mcontext, uc->uc_flags);
 	KASSERT(error == 0);

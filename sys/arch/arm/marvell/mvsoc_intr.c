@@ -1,4 +1,4 @@
-/*	$NetBSD: mvsoc_intr.c,v 1.5 2012/07/29 00:07:10 matt Exp $	*/
+/*	$NetBSD: mvsoc_intr.c,v 1.8 2013/11/20 12:16:47 kiyohara Exp $	*/
 /*
  * Copyright (c) 2010 KIYOHARA Takashi
  * All rights reserved.
@@ -26,7 +26,9 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: mvsoc_intr.c,v 1.5 2012/07/29 00:07:10 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: mvsoc_intr.c,v 1.8 2013/11/20 12:16:47 kiyohara Exp $");
+
+#include "opt_mvsoc.h"
 
 #define _INTR_PRIVATE
 
@@ -39,6 +41,7 @@ __KERNEL_RCSID(0, "$NetBSD: mvsoc_intr.c,v 1.5 2012/07/29 00:07:10 matt Exp $");
 #include <arm/pic/picvar.h>
 #include <arm/marvell/mvsocreg.h>
 #include <arm/marvell/mvsocvar.h>
+
 
 int (*find_pending_irqs)(void);
 

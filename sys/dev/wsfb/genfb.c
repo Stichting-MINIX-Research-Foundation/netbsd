@@ -1,4 +1,4 @@
-/*	$NetBSD: genfb.c,v 1.48 2012/04/12 22:36:15 macallan Exp $ */
+/*	$NetBSD: genfb.c,v 1.51 2013/10/09 17:20:54 macallan Exp $ */
 
 /*-
  * Copyright (c) 2007 Michael Lorenz
@@ -27,7 +27,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: genfb.c,v 1.48 2012/04/12 22:36:15 macallan Exp $");
+__KERNEL_RCSID(0, "$NetBSD: genfb.c,v 1.51 2013/10/09 17:20:54 macallan Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -61,7 +61,7 @@ __KERNEL_RCSID(0, "$NetBSD: genfb.c,v 1.48 2012/04/12 22:36:15 macallan Exp $");
 #ifdef GENFB_DEBUG
 #define GPRINTF panic
 #else
-#define GPRINTF aprint_verbose
+#define GPRINTF aprint_debug
 #endif
 
 #define GENFB_BRIGHTNESS_STEP 15
@@ -380,7 +380,7 @@ genfb_ioctl(void *v, void *vs, u_long cmd, void *data, int flag,
 			if (sc->sc_ops.genfb_ioctl)
 				error = sc->sc_ops.genfb_ioctl(sc, vs,
 					    cmd, data, flag, l);
-			if (error)
+			if (error && error != EPASSTHROUGH)
 				return error;
 
 			if (new_mode != sc->sc_mode) {
@@ -394,6 +394,7 @@ genfb_ioctl(void *v, void *vs, u_long cmd, void *data, int flag,
 				}
 			}
 			return 0;
+		
 		case WSDISPLAYIO_SSPLASH:
 #if defined(SPLASHSCREEN)
 			if(*(int *)data == 1) {
@@ -452,10 +453,17 @@ genfb_ioctl(void *v, void *vs, u_long cmd, void *data, int flag,
 				    sc->sc_backlight->gpc_cookie, val);
 			}
 			return EPASSTHROUGH;
+		
 		case WSDISPLAYIO_GET_EDID: {
 			struct wsdisplayio_edid_info *d = data;
 			return wsdisplayio_get_edid(sc->sc_dev, d);
 		}
+	
+		case WSDISPLAYIO_GET_FBINFO: {
+			struct wsdisplayio_fbinfo *fbi = data;
+			return wsdisplayio_get_fbinfo(&ms->scr_ri, fbi);
+		}
+		
 		default:
 			if (sc->sc_ops.genfb_ioctl)
 				return sc->sc_ops.genfb_ioctl(sc, vs, cmd,

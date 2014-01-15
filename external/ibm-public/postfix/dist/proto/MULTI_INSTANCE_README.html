@@ -374,6 +374,8 @@ post-filter re-injection SMTP service. Typical additions include: </p>
     # With multiple instances, rarely need "-o param=value" overrides
     # in master.cf, each instance gets its own main.cf file.
     #
+    # Postfix 2.10 and later: specify empty smtpd_relay_restrictions.
+    smtpd_relay_restrictions =
     smtpd_recipient_restrictions = permit_mynetworks, reject
 
     # Tolerate occasional high latency in the  content filter.
@@ -620,7 +622,7 @@ $daemon_directory. </p>
 $manpage_directory and $readme_directory. </p>
 
 <li><p> Entries in /etc/passwd and /etc/group for the $mail_owner user and
-$setgid_group group. The the $mail_owner user provides the mail system
+$setgid_group group. The $mail_owner user provides the mail system
 with a protected (non-root) execution context. The $setgid_group group
 is used exclusively to support the setgid postdrop(1) and postqueue(1)
 utilities (it <b>must not</b> be the primary group or secondary group

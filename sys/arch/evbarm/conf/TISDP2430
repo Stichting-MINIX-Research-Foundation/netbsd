@@ -1,5 +1,5 @@
 #
-#	$NetBSD: TISDP2430,v 1.21 2012/09/11 19:43:10 msaitoh Exp $
+#	$NetBSD: TISDP2430,v 1.27 2013/06/30 21:38:56 rmind Exp $
 #
 #	TISDP2430 -- TI OMAP 2430 Eval Board Kernel
 #
@@ -56,18 +56,10 @@ options 	WAPBL		# File system journaling support
 options 	INET		# IP + ICMP + TCP + UDP
 options 	INET6		# IPV6
 #options 	IPSEC		# IP security
-#options 	IPSEC_ESP	# IP security (encryption part; define w/ IPSEC)
-#options 	IPSEC_NAT_T	# IPsec NAT traversal (NAT-T)
 #options 	IPSEC_DEBUG	# debug for IP security
 #options 	MROUTING	# IP multicast routing
 #options 	PIM		# Protocol Independent Multicast
-#options 	NS		# XNS
-#options 	NSIP		# XNS tunneling over IP
-#options 	ISO,TPIP	# OSI
-#options 	EON		# OSI tunneling over IP
-#options 	CCITT,LLC,HDLC	# X.25
 #options 	NETATALK	# AppleTalk networking
-#options 	PFIL_HOOKS	# pfil(9) packet filter hooks
 #options 	PPP_BSDCOMP	# BSD-Compress compression support for PPP
 #options 	PPP_DEFLATE	# Deflate compression support for PPP
 #options 	PPP_FILTER	# Active filter support for PPP (requires bpf)
@@ -87,6 +79,7 @@ options		NFS_BOOT_RWSIZE=1024
 # Compatibility options
 
 #options 	COMPAT_43	# 4.3BSD compatibility.
+options 	COMPAT_60	# NetBSD 6.0 compatibility.
 options 	COMPAT_50	# NetBSD 5.0 compatibility.
 options 	COMPAT_40	# NetBSD 4.0 compatibility.
 options 	COMPAT_30	# NetBSD 3.0 compatibility.
@@ -138,7 +131,7 @@ options		DDB_ONPANIC=1
 options 	DDB_HISTORY_SIZE=100	# Enable history editing in DDB
 #options 	KGDB
 makeoptions	DEBUG="-g"	# compile full symbol table
-options 	SYMTAB_SPACE=500000
+options 	SYMTAB_SPACE=520000
 
 ## USB Debugging options
 options USB_DEBUG
@@ -227,11 +220,11 @@ omapwdt32k*	at obio? addr 0x48026000 size 2048	# WDT4
 sm0		at gpmc? addr 0x08000300 intr 245
 
 # On-board USB
-##ohci*		at obio? addr 0x4805e000 size 0x1000 intr 75
-##usb*		at ohci?
-##uhub*		at usb?
-##umass*		at uhub? port ? configuration ? interface ?
-##wd*		at umass?
+ohci*		at obio? addr 0x4805e000 size 0x1000 intr 75
+usb*		at ohci?
+uhub*		at usb?
+umass*		at uhub? port ? configuration ? interface ?
+wd*		at umass?
 
 # Hardware clocking and power management
 

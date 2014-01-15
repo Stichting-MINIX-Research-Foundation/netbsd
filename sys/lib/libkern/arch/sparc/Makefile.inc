@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile.inc,v 1.34 2009/08/14 19:23:54 dsl Exp $
+#	$NetBSD: Makefile.inc,v 1.36 2013/03/17 04:45:46 nakayama Exp $
 
 SRCS+=	ffs.S
 SRCS+=	memset.S

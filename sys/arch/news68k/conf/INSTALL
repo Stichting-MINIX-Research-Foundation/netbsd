@@ -1,4 +1,4 @@
-# 	$NetBSD: INSTALL,v 1.56 2011/12/18 05:49:30 dholland Exp $
+# 	$NetBSD: INSTALL,v 1.59 2013/06/30 21:38:58 rmind Exp $
 
 #	config for bootable floppy kernel
 #
@@ -47,6 +47,7 @@ options 	PIPE_SOCKETPAIR		# smaller, but slower pipe(2)
 #options 	COMPAT_30		# NetBSD 3.0 binary compatibility.
 #options 	COMPAT_40		# NetBSD 4.0 binary compatibility.
 #options 	COMPAT_50		# NetBSD 5.0 binary compatibility.
+#options 	COMPAT_60		# NetBSD 6.0 compatibility.
 options 	COMPAT_BSDPTY		# /dev/[pt]ty?? ptys.
 
 #options 	TCP_COMPAT_42	# 4.2BSD TCP/IP bug compat. Not recommended.
@@ -76,7 +77,6 @@ options 	WAPBL		# File system journaling support
 # Networking options
 options 	INET		# Internet protocols
 #options 	GATEWAY		# IP packet forwarding
-#options 	PFIL_HOOKS	# pfil(9) packet filter hooks
 #options 	IPFILTER_LOG	# ipmon(8) log support
 #options 	IPFILTER_LOOKUP	# ippool(8) support
 #options 	TCP_DEBUG	# Record last TCP_NDEBUG packets with SO_DEBUG
@@ -151,7 +151,7 @@ cd*	at scsibus? target ? lun ?		# SCSI CD-ROMs
 
 # Misc.
 pseudo-device	loop			# loopback interface; required
-pseudo-device	pty		2	# pseudo-terminals (Sysinst needs two)
+pseudo-device	pty			# pseudo-terminals
 pseudo-device	md			# memory disk device
 #pseudo-device	fss			# file system snapshot device
 pseudo-device	sl			# SLIP interfaces

@@ -1,9 +1,10 @@
-#	$NetBSD: Makefile.gzboot,v 1.20 2012/08/13 10:25:02 khorben Exp $
+#	$NetBSD: Makefile.gzboot,v 1.27 2013/11/04 21:25:05 christos Exp $
 
 NOMAN=  # defined
 
 .include <bsd.obj.mk>		# Pull in OBJDIR name rules.
 .include <bsd.own.mk>
+.include <bsd.klinks.mk>
 
 EVBARM_STAND=	${S}/arch/evbarm/stand
 
@@ -35,6 +36,12 @@ STARTFILE= srtbegin.o
 CPPFLAGS+= -nostdinc -I. -I${EVBARM_STAND}/gzboot -I${EVBARM_STAND}/board
 CPPFLAGS+= -I${S} -I${S}/arch -I${S}/lib/libsa
 CPPFLAGS+= -I${S}/../common/dist/zlib
+CPPFLAGS+= -mabi=apcs-gnu -mfloat-abi=soft
+.if ${HAVE_GCC} < 48
+CPPFLAGS+= -mno-thumb -mno-thumb-interwork
+.else
+CPPFLAGS+= -marm
+.endif
 
 CPPFLAGS+= -D_STANDALONE
 
@@ -50,26 +57,13 @@ CPPFLAGS+= -DLOADADDR=${LOADADDR}
 
 COPTS+=	-ffreestanding
 COPTS+=	-fno-stack-protector
+COPTS+=	-fno-unwind-tables
 CWARNFLAGS+= -Werror
 CWARNFLAGS+= -Wall -Wmissing-prototypes -Wstrict-prototypes -Wpointer-arith
 
 CLEANFILES+= ${STARTFILE} vers.c ${BASE}.list
 CLEANFILES+= ${PROGSYM}
 SRCS+= vers.c
-
-.if !make(obj) && !make(clean) && !make(cleandir)
-.NOPATH: machine
-.endif
-
-realdepend realall: machine
-CLEANFILES+= arm machine
-
-machine::
-	-rm -f arm machine
-	ln -s ${S}/arch/evbarm/include machine
-	ln -s ${S}/arch/arm/include arm
-
-${OBJS}: machine
 
 ### find out what to use for libkern
 KERN_AS=	library

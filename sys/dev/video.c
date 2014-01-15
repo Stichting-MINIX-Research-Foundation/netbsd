@@ -1,4 +1,4 @@
-/* $NetBSD: video.c,v 1.28 2012/02/02 17:21:18 drochner Exp $ */
+/* $NetBSD: video.c,v 1.30 2013/10/17 21:20:10 christos Exp $ */
 
 /*
  * Copyright (c) 2008 Patrick Mahoney <pat@polycrystal.org>
@@ -36,7 +36,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: video.c,v 1.28 2012/02/02 17:21:18 drochner Exp $");
+__KERNEL_RCSID(0, "$NetBSD: video.c,v 1.30 2013/10/17 21:20:10 christos Exp $");
 
 #include "video.h"
 #if NVIDEO > 0
@@ -315,10 +315,12 @@ static const char *	video_ioctl_str(u_long);
 static int
 video_match(device_t parent, cfdata_t match, void *aux)
 {
+#ifdef VIDEO_DEBUG
 	struct video_attach_args *args;
 
 	args = aux;
 	DPRINTF(("video_match: hw=%p\n", args->hw_if));
+#endif
 	return 1;
 }
 
@@ -397,11 +399,8 @@ video_detach(device_t self, int flags)
 static int
 video_print(void *aux, const char *pnp)
 {
-	struct video_attach_args *arg;
-
 	if (pnp != NULL) {
 		DPRINTF(("video_print: have pnp\n"));
-		arg = aux;
 		aprint_normal("%s at %s\n", "video", pnp);
 	} else {
 		DPRINTF(("video_print: pnp is NULL\n"));
@@ -1604,7 +1603,8 @@ videoopen(dev_t dev, int flags, int ifmt, struct lwp *l)
 
 	sc = device_private(device_lookup(&video_cd, VIDEOUNIT(dev)));
 	if (sc == NULL) {
-		DPRINTF(("videoopen: failed to get softc\n"));
+		DPRINTF(("videoopen: failed to get softc for unit %d\n",
+			VIDEOUNIT(dev)));
 		return ENXIO;
 	}
 	

@@ -1,5 +1,5 @@
-/*	$NetBSD: ssh-pkcs11-helper.c,v 1.3 2011/05/24 14:27:07 joerg Exp $	*/
-/* $OpenBSD: ssh-pkcs11-helper.c,v 1.3 2010/02/24 06:12:53 djm Exp $ */
+/*	$NetBSD: ssh-pkcs11-helper.c,v 1.6 2013/11/11 16:32:10 christos Exp $	*/
+/* $OpenBSD: ssh-pkcs11-helper.c,v 1.6 2013/05/17 00:13:14 djm Exp $ */
 /*
  * Copyright (c) 2010 Markus Friedl.  All rights reserved.
  *
@@ -16,7 +16,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 #include "includes.h"
-__RCSID("$NetBSD: ssh-pkcs11-helper.c,v 1.3 2011/05/24 14:27:07 joerg Exp $");
+__RCSID("$NetBSD: ssh-pkcs11-helper.c,v 1.6 2013/11/11 16:32:10 christos Exp $");
 
 #include <sys/queue.h>
 #include <sys/types.h>
@@ -76,7 +76,7 @@ del_keys_by_name(char *name)
 		nxt = TAILQ_NEXT(ki, next);
 		if (!strcmp(ki->providername, name)) {
 			TAILQ_REMOVE(&pkcs11_keylist, ki, next);
-			xfree(ki->providername);
+			free(ki->providername);
 			key_free(ki->key);
 			free(ki);
 		}
@@ -124,18 +124,19 @@ process_add(void)
 		buffer_put_char(&msg, SSH2_AGENT_IDENTITIES_ANSWER);
 		buffer_put_int(&msg, nkeys);
 		for (i = 0; i < nkeys; i++) {
-			key_to_blob(keys[i], &blob, &blen);
+			if (key_to_blob(keys[i], &blob, &blen) == 0)
+				continue;
 			buffer_put_string(&msg, blob, blen);
 			buffer_put_cstring(&msg, name);
-			xfree(blob);
+			free(blob);
 			add_key(keys[i], name);
 		}
-		xfree(keys);
+		free(keys);
 	} else {
 		buffer_put_char(&msg, SSH_AGENT_FAILURE);
 	}
-	xfree(pin);
-	xfree(name);
+	free(pin);
+	free(name);
 	send_msg(&msg);
 	buffer_free(&msg);
 }
@@ -154,8 +155,8 @@ process_del(void)
 		 buffer_put_char(&msg, SSH_AGENT_SUCCESS);
 	else
 		 buffer_put_char(&msg, SSH_AGENT_FAILURE);
-	xfree(pin);
-	xfree(name);
+	free(pin);
+	free(name);
 	send_msg(&msg);
 	buffer_free(&msg);
 }
@@ -165,13 +166,13 @@ process_sign(void)
 {
 	u_char *blob, *data, *signature = NULL;
 	u_int blen, dlen, slen = 0;
-	int ok = -1, flags, ret;
+	int ok = -1, ret;
 	Key *key, *found;
 	Buffer msg;
 
 	blob = get_string(&blen);
 	data = get_string(&dlen);
-	flags = get_int(); /* XXX ignore */
+	(void)get_int(); /* XXX ignore flags */
 
 	if ((key = key_from_blob(blob, blen)) != NULL) {
 		if ((found = lookup_key(key)) != NULL) {
@@ -192,10 +193,9 @@ process_sign(void)
 	} else {
 		buffer_put_char(&msg, SSH_AGENT_FAILURE);
 	}
-	xfree(data);
-	xfree(blob);
-	if (signature != NULL)
-		xfree(signature);
+	free(data);
+	free(blob);
+	free(signature);
 	send_msg(&msg);
 	buffer_free(&msg);
 }

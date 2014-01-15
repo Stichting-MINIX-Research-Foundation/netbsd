@@ -1,4 +1,4 @@
-/*	$NetBSD: nfs_vfsops.c,v 1.220 2011/10/24 11:43:30 hannken Exp $	*/
+/*	$NetBSD: nfs_vfsops.c,v 1.223 2013/11/23 13:35:36 christos Exp $	*/
 
 /*
  * Copyright (c) 1989, 1993, 1995
@@ -35,7 +35,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: nfs_vfsops.c,v 1.220 2011/10/24 11:43:30 hannken Exp $");
+__KERNEL_RCSID(0, "$NetBSD: nfs_vfsops.c,v 1.223 2013/11/23 13:35:36 christos Exp $");
 
 #if defined(_KERNEL_OPT)
 #include "opt_nfs.h"
@@ -379,9 +379,7 @@ nfs_mountroot(void)
 	/*
 	 * Link it into the mount list.
 	 */
-	mutex_enter(&mountlist_lock);
-	CIRCLEQ_INSERT_TAIL(&mountlist, mp, mnt_list);
-	mutex_exit(&mountlist_lock);
+	mountlist_append(mp);
 	rootvp = vp;
 	mp->mnt_vnodecovered = NULLVP;
 	vfs_unbusy(mp, false, NULL);
@@ -596,14 +594,12 @@ nfs_mount(struct mount *mp, const char *path, void *data, size_t *data_len)
 	struct sockaddr *sa;
 	struct vnode *vp;
 	char *pth, *hst;
-	struct proc *p;
 	size_t len;
 	u_char *nfh;
 
 	if (*data_len < sizeof *args)
 		return EINVAL;
 
-	p = l->l_proc;
 	if (mp->mnt_flag & MNT_GETARGS) {
 
 		if (nmp == NULL)
@@ -814,7 +810,7 @@ mountnfs(struct nfs_args *argp, struct mount *mp, struct mbuf *nam, const char *
 	 * traversals of the mount point (i.e. "..") will not work if
 	 * the nfsnode gets flushed out of the cache. Ufs does not have
 	 * this problem, because one can identify root inodes by their
-	 * number == ROOTINO (2). So, just unlock, but no rele.
+	 * number == UFS_ROOTINO (2). So, just unlock, but no rele.
 	 */
 
 	nmp->nm_vnode = vp;

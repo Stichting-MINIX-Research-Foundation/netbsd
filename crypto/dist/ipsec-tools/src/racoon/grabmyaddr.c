@@ -1,4 +1,4 @@
-/*	$NetBSD: grabmyaddr.c,v 1.29 2012/01/01 15:54:51 tteras Exp $	*/
+/*	$NetBSD: grabmyaddr.c,v 1.32 2013/07/18 17:02:58 christos Exp $	*/
 /*
  * Copyright (C) 1995, 1996, 1997, and 1998 WIDE Project.
  * Copyright (C) 2008 Timo Teras <timo.teras@iki.fi>.
@@ -274,13 +274,24 @@ myaddr_getsport(addr)
 	struct sockaddr *addr;
 {
 	struct myaddr *my;
+	int port = 0, wport;
 
 	LIST_FOREACH(my, &opened, chain) {
-		if (cmpsaddr((struct sockaddr *) &my->addr, addr) <= CMPSADDR_WILDPORT_MATCH)
+		switch (cmpsaddr((struct sockaddr *) &my->addr, addr)) {
+		case CMPSADDR_MATCH:
 			return extract_port((struct sockaddr *) &my->addr);
+		case CMPSADDR_WILDPORT_MATCH:
+			wport = extract_port((struct sockaddr *) &my->addr);
+			if (port == 0 || wport < port)
+				port = wport;
+			break;
+		}
 	}
 
-	return -1;
+	if (port == 0)
+		port = PORT_ISAKMP;
+
+	return port;
 }
 
 void
@@ -753,7 +764,14 @@ kernel_handle_message(msg)
 	case RTM_ADD:
 	case RTM_DELETE:
 	case RTM_CHANGE:
+	case RTM_GET:
 	case RTM_MISS:
+#ifdef RTM_LOSING
+	case RTM_LOSING:
+#endif
+#ifdef RTM_REDIRECT
+	case RTM_REDIRECT:
+#endif
 	case RTM_IFINFO:
 #ifdef RTM_OIFINFO
 	case RTM_OIFINFO:
@@ -768,7 +786,7 @@ kernel_handle_message(msg)
 		break;
 	default:
 		plog(LLV_WARNING, LOCATION, NULL,
-		     "unrecognized route message with rtm_type: %d",
+		     "unrecognized route message with rtm_type: %d\n",
 		     rtm->rtm_type);
 		break;
 	}

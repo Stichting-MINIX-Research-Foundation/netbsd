@@ -1,4 +1,4 @@
-/*      $NetBSD: cpu.h,v 1.94 2012/02/27 15:50:48 matt Exp $      */
+/*      $NetBSD: cpu.h,v 1.98 2013/11/10 00:50:13 christos Exp $      */
 
 /*
  * Copyright (c) 1994 Ludd, University of Lule}, Sweden
@@ -158,6 +158,7 @@ extern int cpu_printfataltraps;
 #define	cpu_number()		(curcpu()->ci_cpuid)
 #define	cpu_need_resched(ci, flags)		\
 	do {					\
+		__USE(flags);			\
 		(ci)->ci_want_resched = 1;	\
 		mtpr(AST_OK,PR_ASTLVL);		\
 	} while (/*CONSTCOND*/ 0)
@@ -184,8 +185,8 @@ cpu_intr_p(void)
 #if defined(MULTIPROCESSOR)
 #define	CPU_IS_PRIMARY(ci)	((ci)->ci_flags & CI_MASTERCPU)
 
-#define	CPU_INFO_ITERATOR	int
-#define	CPU_INFO_FOREACH(cii, ci)	cii = 0, ci = SIMPLEQ_FIRST(&cpus); \
+#define	CPU_INFO_ITERATOR	int __unused
+#define	CPU_INFO_FOREACH(cii, ci)	ci = SIMPLEQ_FIRST(&cpus); \
 					ci != NULL; \
 					ci = SIMPLEQ_NEXT(ci, ci_next)
 
@@ -215,7 +216,6 @@ extern char vax_mp_tramp;
 
 #define	LWP_PC(l)	cpu_lwp_pc(l)
 
-struct device;
 struct buf;
 struct pte;
 

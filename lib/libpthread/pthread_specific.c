@@ -1,4 +1,4 @@
-/*	$NetBSD: pthread_specific.c,v 1.23 2012/09/12 14:55:48 matt Exp $	*/
+/*	$NetBSD: pthread_specific.c,v 1.26 2013/03/21 16:49:12 christos Exp $	*/
 
 /*-
  * Copyright (c) 2001, 2007 The NetBSD Foundation, Inc.
@@ -30,12 +30,13 @@
  */
 
 #include <sys/cdefs.h>
-__RCSID("$NetBSD: pthread_specific.c,v 1.23 2012/09/12 14:55:48 matt Exp $");
+__RCSID("$NetBSD: pthread_specific.c,v 1.26 2013/03/21 16:49:12 christos Exp $");
 
 /* Functions and structures dealing with thread-specific data */
 
 #include "pthread.h"
 #include "pthread_int.h"
+#include "reentrant.h"
 
 #include <string.h>
 #include <sys/lwpctl.h>
@@ -55,6 +56,9 @@ pthread_setspecific(pthread_key_t key, const void *value)
 {
 	pthread_t self;
 
+	if (__predict_false(__uselibcstub))
+		return __libc_thr_setspecific_stub(key, value);
+
 	self = pthread__self();
 	/*
 	 * We can't win here on constness. Having been given a 
@@ -62,25 +66,32 @@ pthread_setspecific(pthread_key_t key, const void *value)
 	 * and return it from functions that are const void *, without
 	 * generating a warning. 
 	 */
-	/*LINTED const cast*/
-	self->pt_specific[key] = (void *) value;
-	self->pt_havespecific = 1;
-
-	return 0;
+	return pthread__add_specific(self, key, value);
 }
 
 void *
 pthread_getspecific(pthread_key_t key)
 {
+	if (__predict_false(__uselibcstub))
+		return __libc_thr_getspecific_stub(key);
 
-	return pthread__self()->pt_specific[key];
+	return pthread__self()->pt_specific[key].pts_value;
 }
 
 unsigned int
 pthread_curcpu_np(void)
 {
+	if (__predict_false(__uselibcstub))
+		return __libc_thr_curcpu_stub();
 
-	return pthread__self()->pt_lwpctl->lc_curcpu;
+	{
+		const int curcpu = pthread__self()->pt_lwpctl->lc_curcpu;
+
+		pthread__assert(curcpu != LWPCTL_CPU_NONE);
+		pthread__assert(curcpu != LWPCTL_CPU_EXITED);
+		pthread__assert(curcpu >= 0);
+		return curcpu;
+	}
 }
 
 /*

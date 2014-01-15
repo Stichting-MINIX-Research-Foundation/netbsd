@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.8 2011/08/11 23:15:39 joerg Exp $
+#	$NetBSD: Makefile,v 1.11 2013/10/18 01:12:00 riz Exp $
 
 .include <bsd.own.mk>
 
@@ -7,6 +7,7 @@ LIB=	Xi
 .PATH:	${X11SRCDIR.${LIB}}/include/X11/extensions
 
 SRCS=	XIAllowEvents.c \
+	XIBarrier.c \
 	XIGrabDevice.c \
 	XIQueryVersion.c \
 	XIQueryDevice.c \
@@ -79,7 +80,13 @@ PKGDIST=	${LIB}
 COPTS.XExtInt.c+=	-Wno-error	# XXX
 COPTS.XSndExEv.c+=	-Wno-error	# XXX
 
+.if defined(HAVE_GCC) && ${HAVE_GCC} < 45
+COPTS.XGetFCtl.c+=	-Wno-error	# XXX
+.endif
+
 CWARNFLAGS.clang+=	-Wno-pointer-sign
+
+# XXX manuals
 
 .include <bsd.x11.mk>
 .include <bsd.lib.mk>

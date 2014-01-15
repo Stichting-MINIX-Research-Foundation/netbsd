@@ -1,4 +1,4 @@
-/*	$NetBSD: single_server.c,v 1.1.1.3 2011/03/02 19:32:21 tron Exp $	*/
+/*	$NetBSD: single_server.c,v 1.1.1.5 2013/09/25 19:06:32 tron Exp $	*/
 
 /*++
 /* NAME
@@ -31,6 +31,8 @@
 /*	a client connects to the program's service port. The function is
 /*	run after the program has irrevocably dropped its privileges.
 /*	The stream initial state is non-blocking mode.
+/*	Optional connection attributes are provided as a hash that
+/*	is attached as stream context.
 /*	The service name argument corresponds to the service name in the
 /*	master.cf file.
 /*	The argv argument specifies command-line arguments left over
@@ -39,6 +41,11 @@
 /*	Optional arguments are specified as a null-terminated (key, value)
 /*	list. Keys and expected values are:
 /* .IP "MAIL_SERVER_INT_TABLE (CONFIG_INT_TABLE *)"
+/*	A table with configurable parameters, to be loaded from the
+/*	global Postfix configuration file. Tables are loaded in the
+/*	order as specified, and multiple instances of the same type
+/*	are allowed.
+/* .IP "MAIL_SERVER_LONG_TABLE (CONFIG_LONG_TABLE *)"
 /*	A table with configurable parameters, to be loaded from the
 /*	global Postfix configuration file. Tables are loaded in the
 /*	order as specified, and multiple instances of the same type
@@ -188,6 +195,7 @@
 #include <timed_ipc.h>
 #include <resolve_local.h>
 #include <mail_flow.h>
+#include <mail_version.h>
 
 /* Process manager. */
 
@@ -241,7 +249,7 @@ static void single_server_timeout(int unused_event, char *unused_context)
 
 /* single_server_wakeup - wake up application */
 
-static void single_server_wakeup(int fd)
+static void single_server_wakeup(int fd, HTABLE *attr)
 {
     VSTREAM *stream;
     char   *tmp;
@@ -259,7 +267,10 @@ static void single_server_wakeup(int fd)
     close_on_exec(fd, CLOSE_ON_EXEC);
     stream = vstream_fdopen(fd, O_RDWR);
     tmp = concatenate(single_server_name, " socket", (char *) 0);
-    vstream_control(stream, VSTREAM_CTL_PATH, tmp, VSTREAM_CTL_END);
+    vstream_control(stream,
+		    VSTREAM_CTL_PATH, tmp,
+		    VSTREAM_CTL_CONTEXT, (char *) attr,
+		    VSTREAM_CTL_END);
     myfree(tmp);
     timed_ipc_setup(stream);
     if (master_notify(var_pid, single_server_generation, MASTER_STAT_TAKEN) < 0)
@@ -277,6 +288,8 @@ static void single_server_wakeup(int fd)
 	use_count++;
     if (var_idle_limit > 0)
 	event_request_timer(single_server_timeout, (char *) 0, var_idle_limit);
+    if (attr)
+	htable_free(attr, myfree);
 }
 
 /* single_server_accept_local - accept client connection request */
@@ -310,7 +323,7 @@ static void single_server_accept_local(int unused_event, char *context)
 	    event_request_timer(single_server_timeout, (char *) 0, time_left);
 	return;
     }
-    single_server_wakeup(fd);
+    single_server_wakeup(fd, (HTABLE *) 0);
 }
 
 #ifdef MASTER_XPORT_NAME_PASS
@@ -322,6 +335,7 @@ static void single_server_accept_pass(int unused_event, char *context)
     int     listen_fd = CAST_CHAR_PTR_TO_INT(context);
     int     time_left = -1;
     int     fd;
+    HTABLE *attr = 0;
 
     /*
      * Be prepared for accept() to fail because some other process already
@@ -334,7 +348,7 @@ static void single_server_accept_pass(int unused_event, char *context)
 
     if (single_server_pre_accept)
 	single_server_pre_accept(single_server_name, single_server_argv);
-    fd = PASS_ACCEPT(listen_fd);
+    fd = pass_accept_attr(listen_fd, &attr);
     if (single_server_lock != 0
 	&& myflock(vstream_fileno(single_server_lock), INTERNAL_LOCK,
 		   MYFLOCK_OP_NONE) < 0)
@@ -346,7 +360,7 @@ static void single_server_accept_pass(int unused_event, char *context)
 	    event_request_timer(single_server_timeout, (char *) 0, time_left);
 	return;
     }
-    single_server_wakeup(fd);
+    single_server_wakeup(fd, attr);
 }
 
 #endif
@@ -382,7 +396,7 @@ static void single_server_accept_inet(int unused_event, char *context)
 	    event_request_timer(single_server_timeout, (char *) 0, time_left);
 	return;
     }
-    single_server_wakeup(fd);
+    single_server_wakeup(fd, (HTABLE *) 0);
 }
 
 /* single_server_main - the real main program */
@@ -454,6 +468,11 @@ NORETURN single_server_main(int argc, char **argv, SINGLE_SERVER_FN service,...)
 	msg_info("daemon started");
 
     /*
+     * Check the Postfix library version as soon as we enable logging.
+     */
+    MAIL_VERSION_CHECK;
+
+    /*
      * Initialize from the configuration file. Allow command-line options to
      * override compiled-in defaults or configured parameter values.
      */
@@ -463,6 +482,12 @@ NORETURN single_server_main(int argc, char **argv, SINGLE_SERVER_FN service,...)
      * Register dictionaries that use higher-level interfaces and protocols.
      */
     mail_dict_init();
+
+    /*
+     * After database open error, continue execution with reduced
+     * functionality.
+     */
+    dict_allow_surrogate = 1;
 
     /*
      * Pick up policy settings from master process. Shut up error messages to
@@ -553,6 +578,9 @@ NORETURN single_server_main(int argc, char **argv, SINGLE_SERVER_FN service,...)
 	switch (key) {
 	case MAIL_SERVER_INT_TABLE:
 	    get_mail_conf_int_table(va_arg(ap, CONFIG_INT_TABLE *));
+	    break;
+	case MAIL_SERVER_LONG_TABLE:
+	    get_mail_conf_long_table(va_arg(ap, CONFIG_LONG_TABLE *));
 	    break;
 	case MAIL_SERVER_STR_TABLE:
 	    get_mail_conf_str_table(va_arg(ap, CONFIG_STR_TABLE *));

@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile.libkern,v 1.18 2012/08/30 12:16:49 drochner Exp $
+#	$NetBSD: Makefile.libkern,v 1.26 2013/07/23 14:52:07 skrll Exp $
 
 # 
 # Variable definitions for libkern.  
@@ -61,7 +61,7 @@ SRCS+=	cpuset.c inet_addr.c intoa.c
 .if empty(SRCS:Mbyte_swap_8.*)
 SRCS+=	bswap64.c
 .endif
-SRCS+=	md4c.c md5c.c rmd160.c sha1.c sha2.c
+SRCS+=	md4c.c md5c.c rmd160.c sha1.c sha2.c murmurhash.c
 SRCS+=	pmatch.c arc4random.c bcd.c mcount.c mertwist.c crc32.c
 
 SRCS+=	ppath_kmem_alloc.c
@@ -70,12 +70,15 @@ SRCS+=	strsep.c strstr.c
 SRCS+=	strlcpy.c strlcat.c
 
 SRCS+=	imax.c imin.c lmax.c lmin.c max.c min.c ulmax.c ulmin.c
-SRCS+=	memcpy.c memmove.c
+SRCS+=	memmove.c
 SRCS+=	strchr.c strrchr.c
 SRCS+=	memcmp.c
+
+SRCS+=	memcpy.c
 .if empty(SRCS:Mmemset2.*)
 SRCS+=	memset.c 
 .endif
+
 SRCS+=	popcount32.c popcount64.c
 SRCS+=	strtoul.c strtoll.c strtoull.c strtoumax.c
 
@@ -84,7 +87,7 @@ SRCS+=	random.c
 SRCS+=	rngtest.c
 
 SRCS+=	memchr.c
-SRCS+=	strcat.c strcmp.c strcpy.c strlen.c
+SRCS+=	strcat.c strcmp.c strcpy.c strlen.c strnlen.c
 SRCS+=	strncmp.c strncpy.c
 SRCS+=	strcasecmp.c strncasecmp.c
 
@@ -93,7 +96,7 @@ SRCS+=	xlat_mbr_fstype.c
 SRCS+=	heapsort.c ptree.c rb.c
 
 # for crypto
-SRCS+=	explicit_bzero.c consttime_bcmp.c
+SRCS+=	explicit_memset.c consttime_memequal.c
 
 # Files to clean up
 CLEANFILES+= lib${LIB}.o lib${LIB}.po
@@ -108,3 +111,7 @@ unwanted_file := ${SRCS:M${check_file:.S=.c}}
 SRCS := ${SRCS:N${unwanted_file}}
 .endif
 .endfor
+
+.if ${HAVE_GCC:U} == "45" && ${MACHINE_CPU} == "hppa"
+COPTS.md5c.c +=		${${ACTIVE_CC} == "gcc" :? -O0 :}
+.endif

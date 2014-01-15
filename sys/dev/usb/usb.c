@@ -1,4 +1,4 @@
-/*	$NetBSD: usb.c,v 1.135 2012/07/20 23:18:02 mrg Exp $	*/
+/*	$NetBSD: usb.c,v 1.148 2013/11/09 07:52:22 skrll Exp $	*/
 
 /*
  * Copyright (c) 1998, 2002, 2008, 2012 The NetBSD Foundation, Inc.
@@ -37,10 +37,11 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: usb.c,v 1.135 2012/07/20 23:18:02 mrg Exp $");
+__KERNEL_RCSID(0, "$NetBSD: usb.c,v 1.148 2013/11/09 07:52:22 skrll Exp $");
 
+#ifdef _KERNEL_OPT
 #include "opt_compat_netbsd.h"
-#include "opt_usb.h"
+#endif
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -180,11 +181,9 @@ usb_attach(device_t parent, device_t self, void *aux)
 {
 	static ONCE_DECL(init_control);
 	struct usb_softc *sc = device_private(self);
-	bool mpsafe;
 	int usbrev;
 
 	sc->sc_bus = aux;
-	mpsafe = sc->sc_bus->methods->get_lock ? true : false;
 	usbrev = sc->sc_bus->usbrev;
 
 	aprint_naive("\n");
@@ -201,10 +200,18 @@ usb_attach(device_t parent, device_t self, void *aux)
 	}
 	aprint_normal("\n");
 
-	if (mpsafe)
-		sc->sc_bus->methods->get_lock(sc->sc_bus, &sc->sc_bus->lock);
-	else
-		sc->sc_bus->lock = NULL;
+	/* XXX we should have our own level */
+	sc->sc_bus->soft = softint_establish(SOFTINT_NET | SOFTINT_MPSAFE,
+	    usb_soft_intr, sc->sc_bus);
+	if (sc->sc_bus->soft == NULL) {
+		aprint_error("%s: can't register softintr\n",
+			     device_xname(self));
+		sc->sc_dying = 1;
+		return;
+	}
+
+	sc->sc_bus->methods->get_lock(sc->sc_bus, &sc->sc_bus->lock);
+	KASSERT(sc->sc_bus->lock != NULL);
 
 	RUN_ONCE(&init_control, usb_once_init);
 	config_interrupts(self, usb_doattach);
@@ -224,7 +231,11 @@ usb_once_init(void)
 		taskq = &usb_taskq[i];
 
 		TAILQ_INIT(&taskq->tasks);
-		mutex_init(&taskq->lock, MUTEX_DEFAULT, IPL_NONE);
+		/*
+		 * Since USB task methods usb_{add,rem}_task are callable
+		 * from any context, we have to make this lock a spinlock.
+		 */
+		mutex_init(&taskq->lock, MUTEX_DEFAULT, IPL_USB);
 		cv_init(&taskq->cv, "usbtsk");
 		taskq->name = taskq_names[i];
 		if (kthread_create(PRI_NONE, KTHREAD_MPSAFE, NULL,
@@ -249,7 +260,6 @@ usb_doattach(device_t self)
 	usbd_status err;
 	int speed;
 	struct usb_event *ue;
-	const bool mpsafe = sc->sc_bus->methods->get_lock ? true : false;
 
 	DPRINTF(("usbd_doattach\n"));
 
@@ -274,17 +284,6 @@ usb_doattach(device_t self)
 	ue->u.ue_ctrlr.ue_bus = device_unit(self);
 	usb_add_event(USB_EVENT_CTRLR_ATTACH, ue);
 
-	/* XXX we should have our own level */
-	sc->sc_bus->soft = softint_establish(
-	    SOFTINT_NET | (mpsafe ? SOFTINT_MPSAFE : 0),
-	    usb_soft_intr, sc->sc_bus);
-	if (sc->sc_bus->soft == NULL) {
-		aprint_error("%s: can't register softintr\n",
-			     device_xname(self));
-		sc->sc_dying = 1;
-		return;
-	}
-
 	err = usbd_new_device(self, sc->sc_bus, 0, speed, 0,
 		  &sc->sc_port);
 	if (!err) {
@@ -307,12 +306,12 @@ usb_doattach(device_t self)
 			dev->hub->explore(sc->sc_bus->root_hub);
 #endif
 	} else {
-		aprint_error("%s: root hub problem, error=%d\n",
-			     device_xname(self), err);
+		aprint_error("%s: root hub problem, error=%s\n",
+			     device_xname(self), usbd_errstr(err));
 		sc->sc_dying = 1;
 	}
 
-	config_pending_incr();
+	config_pending_incr(self);
 
 	if (!pmf_device_register(self, NULL, NULL))
 		aprint_error_dev(self, "couldn't establish power handler\n");
@@ -328,8 +327,7 @@ usb_create_event_thread(device_t self)
 {
 	struct usb_softc *sc = device_private(self);
 
-	if (kthread_create(PRI_NONE,
-	    sc->sc_bus->lock ? KTHREAD_MPSAFE : 0, NULL,
+	if (kthread_create(PRI_NONE, KTHREAD_MPSAFE, NULL,
 	    usb_event_thread, sc, &sc->sc_event_thread,
 	    "%s", device_xname(self))) {
 		printf("%s: unable to create event thread for\n",
@@ -392,36 +390,27 @@ usb_event_thread(void *arg)
 	usb_delay_ms(sc->sc_bus, 500);
 
 	/* Make sure first discover does something. */
-	if (sc->sc_bus->lock)
-		mutex_enter(sc->sc_bus->lock);
+	mutex_enter(sc->sc_bus->lock);
 	sc->sc_bus->needs_explore = 1;
 	usb_discover(sc);
-	if (sc->sc_bus->lock)
-		mutex_exit(sc->sc_bus->lock);
-	config_pending_decr();
+	mutex_exit(sc->sc_bus->lock);
+	config_pending_decr(sc->sc_bus->usbctl);
 
-	if (sc->sc_bus->lock)
-		mutex_enter(sc->sc_bus->lock);
+	mutex_enter(sc->sc_bus->lock);
 	while (!sc->sc_dying) {
 		if (usb_noexplore < 2)
 			usb_discover(sc);
 
-		if (sc->sc_bus->lock)
-			cv_timedwait(&sc->sc_bus->needs_explore_cv,
-			    sc->sc_bus->lock, usb_noexplore ? 0 : hz * 60);
-		else
-			(void)tsleep(&sc->sc_bus->needs_explore, /* XXXSMP ok */
-			    PWAIT, "usbevt", usb_noexplore ? 0 : hz * 60);
+		cv_timedwait(&sc->sc_bus->needs_explore_cv,
+		    sc->sc_bus->lock, usb_noexplore ? 0 : hz * 60);
+
 		DPRINTFN(2,("usb_event_thread: woke up\n"));
 	}
 	sc->sc_event_thread = NULL;
 
 	/* In case parent is waiting for us to exit. */
-	if (sc->sc_bus->lock) {
-		cv_signal(&sc->sc_bus->needs_explore_cv);
-		mutex_exit(sc->sc_bus->lock);
-	} else
-		wakeup(sc);	/* XXXSMP ok */
+	cv_signal(&sc->sc_bus->needs_explore_cv);
+	mutex_exit(sc->sc_bus->lock);
 
 	DPRINTF(("usb_event_thread: exit\n"));
 	kthread_exit(0);
@@ -448,7 +437,13 @@ usb_task_thread(void *arg)
 			TAILQ_REMOVE(&taskq->tasks, task, next);
 			task->queue = -1;
 			mutex_exit(&taskq->lock);
+
+			if (!(task->flags & USB_TASKQ_MPSAFE))
+				KERNEL_LOCK(1, curlwp);
 			task->fun(task->arg);
+			if (!(task->flags & USB_TASKQ_MPSAFE))
+				KERNEL_UNLOCK_ONE(curlwp);
+
 			mutex_enter(&taskq->lock);
 		}
 	}
@@ -497,13 +492,13 @@ usbread(dev_t dev, struct uio *uio, int flag)
 	struct usb_event *ue;
 #ifdef COMPAT_30
 	struct usb_event_old *ueo = NULL;	/* XXXGCC */
+	int useold = 0;
 #endif
-	int error, n, useold;
+	int error, n;
 
 	if (minor(dev) != USB_DEV_MINOR)
 		return (ENXIO);
 
-	useold = 0;
 	switch (uio->uio_resid) {
 #ifdef COMPAT_30
 	case sizeof(struct usb_event_old):
@@ -555,7 +550,7 @@ usbread(dev_t dev, struct uio *uio, int flag)
 				case USB_EVENT_DRIVER_DETACH:
 					ueo->u.ue_driver.ue_cookie=ue->u.ue_driver.ue_cookie;
 					memcpy(ueo->u.ue_driver.ue_devname,
-					       ue->u.ue_driver.ue_devname,  
+					       ue->u.ue_driver.ue_devname,
 					       sizeof(ue->u.ue_driver.ue_devname));
 					break;
 				default:
@@ -649,7 +644,7 @@ usbioctl(dev_t devt, u_long cmd, void *data, int flag, struct lwp *l)
 		if (len < 0 || len > 32768)
 			return (EINVAL);
 		if (addr < 0 || addr >= USB_MAX_DEVICES ||
-		    sc->sc_bus->devices[addr] == 0)
+		    sc->sc_bus->devices[addr] == NULL)
 			return (EINVAL);
 		if (len != 0) {
 			iov.iov_base = (void *)ur->ucr_data;
@@ -697,7 +692,7 @@ usbioctl(dev_t devt, u_long cmd, void *data, int flag, struct lwp *l)
 		struct usb_device_info *di = (void *)data;
 		int addr = di->udi_addr;
 
-		if (addr < 1 || addr >= USB_MAX_DEVICES)
+		if (addr < 0 || addr >= USB_MAX_DEVICES)
 			return EINVAL;
 		if ((dev = sc->sc_bus->devices[addr]) == NULL)
 			return ENXIO;
@@ -807,7 +802,7 @@ Static void
 usb_discover(struct usb_softc *sc)
 {
 
-	KASSERT(sc->sc_bus->lock == NULL || mutex_owned(sc->sc_bus->lock));
+	KASSERT(mutex_owned(sc->sc_bus->lock));
 
 	DPRINTFN(2,("usb_discover\n"));
 	if (usb_noexplore > 1)
@@ -817,15 +812,13 @@ usb_discover(struct usb_softc *sc)
 	 * but this is guaranteed since this function is only called
 	 * from the event thread for the controller.
 	 *
-	 * Also, we now have sc_bus->lock held for MPSAFE controllers.
+	 * Also, we now have sc_bus->lock held.
 	 */
 	while (sc->sc_bus->needs_explore && !sc->sc_dying) {
 		sc->sc_bus->needs_explore = 0;
-		if (sc->sc_bus->lock)
-			mutex_exit(sc->sc_bus->lock);
+		mutex_exit(sc->sc_bus->lock);
 		sc->sc_bus->root_hub->hub->explore(sc->sc_bus->root_hub);
-		if (sc->sc_bus->lock)
-			mutex_enter(sc->sc_bus->lock);
+		mutex_enter(sc->sc_bus->lock);
 	}
 }
 
@@ -833,29 +826,21 @@ void
 usb_needs_explore(usbd_device_handle dev)
 {
 	DPRINTFN(2,("usb_needs_explore\n"));
-	if (dev->bus->lock)
-		mutex_enter(dev->bus->lock);
+	mutex_enter(dev->bus->lock);
 	dev->bus->needs_explore = 1;
-	if (dev->bus->lock) {
-		cv_signal(&dev->bus->needs_explore_cv);
-		mutex_exit(dev->bus->lock);
-	} else
-		wakeup(&dev->bus->needs_explore);	/* XXXSMP ok */
+	cv_signal(&dev->bus->needs_explore_cv);
+	mutex_exit(dev->bus->lock);
 }
 
 void
 usb_needs_reattach(usbd_device_handle dev)
 {
 	DPRINTFN(2,("usb_needs_reattach\n"));
-	if (dev->bus->lock)
-		mutex_enter(dev->bus->lock);
+	mutex_enter(dev->bus->lock);
 	dev->powersrc->reattach = 1;
 	dev->bus->needs_explore = 1;
-	if (dev->bus->lock) {
-		cv_signal(&dev->bus->needs_explore_cv);
-		mutex_exit(dev->bus->lock);
-	} else
-		wakeup(&dev->bus->needs_explore);	/* XXXSMP ok */
+	cv_signal(&dev->bus->needs_explore_cv);
+	mutex_exit(dev->bus->lock);
 }
 
 /* Called at with usb_event_lock held. */
@@ -963,11 +948,9 @@ usb_soft_intr(void *arg)
 {
 	usbd_bus_handle bus = arg;
 
-	if (bus->lock)
-		mutex_enter(bus->lock);
+	mutex_enter(bus->lock);
 	(*bus->methods->soft_intr)(bus);
-	if (bus->lock)
-		mutex_exit(bus->lock);
+	mutex_exit(bus->lock);
 }
 
 void
@@ -1032,16 +1015,11 @@ usb_detach(device_t self, int flags)
 	/* Kill off event thread. */
 	sc->sc_dying = 1;
 	while (sc->sc_event_thread != NULL) {
-		if (sc->sc_bus->lock) {
-			mutex_enter(sc->sc_bus->lock);
-			cv_signal(&sc->sc_bus->needs_explore_cv);
-			cv_timedwait(&sc->sc_bus->needs_explore_cv,
-			    sc->sc_bus->lock, hz * 60);
-			mutex_exit(sc->sc_bus->lock);
-		} else {
-			wakeup(&sc->sc_bus->needs_explore);	/* XXXSMP ok */
-			tsleep(sc, PWAIT, "usbdet", hz * 60);	/* XXXSMP ok */
-		}
+		mutex_enter(sc->sc_bus->lock);
+		cv_signal(&sc->sc_bus->needs_explore_cv);
+		cv_timedwait(&sc->sc_bus->needs_explore_cv,
+		    sc->sc_bus->lock, hz * 60);
+		mutex_exit(sc->sc_bus->lock);
 	}
 	DPRINTF(("usb_detach: event thread dead\n"));
 
@@ -1069,7 +1047,7 @@ usb_copy_old_devinfo(struct usb_device_info_old *uo,
 	int i, n;
 
 	uo->udi_bus = ue->udi_bus;
-	uo->udi_addr = ue->udi_addr;       
+	uo->udi_addr = ue->udi_addr;
 	uo->udi_cookie = ue->udi_cookie;
 	for (i = 0, p = (const unsigned char *)ue->udi_product,
 	     q = (unsigned char *)uo->udi_product;
@@ -1108,7 +1086,7 @@ usb_copy_old_devinfo(struct usb_device_info_old *uo,
 	uo->udi_protocol = ue->udi_protocol;
 	uo->udi_config = ue->udi_config;
 	uo->udi_speed = ue->udi_speed;
-	uo->udi_power = ue->udi_power;    
+	uo->udi_power = ue->udi_power;
 	uo->udi_nports = ue->udi_nports;
 
 	for (n=0; n<USB_MAX_DEVNAMES; n++)

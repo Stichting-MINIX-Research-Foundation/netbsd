@@ -1,4 +1,4 @@
-/*	$NetBSD: optr.c,v 1.38 2012/04/07 16:44:10 christos Exp $	*/
+/*	$NetBSD: optr.c,v 1.42 2013/09/08 13:26:05 mlelstv Exp $	*/
 
 /*-
  * Copyright (c) 1980, 1988, 1993
@@ -34,7 +34,7 @@
 #if 0
 static char sccsid[] = "@(#)optr.c	8.2 (Berkeley) 1/6/94";
 #else
-__RCSID("$NetBSD: optr.c,v 1.38 2012/04/07 16:44:10 christos Exp $");
+__RCSID("$NetBSD: optr.c,v 1.42 2013/09/08 13:26:05 mlelstv Exp $");
 #endif
 #endif /* not lint */
 
@@ -58,17 +58,15 @@ __RCSID("$NetBSD: optr.c,v 1.38 2012/04/07 16:44:10 christos Exp $");
 #include <unistd.h>
 #include <util.h>
 
-#include <ufs/ufs/dinode.h>
-
 #include "dump.h"
 #include "pathnames.h"
 
-void	alarmcatch(int);
-struct fstab *allocfsent(struct fstab *);
-int	datesort(const void *, const void *);
 extern  char *time_string;
 extern  char default_time_string[];
 
+static void alarmcatch(int);
+static struct fstab *allocfsent(const struct fstab *);
+static int datesort(const void *, const void *);
 static void do_timestamp(time_t, const char *);
 
 /*
@@ -144,7 +142,7 @@ char lastmsg[200];
  *	Alert the console operator, and enable the alarm clock to
  *	sleep for 2 minutes in case nobody comes to satisfy dump
  */
-void
+static void
 alarmcatch(int dummy __unused)
 {
 
@@ -318,19 +316,15 @@ quit(const char *fmt, ...)
  *	we don't actually do it
  */
 
-struct fstab *
-allocfsent(struct fstab *fs)
+static struct fstab *
+allocfsent(const struct fstab *fs)
 {
 	struct fstab *new;
-	char buf[MAXPATHLEN];
 
 	new = xmalloc(sizeof (*fs));
 	new->fs_file = xstrdup(fs->fs_file);
 	new->fs_type = xstrdup(fs->fs_type);
-
-	if (getfsspecname(buf, sizeof(buf), fs->fs_spec) == NULL)
-		msg("%s (%s)", buf, strerror(errno));
-	new->fs_spec = xstrdup(buf);
+	new->fs_spec = xstrdup(fs->fs_spec);
 	new->fs_passno = fs->fs_passno;
 	new->fs_freq = fs->fs_freq;
 	return (new);
@@ -501,7 +495,7 @@ lastdump(char arg)
 	}
 }
 
-int
+static int
 datesort(const void *a1, const void *a2)
 {
 	const struct dumpdates *d1 = *(const struct dumpdates *const *)a1;

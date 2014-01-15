@@ -1,4 +1,4 @@
-/*	$NetBSD: pci.c,v 1.142 2011/08/29 14:47:08 jmcneill Exp $	*/
+/*	$NetBSD: pci.c,v 1.144 2013/09/15 09:19:52 martin Exp $	*/
 
 /*
  * Copyright (c) 1995, 1996, 1997, 1998
@@ -36,7 +36,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: pci.c,v 1.142 2011/08/29 14:47:08 jmcneill Exp $");
+__KERNEL_RCSID(0, "$NetBSD: pci.c,v 1.144 2013/09/15 09:19:52 martin Exp $");
 
 #include "opt_pci.h"
 
@@ -274,7 +274,7 @@ pci_probe_device(struct pci_softc *sc, pcitag_t tag,
 {
 	pci_chipset_tag_t pc = sc->sc_pc;
 	struct pci_attach_args pa;
-	pcireg_t id, csr, class, intr, bhlcr, bar, endbar;
+	pcireg_t id, /* csr, */ class, intr, bhlcr, bar, endbar;
 	int ret, pin, bus, device, function, i, width;
 	int locs[PCICF_NLOCS];
 
@@ -289,7 +289,7 @@ pci_probe_device(struct pci_softc *sc, pcitag_t tag,
 		return 0;
 
 	id = pci_conf_read(pc, tag, PCI_ID_REG);
-	csr = pci_conf_read(pc, tag, PCI_COMMAND_STATUS_REG);
+	/* csr = pci_conf_read(pc, tag, PCI_COMMAND_STATUS_REG); */
 	class = pci_conf_read(pc, tag, PCI_CLASS_REG);
 
 	/* Invalid vendor ID value? */
@@ -580,7 +580,24 @@ pci_enumerate_bus(struct pci_softc *sc, const int *locators,
 		else
 			nfunctions = PCI_HDRTYPE_MULTIFN(bhlcr) ? 8 : 1;
 
+#ifdef __PCI_DEV_FUNCORDER
+		char funcs[8];
+		int j;
+		for (j = 0; j < nfunctions; j++) {
+			funcs[j] = j;
+		}
+		if (j < __arraycount(funcs))
+			funcs[j] = -1;
+		if (nfunctions > 1) {
+			pci_dev_funcorder(sc->sc_pc, sc->sc_bus, device,
+			    nfunctions, funcs);
+		}
+		for (j = 0;
+		     j < 8 && (function = funcs[j]) < 8 && function >= 0;
+		     j++) {
+#else
 		for (function = 0; function < nfunctions; function++) {
+#endif
 			if ((locators[PCICF_FUNCTION] != PCICF_FUNCTION_DEFAULT)
 			    && (locators[PCICF_FUNCTION] != function))
 				continue;

@@ -1,4 +1,4 @@
-/*	$NetBSD: ixdp425_machdep.c,v 1.32 2012/09/22 00:33:39 matt Exp $ */
+/*	$NetBSD: ixdp425_machdep.c,v 1.34 2013/08/18 15:58:20 matt Exp $ */
 /*
  * Copyright (c) 2003
  *	Ichiro FUKUHARA <ichiro@ichiro.org>.
@@ -64,7 +64,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ixdp425_machdep.c,v 1.32 2012/09/22 00:33:39 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ixdp425_machdep.c,v 1.34 2013/08/18 15:58:20 matt Exp $");
 
 #include "opt_ddb.h"
 #include "opt_kgdb.h"
@@ -80,6 +80,8 @@ __KERNEL_RCSID(0, "$NetBSD: ixdp425_machdep.c,v 1.32 2012/09/22 00:33:39 matt Ex
 #include <sys/reboot.h>
 #include <sys/termios.h>
 #include <sys/ksyms.h>
+#include <sys/bus.h>
+#include <sys/cpu.h>
 
 #include <uvm/uvm_extern.h>
 
@@ -90,9 +92,7 @@ __KERNEL_RCSID(0, "$NetBSD: ixdp425_machdep.c,v 1.32 2012/09/22 00:33:39 matt Ex
 #include <ddb/db_extern.h>
 
 #include <machine/bootconfig.h>
-#include <sys/bus.h>
-#include <machine/cpu.h>
-#include <machine/frame.h>
+#include <arm/locore.h>
 #include <arm/undefined.h>
 
 #include <arm/arm32/machdep.h>
@@ -212,7 +212,7 @@ int kgdb_devmode = KGDB_DEVMODE;
 void
 cpu_reboot(int howto, char *bootstr)
 {
-	u_int32_t reg;
+	uint32_t reg;
 
 #ifdef DIAGNOSTIC
 	/* info */
@@ -405,7 +405,7 @@ initarm(void *arg)
 	bootconfig.dram[0].address = 0x10000000;
 	bootconfig.dram[0].pages = ixp425_sdram_size() / PAGE_SIZE;
 
-	kerneldatasize = (u_int32_t)&end - (u_int32_t)KERNEL_TEXT_BASE;
+	kerneldatasize = (uint32_t)&end - (uint32_t)KERNEL_TEXT_BASE;
 
 #ifdef VERBOSE_INIT_ARM
         printf("kernsize=0x%x\n", kerneldatasize);

@@ -1,0 +1,11 @@
+# $Id: files.imx23_olinuxino,v 1.2 2013/10/07 17:36:40 matt Exp $
+#
+# Olimex i.MX23 OLinuXino board configuration info.
+#
+
+# Pull in SoC support
+include "arch/arm/imx/files.imx23"
+
+file	arch/evbarm/imx23_olinuxino/imx23_olinuxino_machdep.c
+file	arch/arm/arm32/arm32_kvminit.c
+file	arch/arm/arm32/arm32_boot.c

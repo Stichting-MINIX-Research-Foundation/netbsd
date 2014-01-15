@@ -1,4 +1,4 @@
-/* $NetBSD: u3.c,v 1.5 2011/06/30 00:52:58 matt Exp $ */
+/* $NetBSD: u3.c,v 1.7 2013/04/30 10:16:25 macallan Exp $ */
 
 /*
  * Copyright 2006 Kyma Systems LLC.
@@ -46,10 +46,11 @@
 #include <dev/ofw/ofw_pci.h>
 
 #include <machine/autoconf.h>
+#include <machine/pio.h>
 
 struct ibmcpc_softc
 {
-	struct device sc_dev;
+	device_t sc_dev;
 	struct genppc_pci_chipset sc_pc[8];
 	struct powerpc_bus_space sc_iot;
 	struct powerpc_bus_space sc_memt;
@@ -61,7 +62,7 @@ static int ibmcpc_match(device_t, cfdata_t, void *);
 static pcireg_t ibmcpc_conf_read(void *, pcitag_t, int);
 static void ibmcpc_conf_write(void *, pcitag_t, int, pcireg_t);
 
-CFATTACH_DECL(ibmcpc, sizeof(struct ibmcpc_softc),
+CFATTACH_DECL_NEW(ibmcpc, sizeof(struct ibmcpc_softc),
               ibmcpc_match, ibmcpc_attach, NULL, NULL);
 
 #define PCI_DEVFN(slot,func)    ((((slot) & 0x1f) << 3) | ((func) & 0x07))
@@ -87,7 +88,7 @@ ibmcpc_match(device_t parent, cfdata_t cf, void *aux)
 static void
 ibmcpc_attach(device_t parent, device_t self, void *aux)
 {
-	struct ibmcpc_softc *sc = (void *) self;
+	struct ibmcpc_softc *sc = device_private(self);
 	pci_chipset_tag_t pc = sc->sc_pc;
 	struct confargs *ca = aux;
 	struct pcibus_attach_args pba;
@@ -97,6 +98,7 @@ ibmcpc_attach(device_t parent, device_t self, void *aux)
 	char name[32];
 
 	aprint_normal("\n");
+	sc->sc_dev = self;
 
 	/* u3 address */
 	if (OF_getprop(node, "reg", reg, sizeof(reg)) < 24) {
@@ -120,6 +122,7 @@ ibmcpc_attach(device_t parent, device_t self, void *aux)
 		if (OF_getprop(child, "bus-range", busrange, 8) < 8)
 			continue;
 
+		memset(&sc->sc_iot, 0, sizeof(sc->sc_iot));
 		sc->sc_iot.pbs_flags = _BUS_SPACE_LITTLE_ENDIAN |
 		    _BUS_SPACE_IO_TYPE;
 		sc->sc_iot.pbs_base = 0x00000000;
@@ -127,6 +130,7 @@ ibmcpc_attach(device_t parent, device_t self, void *aux)
 		    &sc->sc_iot, "ibmcpc io") != 0)
 			panic("Can't init ibmcpc io tag");
 
+		memset(&sc->sc_memt, 0, sizeof(sc->sc_memt));
 		sc->sc_memt.pbs_flags = _BUS_SPACE_LITTLE_ENDIAN |
 		    _BUS_SPACE_MEM_TYPE;
 		sc->sc_memt.pbs_base = 0x00000000;

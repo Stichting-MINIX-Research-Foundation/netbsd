@@ -1,4 +1,4 @@
-/*	$NetBSD: ct65550.c,v 1.6 2012/08/22 21:17:58 macallan Exp $	*/
+/*	$NetBSD: ct65550.c,v 1.8 2013/10/09 17:20:54 macallan Exp $	*/
 
 /*
  * Copyright (c) 2006 Michael Lorenz
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ct65550.c,v 1.6 2012/08/22 21:17:58 macallan Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ct65550.c,v 1.8 2013/10/09 17:20:54 macallan Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -259,7 +259,9 @@ chipsfb_do_attach(struct chipsfb_softc *sc)
 			/* do some minimal setup to avoid weirdnesses later */
 			vcons_init_screen(&sc->vd, &chipsfb_console_screen, 1,
 			    &defattr);
-		}
+		} else
+			(*ri->ri_ops.allocattr)(ri, 0, 0, 0, &defattr);
+
 	}
 
 	rasops_unpack_attr(defattr, &fg, &bg, &ul);
@@ -748,6 +750,12 @@ chipsfb_ioctl(void *v, void *vs, u_long cmd, void *data, int flag,
 		}
 		}
 		return 0;
+	
+	case WSDISPLAYIO_GET_FBINFO: {
+		struct wsdisplayio_fbinfo *fbi = data;
+		return wsdisplayio_get_fbinfo(&ms->scr_ri, fbi);
+	}
+
 	default:
 		if (sc->sc_ioctl != NULL)
 			return sc->sc_ioctl(v, vs, cmd, data, flag, l);

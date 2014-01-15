@@ -1,4 +1,4 @@
-/* $NetBSD: notifications.h,v 1.1 2010/12/08 07:20:15 kefren Exp $ */
+/* $NetBSD: notifications.h,v 1.3 2013/07/11 05:45:23 kefren Exp $ */
 
 /*-
  * Copyright (c) 2010 The NetBSD Foundation, Inc.
@@ -32,7 +32,7 @@
 #ifndef _NOTIFICATIONS_H_
 #define _NOTIFICATIONS_H_
 
-/* Notifications codes RFC3036 2.9 */
+/* Notifications codes from RFC5036 3.9 - Status code summary */
 #define	NOTIF_SUCCESS			0x00000000
 #define	NOTIF_BAD_LDP_ID		0x00000001
 #define	NOTIF_BAD_LDP_VER		0x00000002
@@ -92,7 +92,7 @@ static const char	*NOTIF_STR[] __unused =
 	"Internal error"
 };
 
-struct notification_tlv *	build_notification(uint32_t, uint32_t);
-int		send_notification(struct ldp_peer *, uint32_t, uint32_t);
+struct notification_tlv* build_notification(uint32_t, uint32_t);
+int send_notification(const struct ldp_peer *, uint32_t, uint32_t);
 
 #endif	/* !_NOTIFICATIONS_H_ */

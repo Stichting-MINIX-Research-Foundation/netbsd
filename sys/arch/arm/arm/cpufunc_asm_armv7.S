@@ -28,15 +28,14 @@
  */
 
 #include "assym.h"
-#include <machine/cpu.h>
 #include <machine/asm.h>
+#include <arm/locore.h>
 
 	.arch	armv7a
 
 ENTRY(armv7_cpu_sleep)
-	tst	r0, #0x00000000 	@ shouldn't sleep 0
-	wfene				@ this can cheaper when doing MP
-	bx	lr
+	wfi				@ wait for an interrupt
+	b	irq_idle_entry		@ assume we got an interrupt
 END(armv7_cpu_sleep)
 
 ENTRY(armv7_wait)
@@ -49,8 +48,8 @@ ENTRY(armv7_context_switch)
 	dsb				@ data synchronization barrier
 	mrc	p15, 0, r2, c0, c0, 5	@ get MPIDR
 	cmp	r2, #0
-	orrlt	r0, #0x5b		@ MP, cachable (Normal WB)
-	orrge	r0, #0x1b		@ Non-MP, cacheable, normal WB
+	orrlt	r0, r0, #0x5b		@ MP, cachable (Normal WB)
+	orrge	r0, r0, #0x1b		@ Non-MP, cacheable, normal WB
 	mcr	p15, 0, r0, c2, c0, 0 	@ set the new TTB
 #ifdef MULTIPROCESSOR
 	mcr	p15, 0, r0, c8, c3, 0	@ flush the I+D
@@ -74,11 +73,11 @@ ENTRY(armv7_tlb_flushID_SE)
 END(armv7_tlb_flushID_SE)
 
 
-ENTRY(armv7_setttb)
+ENTRY_NP(armv7_setttb)
 	mrc	p15, 0, r2, c0, c0, 5	@ get MPIDR
 	cmp	r2, #0
-	orrlt	r0, #0x5b		@ MP, cachable (Normal WB)
-	orrge	r0, #0x1b		@ Non-MP, cacheable, normal WB
+	orrlt	r0, r0, #0x5b		@ MP, cachable (Normal WB)
+	orrge	r0, r0, #0x1b		@ Non-MP, cacheable, normal WB
 	mcr	p15, 0, r0, c2, c0, 0   @ load new TTB
 	cmp	r1, #0
 #ifdef MULTIPROCESSOR
@@ -90,6 +89,13 @@ ENTRY(armv7_setttb)
 	isb
 	bx	lr
 END(armv7_setttb)
+
+/* Other functions. */
+
+ENTRY_NP(armv7_drain_writebuf)
+	dsb				@ data synchronization barrier
+	RET
+END(armv7_drain_writebuf)
 
 /* Cache operations. */
 
@@ -139,6 +145,7 @@ ENTRY(armv7_dcache_wb_range)
 	and	r3, r0, ip		@ get offset into cache line
 	add	r1, r1, r3		@ add to length
 	bic	r0, r0, ip		@ clear offset from start.
+	dsb
 1:
 	mcr	p15, 0, r0, c7, c10, 1	@ wb the D-Cache to PoC
 	add	r0, r0, r2
@@ -158,6 +165,7 @@ ENTRY(armv7_dcache_wbinv_range)
 	and	r3, r0, ip		@ get offset into cache line
 	add	r1, r1, r3		@ add to length
 	bic	r0, r0, ip		@ clear offset from start.
+	dsb
 1:
 	mcr	p15, 0, r0, c7, c14, 1	@ wb and inv the D-Cache line
 	add	r0, r0, r2
@@ -198,6 +206,7 @@ ENTRY(armv7_idcache_wbinv_range)
 	and	r3, r0, ip		@ get offset into cache line
 	add	r1, r1, r3		@ add to length
 	bic	r0, r0, ip		@ clear offset from start.
+	dsb
 1:
 	mcr	p15, 0, r0, c7, c5, 1	@ invalidate the I-Cache line
 	mcr	p15, 0, r0, c7, c14, 1 	@ wb and inv the D-Cache line

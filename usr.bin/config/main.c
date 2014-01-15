@@ -1,4 +1,4 @@
-/*	$NetBSD: main.c,v 1.49 2012/08/31 01:23:49 christos Exp $	*/
+/*	$NetBSD: main.c,v 1.51 2013/11/01 21:39:13 christos Exp $	*/
 
 /*
  * Copyright (c) 1992, 1993

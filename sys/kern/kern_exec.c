@@ -1,4 +1,4 @@
-/*	$NetBSD: kern_exec.c,v 1.357 2012/10/14 20:56:55 christos Exp $	*/
+/*	$NetBSD: kern_exec.c,v 1.367 2013/11/23 22:15:16 christos Exp $	*/
 
 /*-
  * Copyright (c) 2008 The NetBSD Foundation, Inc.
@@ -59,9 +59,10 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: kern_exec.c,v 1.357 2012/10/14 20:56:55 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: kern_exec.c,v 1.367 2013/11/23 22:15:16 christos Exp $");
 
 #include "opt_exec.h"
+#include "opt_execfmt.h"
 #include "opt_ktrace.h"
 #include "opt_modular.h"
 #include "opt_syscall_debug.h"
@@ -111,6 +112,14 @@ __KERNEL_RCSID(0, "$NetBSD: kern_exec.c,v 1.357 2012/10/14 20:56:55 christos Exp
 
 #include <compat/common/compat_util.h>
 
+#ifndef MD_TOPDOWN_INIT
+#ifdef __USING_TOPDOWN_VM
+#define	MD_TOPDOWN_INIT(epp)	(epp)->ep_flags |= EXEC_TOPDOWN_VM
+#else
+#define	MD_TOPDOWN_INIT(epp)
+#endif
+#endif
+
 static int exec_sigcode_map(struct proc *, const struct emul *);
 
 #ifdef DEBUG_EXEC
@@ -125,15 +134,15 @@ static int exec_sigcode_map(struct proc *, const struct emul *);
 /*
  * DTrace SDT provider definitions
  */
-SDT_PROBE_DEFINE(proc,,,exec, 
+SDT_PROBE_DEFINE(proc,,,exec,exec,
 	    "char *", NULL,
 	    NULL, NULL, NULL, NULL,
 	    NULL, NULL, NULL, NULL);
-SDT_PROBE_DEFINE(proc,,,exec_success, 
+SDT_PROBE_DEFINE(proc,,,exec_success,exec-success, 
 	    "char *", NULL,
 	    NULL, NULL, NULL, NULL,
 	    NULL, NULL, NULL, NULL);
-SDT_PROBE_DEFINE(proc,,,exec_failure, 
+SDT_PROBE_DEFINE(proc,,,exec_failure,exec-failure, 
 	    "int", NULL,
 	    NULL, NULL, NULL, NULL,
 	    NULL, NULL, NULL, NULL);
@@ -556,7 +565,7 @@ exec_autoload(void)
 
 	list = (nexecs == 0 ? native : compat);
 	for (i = 0; list[i] != NULL; i++) {
-		if (module_autoload(list[i], MODULE_CLASS_MISC) != 0) {
+		if (module_autoload(list[i], MODULE_CLASS_EXEC) != 0) {
 		    	continue;
 		}
 	   	yield();
@@ -652,10 +661,13 @@ execve_loadvm(struct lwp *l, const char *path, char * const *args,
 	data->ed_pack.ep_vmcmds.evs_used = 0;
 	data->ed_pack.ep_vap = &data->ed_attr;
 	data->ed_pack.ep_flags = 0;
+	MD_TOPDOWN_INIT(&data->ed_pack);
 	data->ed_pack.ep_emul_root = NULL;
 	data->ed_pack.ep_interp = NULL;
 	data->ed_pack.ep_esch = NULL;
 	data->ed_pack.ep_pax_flags = 0;
+	memset(data->ed_pack.ep_machine_arch, 0,
+	    sizeof(data->ed_pack.ep_machine_arch));
 
 	rw_enter(&exec_lock, RW_READER);
 
@@ -930,10 +942,12 @@ execve_runproc(struct lwp *l, struct execve_data * restrict data,
 	 */
 	if (is_spawn)
 		uvmspace_spawn(l, data->ed_pack.ep_vm_minaddr,
-		    data->ed_pack.ep_vm_maxaddr);
+		    data->ed_pack.ep_vm_maxaddr,
+		    data->ed_pack.ep_flags & EXEC_TOPDOWN_VM);
 	else
 		uvmspace_exec(l, data->ed_pack.ep_vm_minaddr,
-		    data->ed_pack.ep_vm_maxaddr);
+		    data->ed_pack.ep_vm_maxaddr,
+		    data->ed_pack.ep_flags & EXEC_TOPDOWN_VM);
 
 	/* record proc's vnode, for use by procfs and others */
         if (p->p_textvp)
@@ -1069,10 +1083,11 @@ execve_runproc(struct lwp *l, struct execve_data * restrict data,
 #ifdef notyet
 	/*
 	 * Although this works most of the time [since the entry was just
-	 * entered in the cache] we don't use it because it theoretically
-	 * can fail and it is not the cleanest interface, because there
-	 * could be races. When the namei cache is re-written, this can
-	 * be changed to use the appropriate function.
+	 * entered in the cache] we don't use it because it will fail for
+	 * entries that are not placed in the cache because their name is
+	 * longer than NCHNAMLEN and it is not the cleanest interface,
+	 * because there could be races. When the namei cache is re-written,
+	 * this can be changed to use the appropriate function.
 	 */
 	else if (!(error = vnode_to_path(dp, MAXPATHLEN, p->p_textvp, l, p)))
 		data->ed_pack.ep_path = dp;
@@ -1897,6 +1912,7 @@ spawn_return(void *arg)
 
 	/* handle posix_spawnattr */
 	if (spawn_data->sed_attrs != NULL) {
+		int ostat;
 		struct sigaction sigact;
 		sigact._sa_u._sa_handler = SIG_DFL;
 		sigact.sa_flags = 0;
@@ -1905,6 +1921,7 @@ spawn_return(void *arg)
 		 * set state to SSTOP so that this proc can be found by pid.
 		 * see proc_enterprp, do_sched_setparam below
 		 */
+		ostat = l->l_proc->p_stat;
 		l->l_proc->p_stat = SSTOP;
 
 		/* Set process group */
@@ -1966,6 +1983,7 @@ spawn_return(void *arg)
 					    0);
 			}
 		}
+		l->l_proc->p_stat = ostat;
 	}
 
 	/* now do the real exec */
@@ -2209,7 +2227,7 @@ do_posix_spawn(struct lwp *l1, pid_t *pid_res, bool *child_ok, const char *path,
 	    (unsigned) ((char *)&p2->p_endcopy - (char *)&p2->p_startcopy));
 	p2->p_vmspace = proc0.p_vmspace;
 
-	CIRCLEQ_INIT(&p2->p_sigpend.sp_info);
+	TAILQ_INIT(&p2->p_sigpend.sp_info);
 
 	LIST_INIT(&p2->p_lwps);
 	LIST_INIT(&p2->p_sigwaiters);

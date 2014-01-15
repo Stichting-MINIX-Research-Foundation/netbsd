@@ -1,4 +1,4 @@
-/*	$NetBSD: postqueue.c,v 1.1.1.3 2012/06/09 11:27:17 tron Exp $	*/
+/*	$NetBSD: postqueue.c,v 1.1.1.5 2013/09/25 19:06:33 tron Exp $	*/
 
 /*++
 /* NAME
@@ -62,7 +62,7 @@
 /* .RE
 /* .IP "\fB-s \fIsite\fR"
 /*	Schedule immediate delivery of all mail that is queued for the named
-/*	\fIsite\fR. A numerical site must be specified as a valid RFC 2821
+/*	\fIsite\fR. A numerical site must be specified as a valid RFC 5321
 /*	address literal enclosed in [], just like in email addresses.
 /*	The site must be eligible for the "fast flush" service.
 /*	See \fBflush\fR(8) for more information about the "fast flush"
@@ -188,6 +188,7 @@
 #include <safe.h>
 #include <connect.h>
 #include <valid_hostname.h>
+#include <warn_stat.h>
 #include <events.h>
 
 /* Global library. */
@@ -480,6 +481,11 @@ int     main(int argc, char **argv)
     msg_cleanup(unavailable);
     msg_syslog_init(mail_task("postqueue"), LOG_PID, LOG_FACILITY);
     set_mail_conf_str(VAR_PROCNAME, var_procname = mystrdup(argv[0]));
+
+    /*
+     * Check the Postfix library version as soon as we enable logging.
+     */
+    MAIL_VERSION_CHECK;
 
     /*
      * Parse JCL. This program is set-gid and must sanitize all command-line

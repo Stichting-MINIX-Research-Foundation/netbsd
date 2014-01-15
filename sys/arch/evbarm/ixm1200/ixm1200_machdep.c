@@ -1,4 +1,4 @@
-/*	$NetBSD: ixm1200_machdep.c,v 1.52 2012/09/22 00:33:39 matt Exp $ */
+/*	$NetBSD: ixm1200_machdep.c,v 1.54 2013/08/18 15:58:20 matt Exp $ */
 
 /*
  * Copyright (c) 2002, 2003
@@ -61,7 +61,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ixm1200_machdep.c,v 1.52 2012/09/22 00:33:39 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ixm1200_machdep.c,v 1.54 2013/08/18 15:58:20 matt Exp $");
 
 #include "opt_ddb.h"
 #include "opt_modular.h"
@@ -77,6 +77,8 @@ __KERNEL_RCSID(0, "$NetBSD: ixm1200_machdep.c,v 1.52 2012/09/22 00:33:39 matt Ex
 #include <sys/reboot.h>
 #include <sys/termios.h>
 #include <sys/ksyms.h>
+#include <sys/bus.h>
+#include <sys/cpu.h>
 
 #include <uvm/uvm_extern.h>
 
@@ -96,9 +98,7 @@ __KERNEL_RCSID(0, "$NetBSD: ixm1200_machdep.c,v 1.52 2012/09/22 00:33:39 matt Ex
 #endif
 
 #include <machine/bootconfig.h>
-#include <sys/bus.h>
-#include <machine/cpu.h>
-#include <machine/frame.h>
+#include <arm/locore.h>
 #include <arm/undefined.h>
 
 #include <arm/arm32/machdep.h>
@@ -361,7 +361,7 @@ initarm(void *arg)
 	bootconfig.dram[0].pages   = 0x10000000 / PAGE_SIZE; /* SDRAM 256MB */
 	bootconfig.dramblocks = 1;
 
-	kerneldatasize = (u_int32_t)&end - (u_int32_t)KERNEL_TEXT_BASE;
+	kerneldatasize = (uint32_t)&end - (uint32_t)KERNEL_TEXT_BASE;
 
 	symbolsize = 0;
 

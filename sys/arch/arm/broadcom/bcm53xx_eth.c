@@ -31,10 +31,11 @@
 #define GMAC_PRIVATE
 
 #include "locators.h"
+#include "opt_broadcom.h"
 
 #include <sys/cdefs.h>
 
-__KERNEL_RCSID(1, "$NetBSD: bcm53xx_eth.c,v 1.10 2012/10/12 23:25:15 matt Exp $");
+__KERNEL_RCSID(1, "$NetBSD: bcm53xx_eth.c,v 1.25 2013/10/28 22:51:16 matt Exp $");
 
 #include <sys/param.h>
 #include <sys/atomic.h>
@@ -61,7 +62,15 @@ __KERNEL_RCSID(1, "$NetBSD: bcm53xx_eth.c,v 1.10 2012/10/12 23:25:15 matt Exp $"
 #include <arm/broadcom/bcm53xx_reg.h>
 #include <arm/broadcom/bcm53xx_var.h>
 
-#define	BCMETH_RCVOFFSET	6
+//#define BCMETH_MPSAFE
+
+#ifdef BCMETH_COUNTERS
+#define	BCMETH_EVCNT_ADD(a,b)	((void)((a).ev_count += (b)))
+#else
+#define	BCMETH_EVCNT_ADD(a,b)	do { } while (/*CONSTCOND*/0)
+#endif
+#define	BCMETH_EVCNT_INCR(a)	BCMETH_EVCNT_ADD((a), 1)
+
 #define	BCMETH_MAXTXMBUFS	128
 #define	BCMETH_NTXSEGS		30
 #define	BCMETH_MAXRXMBUFS	255
@@ -69,7 +78,9 @@ __KERNEL_RCSID(1, "$NetBSD: bcm53xx_eth.c,v 1.10 2012/10/12 23:25:15 matt Exp $"
 #define	BCMETH_NRXSEGS		1
 #define	BCMETH_RINGSIZE		PAGE_SIZE
 
+#if 1
 #define	BCMETH_RCVMAGIC		0xfeedface
+#endif
 
 static int bcmeth_ccb_match(device_t, cfdata_t, void *);
 static void bcmeth_ccb_attach(device_t, device_t, void *);
@@ -136,6 +147,8 @@ struct bcmeth_softc {
 	struct bcmeth_rxqueue sc_rxq;
 	struct bcmeth_txqueue sc_txq;
 
+	size_t sc_rcvoffset;
+	uint32_t sc_macaddr[2];
 	uint32_t sc_maxfrm;
 	uint32_t sc_cmdcfg;
 	uint32_t sc_intmask;
@@ -144,12 +157,14 @@ struct bcmeth_softc {
 #define	SOFT_RXINTR		0x01
 #define	SOFT_TXINTR		0x02
 
+#ifdef BCMETH_COUNTERS
 	struct evcnt sc_ev_intr;
 	struct evcnt sc_ev_soft_intr;
 	struct evcnt sc_ev_work;
 	struct evcnt sc_ev_tx_stall;
 	struct evcnt sc_ev_rx_badmagic_lo;
 	struct evcnt sc_ev_rx_badmagic_hi;
+#endif
 
 	struct ifqueue sc_rx_bufcache;
 	struct bcmeth_mapcache *sc_rx_mapcache;     
@@ -204,18 +219,14 @@ static void bcmeth_rxq_reset(struct bcmeth_softc *,
     struct bcmeth_rxqueue *);
 
 static int bcmeth_intr(void *);
+#ifdef BCMETH_MPSAFETX
+static void bcmeth_soft_txintr(struct bcmeth_softc *);
+#endif
 static void bcmeth_soft_intr(void *);
 static void bcmeth_worker(struct work *, void *);
 
 static int bcmeth_mediachange(struct ifnet *);
 static void bcmeth_mediastatus(struct ifnet *, struct ifmediareq *);
-
-static struct arm32_dma_range bcmeth_dma_ranges[2];
-static struct arm32_bus_dma_tag bcmeth_dma_tag = {
-	_BUS_DMAMAP_FUNCS,
-	_BUS_DMAMEM_FUNCS,
-	_BUS_DMATAG_FUNCS,
-};
 
 static inline uint32_t
 bcmeth_read_4(struct bcmeth_softc *sc, bus_size_t o)
@@ -267,23 +278,14 @@ bcmeth_ccb_attach(device_t parent, device_t self, void *aux)
 	    loc->loc_offset, loc->loc_size, &sc->sc_bsh);
 
 	/*
-	 * Initialize a bus_dma_tag to prefer memory over 256MB.
+	 * We need to use the coherent dma tag for the GMAC.
 	 */
-	if (bcmeth_dma_tag._nranges != sc->sc_dmat->_nranges) {
-		KASSERT(sc->sc_dmat->_nranges == 2);
-		bcmeth_dma_ranges[0] = sc->sc_dmat->_ranges[1];
-		bcmeth_dma_ranges[1] = sc->sc_dmat->_ranges[0];
-		bcmeth_dma_tag._ranges = bcmeth_dma_ranges;
-		bcmeth_dma_tag._nranges = sc->sc_dmat->_nranges;
+	sc->sc_dmat = &bcm53xx_coherent_dma_tag;
+#if _ARM32_NEED_BUS_DMA_BOUNCE
+	if (device_cfdata(self)->cf_flags & 2) {
+		sc->sc_dmat = &bcm53xx_bounce_dma_tag;
 	}
-
-	/*
-	 * If we initialized our dma tag, then use it.
-	 */
-	if (bcmeth_dma_tag._nranges > 0) {
-		sc->sc_dmat = &bcmeth_dma_tag;
-		KASSERT(sc->sc_dmat->_ranges[0].dr_busbase - sc->sc_dmat->_ranges[1].dr_busbase == 0x10000000);
-	}
+#endif
 
 	prop_data_t eaprop = prop_dictionary_get(dict, "mac-address");
         if (eaprop == NULL) {
@@ -382,6 +384,9 @@ bcmeth_ccb_attach(device_t parent, device_t self, void *aux)
 	ifp->if_baudrate = IF_Mbps(1000);
 	ifp->if_capabilities = 0;
 	ifp->if_flags = IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST;
+#ifdef BCMETH_MPSAFE
+	ifp->if_flags2 = IFF2_MPSAFE;
+#endif
 	ifp->if_ioctl = bcmeth_ifioctl;
 	ifp->if_start = bcmeth_ifstart;
 	ifp->if_watchdog = bcmeth_ifwatchdog;
@@ -397,6 +402,7 @@ bcmeth_ccb_attach(device_t parent, device_t self, void *aux)
 	if_attach(ifp);
 	ether_ifattach(ifp, sc->sc_enaddr);
 
+#ifdef BCMETH_COUNTERS
 	evcnt_attach_dynamic(&sc->sc_ev_intr, EVCNT_TYPE_INTR,
 	    NULL, xname, "intr");
 	evcnt_attach_dynamic(&sc->sc_ev_soft_intr, EVCNT_TYPE_INTR,
@@ -409,6 +415,7 @@ bcmeth_ccb_attach(device_t parent, device_t self, void *aux)
 	    NULL, xname, "rx badmagic lo");
 	evcnt_attach_dynamic(&sc->sc_ev_rx_badmagic_hi, EVCNT_TYPE_MISC,
 	    NULL, xname, "rx badmagic hi");
+#endif
 }
 
 static int
@@ -433,7 +440,7 @@ bcmeth_macaddr_create(const uint8_t *enaddr)
 	return (enaddr[3] << 0)			// UNIMAC_MAC_0
 	    |  (enaddr[2] << 8)			// UNIMAC_MAC_0
 	    |  (enaddr[1] << 16)		// UNIMAC_MAC_0
-	    |  (enaddr[0] << 24)		// UNIMAC_MAC_0
+	    |  ((uint64_t)enaddr[0] << 24)	// UNIMAC_MAC_0
 	    |  ((uint64_t)enaddr[5] << 32)	// UNIMAC_MAC_1
 	    |  ((uint64_t)enaddr[4] << 40);	// UNIMAC_MAC_1
 }
@@ -454,6 +461,21 @@ bcmeth_ifinit(struct ifnet *ifp)
 	 * Stop the interface
 	 */
 	bcmeth_ifstop(ifp, 0);
+
+	/*
+	 * Reserve enough space at the front so that we can insert a maxsized
+	 * link header and a VLAN tag.  Also make sure we have enough room for
+	 * the rcvsts field as well.
+	 */
+	KASSERT(ALIGN(max_linkhdr) == max_linkhdr);
+	KASSERTMSG(max_linkhdr > sizeof(struct ether_header), "%u > %zu",
+	    max_linkhdr, sizeof(struct ether_header));
+	sc->sc_rcvoffset = max_linkhdr + 4 - sizeof(struct ether_header);
+	if (sc->sc_rcvoffset <= 4)
+		sc->sc_rcvoffset += 4;
+	KASSERT((sc->sc_rcvoffset & 3) == 2);
+	KASSERT(sc->sc_rcvoffset <= __SHIFTOUT(RCVCTL_RCVOFFSET, RCVCTL_RCVOFFSET));
+	KASSERT(sc->sc_rcvoffset >= 6);
 
 	/*
 	 * If our frame size has changed (or it's our first time through)
@@ -482,8 +504,24 @@ bcmeth_ifinit(struct ifnet *ifp)
 		sc->sc_cmdcfg &= ~PROMISC_EN;
 	}
 
-	const uint64_t macstnaddr =
-	    bcmeth_macaddr_create(CLLADDR(ifp->if_sadl));
+	const uint8_t * const lladdr = CLLADDR(ifp->if_sadl);
+	const uint64_t macstnaddr = bcmeth_macaddr_create(lladdr);
+
+	/*
+	 * We make sure that a received Ethernet packet start on a non-word
+	 * boundary so that the packet payload will be on a word boundary.
+	 * So to check the destination address we keep around two words to
+	 * quickly compare with.
+	 */
+#if __ARMEL__
+	sc->sc_macaddr[0] = lladdr[0] | (lladdr[1] << 8);
+	sc->sc_macaddr[1] = lladdr[2] | (lladdr[3] << 8)
+	    | (lladdr[4] << 16) | (lladdr[5] << 24);
+#else
+	sc->sc_macaddr[0] = lladdr[1] | (lladdr[0] << 8);
+	sc->sc_macaddr[1] = lladdr[5] | (lladdr[4] << 8)
+	    | (lladdr[1] << 16) | (lladdr[2] << 24);
+#endif
 
 	sc->sc_intmask = DESCPROTOERR|DATAERR|DESCERR;
 
@@ -491,17 +529,17 @@ bcmeth_ifinit(struct ifnet *ifp)
 	bcmeth_rxq_reset(sc, &sc->sc_rxq);
 
 	bcmeth_write_4(sc, sc->sc_rxq.rxq_reg_rcvctl,
-	    __SHIFTIN(BCMETH_RCVOFFSET, RCVCTL_RCVOFFSET)
+	    __SHIFTIN(sc->sc_rcvoffset, RCVCTL_RCVOFFSET)
 	    | RCVCTL_PARITY_DIS
 	    | RCVCTL_OFLOW_CONTINUE
-	    | __SHIFTIN(4, RCVCTL_BURSTLEN));
+	    | __SHIFTIN(3, RCVCTL_BURSTLEN));
 
 	/* 6. Load XMTADDR_LO with new pointer */
 	bcmeth_txq_reset(sc, &sc->sc_txq);
 
 	bcmeth_write_4(sc, sc->sc_txq.txq_reg_xmtctl, XMTCTL_DMA_ACT_INDEX
 	    | XMTCTL_PARITY_DIS
-	    | __SHIFTIN(4, XMTCTL_BURSTLEN));
+	    | __SHIFTIN(3, XMTCTL_BURSTLEN));
 
 	/* 7. Setup other UNIMAC registers */
 	bcmeth_write_4(sc, UNIMAC_FRAME_LEN, sc->sc_maxfrm);
@@ -518,8 +556,9 @@ bcmeth_ifinit(struct ifnet *ifp)
 	bcmeth_write_4(sc, GMAC_DEVCONTROL, devctl);
 
 	/* Setup lazy receive (at most 1ms). */
+	const struct cpu_softc * const cpu = curcpu()->ci_softc;
 	sc->sc_rcvlazy =  __SHIFTIN(4, INTRCVLAZY_FRAMECOUNT)
-	     | __SHIFTIN(125000000 / 1000, INTRCVLAZY_TIMEOUT);
+	     | __SHIFTIN(cpu->cpu_clk.clk_apb / 1000, INTRCVLAZY_TIMEOUT);
 	bcmeth_write_4(sc, GMAC_INTRCVLAZY, sc->sc_rcvlazy);
 
 	/* 11. Enable transmit queues in TQUEUE, and ensure that the transmit scheduling mode is correctly set in TCTRL. */
@@ -562,6 +601,7 @@ bcmeth_ifstop(struct ifnet *ifp, int disable)
 	KASSERT(!cpu_intr_p());
 
 	sc->sc_soft_flags = 0;
+	sc->sc_work_flags = 0;
 
 	/* Disable Rx processing */
 	bcmeth_write_4(sc, rxq->rxq_reg_rcvctl,
@@ -862,12 +902,16 @@ bcmeth_rx_buf_alloc(
 		return NULL;
 	}
 	KASSERT(map->dm_mapsize == MCLBYTES);
-	*mtod(m, uint32_t *) = BCMETH_RCVMAGIC;
+#ifdef BCMETH_RCVMAGIC
+	*mtod(m, uint32_t *) = htole32(BCMETH_RCVMAGIC);
 	bus_dmamap_sync(sc->sc_dmat, map, 0, sizeof(uint32_t),
 	    BUS_DMASYNC_PREREAD|BUS_DMASYNC_PREWRITE);
-
 	bus_dmamap_sync(sc->sc_dmat, map, sizeof(uint32_t),
 	    map->dm_mapsize - sizeof(uint32_t), BUS_DMASYNC_PREREAD);
+#else
+	bus_dmamap_sync(sc->sc_dmat, map, 0, map->dm_mapsize,
+	    BUS_DMASYNC_PREREAD);
+#endif
 
 	return m;
 }
@@ -911,9 +955,9 @@ bcmeth_rxq_produce(
 		bus_dmamap_t map = M_GETCTX(m, bus_dmamap_t);
 		KASSERT(map);
 
-		producer->rxdb_buflen = MCLBYTES;
-		producer->rxdb_addrlo = map->dm_segs[0].ds_addr;
-		producer->rxdb_flags &= RXDB_FLAG_ET;
+		producer->rxdb_buflen = htole32(MCLBYTES);
+		producer->rxdb_addrlo = htole32(map->dm_segs[0].ds_addr);
+		producer->rxdb_flags &= htole32(RXDB_FLAG_ET);
 		*rxq->rxq_mtail = m;
 		rxq->rxq_mtail = &m->m_next;
 		m->m_len = MCLBYTES;
@@ -951,21 +995,18 @@ bcmeth_rx_input(
 
 	bcmeth_rx_map_unload(sc, m);
 
-	m_adj(m, BCMETH_RCVOFFSET);
+	m_adj(m, sc->sc_rcvoffset);
 
-	switch (__SHIFTOUT(rxdb_flags, RXSTS_PKTTYPE)) {
-	case RXSTS_PKTTYPE_UC:
-		break;
-	case RXSTS_PKTTYPE_MC:
-		m->m_flags |= M_MCAST;
-		break;
-	case RXSTS_PKTTYPE_BC:
-		m->m_flags |= M_BCAST|M_MCAST;
-		break;
-	default:
-		if (sc->sc_cmdcfg & PROMISC_EN) 
-			m->m_flags |= M_PROMISC;
-		break;
+	/*
+	 * If we are in promiscuous mode and this isn't a multicast, check the
+	 * destination address to make sure it matches our own.  If it doesn't,
+	 * mark the packet as being received promiscuously.
+	 */
+	if ((sc->sc_cmdcfg & PROMISC_EN)
+	    && (m->m_data[0] & 1) == 0
+	    && (*(uint16_t *)&m->m_data[0] != sc->sc_macaddr[0]
+		|| *(uint32_t *)&m->m_data[2] != sc->sc_macaddr[1])) {
+		m->m_flags |= M_PROMISC;
 	}
 	m->m_pkthdr.rcvif = ifp;
 
@@ -975,35 +1016,39 @@ bcmeth_rx_input(
 	/*
 	 * Let's give it to the network subsystm to deal with.
 	 */
+#ifdef BCMETH_MPSAFE
+	mutex_exit(sc->sc_lock);
+	(*ifp->if_input)(ifp, m);
+	mutex_enter(sc->sc_lock);
+#else
 	int s = splnet();
 	bpf_mtap(ifp, m);
 	(*ifp->if_input)(ifp, m);
 	splx(s);
+#endif
 }
 
-static void
+static bool
 bcmeth_rxq_consume(
 	struct bcmeth_softc *sc,
-	struct bcmeth_rxqueue *rxq)
+	struct bcmeth_rxqueue *rxq,
+	size_t atmost)
 {
 	struct ifnet * const ifp = &sc->sc_if;
 	struct gmac_rxdb *consumer = rxq->rxq_consumer;
 	size_t rxconsumed = 0;
+	bool didconsume = false;
 
-	for (;;) {
+	while (atmost-- > 0) {
 		if (consumer == rxq->rxq_producer) {
-			rxq->rxq_consumer = consumer;
-			rxq->rxq_inuse -= rxconsumed;
 			KASSERT(rxq->rxq_inuse == 0);
-			return;
+			break;
 		}
 		
 		uint32_t rcvsts0 = bcmeth_read_4(sc, rxq->rxq_reg_rcvsts0);
 		uint32_t currdscr = __SHIFTOUT(rcvsts0, RCV_CURRDSCR);
 		if (consumer == rxq->rxq_first + currdscr) {
-			rxq->rxq_consumer = consumer;
-			rxq->rxq_inuse -= rxconsumed;
-			return;
+			break;
 		}
 		bcmeth_rxq_desc_postsync(sc, rxq, consumer, 1);
 
@@ -1011,12 +1056,14 @@ bcmeth_rxq_consume(
 		 * We own this packet again.  Copy the rxsts word from it.
 		 */
 		rxconsumed++;
+		didconsume = true;
 		uint32_t rxsts;
 		KASSERT(rxq->rxq_mhead != NULL);
 		bus_dmamap_t map = M_GETCTX(rxq->rxq_mhead, bus_dmamap_t);
 		bus_dmamap_sync(sc->sc_dmat, map, 0, arm_dcache_align,
 		    BUS_DMASYNC_POSTREAD);
 		memcpy(&rxsts, rxq->rxq_mhead->m_data, 4);
+		rxsts = le32toh(rxsts);
 #if 0
 		KASSERTMSG(rxsts != BCMETH_RCVMAGIC, "currdscr=%u consumer=%zd",
 		    currdscr, consumer - rxq->rxq_first);
@@ -1026,7 +1073,11 @@ bcmeth_rxq_consume(
 		 * Get the count of descriptors.  Fetch the correct number
 		 * of mbufs.
 		 */
+#ifdef BCMETH_RCVMAGIC
 		size_t desc_count = rxsts != BCMETH_RCVMAGIC ? __SHIFTOUT(rxsts, RXSTS_DESC_COUNT) + 1 : 1;
+#else
+		size_t desc_count = __SHIFTOUT(rxsts, RXSTS_DESC_COUNT) + 1;
+#endif
 		struct mbuf *m = rxq->rxq_mhead;
 		struct mbuf *m_last = m;
 		for (size_t i = 1; i < desc_count; i++) {
@@ -1047,15 +1098,18 @@ bcmeth_rxq_consume(
 			rxq->rxq_mtail = &rxq->rxq_mhead;
 		m_last->m_next = NULL;
 
+#ifdef BCMETH_RCVMAGIC
 		if (rxsts == BCMETH_RCVMAGIC) {	
 			ifp->if_ierrors++;
 			if ((m->m_ext.ext_paddr >> 28) == 8) {
-				sc->sc_ev_rx_badmagic_lo.ev_count++;
+				BCMETH_EVCNT_INCR(sc->sc_ev_rx_badmagic_lo);
 			} else {
-				sc->sc_ev_rx_badmagic_hi.ev_count++;
+				BCMETH_EVCNT_INCR( sc->sc_ev_rx_badmagic_hi);
 			}
 			IF_ENQUEUE(&sc->sc_rx_bufcache, m);
-		} else if (rxsts & (RXSTS_CRC_ERROR|RXSTS_OVERSIZED|RXSTS_PKT_OVERFLOW)) {
+		} else
+#endif /* BCMETH_RCVMAGIC */
+		if (rxsts & (RXSTS_CRC_ERROR|RXSTS_OVERSIZED|RXSTS_PKT_OVERFLOW)) {
 			aprint_error_dev(sc->sc_dev, "[%zu]: count=%zu rxsts=%#x\n",
 			    consumer - rxq->rxq_first, desc_count, rxsts);
 			/*
@@ -1071,7 +1125,7 @@ bcmeth_rxq_consume(
 			} while (m);
 		} else {
 			uint32_t framelen = __SHIFTOUT(rxsts, RXSTS_FRAMELEN);
-			framelen += BCMETH_RCVOFFSET;
+			framelen += sc->sc_rcvoffset;
 			m->m_pkthdr.len = framelen;
 			if (desc_count == 1) {
 				KASSERT(framelen <= MCLBYTES);
@@ -1079,17 +1133,55 @@ bcmeth_rxq_consume(
 			} else {
 				m_last->m_len = framelen & (MCLBYTES - 1);
 			}
+
+#ifdef BCMETH_MPSAFE
+			/*
+			 * Wrap at the last entry!
+			 */
+			if (++consumer == rxq->rxq_last) {
+				KASSERT(consumer[-1].rxdb_flags & htole32(RXDB_FLAG_ET));
+				rxq->rxq_consumer = rxq->rxq_first;
+			} else {
+				rxq->rxq_consumer = consumer;
+			}
+			rxq->rxq_inuse -= rxconsumed;
+#endif /* BCMETH_MPSAFE */
+
+			/*
+			 * Receive the packet (which releases our lock)
+			 */
 			bcmeth_rx_input(sc, m, rxsts);
+
+#ifdef BCMETH_MPSAFE
+			/*
+			 * Since we had to give up our lock, we need to
+			 * refresh these.
+			 */
+			consumer = rxq->rxq_consumer;
+			rxconsumed = 0;
+			continue;
+#endif /* BCMETH_MPSAFE */
 		}
 
 		/*
 		 * Wrap at the last entry!
 		 */
 		if (++consumer == rxq->rxq_last) {
-			KASSERT(consumer[-1].rxdb_flags & RXDB_FLAG_ET);
+			KASSERT(consumer[-1].rxdb_flags & htole32(RXDB_FLAG_ET));
 			consumer = rxq->rxq_first;
 		}
 	}
+
+	/*
+	 * Update queue info.
+	 */
+	rxq->rxq_consumer = consumer;
+	rxq->rxq_inuse -= rxconsumed;
+
+	/*
+	 * Did we consume anything?
+	 */
+	return didconsume;
 }
 
 static void
@@ -1136,13 +1228,13 @@ bcmeth_rxq_reset(
 	 */
 	struct gmac_rxdb *rxdb;
 	for (rxdb = rxq->rxq_first; rxdb < rxq->rxq_last - 1; rxdb++) {
-		rxdb->rxdb_flags = RXDB_FLAG_IC;
+		rxdb->rxdb_flags = htole32(RXDB_FLAG_IC);
 	}
 
 	/*
 	 * Last descriptor has the wrap flag.
 	 */
-	rxdb->rxdb_flags = RXDB_FLAG_ET|RXDB_FLAG_IC;
+	rxdb->rxdb_flags = htole32(RXDB_FLAG_ET|RXDB_FLAG_IC);
 
 	/*
 	 * Reset the producer consumer indexes.
@@ -1324,14 +1416,16 @@ bcmeth_txq_produce(
 
 	struct gmac_txdb *start = producer;
 	size_t count = map->dm_nsegs;
-	producer->txdb_flags |= first_flags;
-	producer->txdb_addrlo = map->dm_segs[0].ds_addr;
-	producer->txdb_buflen = map->dm_segs[0].ds_len;
+	producer->txdb_flags |= htole32(first_flags);
+	producer->txdb_addrlo = htole32(map->dm_segs[0].ds_addr);
+	producer->txdb_buflen = htole32(map->dm_segs[0].ds_len);
 	for (u_int i = 1; i < map->dm_nsegs; i++) {
 #if 0
 		printf("[%zu]: %#x/%#x/%#x/%#x\n", producer - txq->txq_first,
-		     producer->txdb_flags, producer->txdb_buflen,
-		     producer->txdb_addrlo, producer->txdb_addrhi);
+		    le32toh(producer->txdb_flags),
+		    le32toh(producer->txdb_buflen),
+		    le32toh(producer->txdb_addrlo),
+		    le32toh(producer->txdb_addrhi));
 #endif
 		if (__predict_false(++producer == txq->txq_last)) {
 			bcmeth_txq_desc_presync(sc, txq, start,
@@ -1340,14 +1434,14 @@ bcmeth_txq_produce(
 			producer = txq->txq_first;
 			start = txq->txq_first;
 		}
-		producer->txdb_addrlo = map->dm_segs[i].ds_addr;
-		producer->txdb_buflen = map->dm_segs[i].ds_len;
+		producer->txdb_addrlo = htole32(map->dm_segs[i].ds_addr);
+		producer->txdb_buflen = htole32(map->dm_segs[i].ds_len);
 	}
-	producer->txdb_flags |= last_flags;
+	producer->txdb_flags |= htole32(last_flags);
 #if 0
 	printf("[%zu]: %#x/%#x/%#x/%#x\n", producer - txq->txq_first,
-	     producer->txdb_flags, producer->txdb_buflen,
-	     producer->txdb_addrlo, producer->txdb_addrhi);
+	    le32toh(producer->txdb_flags), le32toh(producer->txdb_buflen),
+	    le32toh(producer->txdb_addrlo), le32toh(producer->txdb_addrhi));
 #endif
 	if (count)
 		bcmeth_txq_desc_presync(sc, txq, start, count);
@@ -1357,8 +1451,8 @@ bcmeth_txq_produce(
 	 */
 	txq->txq_free -= map->dm_nsegs;
 	KASSERT(map->dm_nsegs == 1 || txq->txq_producer != producer);
-	KASSERT(map->dm_nsegs == 1 || (txq->txq_producer->txdb_flags & TXDB_FLAG_EF) == 0);
-	KASSERT(producer->txdb_flags & TXDB_FLAG_EF);
+	KASSERT(map->dm_nsegs == 1 || (txq->txq_producer->txdb_flags & htole32(TXDB_FLAG_EF)) == 0);
+	KASSERT(producer->txdb_flags & htole32(TXDB_FLAG_EF));
 
 #if 0
 	printf("%s: mbuf %p: produced a %u byte packet in %u segments (%zd..%zd)\n",
@@ -1382,6 +1476,64 @@ bcmeth_txq_produce(
 	return true;
 }
 
+static struct mbuf *
+bcmeth_copy_packet(struct mbuf *m)
+{
+	struct mbuf *mext = NULL;
+	size_t misalignment = 0;
+	size_t hlen = 0;
+
+	for (mext = m; mext != NULL; mext = mext->m_next) {
+		if (mext->m_flags & M_EXT) {
+			misalignment = mtod(mext, vaddr_t) & arm_dcache_align;
+			break;
+		}
+		hlen += m->m_len;
+	}
+
+	struct mbuf *n = m->m_next;
+	if (m != mext && hlen + misalignment <= MHLEN && false) {
+		KASSERT(m->m_pktdat <= m->m_data && m->m_data <= &m->m_pktdat[MHLEN - m->m_len]);
+		size_t oldoff = m->m_data - m->m_pktdat;
+		size_t off;
+		if (mext == NULL) {
+			off = (oldoff + hlen > MHLEN) ? 0 : oldoff;
+		} else {
+			off = MHLEN - (hlen + misalignment);
+		}
+		KASSERT(off + hlen + misalignment <= MHLEN);
+		if (((oldoff ^ off) & arm_dcache_align) != 0 || off < oldoff) {
+			memmove(&m->m_pktdat[off], m->m_data, m->m_len);
+			m->m_data = &m->m_pktdat[off];
+		}
+		m_copydata(n, 0, hlen - m->m_len, &m->m_data[m->m_len]);
+		m->m_len = hlen;
+		m->m_next = mext;
+		while (n != mext) {
+			n = m_free(n);
+		}
+		return m;
+	}
+
+	struct mbuf *m0 = m_gethdr(M_DONTWAIT, m->m_type);
+	if (m0 == NULL) {
+		return NULL;
+	}
+	M_COPY_PKTHDR(m0, m);
+	MCLAIM(m0, m->m_owner);
+	if (m0->m_pkthdr.len > MHLEN) {
+		MCLGET(m0, M_DONTWAIT);
+		if ((m0->m_flags & M_EXT) == 0) {
+			m_freem(m0);
+			return NULL;
+		}
+	}
+	m0->m_len = m->m_pkthdr.len;
+	m_copydata(m, 0, m0->m_len, mtod(m0, void *));
+	m_freem(m);
+	return m0;
+}
+
 static bool
 bcmeth_txq_enqueue(
 	struct bcmeth_softc *sc,
@@ -1400,6 +1552,18 @@ bcmeth_txq_enqueue(
 			M_SETCTX(m, NULL);
 		} else {
 			txq->txq_next = NULL;
+		}
+		/*
+		 * If LINK2 is set and this packet uses multiple mbufs,
+		 * consolidate it into a single mbuf.
+		 */
+		if (m->m_next != NULL && (sc->sc_if.if_flags & IFF_LINK2)) {
+			struct mbuf *m0 = bcmeth_copy_packet(m);
+			if (m0 == NULL) {
+				txq->txq_next = m;
+				return true;
+			}
+			m = m0;
 		}
 		int error = bcmeth_txq_map_load(sc, txq, m);
 		if (error) {
@@ -1461,7 +1625,7 @@ bcmeth_txq_consume(
 		 * If this is the last descriptor in the chain, get the
 		 * mbuf, free its dmamap, and free the mbuf chain itself.
 		 */
-		const uint32_t txdb_flags = consumer->txdb_flags;
+		const uint32_t txdb_flags = le32toh(consumer->txdb_flags);
 		if (txdb_flags & TXDB_FLAG_EF) {
 			struct mbuf *m;
 
@@ -1489,7 +1653,7 @@ bcmeth_txq_consume(
 		 * Wrap at the last entry!
 		 */
 		if (txdb_flags & TXDB_FLAG_ET) {
-			consumer->txdb_flags = TXDB_FLAG_ET;
+			consumer->txdb_flags = htole32(TXDB_FLAG_ET);
 			KASSERT(consumer + 1 == txq->txq_last);
 			consumer = txq->txq_first;
 		} else {
@@ -1544,7 +1708,7 @@ bcmeth_txq_reset(
 	/*
 	 * Last descriptor has the wrap flag.
 	 */
-	txdb->txdb_flags = TXDB_FLAG_ET;
+	txdb->txdb_flags = htole32(TXDB_FLAG_ET);
 
 	/*
 	 * Reset the producer consumer indexes.
@@ -1572,8 +1736,25 @@ bcmeth_ifstart(struct ifnet *ifp)
 {
 	struct bcmeth_softc * const sc = ifp->if_softc;
 
-	atomic_or_uint(&sc->sc_soft_flags, SOFT_TXINTR);
-	softint_schedule(sc->sc_soft_ih);
+	if (__predict_false((ifp->if_flags & IFF_RUNNING) == 0)) {
+		return;
+	}
+
+#ifdef BCMETH_MPSAFETX
+	if (cpu_intr_p()) {
+#endif
+		atomic_or_uint(&sc->sc_soft_flags, SOFT_TXINTR);
+		softint_schedule(sc->sc_soft_ih);
+#ifdef BCMETH_MPSAFETX
+	} else {
+		/*
+		 * Either we are in a softintr thread already or some other
+		 * thread so just borrow it to do the send and save ourselves
+		 * the overhead of a fast soft int.
+		 */
+		bcmeth_soft_txintr(sc);
+	}
+#endif
 }
 
 int
@@ -1586,11 +1767,12 @@ bcmeth_intr(void *arg)
 
 	mutex_enter(sc->sc_hwlock);
 
-	sc->sc_ev_intr.ev_count++;
+	uint32_t intmask = sc->sc_intmask;
+	BCMETH_EVCNT_INCR(sc->sc_ev_intr);
 
 	for (;;) {
 		uint32_t intstatus = bcmeth_read_4(sc, GMAC_INTSTATUS);
-		intstatus &= sc->sc_intmask;
+		intstatus &= intmask;
 		bcmeth_write_4(sc, GMAC_INTSTATUS, intstatus);	/* write 1 to clear */
 		if (intstatus == 0) {
 			break;
@@ -1601,8 +1783,7 @@ bcmeth_intr(void *arg)
 #endif
 		if (intstatus & RCVINT) {
 			struct bcmeth_rxqueue * const rxq = &sc->sc_rxq;
-			intstatus &= ~RCVINT;
-			sc->sc_intmask &= ~RCVINT;
+			intmask &= ~RCVINT;
 
 			uint32_t rcvsts0 = bcmeth_read_4(sc, rxq->rxq_reg_rcvsts0);
 			uint32_t descs = __SHIFTOUT(rcvsts0, RCV_CURRDSCR);
@@ -1630,17 +1811,16 @@ bcmeth_intr(void *arg)
 		}
 
 		if (intstatus & XMTINT_0) {
-			intstatus &= ~XMTINT_0;
-			sc->sc_intmask &= ~XMTINT_0;
+			intmask &= ~XMTINT_0;
 			soft_flags |= SOFT_TXINTR;
 		}
 
 		if (intstatus & RCVDESCUF) {
-			intstatus &= ~RCVDESCUF;
-			sc->sc_intmask &= ~RCVDESCUF;
+			intmask &= ~RCVDESCUF;
 			work_flags |= WORK_RXUNDERFLOW;
 		}
 
+		intstatus &= intmask;
 		if (intstatus) {
 			aprint_error_dev(sc->sc_dev,
 			    "intr: intstatus=%#x\n", intstatus);
@@ -1658,14 +1838,13 @@ bcmeth_intr(void *arg)
 			    bcmeth_read_4(sc, sc->sc_txq.txq_reg_xmtptr),
 			    bcmeth_read_4(sc, sc->sc_txq.txq_reg_xmtsts0),
 			    bcmeth_read_4(sc, sc->sc_txq.txq_reg_xmtsts1));
-			Debugger();
-			sc->sc_intmask &= ~intstatus;
+			intmask &= ~intstatus;
 			work_flags |= WORK_REINIT;
 			break;
 		}
 	}
 
-	if (work_flags | soft_flags) {
+	if (intmask != sc->sc_intmask) {
 		bcmeth_write_4(sc, GMAC_INTMASK, sc->sc_intmask);
 	}
 
@@ -1690,17 +1869,44 @@ bcmeth_intr(void *arg)
 	return rv;
 }
 
+#ifdef BCMETH_MPSAFETX
+void
+bcmeth_soft_txintr(struct bcmeth_softc *sc)
+{
+	mutex_enter(sc->sc_lock);
+	/*
+	 * Let's do what we came here for.  Consume transmitted
+	 * packets off the the transmit ring.
+	 */
+	if (!bcmeth_txq_consume(sc, &sc->sc_txq)
+	    || !bcmeth_txq_enqueue(sc, &sc->sc_txq)) {
+		BCMETH_EVCNT_INCR(sc->sc_ev_tx_stall);
+		sc->sc_if.if_flags |= IFF_OACTIVE;
+	} else {
+		sc->sc_if.if_flags &= ~IFF_OACTIVE;
+	}
+	if (sc->sc_if.if_flags & IFF_RUNNING) {
+		mutex_spin_enter(sc->sc_hwlock);
+		sc->sc_intmask |= XMTINT_0;
+		bcmeth_write_4(sc, GMAC_INTMASK, sc->sc_intmask);
+		mutex_spin_exit(sc->sc_hwlock);
+	}
+	mutex_exit(sc->sc_lock);
+}
+#endif /* BCMETH_MPSAFETX */
+
 void
 bcmeth_soft_intr(void *arg)
 {
 	struct bcmeth_softc * const sc = arg;
 	struct ifnet * const ifp = &sc->sc_if;
+	uint32_t intmask = 0;
 
 	mutex_enter(sc->sc_lock);
 
 	u_int soft_flags = atomic_swap_uint(&sc->sc_soft_flags, 0);
 
-	sc->sc_ev_soft_intr.ev_count++;
+	BCMETH_EVCNT_INCR(sc->sc_ev_soft_intr);
 
 	if ((soft_flags & SOFT_TXINTR)
 	    || bcmeth_txq_active_p(sc, &sc->sc_txq)) {
@@ -1710,25 +1916,35 @@ bcmeth_soft_intr(void *arg)
 		 */
 		if (!bcmeth_txq_consume(sc, &sc->sc_txq)
 		    || !bcmeth_txq_enqueue(sc, &sc->sc_txq)) {
-			sc->sc_ev_tx_stall.ev_count++;
+			BCMETH_EVCNT_INCR(sc->sc_ev_tx_stall);
 			ifp->if_flags |= IFF_OACTIVE;
 		} else {
 			ifp->if_flags &= ~IFF_OACTIVE;
 		}
-		sc->sc_intmask |= XMTINT_0;
+		intmask |= XMTINT_0;
 	}
 
 	if (soft_flags & SOFT_RXINTR) {
 		/*
 		 * Let's consume 
 		 */
-		bcmeth_rxq_consume(sc, &sc->sc_rxq);
-		sc->sc_intmask |= RCVINT;
+		while (bcmeth_rxq_consume(sc, &sc->sc_rxq,
+		    sc->sc_rxq.rxq_threshold / 4)) {
+			/*
+			 * We've consumed a quarter of the ring and still have
+			 * more to do.  Refill the ring.
+			 */
+			bcmeth_rxq_produce(sc, &sc->sc_rxq);
+		}
+		intmask |= RCVINT;
 	}
 
 	if (ifp->if_flags & IFF_RUNNING) {
 		bcmeth_rxq_produce(sc, &sc->sc_rxq);
+		mutex_spin_enter(sc->sc_hwlock);
+		sc->sc_intmask |= intmask;
 		bcmeth_write_4(sc, GMAC_INTMASK, sc->sc_intmask);
+		mutex_spin_exit(sc->sc_hwlock);
 	}
 
 	mutex_exit(sc->sc_lock);
@@ -1739,10 +1955,11 @@ bcmeth_worker(struct work *wk, void *arg)
 {
 	struct bcmeth_softc * const sc = arg;
 	struct ifnet * const ifp = &sc->sc_if;
+	uint32_t intmask = 0;
 
 	mutex_enter(sc->sc_lock);
 
-	sc->sc_ev_work.ev_count++;
+	BCMETH_EVCNT_INCR(sc->sc_ev_work);
 
 	uint32_t work_flags = atomic_swap_32(&sc->sc_work_flags, 0);
 	if (work_flags & WORK_REINIT) {
@@ -1759,7 +1976,7 @@ bcmeth_worker(struct work *wk, void *arg)
 		if (threshold >= rxq->rxq_last - rxq->rxq_first) {
 			threshold = rxq->rxq_last - rxq->rxq_first - 1;
 		} else {
-			sc->sc_intmask |= RCVDESCUF;
+			intmask |= RCVDESCUF;
 		}
 		aprint_normal_dev(sc->sc_dev,
 		    "increasing receive buffers from %zu to %zu\n",
@@ -1771,13 +1988,31 @@ bcmeth_worker(struct work *wk, void *arg)
 		/*
 		 * Let's consume 
 		 */
-		bcmeth_rxq_consume(sc, &sc->sc_rxq);
-		sc->sc_intmask |= RCVINT;
+		while (bcmeth_rxq_consume(sc, &sc->sc_rxq,
+		    sc->sc_rxq.rxq_threshold / 4)) {
+			/*
+			 * We've consumed a quarter of the ring and still have
+			 * more to do.  Refill the ring.
+			 */
+			bcmeth_rxq_produce(sc, &sc->sc_rxq);
+		}
+		intmask |= RCVINT;
 	}
 
 	if (ifp->if_flags & IFF_RUNNING) {
 		bcmeth_rxq_produce(sc, &sc->sc_rxq);
+#if 0
+		uint32_t intstatus = bcmeth_read_4(sc, GMAC_INTSTATUS);
+		if (intstatus & RCVINT) {
+			bcmeth_write_4(sc, GMAC_INTSTATUS, RCVINT);
+			work_flags |= WORK_RXINTR;
+			continue;
+		}
+#endif
+		mutex_spin_enter(sc->sc_hwlock);
+		sc->sc_intmask |= intmask;
 		bcmeth_write_4(sc, GMAC_INTMASK, sc->sc_intmask);
+		mutex_spin_exit(sc->sc_hwlock);
 	}
 
 	mutex_exit(sc->sc_lock);

@@ -1,4 +1,4 @@
-/*	$NetBSD: exec.c,v 1.43 2012/03/20 18:42:29 matt Exp $	*/
+/*	$NetBSD: exec.c,v 1.45 2013/11/01 16:49:02 christos Exp $	*/
 
 /*-
  * Copyright (c) 1991, 1993
@@ -37,7 +37,7 @@
 #if 0
 static char sccsid[] = "@(#)exec.c	8.4 (Berkeley) 6/8/95";
 #else
-__RCSID("$NetBSD: exec.c,v 1.43 2012/03/20 18:42:29 matt Exp $");
+__RCSID("$NetBSD: exec.c,v 1.45 2013/11/01 16:49:02 christos Exp $");
 #endif
 #endif /* not lint */
 
@@ -629,7 +629,8 @@ int
 	const struct builtincmd *bp;
 
 	for (bp = builtincmd ; bp->name ; bp++) {
-		if (*bp->name == *name && equal(bp->name, name))
+		if (*bp->name == *name
+		    && (*name == '%' || equal(bp->name, name)))
 			return bp->builtin;
 	}
 	return 0;
@@ -942,9 +943,8 @@ unsetfunc(char *name)
 	    cmdp->cmdtype == CMDFUNCTION) {
 		freefunc(cmdp->param.func);
 		delete_cmd_entry();
-		return (0);
 	}
-	return (1);
+	return 0;
 }
 
 /*

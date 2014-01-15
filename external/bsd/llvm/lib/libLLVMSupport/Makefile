@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.13 2012/08/09 14:37:07 joerg Exp $
+#	$NetBSD: Makefile,v 1.22 2013/09/21 22:28:12 joerg Exp $
 
 LIB=	LLVMSupport
 
@@ -16,7 +16,10 @@ SRCS+=	APFloat.cpp \
 	BranchProbability.cpp \
 	circular_raw_ostream.cpp \
 	CommandLine.cpp \
+	Compression.cpp \
 	ConstantRange.cpp \
+	ConvertUTF.c \
+	ConvertUTFWrapper.cpp \
 	CrashRecoveryContext.cpp \
 	DataExtractor.cpp \
 	DataStream.cpp \
@@ -38,6 +41,7 @@ SRCS+=	APFloat.cpp \
 	IsNAN.cpp \
 	Locale.cpp \
 	LockFileManager.cpp \
+	MD5.cpp \
 	ManagedStatic.cpp \
 	MemoryBuffer.cpp \
 	MemoryObject.cpp \
@@ -53,13 +57,17 @@ SRCS+=	APFloat.cpp \
 	StringMap.cpp \
 	StringPool.cpp \
 	StringRef.cpp \
+	StringRefMemoryObject.cpp \
 	SystemUtils.cpp \
 	TargetRegistry.cpp \
 	Timer.cpp \
 	ToolOutputFile.cpp \
 	Triple.cpp \
 	Twine.cpp \
+	Unicode.cpp \
+	Watchdog.cpp \
 	YAMLParser.cpp \
+	YAMLTraits.cpp \
 	raw_os_ostream.cpp \
 	raw_ostream.cpp \
 	regcomp.c \
@@ -77,7 +85,6 @@ SRCS+=	Atomic.cpp \
 	Memory.cpp \
 	Mutex.cpp \
 	Path.cpp \
-	PathV2.cpp \
 	Process.cpp \
 	Program.cpp \
 	RWMutex.cpp \
@@ -95,14 +102,18 @@ SRCS+=	Host.inc \
 	Memory.inc \
 	Mutex.inc \
 	Path.inc \
-	PathV2.inc \
 	Process.inc \
 	Program.inc \
 	RWMutex.inc \
 	Signals.inc \
+	Watchdog.inc \
 	system_error.inc \
 	ThreadLocal.inc \
 	TimeValue.inc
+
+.for src in ${SRCS:M*.c}
+CPPFLAGS.${src}+=	-std=gnu99
+.endfor
 
 .if defined(HOSTLIB)
 .include <bsd.hostlib.mk>

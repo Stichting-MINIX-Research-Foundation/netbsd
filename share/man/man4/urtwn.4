@@ -1,4 +1,4 @@
-.\" $NetBSD: urtwn.4,v 1.6 2012/06/19 22:12:03 njoly Exp $
+.\" $NetBSD: urtwn.4,v 1.8 2013/08/10 21:32:07 jnemeth Exp $
 .\" $OpenBSD: urtwn.4,v 1.15 2011/11/26 06:39:33 ckuethe Exp $
 .\"
 .\" Copyright (c) 2010 Damien Bergamini <damien.bergamini@free.fr>
@@ -15,7 +15,7 @@
 .\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 .\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
-.Dd June 13, 2012
+.Dd August 10, 2013
 .Dt URTWN 4
 .Os
 .Sh NAME
@@ -106,6 +106,7 @@ The following adapters should work:
 .It Planex GW-USValue-EZ
 .It Planex GW-USWExtreme
 .It POWCHIP POW-N18
+.It Sitecom N300 USB (WLA-2102 v1)
 .It Sitecom WL-365
 .It Solwise NET-WL-UMD-606N
 .It TRENDnet TEW-648UBM
@@ -120,14 +121,6 @@ channel 11, obtaining an IP address using DHCP:
 .Bd -literal -offset indent
 nwkey 0x1deadbeef1 chan 11
 dhcp
-.Ed
-.Pp
-Configure urtwn0 to join network
-.Dq my_net
-using WPA with passphrase
-.Dq my_passphrase :
-.Bd -literal -offset indent
-# ifconfig urtwn0 nwid my_net wpakey my_passphrase
 .Ed
 .Pp
 Join an existing BSS network,

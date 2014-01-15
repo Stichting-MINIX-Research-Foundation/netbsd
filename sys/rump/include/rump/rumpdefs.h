@@ -1,4 +1,4 @@
-/*	$NetBSD: rumpdefs.h,v 1.11 2012/07/20 09:03:09 pooka Exp $	*/
+/*	$NetBSD: rumpdefs.h,v 1.27 2013/11/13 16:42:30 pooka Exp $	*/
 
 /*
  *	AUTOMATICALLY GENERATED.  DO NOT EDIT.
@@ -9,17 +9,7 @@
 
 #include <rump/rump_namei.h>
 
-struct rump_sockaddr_in {
-	uint8_t		sin_len;
-	uint8_t		sin_family;
-	uint16_t	sin_port;
-	struct {
-			uint32_t s_addr;
-	} sin_addr;
-	int8_t		sin_zero[8];
-};
-
-/*	NetBSD: fcntl.h,v 1.42 2012/01/25 00:28:35 christos Exp 	*/
+/*	NetBSD: fcntl.h,v 1.46 2013/09/15 10:41:20 njoly Exp 	*/
 #define	RUMP_O_RDONLY	0x00000000	/* open for reading only */
 #define	RUMP_O_WRONLY	0x00000001	/* open for writing only */
 #define	RUMP_O_RDWR		0x00000002	/* open for reading and writing */
@@ -43,20 +33,117 @@ struct rump_sockaddr_in {
 #define	RUMP_O_SEARCH	0x00800000	/* skip search permission checks */
 #define	RUMP_O_NOSIGPIPE	0x01000000	/* don't deliver sigpipe */
 
-/*	NetBSD: vnode.h,v 1.236 2011/11/24 15:51:30 ahoka Exp 	*/
-#ifndef __VTYPE_DEFINED
-#define __VTYPE_DEFINED
-enum vtype	{ VNON, VREG, VDIR, VBLK, VCHR, VLNK, VSOCK, VFIFO, VBAD };
-#endif /* __VTYPE_DEFINED */
+/*	NetBSD: vnode.h,v 1.240 2013/11/07 09:48:34 hannken Exp 	*/
+enum rump_vtype	{ RUMP_VNON, RUMP_VREG, RUMP_VDIR, RUMP_VBLK, RUMP_VCHR, RUMP_VLNK, RUMP_VSOCK, RUMP_VFIFO, RUMP_VBAD };
 #define	RUMP_LK_SHARED	0x00000001	
 #define	RUMP_LK_EXCLUSIVE	0x00000002	
 #define	RUMP_LK_NOWAIT	0x00000010	
 #define	RUMP_LK_RETRY	0x00020000	
 
-/*	NetBSD: errno.h,v 1.39 2006/10/31 00:38:07 cbiere Exp 	*/
-#ifndef EJUSTRETURN
-#define	EJUSTRETURN	-2		/* don't modify regs, just return */
-#endif /* EJUSTRETURN */
+/*	NetBSD: errno.h,v 1.40 2013/01/02 18:51:53 dsl Exp 	*/
+#define	RUMP_EPERM		1		/* Operation not permitted */
+#define	RUMP_ENOENT		2		/* No such file or directory */
+#define	RUMP_ESRCH		3		/* No such process */
+#define	RUMP_EINTR		4		/* Interrupted system call */
+#define	RUMP_EIO		5		/* Input/output error */
+#define	RUMP_ENXIO		6		/* Device not configured */
+#define	RUMP_E2BIG		7		/* Argument list too long */
+#define	RUMP_ENOEXEC		8		/* Exec format error */
+#define	RUMP_EBADF		9		/* Bad file descriptor */
+#define	RUMP_ECHILD		10		/* No child processes */
+#define	RUMP_EDEADLK		11		/* Resource deadlock avoided */
+#define	RUMP_ENOMEM		12		/* Cannot allocate memory */
+#define	RUMP_EACCES		13		/* Permission denied */
+#define	RUMP_EFAULT		14		/* Bad address */
+#define	RUMP_ENOTBLK		15		/* Block device required */
+#define	RUMP_EBUSY		16		/* Device busy */
+#define	RUMP_EEXIST		17		/* File exists */
+#define	RUMP_EXDEV		18		/* Cross-device link */
+#define	RUMP_ENODEV		19		/* Operation not supported by device */
+#define	RUMP_ENOTDIR		20		/* Not a directory */
+#define	RUMP_EISDIR		21		/* Is a directory */
+#define	RUMP_EINVAL		22		/* Invalid argument */
+#define	RUMP_ENFILE		23		/* Too many open files in system */
+#define	RUMP_EMFILE		24		/* Too many open files */
+#define	RUMP_ENOTTY		25		/* Inappropriate ioctl for device */
+#define	RUMP_ETXTBSY		26		/* Text file busy */
+#define	RUMP_EFBIG		27		/* File too large */
+#define	RUMP_ENOSPC		28		/* No space left on device */
+#define	RUMP_ESPIPE		29		/* Illegal seek */
+#define	RUMP_EROFS		30		/* Read-only file system */
+#define	RUMP_EMLINK		31		/* Too many links */
+#define	RUMP_EPIPE		32		/* Broken pipe */
+#define	RUMP_EDOM		33		/* Numerical argument out of domain */
+#define	RUMP_ERANGE		34		/* Result too large or too small */
+#define	RUMP_EAGAIN		35		/* Resource temporarily unavailable */
+#define	RUMP_EWOULDBLOCK	EAGAIN		/* Operation would block */
+#define	RUMP_EINPROGRESS	36		/* Operation now in progress */
+#define	RUMP_EALREADY	37		/* Operation already in progress */
+#define	RUMP_ENOTSOCK	38		/* Socket operation on non-socket */
+#define	RUMP_EDESTADDRREQ	39		/* Destination address required */
+#define	RUMP_EMSGSIZE	40		/* Message too long */
+#define	RUMP_EPROTOTYPE	41		/* Protocol wrong type for socket */
+#define	RUMP_ENOPROTOOPT	42		/* Protocol option not available */
+#define	RUMP_EPROTONOSUPPORT	43		/* Protocol not supported */
+#define	RUMP_ESOCKTNOSUPPORT	44		/* Socket type not supported */
+#define	RUMP_EOPNOTSUPP	45		/* Operation not supported */
+#define	RUMP_EPFNOSUPPORT	46		/* Protocol family not supported */
+#define	RUMP_EAFNOSUPPORT	47		/* Address family not supported by protocol family */
+#define	RUMP_EADDRINUSE	48		/* Address already in use */
+#define	RUMP_EADDRNOTAVAIL	49		/* Can't assign requested address */
+#define	RUMP_ENETDOWN	50		/* Network is down */
+#define	RUMP_ENETUNREACH	51		/* Network is unreachable */
+#define	RUMP_ENETRESET	52		/* Network dropped connection on reset */
+#define	RUMP_ECONNABORTED	53		/* Software caused connection abort */
+#define	RUMP_ECONNRESET	54		/* Connection reset by peer */
+#define	RUMP_ENOBUFS		55		/* No buffer space available */
+#define	RUMP_EISCONN		56		/* Socket is already connected */
+#define	RUMP_ENOTCONN	57		/* Socket is not connected */
+#define	RUMP_ESHUTDOWN	58		/* Can't send after socket shutdown */
+#define	RUMP_ETOOMANYREFS	59		/* Too many references: can't splice */
+#define	RUMP_ETIMEDOUT	60		/* Operation timed out */
+#define	RUMP_ECONNREFUSED	61		/* Connection refused */
+#define	RUMP_ELOOP		62		/* Too many levels of symbolic links */
+#define	RUMP_ENAMETOOLONG	63		/* File name too long */
+#define	RUMP_EHOSTDOWN	64		/* Host is down */
+#define	RUMP_EHOSTUNREACH	65		/* No route to host */
+#define	RUMP_ENOTEMPTY	66		/* Directory not empty */
+#define	RUMP_EPROCLIM	67		/* Too many processes */
+#define	RUMP_EUSERS		68		/* Too many users */
+#define	RUMP_EDQUOT		69		/* Disc quota exceeded */
+#define	RUMP_ESTALE		70		/* Stale NFS file handle */
+#define	RUMP_EREMOTE		71		/* Too many levels of remote in path */
+#define	RUMP_EBADRPC		72		/* RPC struct is bad */
+#define	RUMP_ERPCMISMATCH	73		/* RPC version wrong */
+#define	RUMP_EPROGUNAVAIL	74		/* RPC prog. not avail */
+#define	RUMP_EPROGMISMATCH	75		/* Program version wrong */
+#define	RUMP_EPROCUNAVAIL	76		/* Bad procedure for program */
+#define	RUMP_ENOLCK		77		/* No locks available */
+#define	RUMP_ENOSYS		78		/* Function not implemented */
+#define	RUMP_EFTYPE		79		/* Inappropriate file type or format */
+#define	RUMP_EAUTH		80		/* Authentication error */
+#define	RUMP_ENEEDAUTH	81		/* Need authenticator */
+#define	RUMP_EIDRM		82		/* Identifier removed */
+#define	RUMP_ENOMSG		83		/* No message of desired type */
+#define	RUMP_EOVERFLOW	84		/* Value too large to be stored in data type */
+#define	RUMP_EILSEQ		85		/* Illegal byte sequence */
+#define RUMP_ENOTSUP		86		/* Not supported */
+#define RUMP_ECANCELED	87		/* Operation canceled */
+#define RUMP_EBADMSG		88		/* Bad or Corrupt message */
+#define RUMP_ENODATA		89		/* No message available */
+#define RUMP_ENOSR		90		/* No STREAM resources */
+#define RUMP_ENOSTR		91		/* Not a STREAM */
+#define RUMP_ETIME		92		/* STREAM ioctl timeout */
+#define	RUMP_ENOATTR		93		/* Attribute not found */
+#define	RUMP_EMULTIHOP	94		/* Multihop attempted */ 
+#define	RUMP_ENOLINK		95		/* Link has been severed */
+#define	RUMP_EPROTO		96		/* Protocol error */
+#define	RUMP_ELAST		96		/* Must equal largest errno */
+#define	RUMP_EJUSTRETURN	-2		/* don't modify regs, just return */
+#define	RUMP_ERESTART	-3		/* restart syscall */
+#define	RUMP_EPASSTHROUGH	-4		/* ioctl not handled by this layer */
+#define	RUMP_EDUPFD		-5		/* Dup given fd */
+#define	RUMP_EMOVEFD		-6		/* Move given fd */
 
 /*	NetBSD: reboot.h,v 1.25 2007/12/25 18:33:48 perry Exp 	*/
 #define	RUMP_RB_AUTOBOOT	0	
@@ -83,7 +170,7 @@ enum vtype	{ VNON, VREG, VDIR, VBLK, VCHR, VLNK, VSOCK, VFIFO, VBAD };
 #define	RUMP_AB_SILENT	0x00040000	
 #define	RUMP_AB_DEBUG	0x00080000	
 
-/*	NetBSD: socket.h,v 1.107 2012/06/22 18:26:35 christos Exp 	*/
+/*	NetBSD: socket.h,v 1.108 2013/01/31 14:30:47 joerg Exp 	*/
 #define	RUMP_SOCK_STREAM	1		
 #define	RUMP_SOCK_DGRAM	2		
 #define	RUMP_SOCK_RAW	3		
@@ -188,5 +275,234 @@ enum vtype	{ VNON, VREG, VDIR, VBLK, VCHR, VLNK, VSOCK, VFIFO, VBAD };
 #define RUMP_SO_SNDTIMEO	0x100b		
 #define RUMP_SO_RCVTIMEO	0x100c		
 #define	RUMP_SOL_SOCKET	0xffff		
+#define	RUMP_MSG_OOB		0x0001		
+#define	RUMP_MSG_PEEK	0x0002		
+#define	RUMP_MSG_DONTROUTE	0x0004		
+#define	RUMP_MSG_EOR		0x0008		
+#define	RUMP_MSG_TRUNC	0x0010		
+#define	RUMP_MSG_CTRUNC	0x0020		
+#define	RUMP_MSG_WAITALL	0x0040		
+#define	RUMP_MSG_DONTWAIT	0x0080		
+#define	RUMP_MSG_BCAST	0x0100		
+#define	RUMP_MSG_MCAST	0x0200		
+#define	RUMP_MSG_NOSIGNAL	0x0400		
+#define	RUMP_MSG_CRUMP_MSG_CLOEXEC 0x0800		
+#define	RUMP_MSG_NBIO	0x1000		
+#define	RUMP_MSG_WAITFORONE	0x2000		
+#define	RUMP_MSG_USERFLAGS	0x0ffffff
+#define RUMP_MSG_NAMEMBUF	0x1000000	
+#define RUMP_MSG_CONTROLMBUF	0x2000000	
+#define RUMP_MSG_IOVUSRSPACE	0x4000000	
+#define RUMP_MSG_LENUSRSPACE	0x8000000	
+
+/*	NetBSD: in.h,v 1.87 2012/06/22 14:54:35 christos Exp 	*/
+#define	RUMP_IP_OPTIONS		1    
+#define	RUMP_IP_HDRINCL		2    
+#define	RUMP_IP_TOS			3    
+#define	RUMP_IP_TTL			4    
+#define	RUMP_IP_RECVOPTS		5    
+#define	RUMP_IP_RECVRETOPTS		6    
+#define	RUMP_IP_RECVDSTADDR		7    
+#define	RUMP_IP_RETOPTS		8    
+#define	RUMP_IP_MULTICAST_IF		9    
+#define	RUMP_IP_MULTICAST_TTL	10   
+#define	RUMP_IP_MULTICAST_LOOP	11   
+#define	RUMP_IP_ADD_MEMBERSHIP	12   
+#define	RUMP_IP_DROP_MEMBERSHIP	13   
+#define	RUMP_IP_PORTALGO		18   
+#define	RUMP_IP_PORTRANGE		19   
+#define	RUMP_IP_RECVIF		20   
+#define	RUMP_IP_ERRORMTU		21   
+#define	RUMP_IP_IPSEC_POLICY		22 
+#define	RUMP_IP_RECVTTL		23   
+#define	RUMP_IP_MINTTL		24   
+#define	RUMP_IP_DEFAULT_MULTICAST_TTL  1	
+#define	RUMP_IP_DEFAULT_MULTICAST_LOOP 1	
+#define	RUMP_IP_MAX_MEMBERSHIPS	20	
+#define	RUMP_IP_PORTRANGE_DEFAULT	0	
+#define	RUMP_IP_PORTRANGE_HIGH	1	
+#define	RUMP_IP_PORTRANGE_LOW	2	
+#define	RUMP_IPPROTO_IP		0		
+#define	RUMP_IPPROTO_HOPOPTS		0		
+#define	RUMP_IPPROTO_ICMP		1		
+#define	RUMP_IPPROTO_IGMP		2		
+#define	RUMP_IPPROTO_GGP		3		
+#define	RUMP_IPPROTO_IPV4		4 		
+#define	RUMP_IPPROTO_IPIP		4		
+#define	RUMP_IPPROTO_TCP		6		
+#define	RUMP_IPPROTO_EGP		8		
+#define	RUMP_IPPROTO_PUP		12		
+#define	RUMP_IPPROTO_UDP		17		
+#define	RUMP_IPPROTO_IDP		22		
+#define	RUMP_IPPROTO_TP		29 		
+#define	RUMP_IPPROTO_IPV6		41		
+#define	RUMP_IPPROTO_ROUTING		43		
+#define	RUMP_IPPROTO_FRAGMENT	44		
+#define	RUMP_IPPROTO_RSVP		46		
+#define	RUMP_IPPROTO_GRE		47		
+#define	RUMP_IPPROTO_ESP		50 		
+#define	RUMP_IPPROTO_AH		51 		
+#define	RUMP_IPPROTO_MOBILE		55		
+#define	RUMP_IPPROTO_IPV6_ICMP	58		
+#define	RUMP_IPPROTO_ICMPV6		58		
+#define	RUMP_IPPROTO_NONE		59		
+#define	RUMP_IPPROTO_DSTOPTS		60		
+#define	RUMP_IPPROTO_EON		80		
+#define	RUMP_IPPROTO_ETHERIP		97		
+#define	RUMP_IPPROTO_ENCAP		98		
+#define	RUMP_IPPROTO_PIM		103		
+#define	RUMP_IPPROTO_IPCOMP		108		
+#define	RUMP_IPPROTO_VRRP		112		
+#define	RUMP_IPPROTO_CARP		112		
+#define RUMP_IPPROTO_PFSYNC      240     
+#define	RUMP_IPPROTO_RAW		255		
+#define	RUMP_IPPROTO_MAX		256
+#define	RUMP_IPPROTO_DONE		257
+#define	RUMP_IPPROTO_MAXID	(RUMP_IPPROTO_AH + 1)	
+
+/*	NetBSD: tcp.h,v 1.30 2012/01/07 20:20:22 christos Exp 	*/
+#define	RUMP_TCP_MSS		536
+#define	RUMP_TCP_MINMSS	216
+#define	RUMP_TCP_MAXWIN	65535	
+#define	RUMP_TCP_MAX_WINSHIFT	14	
+#define	RUMP_TCP_MAXBURST	4	
+#define	RUMP_TCP_NODELAY	1	
+#define	RUMP_TCP_MAXSEG	2	
+#define	RUMP_TCP_KEEPIDLE	3
+#define	RUMP_TCP_NOPUSH	4	
+#define	RUMP_TCP_KEEPINTVL	5
+#define	RUMP_TCP_KEEPCNT	6
+#define	RUMP_TCP_KEEPINIT	7
+#define	RUMP_TCP_NOOPT	8	
+#define	RUMP_TCP_MD5SIG	0x10	
+#define	RUMP_TCP_CONGCTL	0x20	
+
+/*	NetBSD: mount.h,v 1.209 2013/04/26 22:27:16 mlelstv Exp 	*/
+#define	RUMP_MOUNT_FFS	"ffs"		
+#define	RUMP_MOUNT_UFS	RUMP_MOUNT_FFS	
+#define	RUMP_MOUNT_NFS	"nfs"		
+#define	RUMP_MOUNT_MFS	"mfs"		
+#define	RUMP_MOUNT_MSDOS	"msdos"		
+#define	RUMP_MOUNT_LFS	"lfs"		
+#define	RUMP_MOUNT_FDESC	"fdesc"		
+#define	RUMP_MOUNT_NULL	"null"		
+#define	RUMP_MOUNT_OVERLAY	"overlay"	
+#define	RUMP_MOUNT_UMAP	"umap"	
+#define	RUMP_MOUNT_KERNFS	"kernfs"	
+#define	RUMP_MOUNT_PROCFS	"procfs"	
+#define	RUMP_MOUNT_AFS	"afs"		
+#define	RUMP_MOUNT_CD9660	"cd9660"	
+#define	RUMP_MOUNT_UNION	"union"		
+#define	RUMP_MOUNT_ADOSFS	"adosfs"	
+#define	RUMP_MOUNT_EXT2FS	"ext2fs"	
+#define	RUMP_MOUNT_CFS	"coda"		
+#define	RUMP_MOUNT_CODA	RUMP_MOUNT_CFS	
+#define	RUMP_MOUNT_FILECORE	"filecore"	
+#define	RUMP_MOUNT_NTFS	"ntfs"		
+#define	RUMP_MOUNT_SMBFS	"smbfs"		
+#define	RUMP_MOUNT_PTYFS	"ptyfs"		
+#define	RUMP_MOUNT_TMPFS	"tmpfs"		
+#define RUMP_MOUNT_UDF	"udf"		
+#define	RUMP_MOUNT_SYSVBFS	"sysvbfs"	
+#define RUMP_MOUNT_PUFFS	"puffs"		
+#define RUMP_MOUNT_HFS	"hfs"		
+#define RUMP_MOUNT_EFS	"efs"		
+#define RUMP_MOUNT_ZFS	"zfs"		
+#define RUMP_MOUNT_NILFS	"nilfs"		
+#define RUMP_MOUNT_RUMPFS	"rumpfs"	
+#define	RUMP_MOUNT_V7FS	"v7fs"		
+
+/*	NetBSD: fstypes.h,v 1.32 2012/11/26 16:22:21 drochner Exp 	*/
+#define	RUMP_MNT_RDONLY	0x00000001	
+#define	RUMP_MNT_SYNCHRONOUS	0x00000002	
+#define	RUMP_MNT_NOEXEC	0x00000004	
+#define	RUMP_MNT_NOSUID	0x00000008	
+#define	RUMP_MNT_NODEV	0x00000010	
+#define	RUMP_MNT_UNION	0x00000020	
+#define	RUMP_MNT_ASYNC	0x00000040	
+#define	RUMP_MNT_NOCOREDUMP	0x00008000	
+#define	RUMP_MNT_RELATIME	0x00020000	
+#define	RUMP_MNT_IGNORE	0x00100000	
+#define	RUMP_MNT_DISCARD	0x00800000	
+#define	RUMP_MNT_EXTATTR	0x01000000	
+#define	RUMP_MNT_LOG		0x02000000	
+#define	RUMP_MNT_NOATIME	0x04000000	
+#define	RUMP_MNT_SYMPERM	0x20000000	
+#define	RUMP_MNT_NODEVMTIME	0x40000000	
+#define	RUMP_MNT_SOFTDEP	0x80000000	
+#define	RUMP_MNT_EXRDONLY	0x00000080	
+#define	RUMP_MNT_EXPORTED	0x00000100	
+#define	RUMP_MNT_DEFEXPORTED	0x00000200	
+#define	RUMP_MNT_EXPORTANON	0x00000400	
+#define	RUMP_MNT_EXKERB	0x00000800	
+#define	RUMP_MNT_EXNORESPORT	0x08000000	
+#define	RUMP_MNT_EXPUBLIC	0x10000000	
+#define	RUMP_MNT_LOCAL	0x00001000	
+#define	RUMP_MNT_QUOTA	0x00002000	
+#define	RUMP_MNT_ROOTFS	0x00004000	
+#define	RUMP_MNT_UPDATE	0x00010000	
+#define	RUMP_MNT_RELOAD	0x00040000	
+#define	RUMP_MNT_FORCE	0x00080000	
+#define	RUMP_MNT_GETARGS	0x00400000	
+#define	RUMP_MNT_OP_FLAGS	(RUMP_MNT_UPDATE|RUMP_MNT_RELOAD|RUMP_MNT_FORCE|RUMP_MNT_GETARGS)
+#define	RUMP_MNT_WAIT	1	
+#define	RUMP_MNT_NOWAIT	2	
+#define	RUMP_MNT_LAZY 	3	
+
+/*	NetBSD: ioccom.h,v 1.11 2011/10/19 10:53:12 yamt Exp 	*/
+#define	RUMP_IOCPARM_MASK	0x1fff		
+#define	RUMP_IOCPARM_SHIFT	16
+#define	RUMP_IOCGROUP_SHIFT	8
+#define	RUMP_IOCPARM_LEN(x)	(((x) >> RUMP_IOCPARM_SHIFT) & RUMP_IOCPARM_MASK)
+#define	RUMP_IOCBASECMD(x)	((x) & ~(RUMP_IOCPARM_MASK << RUMP_IOCPARM_SHIFT))
+#define	RUMP_IOCGROUP(x)	(((x) >> RUMP_IOCGROUP_SHIFT) & 0xff)
+#define	RUMP_IOCPARM_MAX	NBPG	
+#define	RUMP_IOC_VOID	(unsigned long)0x20000000
+#define	RUMP_IOC_OUT		(unsigned long)0x40000000
+#define	RUMP_IOC_IN		(unsigned long)0x80000000
+#define	RUMP_IOC_INOUT	(RUMP_IOC_IN|RUMP_IOC_OUT)
+#define	RUMP_IOC_DIRMASK	(unsigned long)0xe0000000
+#define	_RUMP_IOC(inout, group, num, len) \
+    ((inout) | (((len) & RUMP_IOCPARM_MASK) << RUMP_IOCPARM_SHIFT) | \
+    ((group) << RUMP_IOCGROUP_SHIFT) | (num))
+#define	_RUMP_IO(g,n)	_RUMP_IOC(RUMP_IOC_VOID,	(g), (n), 0)
+#define	_RUMP_IOR(g,n,t)	_RUMP_IOC(RUMP_IOC_OUT,	(g), (n), sizeof(t))
+#define	_RUMP_IOW(g,n,t)	_RUMP_IOC(RUMP_IOC_IN,	(g), (n), sizeof(t))
+#define	_RUMP_IOWR(g,n,t)	_RUMP_IOC(RUMP_IOC_INOUT,	(g), (n), sizeof(t))
+
+/*	NetBSD: module.h,v 1.34 2013/10/23 18:57:40 mbalmer Exp 	*/
+struct rump_modctl_load {
+	const char *ml_filename;
+
+	int ml_flags;
+
+	const char *ml_props;
+	size_t ml_propslen;
+};
+enum rump_modctl {
+	RUMP_MODCTL_LOAD,		/* modctl_load_t *ml */
+	RUMP_MODCTL_UNLOAD,		/* char *name */
+	RUMP_MODCTL_STAT,		/* struct iovec *buffer */
+	RUMP_MODCTL_EXISTS		/* enum: 0: load, 1: autoload */
+};
+
+/*	NetBSD: ufsmount.h,v 1.39 2012/10/19 17:09:08 drochner Exp 	*/
+struct rump_ufs_args {
+	char	*fspec;			/* block special device to mount */
+};
+
+/*	NetBSD: sysvbfs_args.h,v 1.1 2008/09/04 12:07:30 pooka Exp 	*/
+struct rump_sysvbfs_args {
+	char	*fspec;		/* blocks special holding the fs to mount */
+};
+
+/*	NetBSD: dirent.h,v 1.28 2011/09/27 01:40:32 christos Exp 	*/
+struct rump_dirent {
+	uint64_t d_fileno;			/* file number of entry */
+	uint16_t d_reclen;		/* length of this record */
+	uint16_t d_namlen;		/* length of string in d_name */
+	uint8_t  d_type; 		/* file type, see below */
+	char	d_name[511 + 1];	/* name must be no longer than this */
+};
 
 #endif /* _RUMP_RUMPDEFS_H_ */

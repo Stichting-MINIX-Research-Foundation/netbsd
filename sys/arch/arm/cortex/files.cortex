@@ -1,4 +1,9 @@
-# $NetBSD: files.cortex,v 1.2 2012/09/02 16:55:10 matt Exp $
+# $NetBSD: files.cortex,v 1.4 2013/06/16 16:44:39 matt Exp $
+
+defflag opt_cpu_in_cksum.h			NEON_IN_CKSUM
+
+file	arch/arm/cortex/cpu_in_cksum_neon.c	(inet | inet6) & neon_in_cksum
+file	arch/arm/cortex/cpu_in_cksum_asm_neon.S	(inet | inet6) & neon_in_cksum
 
 device	armperiph {}
 attach	armperiph at mainbus
@@ -13,6 +18,11 @@ file	arch/arm/cortex/gic.c			armgic
 device	arml2cc
 attach	arml2cc at armperiph
 file	arch/arm/cortex/pl310.c			arml2cc
+
+# ARMv7 Generic Timer
+device	armgtmr
+attach	armgtmr at armperiph
+file	arch/arm/cortex/gtmr.c			armgtmr
 
 # A9 MPCore Global Timer
 device	a9tmr

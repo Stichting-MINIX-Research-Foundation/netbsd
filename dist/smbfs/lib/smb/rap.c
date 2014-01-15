@@ -35,7 +35,7 @@
  */
 
 #include <sys/cdefs.h>
-__RCSID("$NetBSD: rap.c,v 1.7 2011/08/14 12:35:35 christos Exp $");
+__RCSID("$NetBSD: rap.c,v 1.9 2013/10/21 15:32:41 christos Exp $");
 
 #include <sys/param.h>
 #include <sys/errno.h>
@@ -57,9 +57,8 @@ static int
 smb_rap_parserqparam(const char *s, char **next, int *rlen)
 {
 	char *np;
-	int len, m;
+	int len;
 
-	m = 1;
 	switch (*s++) {
 	    case 'L':
 	    case 'T':
@@ -94,9 +93,8 @@ static int
 smb_rap_parserpparam(const char *s, char **next, int *rlen)
 {
 	char *np;
-	int len, m;
+	int len;
 
-	m = 1;
 	switch (*s++) {
 	    case 'e':
 	    case 'h':
@@ -124,9 +122,8 @@ static int
 smb_rap_parserpdata(const char *s, char **next, int *rlen)
 {
 	char *np;
-	int len, m;
+	int len;
 
-	m = 1;
 	switch (*s++) {
 	    case 'B':
 		len = 1;
@@ -283,7 +280,7 @@ smb_rap_getNparam(struct smb_rap *rap, long *value)
 {
 	char *p = rap->r_nparam;
 	char ptype = *p;
-	int error, plen;
+	int error, plen = 0;	/* XXX: gcc */
 
 	error = smb_rap_parserpparam(p, &p, &plen);
 	if (error)

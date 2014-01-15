@@ -1,18 +1,13 @@
-#	$NetBSD: std.igepv2,v 1.4 2012/09/04 00:19:20 matt Exp $
+#	$NetBSD: std.igepv2,v 1.6 2013/11/01 18:41:06 skrll Exp $
 #
 # standard NetBSD/evbarm for IGEPV2 options
 
 machine	evbarm arm
-include		"conf/std"	# MI standard options
+include		"arch/evbarm/conf/std.evbarm"
 
 # Pull in BEAGLEBOARD config definitions.
-include "arch/evbarm/conf/files.beagle"
+include		"arch/evbarm/conf/files.beagle"
 
-options 	EXEC_ELF32
-options 	EXEC_SCRIPT
-
-# To support easy transit to ../arch/arm/arm32
-options 	ARM32
 options 	CORTEX_PMC
 options 	__HAVE_CPU_COUNTER
 options 	__HAVE_FAST_SOFTINTS		# should be in types.h
@@ -23,7 +18,6 @@ options 	KERNEL_BASE_EXT=0x80000000
 makeoptions	LOADADDRESS="0x80300000"
 makeoptions	BOARDTYPE="igepv2"
 makeoptions	BOARDMKFRAG="${THISARM}/conf/mk.beagle"
-makeoptions	CPPFLAGS+="-I$S/../../../include"
 
 options 	ARM_INTR_IMPL="<arch/arm/omap/omap2_intr.h>"
 options		ARM_GENERIC_TODR

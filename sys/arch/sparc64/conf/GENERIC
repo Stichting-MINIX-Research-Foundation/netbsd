@@ -1,4 +1,4 @@
-# $NetBSD: GENERIC,v 1.153 2012/10/13 18:00:03 jdc Exp $
+# $NetBSD: GENERIC,v 1.169 2013/09/24 18:12:59 jdc Exp $
 #
 # GENERIC machine description file
 #
@@ -22,7 +22,7 @@ include	"arch/sparc64/conf/std.sparc64"
 
 options 	INCLUDE_CONFIG_FILE	# embed config file in kernel binary
 
-#ident 		"GENERIC-$Revision: 1.153 $"
+#ident 		"GENERIC-$Revision: 1.169 $"
 
 maxusers	64
 
@@ -59,6 +59,8 @@ options 	KTRACE
 options 	SYSVMSG		# System V message queues
 options 	SYSVSEM		# System V semaphores
 options 	SYSVSHM		# System V shared memory
+
+options		MODULAR		# new style module(7) framework
 
 options 	USERCONF	# userconf(4) support
 #options 	PIPE_SOCKETPAIR	# smaller, but slower pipe(2)
@@ -147,6 +149,7 @@ options 	COMPAT_20	# NetBSD 2.0 binary compatibility
 options 	COMPAT_30	# NetBSD 3.0 binary compatibility
 options 	COMPAT_40	# NetBSD 4.0 binary compatibility
 options 	COMPAT_50	# NetBSD 5.0 compatibility.
+options 	COMPAT_60	# NetBSD 6.0 compatibility.
 options 	COMPAT_SUNOS	# SunOS 4.x binary compatibility
 options 	COMPAT_SVR4	# SunOS 5.x binary compatibility
 options 	COMPAT_SVR4_32	# SunOS 5.x 32-bit binary compatibility -- 64-bit only
@@ -181,7 +184,7 @@ file-system	TMPFS		# Efficient memory file-system
 options 	NFSSERVER	# Sun NFS-compatible filesystem server
 options 	QUOTA		# legacy UFS quotas
 options 	QUOTA2		# new, in-filesystem UFS quotas
-#options 	FFS_EI		# FFS Endian Independent support
+options 	FFS_EI		# FFS Endian Independent support
 options 	WAPBL		# File system journaling support
 #options 	FFS_NO_SNAPSHOT	# No FFS snapshot support
 
@@ -189,19 +192,14 @@ options 	WAPBL		# File system journaling support
 options 	INET		# IP (Internet Protocol) v4
 options 	INET6		# IPV6
 #options 	IPSEC		# IP security
-#options 	IPSEC_ESP	# IP security (encryption part; define w/IPSEC)
-#options 	IPSEC_NAT_T	# IPsec NAT traversal (NAT-T)
 #options 	IPSEC_DEBUG	# debug for IP security
 #options 	GATEWAY		# packet forwarding ("router switch")
 options 	MROUTING	# packet forwarding of multicast packets
 options 	PIM		# Protocol Independent Multicast
 #options 	DIRECTED_BROADCAST	# allow broadcasts through routers
-#options 	ISO,TPIP	# OSI networking
-#options 	EON		# OSI tunneling over IP
 options 	NETATALK	# AppleTalk (over Ethernet) protocol
 options 	NTP		# Network Time Protocol in-kernel support
 #options 	PPS_SYNC	# Add serial line synchronization for NTP
-options 	PFIL_HOOKS	# Add pfil(9) packet filter hooks
 options 	IPFILTER_LOG	# Add ipmon(8) logging for ipfilter device
 options 	IPFILTER_LOOKUP	# ippool(8) support
 options 	IPFILTER_COMPAT # Compat for IP-Filter
@@ -442,15 +440,15 @@ pseudo-device	vnd
 ## Concatenated and striped disks; with this, you can create a software-based
 ## disk array similar to a "RAID 0" setup.  See ccd(4).
 
-pseudo-device	ccd	4
+pseudo-device	ccd
 
 ## Cryptographic disk devices.  See cgd(4).
 
-pseudo-device	cgd	4
+pseudo-device	cgd
 
 ## RAIDframe disk driver: software RAID driver.  See raid(4).
 
-pseudo-device	raid	8
+pseudo-device	raid
 options 	RAID_AUTOCONFIG		# auto-configuration of RAID components
 # Options to enable various other RAIDframe RAID types.
 # options 	RF_INCLUDE_EVENODD=1
@@ -591,6 +589,9 @@ wsmouse* at uep? mux 0
 # USB Keyboards
 ukbd*	at uhidev? reportid ?
 wskbd*	at ukbd? console ? mux 1
+
+# USB TEMPer and TEMPerHUM
+uthum*	at uhidev? reportid ?
 
 # USB serial adapter
 ucycom*	at uhidev? reportid ?
@@ -922,10 +923,13 @@ wskbd0 at kbd0
 options 	WSEMUL_VT100		# allow us to be wsvt25
 options 	WS_DEFAULT_FG=WSCOL_BLACK
 options 	WS_DEFAULT_BG=WSCOL_LIGHT_WHITE
+options 	WSDISPLAY_COMPAT_PCVT		# emulate some ioctls
+options 	WSDISPLAY_COMPAT_SYSCONS	# emulate some more ioctls
 options 	WSDISPLAY_COMPAT_USL		# wsconscfg VT handling
 options 	WSDISPLAY_COMPAT_RAWKBD		# can get raw scancodes
 options 	WSDISPLAY_DEFAULTSCREENS=4
 options 	FONT_GALLANT12x22		# PROM font look-alike
+options 	FONT_DROID_SANS_MONO12x22	# antialiased font
 
 #### Other device configuration
 
@@ -938,13 +942,13 @@ lom*		at ebus?		# LOMlite lights out management
 alipm*		at pci?
 iic*		at alipm?
 
-# I2C devices
 spdmem*		at iic? addr?
 admtemp*	at iic? addr?
 ecadc*		at iic? addr?	# envctrl/envctrltwo on E250/E450
 lmtemp*		at iic? addr?
 tda*		at iic? addr?	# fan control on SB1000/2000
 dbcool*		at iic? addr?	# SB25000
+seeprom*	at iic? addr?	# i2c-at24c64 fru's
 
 ### Other pseudo-devices
 
@@ -976,7 +980,7 @@ options		FILEASSOC		# fileassoc(9) - required for Veriexec
 # Veriexec
 #
 # a pseudo device needed for veriexec
-pseudo-device	veriexec		1
+pseudo-device	veriexec
 #
 # Uncomment the fingerprint methods below that are desired. Note that
 # removing fingerprint methods will have almost no impact on the kernel

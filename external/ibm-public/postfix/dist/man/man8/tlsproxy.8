@@ -1,4 +1,4 @@
-.\"	$NetBSD: tlsproxy.8,v 1.1.1.1 2011/03/02 19:31:55 tron Exp $
+.\"	$NetBSD: tlsproxy.8,v 1.1.1.3 2013/09/25 19:06:26 tron Exp $
 .\"
 .TH TLSPROXY 8 
 .ad
@@ -16,7 +16,8 @@ Postfix TLS proxy
 .fi
 The \fBtlsproxy\fR(8) server implements a server-side TLS
 proxy. It is used by \fBpostscreen\fR(8) to talk SMTP-over-TLS
-with remote SMTP clients whose whitelist status has expired,
+with remote SMTP clients that are not whitelisted (including
+clients whose whitelist status has expired),
 but it should also work for non-SMTP protocols.
 
 Although one \fBtlsproxy\fR(8) process can serve multiple
@@ -33,7 +34,8 @@ the \fBtlsproxy\fR(8) server is agnostic of the application
 protocol, and the example is easily adapted to other
 applications.
 
-The \fBpostscreen\fR(8) server sends the remote SMTP client
+After receiving a valid remote SMTP client STARTTLS command,
+the \fBpostscreen\fR(8) server sends the remote SMTP client
 endpoint string, the requested role (server), and the
 requested timeout to \fBtlsproxy\fR(8).  \fBpostscreen\fR(8)
 then receives a "TLS available" indication from \fBtlsproxy\fR(8).
@@ -120,7 +122,8 @@ elliptic-curve Diffie-Hellman (EECDH) key exchange.
 List of ciphers or cipher types to exclude from the \fBtlsproxy\fR(8)
 server cipher list at all TLS security levels.
 .IP "\fBtlsproxy_tls_fingerprint_digest ($smtpd_tls_fingerprint_digest)\fR"
-The message digest algorithm used to construct client-certificate
+The message digest algorithm to construct remote SMTP
+client-certificate
 fingerprints.
 .IP "\fBtlsproxy_tls_key_file ($smtpd_tls_key_file)\fR"
 File with the Postfix \fBtlsproxy\fR(8) server RSA private key in PEM
@@ -158,10 +161,10 @@ cache information.
 These parameters are supported for compatibility with
 \fBsmtpd\fR(8) legacy parameters.
 .IP "\fBtlsproxy_use_tls ($smtpd_use_tls)\fR"
-Opportunistic TLS: announce STARTTLS support to SMTP clients,
+Opportunistic TLS: announce STARTTLS support to remote SMTP clients,
 but do not require that clients use TLS encryption.
 .IP "\fBtlsproxy_enforce_tls ($smtpd_enforce_tls)\fR"
-Mandatory TLS: announce STARTTLS support to SMTP clients, and
+Mandatory TLS: announce STARTTLS support to remote SMTP clients, and
 require that clients use TLS encryption.
 .SH "RESOURCE CONTROLS"
 .na

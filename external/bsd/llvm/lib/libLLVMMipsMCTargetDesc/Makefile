@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.3 2012/01/11 23:24:47 joerg Exp $
+#	$NetBSD: Makefile,v 1.8 2013/11/28 14:19:59 joerg Exp $
 
 LIB=	LLVMMipsMCTargetDesc
 
@@ -13,7 +13,9 @@ SRCS+=	MipsAsmBackend.cpp \
 	MipsELFObjectWriter.cpp \
 	MipsMCAsmInfo.cpp \
 	MipsMCCodeEmitter.cpp \
-	MipsMCTargetDesc.cpp
+	MipsMCTargetDesc.cpp \
+	MipsReginfo.cpp \
+	MipsTargetStreamer.cpp
 
 .if defined(HOSTLIB)
 .include <bsd.hostlib.mk>

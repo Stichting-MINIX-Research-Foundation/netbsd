@@ -1,4 +1,4 @@
-/*	$NetBSD: kern_lock.c,v 1.153 2012/08/30 02:23:14 matt Exp $	*/
+/*	$NetBSD: kern_lock.c,v 1.155 2013/09/14 20:24:22 martin Exp $	*/
 
 /*-
  * Copyright (c) 2002, 2006, 2007, 2008, 2009 The NetBSD Foundation, Inc.
@@ -31,7 +31,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: kern_lock.c,v 1.153 2012/08/30 02:23:14 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: kern_lock.c,v 1.155 2013/09/14 20:24:22 martin Exp $");
 
 #include <sys/param.h>
 #include <sys/proc.h>
@@ -127,11 +127,11 @@ void
 kernel_lock_init(void)
 {
 
-	CTASSERT(CACHE_LINE_SIZE >= sizeof(__cpu_simple_lock_t));
 	__cpu_simple_lock_init(kernel_lock);
 	kernel_lock_dodebug = LOCKDEBUG_ALLOC(kernel_lock, &_kernel_lock_ops,
 	    RETURN_ADDRESS);
 }
+CTASSERT(CACHE_LINE_SIZE >= sizeof(__cpu_simple_lock_t));
 
 /*
  * Print debugging information about the kernel lock.
@@ -175,7 +175,7 @@ _kernel_lock(int nlocks)
 
 	_KERNEL_LOCK_ASSERT(l->l_blcnt == 0);
 	LOCKDEBUG_WANTLOCK(kernel_lock_dodebug, kernel_lock, RETURN_ADDRESS,
-	    false, false);
+	    0);
 
 	if (__cpu_simple_lock_try(kernel_lock)) {
 		ci->ci_biglock_count = nlocks;

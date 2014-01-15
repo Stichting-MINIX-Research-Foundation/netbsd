@@ -1,4 +1,4 @@
-/*	$NetBSD: mount.h,v 1.207 2012/02/01 05:34:42 dholland Exp $	*/
+/*	$NetBSD: mount.h,v 1.210 2013/11/23 13:35:36 christos Exp $	*/
 
 /*
  * Copyright (c) 1989, 1991, 1993
@@ -107,17 +107,17 @@ struct vnode;
  * put on a doubly linked list.
  */
 struct mount {
-	CIRCLEQ_ENTRY(mount) mnt_list;		/* mount list */
+	TAILQ_ENTRY(mount) mnt_list;		/* mount list */
 	TAILQ_HEAD(, vnode) mnt_vnodelist;	/* list of vnodes this mount */
 	struct vfsops	*mnt_op;		/* operations on fs */
 	struct vnode	*mnt_vnodecovered;	/* vnode we mounted on */
 	struct vnode	*mnt_syncer;		/* syncer vnode */
 	void		*mnt_transinfo;		/* for FS-internal use */
 	void		*mnt_data;		/* private data */
-	krwlock_t	mnt_unmounting;		/* to prevent new activity */
+	kmutex_t	mnt_unmounting;		/* to prevent new activity */
 	kmutex_t	mnt_renamelock;		/* per-fs rename lock */
 	int		mnt_refcnt;		/* ref count on this structure */
-	int		mnt_recursecnt;		/* count of write locks */
+	unsigned int	mnt_busynest;		/* vfs_busy nestings */
 	int		mnt_flag;		/* flags */
 	int		mnt_iflag;		/* internal flags */
 	int		mnt_fs_bshift;		/* offset shift for lblkno */
@@ -277,7 +277,7 @@ int	fsname##_mount(struct mount *, const char *, void *,		\
 int	fsname##_start(struct mount *, int);				\
 int	fsname##_unmount(struct mount *, int);				\
 int	fsname##_root(struct mount *, struct vnode **);			\
-int	fsname##_quotactl(struct mount *, int, struct quotactl_args *);	\
+int	fsname##_quotactl(struct mount *, struct quotactl_args *);	\
 int	fsname##_statvfs(struct mount *, struct statvfs *);		\
 int	fsname##_sync(struct mount *, int, struct kauth_cred *);	\
 int	fsname##_vget(struct mount *, ino_t, struct vnode **);		\
@@ -434,7 +434,7 @@ int	vfs_quotactl_cursorrewind(struct mount *, struct quotakcursor *);
 int	vfs_quotactl_quotaon(struct mount *, int, const char *);
 int	vfs_quotactl_quotaoff(struct mount *, int);
 
-extern	CIRCLEQ_HEAD(mntlist, mount) mountlist;	/* mounted filesystem list */
+extern	TAILQ_HEAD(mntlist, mount) mountlist;	/* mounted filesystem list */
 extern	struct vfsops *vfssw[];			/* filesystem type table */
 extern	int nvfssw;
 extern  kmutex_t mountlist_lock;
@@ -462,6 +462,7 @@ void *	mount_getspecific(struct mount *, specificdata_key_t);
 void	mount_setspecific(struct mount *, specificdata_key_t, void *);
 
 int	usermount_common_policy(struct mount *, u_long);
+void	mountlist_append(struct mount *);
 
 LIST_HEAD(vfs_list_head, vfsops);
 extern struct vfs_list_head vfs_list;

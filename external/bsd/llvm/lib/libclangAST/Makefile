@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.7 2012/09/23 17:22:24 joerg Exp $
+#	$NetBSD: Makefile,v 1.12 2013/10/14 01:37:39 joerg Exp $
 
 LIB=	clangAST
 
@@ -10,13 +10,14 @@ SRCS+=	APValue.cpp \
 	ASTConsumer.cpp \
 	ASTContext.cpp \
 	ASTDiagnostic.cpp \
+	ASTDumper.cpp \
 	ASTImporter.cpp \
+	ASTTypeTraits.cpp \
 	AttrImpl.cpp \
 	CXXInheritance.cpp \
 	Comment.cpp \
 	CommentBriefParser.cpp \
 	CommentCommandTraits.cpp \
-	CommentDumper.cpp \
 	CommentLexer.cpp \
 	CommentParser.cpp \
 	CommentSema.cpp \
@@ -27,9 +28,9 @@ SRCS+=	APValue.cpp \
 	DeclFriend.cpp \
 	DeclGroup.cpp \
 	DeclObjC.cpp \
+	DeclOpenMP.cpp \
 	DeclPrinter.cpp \
 	DeclTemplate.cpp \
-	DumpXML.cpp \
 	Expr.cpp \
 	ExprClassification.cpp \
 	ExprConstant.cpp \
@@ -38,8 +39,8 @@ SRCS+=	APValue.cpp \
 	InheritViz.cpp \
 	ItaniumCXXABI.cpp \
 	ItaniumMangle.cpp \
-	LambdaMangleContext.cpp \
 	Mangle.cpp \
+	MangleNumberingContext.cpp \
 	MicrosoftCXXABI.cpp \
 	MicrosoftMangle.cpp \
 	NSAPI.cpp \
@@ -50,7 +51,6 @@ SRCS+=	APValue.cpp \
 	RecordLayoutBuilder.cpp \
 	SelectorLocationsKind.cpp \
 	Stmt.cpp \
-	StmtDumper.cpp \
 	StmtIterator.cpp \
 	StmtPrinter.cpp \
 	StmtProfile.cpp \

@@ -1,4 +1,4 @@
-/*	$NetBSD: altivec.c,v 1.25 2011/06/07 01:01:43 matt Exp $	*/
+/*	$NetBSD: altivec.c,v 1.28 2013/08/23 06:21:33 matt Exp $	*/
 
 /*
  * Copyright (C) 1996 Wolfgang Solfrank.
@@ -32,7 +32,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: altivec.c,v 1.25 2011/06/07 01:01:43 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: altivec.c,v 1.28 2013/08/23 06:21:33 matt Exp $");
 
 #include "opt_multiprocessor.h"
 
@@ -49,9 +49,9 @@ __KERNEL_RCSID(0, "$NetBSD: altivec.c,v 1.25 2011/06/07 01:01:43 matt Exp $");
 #include <powerpc/oea/spr.h>
 #include <powerpc/psl.h>
 
-static void vec_state_load(lwp_t *, bool);
-static void vec_state_save(lwp_t *);
-static void vec_state_release(lwp_t *);
+static void vec_state_load(lwp_t *, u_int);
+static void vec_state_save(lwp_t *, u_int);
+static void vec_state_release(lwp_t *, u_int);
 
 const pcu_ops_t vec_ops = {
 	.pcu_id = PCU_VEC,
@@ -63,17 +63,17 @@ const pcu_ops_t vec_ops = {
 bool
 vec_used_p(lwp_t *l)
 {
-	return (l->l_md.md_flags & MDLWP_USEDVEC) != 0;
+	return pcu_used_p(&vec_ops);
 }
 
 void
 vec_mark_used(lwp_t *l)
 {
-	l->l_md.md_flags |= MDLWP_USEDVEC;
+	return pcu_discard(&vec_ops, true);
 }
 
 void
-vec_state_load(lwp_t *l, bool used)
+vec_state_load(lwp_t *l, u_int flags)
 {
 	struct pcb * const pcb = lwp_getpcb(l);
 
@@ -109,12 +109,12 @@ vec_state_load(lwp_t *l, bool used)
 	/*
 	 * Mark vector registers as modified.
 	 */
-	l->l_md.md_flags |= MDLWP_USEDVEC|PSL_VEC;
+	l->l_md.md_flags |= PSL_VEC;
 	l->l_md.md_utf->tf_srr1 |= PSL_VEC;
 }
 
 void
-vec_state_save(lwp_t *l)
+vec_state_save(lwp_t *l, u_int flags)
 {
 	struct pcb * const pcb = lwp_getpcb(l);
 
@@ -149,7 +149,7 @@ vec_state_save(lwp_t *l)
 }
 
 void
-vec_state_release(lwp_t *l)
+vec_state_release(lwp_t *l, u_int flags)
 {
 	__asm volatile("dssall;sync");
 	l->l_md.md_utf->tf_srr1 &= ~PSL_VEC;
@@ -164,7 +164,7 @@ vec_restore_from_mcontext(struct lwp *l, const mcontext_t *mcp)
 	KASSERT(l == curlwp);
 
 	/* we don't need to save the state, just drop it */
-	pcu_discard(&vec_ops);
+	pcu_discard(&vec_ops, true);
 	memcpy(pcb->pcb_vr.vreg, &mcp->__vrf.__vrs, sizeof (pcb->pcb_vr.vreg));
 	pcb->pcb_vr.vscr = mcp->__vrf.__vscr;
 	pcb->pcb_vr.vrsave = mcp->__vrf.__vrsave;

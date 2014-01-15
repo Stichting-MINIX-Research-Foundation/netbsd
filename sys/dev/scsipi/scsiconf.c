@@ -1,4 +1,4 @@
-/*	$NetBSD: scsiconf.c,v 1.269 2012/08/21 14:19:02 bouyer Exp $	*/
+/*	$NetBSD: scsiconf.c,v 1.271 2013/10/12 16:49:01 christos Exp $	*/
 
 /*-
  * Copyright (c) 1998, 1999, 2004 The NetBSD Foundation, Inc.
@@ -48,7 +48,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: scsiconf.c,v 1.269 2012/08/21 14:19:02 bouyer Exp $");
+__KERNEL_RCSID(0, "$NetBSD: scsiconf.c,v 1.271 2013/10/12 16:49:01 christos Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -241,7 +241,7 @@ scsibusattach(device_t parent, device_t self, void *aux)
 	scsi_initq = malloc(sizeof(struct scsi_initq), M_DEVBUF, M_WAITOK);
 	scsi_initq->sc_channel = chan;
 	TAILQ_INSERT_TAIL(&scsi_initq_head, scsi_initq, scsi_initq);
-        config_pending_incr();
+        config_pending_incr(sc->sc_dev);
 	if (scsipi_channel_init(chan)) {
 		aprint_error_dev(sc->sc_dev, "failed to init channel\n");
 		return;
@@ -288,7 +288,7 @@ scsibus_config(struct scsipi_channel *chan, void *arg)
 
 	scsipi_adapter_delref(chan->chan_adapter);
 
-	config_pending_decr();
+	config_pending_decr(sc->sc_dev);
 }
 
 static int
@@ -778,7 +778,6 @@ scsi_probe_device(struct scsibus_softc *sc, int target, int lun)
 	struct scsipibus_attach_args sa;
 	cfdata_t cf;
 	int locs[SCSIBUSCF_NLOCS];
-	device_t chld;
 
 	/*
 	 * Assume no more luns to search after this one.
@@ -1001,7 +1000,7 @@ scsi_probe_device(struct scsibus_softc *sc, int target, int lun)
 		 * XXX need it before config_attach() returns.  Must
 		 * XXX assign it in periph driver.
 		 */
-		chld = config_attach_loc(sc->sc_dev, cf, locs, &sa,
+		config_attach_loc(sc->sc_dev, cf, locs, &sa,
 					 scsibusprint);
 	} else {
 		scsibusprint(&sa, device_xname(sc->sc_dev));

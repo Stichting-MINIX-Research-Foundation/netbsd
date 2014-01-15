@@ -1,4 +1,4 @@
-/*	$NetBSD: voodoofb.c,v 1.41 2012/04/23 11:51:56 macallan Exp $	*/
+/*	$NetBSD: voodoofb.c,v 1.47 2013/11/19 06:37:42 macallan Exp $	*/
 
 /*
  * Copyright (c) 2005, 2006, 2012 Michael Lorenz
@@ -32,7 +32,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: voodoofb.c,v 1.41 2012/04/23 11:51:56 macallan Exp $");
+__KERNEL_RCSID(0, "$NetBSD: voodoofb.c,v 1.47 2013/11/19 06:37:42 macallan Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -82,6 +82,11 @@ struct voodoofb_softc {
 	bus_size_t sc_regsize, sc_fbsize, sc_ioregsize;
 
 	void *sc_ih;
+
+#define MAX_CLOCK_VB	270000	/* Voodoo Banshee */
+#define MAX_CLOCK_V3	300000	/* Voodoo3 */
+#define MAX_CLOCK_V45	350000	/* Voodoo4/5 (not yet) */
+	uint32_t sc_max_clock;
 	
 	size_t sc_memsize;
 	int sc_memtype;
@@ -291,10 +296,9 @@ voodoo3_write_gra(struct voodoofb_softc *sc, uint8_t reg, uint8_t val)
 static inline void
 voodoo3_write_attr(struct voodoofb_softc *sc, uint8_t reg, uint8_t val)
 {
-	volatile uint8_t junk;
 	uint8_t index;
 	
-	junk = bus_space_read_1(sc->sc_ioregt, sc->sc_ioregh, IS1_R - 0x300);
+	(void)bus_space_read_1(sc->sc_ioregt, sc->sc_ioregh, IS1_R - 0x300);
 	index = bus_space_read_1(sc->sc_ioregt, sc->sc_ioregh, ATT_IW - 0x300);
 	bus_space_write_1(sc->sc_ioregt, sc->sc_ioregh, ATT_IW - 0x300, reg);
 	bus_space_write_1(sc->sc_ioregt, sc->sc_ioregh, ATT_IW - 0x300, val);
@@ -339,6 +343,10 @@ voodoofb_match(device_t parent, cfdata_t match, void *aux)
 	if ((PCI_VENDOR(pa->pa_id)==PCI_VENDOR_3DFX) && 
 	    (PCI_PRODUCT(pa->pa_id)>=PCI_PRODUCT_3DFX_VOODOO3))
 		return 100;
+
+	if ((PCI_VENDOR(pa->pa_id)==PCI_VENDOR_3DFX) && 
+	    (PCI_PRODUCT(pa->pa_id)>=PCI_PRODUCT_3DFX_BANSHEE))
+		return 100;
 	return 0;
 }
 
@@ -354,7 +362,7 @@ voodoofb_attach(device_t parent, device_t self, void *aux)
 	const char *intrstr;
 #endif
 	ulong defattr;
-	int console, width, height, i, j;
+	int console, width, height, i;
 	prop_dictionary_t dict;
 	int linebytes, depth, flags;
 	uint32_t bg, fg, ul;
@@ -370,6 +378,11 @@ voodoofb_attach(device_t parent, device_t self, void *aux)
 	sc->sc_memt = pa->pa_memt;
 	sc->sc_iot = pa->pa_iot;
 	sc->sc_pa = *pa;
+
+	if (PCI_PRODUCT(pa->pa_id)>=PCI_PRODUCT_3DFX_BANSHEE)
+		sc->sc_max_clock = MAX_CLOCK_VB;
+	else
+		sc->sc_max_clock = MAX_CLOCK_V3;
 
 	/* the framebuffer */
 	if (pci_mapreg_info(sc->sc_pc, sc->sc_pcitag, 0x14, PCI_MAPREG_TYPE_MEM,
@@ -449,11 +462,12 @@ voodoofb_attach(device_t parent, device_t self, void *aux)
 		voodoofb_defaultscreen.ncols = ri->ri_cols;
 		wsdisplay_cnattach(&voodoofb_defaultscreen, ri, 0, 0, defattr);
 	} else {
-		/*
-		 * since we're not the console we can postpone the rest
-		 * until someone actually allocates a screen for us
-		 */
-		voodoofb_set_videomode(sc, sc->sc_videomode);		 
+		if (voodoofb_console_screen.scr_ri.ri_rows == 0) {
+			/* do some minimal setup to avoid weirdnesses later */
+			vcons_init_screen(&sc->vd, &voodoofb_console_screen,
+			    1, &defattr);
+		} else
+			(*ri->ri_ops.allocattr)(ri, 0, 0, 0, &defattr);
 	}
 
 	printf("%s: %d MB aperture at 0x%08x, %d MB registers at 0x%08x\n",
@@ -464,7 +478,6 @@ voodoofb_attach(device_t parent, device_t self, void *aux)
 	printf("fb: %08lx\n", (ulong)ri->ri_bits);
 #endif
 	
-	j = 0;
 	if (sc->sc_bits_per_pixel == 8) {
 		uint8_t tmp;
 		for (i = 0; i < 256; i++) {
@@ -1014,9 +1027,8 @@ static void
 voodoofb_rectfill(struct voodoofb_softc *sc, int x, int y, int width, 
     int height, int colour) 
 {
-	uint32_t fmt, col;
+	uint32_t fmt;
 	
-	col = (colour << 24) | (colour << 16) | (colour << 8) | colour;
 	fmt = sc->sc_linebytes | ((sc->sc_bits_per_pixel + 
 	    ((sc->sc_bits_per_pixel == 8) ? 0 : 8)) << 13);
 
@@ -1181,6 +1193,12 @@ voodoofb_ioctl(void *v, void *vs, u_long cmd, void *data, int flag,
 		}
 		}
 		return 0;
+		/* XXX WSDISPLAYIO_GET_EDID */
+
+	case WSDISPLAYIO_GET_FBINFO: {
+		struct wsdisplayio_fbinfo *fbi = data;
+		return wsdisplayio_get_fbinfo(&ms->scr_ri, fbi);
+	}
 	}
 	return EPASSTHROUGH;
 }
@@ -1374,7 +1392,7 @@ voodoofb_setup_monitor(struct voodoofb_softc *sc, const struct videomode *vm)
 
 	uint8_t misc;
 
-	memset(&mod, 0, sizeof(mode));
+	memset(&mod, 0, sizeof(mod));
 	
 	mode = &mod;
 	
@@ -1521,7 +1539,7 @@ voodoofb_set_videomode(struct voodoofb_softc *sc,
 {
 	uint32_t miscinit0 = 0;
 	int vidpll, fout;
-	uint32_t vp, vidproc = VIDPROCDEFAULT;
+	uint32_t vidproc = VIDPROCDEFAULT;
 	uint32_t bpp = 1;	/* for now */
 	uint32_t bytes_per_row = vm->hdisplay * bpp;
 
@@ -1531,7 +1549,6 @@ voodoofb_set_videomode(struct voodoofb_softc *sc,
 	sc->sc_linebytes = bytes_per_row;
 	
 	voodoofb_setup_monitor(sc, vm);
-	vp = voodoo3_read32(sc, VIDPROCCFG);
 	
 	vidproc &= ~(0x1c0000); /* clear bits 18 to 20, bpp in vidproccfg */
 	/* enable bits 18 to 20 to the required bpp */
@@ -1540,6 +1557,8 @@ voodoofb_set_videomode(struct voodoofb_softc *sc,
 	vidpll = voodoofb_calc_pll(vm->dot_clock, &fout, 0);
 
 #ifdef VOODOOFB_DEBUG
+	uint32_t vp;
+	vp = voodoo3_read32(sc, VIDPROCCFG);
 	printf("old vidproc: %08x\n", vp);
 	printf("pll: %08x %d\n", vidpll, fout);
 #endif
@@ -1658,7 +1677,6 @@ voodoofb_init(struct voodoofb_softc *sc)
 	voodoofb_wait_idle(sc);
 }
 
-#define MAX_CLOCK 250000	/* all Voodoo3 should support that */
 #define MAX_HRES  1700		/*
 				 * XXX in theory we can go higher but I
 				 * couldn't get anything above 1680 x 1200
@@ -1666,7 +1684,7 @@ voodoofb_init(struct voodoofb_softc *sc)
 				 * disabled so people won't end up with a
 				 * blank screen
 				 */
-#define MODE_IS_VALID(m) (((m)->dot_clock <= MAX_CLOCK) && \
+#define MODE_IS_VALID(m, mclk) (((m)->dot_clock <= (mclk)) && \
 					    ((m)->hdisplay < MAX_HRES))
 static void
 voodoofb_setup_i2c(struct voodoofb_softc *sc)
@@ -1714,7 +1732,7 @@ voodoofb_setup_i2c(struct voodoofb_softc *sc)
 			if ((sc->sc_edid_info.edid_preferred_mode != NULL)) {
 				struct videomode *m =
 				    sc->sc_edid_info.edid_preferred_mode;
-				if (MODE_IS_VALID(m)) {
+				if (MODE_IS_VALID(m, sc->sc_max_clock)) {
 					sc->sc_videomode = m;
 				} else {
 					aprint_error_dev(sc->sc_dev,
@@ -1735,7 +1753,8 @@ voodoofb_setup_i2c(struct voodoofb_softc *sc)
 				    sc->sc_edid_info.edid_nmodes);
 				while ((sc->sc_videomode == NULL) &&
 				       (n < sc->sc_edid_info.edid_nmodes)) {
-					if (MODE_IS_VALID(&m[n])) {
+					if (MODE_IS_VALID(&m[n], 
+					    sc->sc_max_clock)) {
 						sc->sc_videomode = &m[n];
 					}
 					n++;

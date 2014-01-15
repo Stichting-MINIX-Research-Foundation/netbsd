@@ -1,4 +1,4 @@
-/*	$NetBSD: machdep.c,v 1.7 2012/07/28 23:08:56 matt Exp $	*/
+/*	$NetBSD: machdep.c,v 1.9 2013/11/10 18:27:15 christos Exp $	*/
 
 /*
  * Copyright (c) 1988 University of Utah.
@@ -39,7 +39,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.7 2012/07/28 23:08:56 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.9 2013/11/10 18:27:15 christos Exp $");
 
 #include "opt_ddb.h"
 
@@ -112,7 +112,7 @@ void	mach_init (int, char *[], int, intptr_t, u_int, char *); /* XXX */
 static void	unimpl_bus_reset(void);
 static void	unimpl_cons_init(void);
 static void	unimpl_iointr(uint32_t, vaddr_t, uint32_t);
-static void	unimpl_intr_establish(struct device *, void *, int,
+static void	unimpl_intr_establish(device_t, void *, int,
 		    int (*)(void *, void *), void *);
 static int	unimpl_memsize(void *);
 
@@ -491,7 +491,6 @@ void
 cpu_reboot(volatile int howto,	/* XXX volatile to keep gcc happy */
            char *bootstr)
 {
-	int s = 0;
 
 	/* take a snap shot before clobbering any registers */
 	if (curlwp)
@@ -527,7 +526,7 @@ cpu_reboot(volatile int howto,	/* XXX volatile to keep gcc happy */
 	}
 
 	/* Disable interrupts. */
-	s = splhigh();
+	splhigh();
 
 	/* If rebooting and a dump is requested do it. */
 	if ((howto & (RB_DUMP | RB_HALT)) == RB_DUMP)
@@ -716,7 +715,7 @@ unimpl_iointr(uint32_t status, vaddr_t pc, uint32_t ipending)
 }
 
 static void
-unimpl_intr_establish(struct device *dev, void *cookie, int level,
+unimpl_intr_establish(device_t dev, void *cookie, int level,
                       int (*handler) (void *,void *), void *arg)
 {
 

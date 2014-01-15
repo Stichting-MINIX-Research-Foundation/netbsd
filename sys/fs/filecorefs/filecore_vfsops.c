@@ -1,4 +1,4 @@
-/*	$NetBSD: filecore_vfsops.c,v 1.69 2012/03/13 18:40:36 elad Exp $	*/
+/*	$NetBSD: filecore_vfsops.c,v 1.72 2013/11/23 13:35:36 christos Exp $	*/
 
 /*-
  * Copyright (c) 1994 The Regents of the University of California.
@@ -66,7 +66,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: filecore_vfsops.c,v 1.69 2012/03/13 18:40:36 elad Exp $");
+__KERNEL_RCSID(0, "$NetBSD: filecore_vfsops.c,v 1.72 2013/11/23 13:35:36 christos Exp $");
 
 #if defined(_KERNEL_OPT)
 #include "opt_compat_netbsd.h"
@@ -216,9 +216,7 @@ filecore_mountroot(void)
 		vfs_destroy(mp);
 		return (error);
 	}
-	mutex_enter(&mountlist_lock);
-	CIRCLEQ_INSERT_TAIL(&mountlist, mp, mnt_list);
-	mutex_exit(&mountlist_lock);
+	mountlist_append(mp);
 	(void)filecore_statvfs(mp, &mp->mnt_stat, p);
 	vfs_unbusy(mp, false, NULL);
 	return (0);
@@ -456,7 +454,7 @@ filecore_unmount(struct mount *mp, int mntflags)
 	fcmp = VFSTOFILECORE(mp);
 
 	if (fcmp->fc_devvp->v_type != VBAD)
-		fcmp->fc_devvp->v_specmountpoint = NULL;
+		spec_node_setmountedfs(fcmp->fc_devvp, NULL);
 	vn_lock(fcmp->fc_devvp, LK_EXCLUSIVE | LK_RETRY);
 	error = VOP_CLOSE(fcmp->fc_devvp, FREAD, NOCRED);
 	vput(fcmp->fc_devvp);
@@ -615,10 +613,6 @@ filecore_vget(struct mount *mp, ino_t ino, struct vnode **vpp)
 		if ((error = filecore_bread(fcmp, ino & FILECORE_INO_MASK,
 		    FILECORE_DIR_SIZE, NOCRED, &bp)) != 0) {
 			vput(vp);
-#ifdef FILECORE_DEBUG_BR
-			printf("brelse(%p) vf4\n", bp);
-#endif
-			brelse(bp, 0);
 			*vpp = NULL;
 			return (error);
 		}

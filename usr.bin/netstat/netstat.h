@@ -1,4 +1,4 @@
-/*	$NetBSD: netstat.h,v 1.44 2012/03/22 20:34:43 drochner Exp $	*/
+/*	$NetBSD: netstat.h,v 1.48 2013/11/23 22:01:12 christos Exp $	*/
 
 /*
  * Copyright (c) 1992, 1993
@@ -74,7 +74,7 @@ int	get_hardticks __P((void));
 
 void	protopr __P((u_long, const char *));
 void	tcp_stats __P((u_long, const char *));
-void	tcp_dump __P((u_long));
+void	tcp_dump __P((u_long, const char *, u_long));
 void	udp_stats __P((u_long, const char *));
 void	ip_stats __P((u_long, const char *));
 void	icmp_stats __P((u_long, const char *));
@@ -92,7 +92,7 @@ struct sockaddr_in6;
 struct in6_addr;
 void	ip6protopr __P((u_long, const char *));
 void	tcp6_stats __P((u_long, const char *));
-void	tcp6_dump __P((u_long));
+void	tcp6_dump __P((u_long, const char *, u_long));
 void	udp6_stats __P((u_long, const char *));
 void	ip6_stats __P((u_long, const char *));
 void	ip6_ifstats __P((const char *));
@@ -118,7 +118,6 @@ void	pr_rthdr __P((int, int));
 void	pr_family __P((int));
 void	rt_stats __P((u_long));
 char	*ns_phost __P((struct sockaddr *));
-void	upHex __P((char *));
 
 void	p_rttables(int);
 void	p_flags(int, const char *);
@@ -139,7 +138,6 @@ const char *atalk_print __P((const struct sockaddr *, int));
 const char *atalk_print2 __P((const struct sockaddr *, const struct sockaddr *,
     int));
 char	*ns_print __P((struct sockaddr *));
-void	routepr __P((u_long));
 
 void	nsprotopr __P((u_long, const char *));
 void	spp_stats __P((u_long, const char *));
@@ -153,15 +151,6 @@ void	intpr __P((int, u_long, void (*) __P((const char *))));
 
 void	unixpr __P((u_long));
 
-void	esis_stats __P((u_long, const char *));
-void	clnp_stats __P((u_long, const char *));
-void	cltp_stats __P((u_long, const char *));
-void	iso_protopr __P((u_long, const char *));
-void	iso_protopr1 __P((u_long, int));
-void	tp_protopr __P((u_long, const char *));
-void	tp_inproto __P((u_long));
-void	tp_stats __P((u_long, const char *));
-
 void	mroutepr __P((u_long, u_long, u_long, u_long));
 void	mrt_stats __P((u_long, u_long));
 
@@ -171,5 +160,7 @@ void	bpf_dump(const char *);
 kvm_t *get_kvmd(void);
 
 char	*mpls_ntoa(const struct sockaddr *);
+
+struct kinfo_pcb *getpcblist_sysctl(const char *, size_t *);
 
 #define PLEN    (LONG_BIT / 4 + 2)

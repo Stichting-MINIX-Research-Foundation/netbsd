@@ -1,4 +1,4 @@
-/*	$NetBSD: icap_ebus.c,v 1.2 2011/06/12 03:29:33 tsutsui Exp $	*/
+/*	$NetBSD: icap_ebus.c,v 1.4 2013/11/10 18:27:15 christos Exp $	*/
 
 /*-
  * Copyright (c) 2010 The NetBSD Foundation, Inc.
@@ -31,7 +31,7 @@
  */
 
 #include <sys/cdefs.h>			/* RCS ID & Copyright macro defns */
-__KERNEL_RCSID(0, "$NetBSD: icap_ebus.c,v 1.2 2011/06/12 03:29:33 tsutsui Exp $");
+__KERNEL_RCSID(0, "$NetBSD: icap_ebus.c,v 1.4 2013/11/10 18:27:15 christos Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -80,8 +80,8 @@ struct icap_softc {
 
 /* Required funcs
  */
-static int	icap_ebus_match (struct device *, struct cfdata *, void *);
-static void	icap_ebus_attach (struct device *, struct device *, void *);
+static int	icap_ebus_match (device_t, cfdata_t, void *);
+static void	icap_ebus_attach (device_t, device_t, void *);
 
 static dev_type_open(icapopen);
 static dev_type_close(icapclose);
@@ -105,7 +105,7 @@ CFATTACH_DECL_NEW(icap_ebus, sizeof (struct icap_softc),
     icap_ebus_match, icap_ebus_attach, NULL, NULL);
 
 static int
-icap_ebus_match(struct device *parent, struct cfdata *match, void *aux)
+icap_ebus_match(device_t parent, cfdata_t match, void *aux)
 {
 	struct ebus_attach_args *ia = aux;
     struct _Icap *f = (struct _Icap *)ia->ia_vaddr;
@@ -121,7 +121,7 @@ icap_ebus_match(struct device *parent, struct cfdata *match, void *aux)
 }
 
 static void
-icap_ebus_attach(struct device *parent, struct device *self, void *aux)
+icap_ebus_attach(device_t parent, device_t self, void *aux)
 {
 	struct icap_softc *sc = device_private(self);
 	struct ebus_attach_args *ia =aux;
@@ -387,6 +387,8 @@ icap_ebus_intr(void *cookie, void *f)
         saf = sc->sc_dp->SizeAndFlags;
         hi  = sc->sc_dp->BufferAddressHi32; /* BUGBUG 64bit */
         lo  = sc->sc_dp->BufferAddressLo32; /* this pops the fifo */
+	__USE(hi);
+	__USE(lo);
 
         /* Say its done that much (and sanity)
          */

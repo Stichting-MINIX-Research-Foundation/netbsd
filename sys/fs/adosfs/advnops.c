@@ -1,4 +1,4 @@
-/*	$NetBSD: advnops.c,v 1.39 2012/03/13 18:40:35 elad Exp $	*/
+/*	$NetBSD: advnops.c,v 1.41 2013/03/18 19:35:35 plunky Exp $	*/
 
 /*
  * Copyright (c) 1994 Christian E. Hopps
@@ -32,7 +32,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: advnops.c,v 1.39 2012/03/13 18:40:35 elad Exp $");
+__KERNEL_RCSID(0, "$NetBSD: advnops.c,v 1.41 2013/03/18 19:35:35 plunky Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -296,7 +296,6 @@ adosfs_read(void *v)
 		 */
 		error = bread(sp->a_vp, lbn, amp->bsize, NOCRED, 0, &bp);
 		if (error) {
-			brelse(bp, 0);
 			goto reterr;
 		}
 		if (!IS_FFS(amp)) {
@@ -518,7 +517,6 @@ adosfs_bmap(void *v)
 		error = bread(ap->amp->devvp, nb * ap->amp->bsize / DEV_BSIZE,
 			      ap->amp->bsize, NOCRED, 0, &flbp);
 		if (error) {
-			brelse(flbp, 0);
 			goto reterr;
 		}
 		if (adoscksum(flbp, ap->nwords)) {
@@ -778,7 +776,7 @@ adosfs_check_permitted(struct vnode *vp, struct anode *ap, mode_t mode,
 {
 	mode_t file_mode = adunixprot(ap->adprot) & ap->amp->mask;
 
-	return kauth_authorize_vnode(cred, kauth_access_action(mode,
+	return kauth_authorize_vnode(cred, KAUTH_ACCESS_ACTION(mode,
 	    vp->v_type, file_mode), vp, NULL, genfs_can_access(vp->v_type,
 	    file_mode, ap->uid, ap->gid, mode, cred));
 }

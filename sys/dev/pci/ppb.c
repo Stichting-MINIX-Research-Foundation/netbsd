@@ -1,4 +1,4 @@
-/*	$NetBSD: ppb.c,v 1.49 2012/01/29 11:31:38 drochner Exp $	*/
+/*	$NetBSD: ppb.c,v 1.52 2013/04/21 19:59:41 msaitoh Exp $	*/
 
 /*
  * Copyright (c) 1996, 1998 Christopher G. Demetriou.  All rights reserved.
@@ -31,7 +31,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ppb.c,v 1.49 2012/01/29 11:31:38 drochner Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ppb.c,v 1.52 2013/04/21 19:59:41 msaitoh Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -43,9 +43,9 @@ __KERNEL_RCSID(0, "$NetBSD: ppb.c,v 1.49 2012/01/29 11:31:38 drochner Exp $");
 #include <dev/pci/ppbreg.h>
 #include <dev/pci/pcidevs.h>
 
-#define	PCI_PCIE_SLCSR_NOTIFY_MASK					\
-	(PCI_PCIE_SLCSR_ABE | PCI_PCIE_SLCSR_PFE | PCI_PCIE_SLCSR_MSE |	\
-	 PCI_PCIE_SLCSR_PDE | PCI_PCIE_SLCSR_CCE | PCI_PCIE_SLCSR_HPE)
+#define	PCIE_SLCSR_NOTIFY_MASK					\
+	(PCIE_SLCSR_ABE | PCIE_SLCSR_PFE | PCIE_SLCSR_MSE |	\
+	 PCIE_SLCSR_PDE | PCIE_SLCSR_CCE | PCIE_SLCSR_HPE)
 
 struct ppb_softc {
 	device_t sc_dev;		/* generic device glue */
@@ -53,6 +53,10 @@ struct ppb_softc {
 	pcitag_t sc_tag;		/* ...and tag. */
 
 	pcireg_t sc_pciconfext[48];
+};
+
+static const char pcie_linkspeed_strings[4][5] = {
+	"1.25", "2.5", "5.0", "8.0",
 };
 
 static bool		ppb_resume(device_t, const pmf_qual_t *);
@@ -83,6 +87,13 @@ ppbmatch(device_t parent, cfdata_t match, void *aux)
 	}
 #endif
 
+#ifdef _MIPS_PADDR_T_64BIT
+	/* The LDT HB acts just like a PPB.  */
+	if (PCI_VENDOR(pa->pa_id) == PCI_VENDOR_SIBYTE
+	    && PCI_PRODUCT(pa->pa_id) == PCI_PRODUCT_SIBYTE_BCM1250_LDTHB)
+		return 1;
+#endif
+
 	return 0;
 }
 
@@ -98,55 +109,91 @@ ppb_fix_pcie(device_t self)
 		return; /* Not a PCIe device */
 
 	aprint_normal_dev(self, "PCI Express ");
-	switch (reg & PCI_PCIE_XCAP_VER_MASK) {
-	case PCI_PCIE_XCAP_VER_1_0:
+	switch (reg & PCIE_XCAP_VER_MASK) {
+	case PCIE_XCAP_VER_1_0:
 		aprint_normal("1.0");
 		break;
-	case PCI_PCIE_XCAP_VER_2_0:
+	case PCIE_XCAP_VER_2_0:
 		aprint_normal("2.0");
 		break;
 	default:
 		aprint_normal_dev(self,
 		    "version unsupported (0x%" PRIxMAX ")\n",
-		    __SHIFTOUT(reg, PCI_PCIE_XCAP_VER_MASK));
+		    __SHIFTOUT(reg, PCIE_XCAP_VER_MASK));
 		return;
 	}
 	aprint_normal(" <");
-	switch (reg & PCI_PCIE_XCAP_TYPE_MASK) {
-	case PCI_PCIE_XCAP_TYPE_PCIE_DEV:
+	switch (reg & PCIE_XCAP_TYPE_MASK) {
+	case PCIE_XCAP_TYPE_PCIE_DEV:
 		aprint_normal("PCI-E Endpoint device");
 		break;
-	case PCI_PCIE_XCAP_TYPE_PCI_DEV:
+	case PCIE_XCAP_TYPE_PCI_DEV:
 		aprint_normal("Legacy PCI-E Endpoint device");
 		break;
-	case PCI_PCIE_XCAP_TYPE_ROOT:
+	case PCIE_XCAP_TYPE_ROOT:
 		aprint_normal("Root Port of PCI-E Root Complex");
 		break;
-	case PCI_PCIE_XCAP_TYPE_UP:
+	case PCIE_XCAP_TYPE_UP:
 		aprint_normal("Upstream Port of PCI-E Switch");
 		break;
-	case PCI_PCIE_XCAP_TYPE_DOWN:
+	case PCIE_XCAP_TYPE_DOWN:
 		aprint_normal("Downstream Port of PCI-E Switch");
 		break;
-	case PCI_PCIE_XCAP_TYPE_PCIE2PCI:
+	case PCIE_XCAP_TYPE_PCIE2PCI:
 		aprint_normal("PCI-E to PCI/PCI-X Bridge");
 		break;
-	case PCI_PCIE_XCAP_TYPE_PCI2PCIE:
+	case PCIE_XCAP_TYPE_PCI2PCIE:
 		aprint_normal("PCI/PCI-X to PCI-E Bridge");
 		break;
 	default:
 		aprint_normal("Device/Port Type 0x%" PRIxMAX,
-		    __SHIFTOUT(reg, PCI_PCIE_XCAP_TYPE_MASK));
+		    __SHIFTOUT(reg, PCIE_XCAP_TYPE_MASK));
 		break;
 	}
-	aprint_normal(">\n");
 
-	reg = pci_conf_read(sc->sc_pc, sc->sc_tag, off + PCI_PCIE_SLCSR);
-	if (reg & PCI_PCIE_SLCSR_NOTIFY_MASK) {
+	switch (reg & PCIE_XCAP_TYPE_MASK) {
+	case PCIE_XCAP_TYPE_ROOT:
+	case PCIE_XCAP_TYPE_DOWN:
+	case PCIE_XCAP_TYPE_PCI2PCIE:
+		reg = pci_conf_read(sc->sc_pc, sc->sc_tag, off + 0x0c);
+		u_int mlw = (reg >> 4) & 0x1f;
+		u_int mls = (reg >> 0) & 0x0f;
+		if (mls < __arraycount(pcie_linkspeed_strings)) {
+			aprint_normal("> x%d @ %sGb/s\n",
+			    mlw, pcie_linkspeed_strings[mls]);
+		} else {
+			aprint_normal("> x%d @ %d.%dGb/s\n",
+			    mlw, (mls * 25) / 10, (mls * 25) % 10);
+		}
+
+		reg = pci_conf_read(sc->sc_pc, sc->sc_tag, off + 0x10);
+		if (reg & __BIT(29)) {	/* DLLA */
+			u_int lw = (reg >> 20) & 0x1f;
+			u_int ls = (reg >> 16) & 0x0f;
+			if (lw != mlw || ls != mls) {
+				if (ls < __arraycount(pcie_linkspeed_strings)) {
+					aprint_normal_dev(self,
+					    "link is x%d @ %sGb/s\n",
+					    lw, pcie_linkspeed_strings[ls]);
+				} else {
+					aprint_normal_dev(self,
+					    "link is x%d @ %d.%dGb/s\n",
+					    lw, (ls * 25) / 10, (ls * 25) % 10);
+				}
+			}
+		}
+		break;
+	default:
+		aprint_normal(">\n");
+		break;
+	}
+
+	reg = pci_conf_read(sc->sc_pc, sc->sc_tag, off + PCIE_SLCSR);
+	if (reg & PCIE_SLCSR_NOTIFY_MASK) {
 		aprint_debug_dev(self, "disabling notification events\n");
-		reg &= ~PCI_PCIE_SLCSR_NOTIFY_MASK;
+		reg &= ~PCIE_SLCSR_NOTIFY_MASK;
 		pci_conf_write(sc->sc_pc, sc->sc_tag,
-		    off + PCI_PCIE_SLCSR, reg);
+		    off + PCIE_SLCSR, reg);
 	}
 }
 

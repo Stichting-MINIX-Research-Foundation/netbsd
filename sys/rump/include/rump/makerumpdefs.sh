@@ -8,7 +8,7 @@ echo Generating rumpdefs.h
 rm -f rumpdefs.h
 exec > rumpdefs.h
 
-printf '/*	$NetBSD: makerumpdefs.sh,v 1.7 2012/07/20 09:02:48 pooka Exp $	*/\n\n'
+printf '/*	$NetBSD: makerumpdefs.sh,v 1.22 2013/11/13 16:42:00 pooka Exp $	*/\n\n'
 printf '/*\n *\tAUTOMATICALLY GENERATED.  DO NOT EDIT.\n */\n\n'
 printf '#ifndef _RUMP_RUMPDEFS_H_\n'
 printf '#define _RUMP_RUMPDEFS_H_\n\n'
@@ -19,37 +19,48 @@ fromvers () {
 	sed -n '1{s/\$//gp;q;}' $1
 }
 
-# Odds of sockaddr_in changing are zero, so no acrobatics needed.  Alas,
-# dealing with in_addr_t for s_addr is very difficult, so have it as
-# an incompatible uint32_t for now.
-echo
-cat <<EOF
-struct rump_sockaddr_in {
-	uint8_t		sin_len;
-	uint8_t		sin_family;
-	uint16_t	sin_port;
-	struct {
-			uint32_t s_addr;
-	} sin_addr;
-	int8_t		sin_zero[8];
-};
-EOF
+# not perfect, but works well enough for the cases so far
+# (also has one struct-specific hack for MAXNAMLEN)
+getstruct () {
+	sed -n '/struct[ 	]*'"$2"'[ 	]*{/{
+		a\
+struct rump_'"$2"' {
+		:loop
+		n
+		s/^}.*;$/};/p
+		t
+		/^#/!{/MAXNAMLEN/!{s/ino_t/uint64_t/;p;}}
+		b loop
+	}' < $1
+}
+
+# likewise not perfect, but as long as it's KNF, we're peachy (though
+# I personally like nectarines more)
+getenum () {
+	sed -n '/enum[ 	]*'"$2"'[ 	]*{/{
+		a\
+enum rump_'"$2"' {
+		:loop
+		n
+		s/^}.*;$/};/p
+		t
+		s/'$3'/RUMP_&/gp
+		b loop
+	}' < $1
+}
+
 
 fromvers ../../../sys/fcntl.h
 sed -n '/#define	O_[A-Z]*	*0x/s/O_/RUMP_O_/gp' \
     < ../../../sys/fcntl.h
 
 fromvers ../../../sys/vnode.h
-printf '#ifndef __VTYPE_DEFINED\n#define __VTYPE_DEFINED\n'
-sed -n '/enum vtype.*{/p' < ../../../sys/vnode.h
-printf '#endif /* __VTYPE_DEFINED */\n'
+sed -n '/enum vtype.*{/{s/vtype/rump_&/;s/ V/ RUMP_V/gp;}' <../../../sys/vnode.h
 sed -n '/#define.*LK_[A-Z]/s/LK_/RUMP_LK_/gp' <../../../sys/vnode.h	\
     | sed 's,/\*.*$,,'
 
 fromvers ../../../sys/errno.h
-printf '#ifndef EJUSTRETURN\n'
-sed -n '/EJUSTRETURN/p'	< ../../../sys/errno.h
-printf '#endif /* EJUSTRETURN */\n'
+sed -n '/#define[ 	]*E/s/E[A-Z]*/RUMP_&/p' < ../../../sys/errno.h
 
 fromvers ../../../sys/reboot.h
 sed -n '/#define.*RB_[A-Z]/s/RB_/RUMP_RB_/gp' <../../../sys/reboot.h	\
@@ -66,5 +77,43 @@ sed -n '/#define[ 	]*SO_[A-Z]/s/SO_/RUMP_&/gp' <../../../sys/socket.h \
     | sed 's,/\*.*$,,'
 sed -n '/#define[ 	]*SOL_[A-Z]/s/SOL_/RUMP_&/gp' <../../../sys/socket.h \
     | sed 's,/\*.*$,,'
+sed -n '/#define[ 	]*MSG_[A-Z]/s/MSG_/RUMP_&/gp' <../../../sys/socket.h \
+    | sed 's,/\*.*$,,'
+
+fromvers ../../../netinet/in.h
+sed -n '/#define[ 	]*IP_[A-Z]/s/IP_/RUMP_&/gp' <../../../netinet/in.h \
+    | sed 's,/\*.*$,,'
+sed -n '/#define[ 	]*IPPROTO_[A-Z]/s/IPPROTO_/RUMP_&/gp' <../../../netinet/in.h \
+    | sed 's,/\*.*$,,'
+
+fromvers ../../../netinet/tcp.h
+sed -n '/#define[ 	]*TCP_[A-Z]/s/TCP_/RUMP_&/gp' <../../../netinet/tcp.h \
+    | sed 's,/\*.*$,,'
+
+fromvers ../../../sys/mount.h
+sed -n '/#define[ 	]*MOUNT_[A-Z]/s/MOUNT_/RUMP_MOUNT_/gp' <../../../sys/mount.h | sed 's,/\*.*$,,'
+
+fromvers ../../../sys/fstypes.h
+sed -n '/#define[ 	]*MNT_[A-Z].*[^\]$/s/MNT_/RUMP_MNT_/gp' <../../../sys/fstypes.h | sed 's,/\*.*$,,'
+
+fromvers ../../../sys/ioccom.h
+sed -n '/#define[ 	]*IOC[A-Z_]/s/IOC/RUMP_&/gp' <../../../sys/ioccom.h | sed 's,/\*.*$,,'
+sed -n '/#define[ 	]*_IO.*\\$/{:t;N;/\\$/bt;s/_IOC/_RUMP_IOC/g;s/IOC[A-Z]/RUMP_&/gp}' <../../../sys/ioccom.h \
+    | sed 's,/\*.*$,,'
+sed -n '/#define[ 	]*_IO.*[^\]$/{s/_IO/_RUMP_IO/g;s/IOC_/RUMP_IOC_/gp}' <../../../sys/ioccom.h \
+    | sed 's,/\*.*$,,'
+
+fromvers ../../../sys/module.h
+getstruct ../../../sys/module.h modctl_load
+getenum ../../../sys/module.h modctl MODCTL
+
+fromvers ../../../ufs/ufs/ufsmount.h
+getstruct ../../../ufs/ufs/ufsmount.h ufs_args
+
+fromvers ../../../fs/sysvbfs/sysvbfs_args.h
+getstruct ../../../fs/sysvbfs/sysvbfs_args.h sysvbfs_args
+
+fromvers ../../../sys/dirent.h
+getstruct ../../../sys/dirent.h dirent
 
 printf '\n#endif /* _RUMP_RUMPDEFS_H_ */\n'

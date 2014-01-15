@@ -1,4 +1,4 @@
-/*	$NetBSD: denode.h,v 1.19 2011/04/04 19:16:58 hannken Exp $	*/
+/*	$NetBSD: denode.h,v 1.23 2013/01/26 19:45:02 christos Exp $	*/
 
 /*-
  * Copyright (C) 1994, 1995, 1997 Wolfgang Solfrank.
@@ -49,7 +49,15 @@
 #ifndef _MSDOSFS_DENODE_H_
 #define _MSDOSFS_DENODE_H_
 
+#ifndef MAKEFS
 #include <miscfs/genfs/genfs_node.h>
+#else
+struct genfs_node {
+};
+struct vnode;
+struct msdosfsmount;
+struct buf;
+#endif
 
 /*
  * This is the pc filesystem specific portion of the vnode structure.
@@ -101,7 +109,7 @@
 #define	MSDOSFSROOT_OFS	0x1fffffff
 
 /*
- * The fat cache structure. fc_fsrcn is the filesystem relative cluster
+ * The FAT cache structure. fc_fsrcn is the filesystem relative cluster
  * number that corresponds to the file relative cluster number in this
  * structure (fc_frcn).
  */
@@ -111,11 +119,11 @@ struct fatcache {
 };
 
 /*
- * The fat entry cache as it stands helps make extending files a "quick"
- * operation by avoiding having to scan the fat to discover the last
+ * The FAT entry cache as it stands helps make extending files a "quick"
+ * operation by avoiding having to scan the FAT to discover the last
  * cluster of the file. The cache also helps sequential reads by
  * remembering the last cluster read from the file.  This also prevents us
- * from having to rescan the fat to find the next cluster to read.  This
+ * from having to rescan the FAT to find the next cluster to read.  This
  * cache is probably pretty worthless if a file is opened by multiple
  * processes.
  */
@@ -128,7 +136,7 @@ struct fatcache {
 #define	FCE_EMPTY	0xffffffff	/* doesn't represent an actual cluster # */
 
 /*
- * Set a slot in the fat cache.
+ * Set a slot in the FAT cache.
  */
 #define	fc_setcache(dep, slot, frcn, fsrcn) \
 	(dep)->de_fc[slot].fc_frcn = frcn; \
@@ -169,7 +177,7 @@ struct denode {
 	u_short de_MDate;	/* modification date */
 	u_long de_StartCluster; /* starting cluster of file */
 	u_long de_FileSize;	/* size of file in bytes */
-	struct fatcache de_fc[FC_SIZE];	/* fat cache */
+	struct fatcache de_fc[FC_SIZE];	/* FAT cache */
 };
 
 /*
@@ -231,7 +239,7 @@ struct denode {
 #define	de_forw		de_chain[0]
 #define	de_back		de_chain[1]
 
-#ifdef _KERNEL
+#if defined(_KERNEL) || defined(MAKEFS)
 
 #define	VTODE(vp)	((struct denode *)(vp)->v_data)
 #define	DETOV(de)	((de)->de_vnode)
@@ -287,13 +295,16 @@ int	msdosfs_pathconf	(void *);
 /*
  * Internal service routine prototypes.
  */
+struct componentname;
+struct direntry;
+struct kauth_cred;
 int msdosfs_update(struct vnode *, const struct timespec *,
 	    const struct timespec *, int);
 int createde(struct denode *, struct denode *,
 		struct denode **, struct componentname *);
-int deextend(struct denode *, u_long, kauth_cred_t);
+int deextend(struct denode *, u_long, struct kauth_cred *);
 int deget(struct msdosfsmount *, u_long, u_long, struct denode **);
-int detrunc(struct denode *, u_long, int, kauth_cred_t);
+int detrunc(struct denode *, u_long, int, struct kauth_cred *);
 int deupdat(struct denode *, int);
 int doscheckpath(struct denode *, struct denode *);
 int dosdirempty(struct denode *);
@@ -304,7 +315,7 @@ void reinsert(struct denode *);
 int removede(struct denode *, struct denode *);
 int uniqdosname(struct denode *, struct componentname *, u_char *);
 int findwin95(struct denode *);
-int msdosfs_gop_alloc(struct vnode *, off_t, off_t, int, kauth_cred_t);
+int msdosfs_gop_alloc(struct vnode *, off_t, off_t, int, struct kauth_cred *);
 void msdosfs_gop_markupdate(struct vnode *, int);
 void msdosfs_detimes(struct denode *, const struct timespec *,
     const struct timespec *, const struct timespec *, int);
@@ -312,5 +323,5 @@ int msdosfs_fh_enter(struct msdosfsmount *, uint32_t, uint32_t, uint32_t *);
 int msdosfs_fh_remove(struct msdosfsmount *, uint32_t, uint32_t);
 int msdosfs_fh_lookup(struct msdosfsmount *, uint32_t, uint32_t, uint32_t *);
 void msdosfs_fh_destroy(struct msdosfsmount *);
-#endif	/* _KERNEL */
+#endif	/* _KERNEL || MAKEFS */
 #endif /* _MSDOSFS_DENODE_H_ */

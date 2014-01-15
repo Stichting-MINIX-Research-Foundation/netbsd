@@ -1,4 +1,4 @@
-/*	$NetBSD: dir.c,v 1.53 2011/03/06 17:08:16 bouyer Exp $	*/
+/*	$NetBSD: dir.c,v 1.57 2013/06/23 07:28:36 dholland Exp $	*/
 
 /*
  * Copyright (c) 1980, 1986, 1993
@@ -34,7 +34,7 @@
 #if 0
 static char sccsid[] = "@(#)dir.c	8.8 (Berkeley) 4/28/95";
 #else
-__RCSID("$NetBSD: dir.c,v 1.53 2011/03/06 17:08:16 bouyer Exp $");
+__RCSID("$NetBSD: dir.c,v 1.57 2013/06/23 07:28:36 dholland Exp $");
 #endif
 #endif /* not lint */
 
@@ -59,7 +59,7 @@ int	lfmode = 01700;
 ino_t	lfdir;
 struct	dirtemplate emptydir = {
 	.dot_ino = 0,
-	.dot_reclen = DIRBLKSIZ,
+	.dot_reclen = UFS_DIRBLKSIZ,
 };
 struct	dirtemplate dirhead = {
 	.dot_ino = 0,
@@ -68,7 +68,7 @@ struct	dirtemplate dirhead = {
 	.dot_namlen = 1,
 	.dot_name = ".",
 	.dotdot_ino = 0,
-	.dotdot_reclen = DIRBLKSIZ - 12,
+	.dotdot_reclen = UFS_DIRBLKSIZ - 12,
 	.dotdot_type = DT_DIR,
 	.dotdot_namlen = 2,
 	.dotdot_name = "..",
@@ -79,7 +79,7 @@ struct	odirtemplate odirhead = {
 	.dot_namlen = 1,
 	.dot_name = ".",
 	.dotdot_ino = 0,
-	.dotdot_reclen = DIRBLKSIZ - 12,
+	.dotdot_reclen = UFS_DIRBLKSIZ - 12,
 	.dotdot_namlen = 2,
 	.dotdot_name = "..",
 };
@@ -154,8 +154,8 @@ dirscan(struct inodesc *idesc)
 	struct bufarea *bp;
 	int dsize, n;
 	long blksiz;
-#if DIRBLKSIZ > APPLEUFS_DIRBLKSIZ
-	char dbuf[DIRBLKSIZ];
+#if UFS_DIRBLKSIZ > APPLEUFS_DIRBLKSIZ
+	char dbuf[UFS_DIRBLKSIZ];
 #else
 	char dbuf[APPLEUFS_DIRBLKSIZ];
 #endif
@@ -324,7 +324,7 @@ dircheck(struct inodesc *idesc, struct direct *dp)
 		return (0);
 	if (dp->d_ino == 0)
 		return (1);
-	size = DIRSIZ(!newinofmt, dp, needswap);
+	size = UFS_DIRSIZ(!newinofmt, dp, needswap);
 #	if (BYTE_ORDER == LITTLE_ENDIAN)
 		if (!newinofmt && !needswap) {
 #	else
@@ -367,7 +367,7 @@ fileerror(ino_t cwd, ino_t ino, const char *errmesg)
 	pinode(ino);
 	printf("\n");
 	getpathname(pathbuf, sizeof(pathbuf), cwd, ino);
-	if (ino < ROOTINO || ino > maxino) {
+	if (ino < UFS_ROOTINO || ino > maxino) {
 		pfatal("NAME=%s\n", pathbuf);
 		return;
 	}
@@ -450,9 +450,9 @@ mkentry(struct inodesc *idesc)
 	int newlen, oldlen;
 
 	newent.d_namlen = strlen(idesc->id_name);
-	newlen = DIRSIZ(0, &newent, 0);
+	newlen = UFS_DIRSIZ(0, &newent, 0);
 	if (dirp->d_ino != 0)
-		oldlen = DIRSIZ(0, dirp, 0);
+		oldlen = UFS_DIRSIZ(0, dirp, 0);
 	else
 		oldlen = 0;
 	if (iswap16(dirp->d_reclen) - oldlen < newlen)
@@ -534,11 +534,11 @@ linkup(ino_t orphan, ino_t parentdir, char *name)
 	if (parentdir != 0)
 		inoinfo(parentdir)->ino_linkcnt++;
 	if (lfdir == 0) {
-		dp = ginode(ROOTINO);
+		dp = ginode(UFS_ROOTINO);
 		idesc.id_name = lfname;
 		idesc.id_type = DATA;
 		idesc.id_func = findino;
-		idesc.id_number = ROOTINO;
+		idesc.id_number = UFS_ROOTINO;
 		idesc.id_uid = iswap32(DIP(dp, uid));
 		idesc.id_gid = iswap32(DIP(dp, gid));
 		if ((ckinode(dp, &idesc) & FOUND) != 0) {
@@ -546,21 +546,21 @@ linkup(ino_t orphan, ino_t parentdir, char *name)
 		} else {
 			pwarn("NO lost+found DIRECTORY");
 			if (preen || reply("CREATE")) {
-				lfdir = allocdir(ROOTINO, (ino_t)0, lfmode);
+				lfdir = allocdir(UFS_ROOTINO, (ino_t)0, lfmode);
 				if (lfdir != 0) {
-					if (makeentry(ROOTINO, lfdir, lfname) != 0) {
+					if (makeentry(UFS_ROOTINO, lfdir, lfname) != 0) {
 						numdirs++;
 						if (preen)
 							printf(" (CREATED)\n");
 					} else {
-						freedir(lfdir, ROOTINO);
+						freedir(lfdir, UFS_ROOTINO);
 						lfdir = 0;
 						if (preen)
 							printf("\n");
 					}
 				}
 				if (lfdir != 0) {
-					reparent(lfdir, ROOTINO);
+					reparent(lfdir, UFS_ROOTINO);
 				}
 			}
 		}
@@ -580,19 +580,19 @@ linkup(ino_t orphan, ino_t parentdir, char *name)
 			return (0);
 		}
 		oldlfdir = lfdir;
-		lfdir = allocdir(ROOTINO, (ino_t)0, lfmode);
+		lfdir = allocdir(UFS_ROOTINO, (ino_t)0, lfmode);
 		if (lfdir == 0) {
 			pfatal("SORRY. CANNOT CREATE lost+found DIRECTORY\n\n");
 			markclean = 0;
 			return (0);
 		}
-		if ((changeino(ROOTINO, lfname, lfdir) & ALTERED) == 0) {
+		if ((changeino(UFS_ROOTINO, lfname, lfdir) & ALTERED) == 0) {
 			pfatal("SORRY. CANNOT CREATE lost+found DIRECTORY\n\n");
 			markclean = 0;
 			return (0);
 		}
 		inodirty();
-		reparent(lfdir, ROOTINO);
+		reparent(lfdir, UFS_ROOTINO);
 		idesc.id_type = ADDR;
 		idesc.id_func = pass4check;
 		idesc.id_number = oldlfdir;
@@ -665,8 +665,8 @@ makeentry(ino_t parent, ino_t ino, const char *name)
 	struct inodesc idesc;
 	char pathbuf[MAXPATHLEN + 1];
 	
-	if (parent < ROOTINO || parent >= maxino ||
-	    ino < ROOTINO || ino >= maxino)
+	if (parent < UFS_ROOTINO || parent >= maxino ||
+	    ino < UFS_ROOTINO || ino >= maxino)
 		return (0);
 	dp = ginode(parent);
 	memset(&idesc, 0, sizeof(struct inodesc));
@@ -716,8 +716,8 @@ expanddir(union dinode *dp, char *name)
 	else
 		dp1 = &dp->dp1;
 
-	lastbn = lblkno(sblock, iswap64(DIP(dp, size)));
-	if (lastbn >= NDADDR - 1 || DIP(dp, db[lastbn]) == 0 ||
+	lastbn = ffs_lblkno(sblock, iswap64(DIP(dp, size)));
+	if (lastbn >= UFS_NDADDR - 1 || DIP(dp, db[lastbn]) == 0 ||
 	    DIP(dp, size) == 0)
 		return (0);
 	if ((newblk = allocblk(sblock->fs_frag)) == 0)
@@ -737,7 +737,7 @@ expanddir(union dinode *dp, char *name)
 		    btodb(sblock->fs_bsize));
 		dirblk = iswap32(dp1->di_db[lastbn + 1]);
 	}
-	bp = getdirblk(dirblk, sblksize(sblock, (daddr_t)DIP(dp, size), lastbn + 1));
+	bp = getdirblk(dirblk, ffs_sblksize(sblock, (daddr_t)DIP(dp, size), lastbn + 1));
 	if (bp->b_errs)
 		goto bad;
 	memmove(firstblk, bp->b_un.b_buf, dirblksiz);
@@ -751,7 +751,7 @@ expanddir(union dinode *dp, char *name)
 	     cp += dirblksiz)
 		memmove(cp, &emptydir, sizeof emptydir);
 	dirty(bp);
-	bp = getdirblk(dirblk, sblksize(sblock, (daddr_t)DIP(dp, size), lastbn + 1));
+	bp = getdirblk(dirblk, ffs_sblksize(sblock, (daddr_t)DIP(dp, size), lastbn + 1));
 	if (bp->b_errs)
 		goto bad;
 	memmove(bp->b_un.b_buf, &emptydir, sizeof emptydir);
@@ -797,7 +797,7 @@ allocdir(ino_t parent, ino_t request, int mode)
 	daddr_t dirblk;
 
 	ino = allocino(request, IFDIR|mode);
-	if (ino < ROOTINO)
+	if (ino < UFS_ROOTINO)
 		return 0;
 	update_uquot(ino, 0, 0, btodb(sblock->fs_fsize), 1);
 	dirhead.dot_reclen = iswap16(12);
@@ -829,7 +829,7 @@ allocdir(ino_t parent, ino_t request, int mode)
 	dirty(bp);
 	DIP_SET(dp, nlink, iswap16(2));
 	inodirty();
-	if (ino == ROOTINO) {
+	if (ino == UFS_ROOTINO) {
 		inoinfo(ino)->ino_linkcnt = iswap16(DIP(dp, nlink));
 		cacheino(dp, ino);
 		return(ino);

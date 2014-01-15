@@ -1,4 +1,4 @@
-/*	$NetBSD: cd9660_vnops.c,v 1.41 2012/03/13 18:40:36 elad Exp $	*/
+/*	$NetBSD: cd9660_vnops.c,v 1.45 2013/06/23 07:28:36 dholland Exp $	*/
 
 /*-
  * Copyright (c) 1994
@@ -37,7 +37,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: cd9660_vnops.c,v 1.41 2012/03/13 18:40:36 elad Exp $");
+__KERNEL_RCSID(0, "$NetBSD: cd9660_vnops.c,v 1.45 2013/06/23 07:28:36 dholland Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -117,7 +117,7 @@ cd9660_check_permitted(struct vnode *vp, struct iso_node *ip, mode_t mode,
     kauth_cred_t cred)
 {
 
-	return kauth_authorize_vnode(cred, kauth_access_action(mode,
+	return kauth_authorize_vnode(cred, KAUTH_ACCESS_ACTION(mode,
 	    vp->v_type, ip->inode.iso_mode & ALLPERMS), vp, NULL,
 	    genfs_can_access(vp->v_type, ip->inode.iso_mode & ALLPERMS,
 	    ip->inode.iso_uid, ip->inode.iso_gid, mode, cred));
@@ -249,28 +249,27 @@ cd9660_read(void *v)
 	}
 
 	do {
-		lbn = lblkno(imp, uio->uio_offset);
-		on = blkoff(imp, uio->uio_offset);
+		lbn = cd9660_lblkno(imp, uio->uio_offset);
+		on = cd9660_blkoff(imp, uio->uio_offset);
 		n = MIN(imp->logical_block_size - on, uio->uio_resid);
 		diff = (off_t)ip->i_size - uio->uio_offset;
 		if (diff <= 0)
 			return (0);
 		if (diff < n)
 			n = diff;
-		size = blksize(imp, ip, lbn);
+		size = cd9660_blksize(imp, ip, lbn);
 		rablock = lbn + 1;
-		if (lblktosize(imp, rablock) < ip->i_size) {
-			rasize = blksize(imp, ip, rablock);
+		if (cd9660_lblktosize(imp, rablock) < ip->i_size) {
+			rasize = cd9660_blksize(imp, ip, rablock);
 			error = breadn(vp, lbn, size, &rablock,
 				       &rasize, 1, NOCRED, 0, &bp);
 		} else {
 			error = bread(vp, lbn, size, NOCRED, 0, &bp);
 		}
-		n = MIN(n, size - bp->b_resid);
 		if (error) {
-			brelse(bp, 0);
 			return (error);
 		}
+		n = MIN(n, size - bp->b_resid);
 
 		error = uiomove((char *)bp->b_data + on, (int)n, uio);
 		brelse(bp, 0);
@@ -603,7 +602,6 @@ cd9660_readlink(void *v)
 		      (imp->im_bshift - DEV_BSHIFT),
 		      imp->logical_block_size, NOCRED, 0, &bp);
 	if (error) {
-		brelse(bp, 0);
 		return (EINVAL);
 	}
 

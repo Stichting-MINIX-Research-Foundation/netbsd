@@ -1,4 +1,4 @@
-/*      $NetBSD: hijack.c,v 1.100 2012/10/16 12:56:10 pooka Exp $	*/
+/*      $NetBSD: hijack.c,v 1.106 2013/09/10 16:53:06 pooka Exp $	*/
 
 /*-
  * Copyright (c) 2011 Antti Kantee.  All Rights Reserved.
@@ -25,24 +25,22 @@
  * SUCH DAMAGE.
  */
 
-/* Disable namespace mangling, Fortification is useless here anyway. */
-#undef _FORTIFY_SOURCE
+#include <rump/rumpuser_port.h>
 
-#include "rumpuser_port.h"
-
-#include <sys/cdefs.h>
-__RCSID("$NetBSD: hijack.c,v 1.100 2012/10/16 12:56:10 pooka Exp $");
+#if !defined(lint)
+__RCSID("$NetBSD: hijack.c,v 1.106 2013/09/10 16:53:06 pooka Exp $");
+#endif
 
 #include <sys/param.h>
 #include <sys/types.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/mount.h>
-#include <sys/poll.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 #include <sys/time.h>
+#include <sys/uio.h>
 
 #ifdef PLATFORM_HAS_KQUEUE
 #include <sys/event.h>
@@ -1303,12 +1301,24 @@ accept(int s, struct sockaddr *addr, socklen_t *addrlen)
 }
 
 /*
- * ioctl and fcntl are varargs calls and need special treatment
+ * ioctl() and fcntl() are varargs calls and need special treatment.
+ */
+
+/*
+ * Various [Linux] libc's have various signatures for ioctl so we
+ * need to handle the discrepancies.  On NetBSD, we use the
+ * one with unsigned long cmd.
  */
 int
+#ifdef HAVE_IOCTL_CMD_INT
+ioctl(int fd, int cmd, ...)
+{
+	int (*op_ioctl)(int, int cmd, ...);
+#else
 ioctl(int fd, unsigned long cmd, ...)
 {
 	int (*op_ioctl)(int, unsigned long cmd, ...);
+#endif
 	va_list ap;
 	int rv;
 

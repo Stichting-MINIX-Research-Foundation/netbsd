@@ -1,4 +1,4 @@
-/*	$NetBSD: rumpuser_daemonize.c,v 1.3 2012/07/27 09:09:05 pooka Exp $	*/
+/*	$NetBSD: rumpuser_daemonize.c,v 1.6 2013/05/07 15:18:35 pooka Exp $	*/
 
 /*
  * Copyright (c) 2010 Antti Kantee.  All Rights Reserved.
@@ -28,7 +28,7 @@
 #include "rumpuser_port.h"
 
 #if !defined(lint)
-__RCSID("$NetBSD: rumpuser_daemonize.c,v 1.3 2012/07/27 09:09:05 pooka Exp $");
+__RCSID("$NetBSD: rumpuser_daemonize.c,v 1.6 2013/05/07 15:18:35 pooka Exp $");
 #endif /* !lint */
 
 #include <sys/types.h>
@@ -36,9 +36,17 @@ __RCSID("$NetBSD: rumpuser_daemonize.c,v 1.3 2012/07/27 09:09:05 pooka Exp $");
 
 #include <errno.h>
 #include <fcntl.h>
-#include <paths.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <unistd.h>
+
+#include "rumpuser_int.h"
+
+#ifdef __sun__
+#define _PATH_DEVNULL "/dev/null"
+#else
+#include <paths.h>
+#endif
 
 static int isdaemonizing;
 static int daemonpipe[2];
@@ -50,9 +58,12 @@ rumpuser_daemonize_begin(void)
 {
 	ssize_t n;
 	int error;
+	int rv;
 
-	if (isdaemonizing)
-		return EINPROGRESS;
+	if (isdaemonizing) {
+		rv = EINPROGRESS;
+		goto out;
+	}
 	isdaemonizing = 1;
 
 	/*
@@ -67,7 +78,8 @@ rumpuser_daemonize_begin(void)
 	 * take care of that or not.
 	 */
 	if (socketpair(PF_LOCAL, SOCK_STREAM, 0, daemonpipe) == -1) {
-		return errno;
+		rv = errno;
+		goto out;
 	}
 
 	switch (fork()) {
@@ -75,9 +87,11 @@ rumpuser_daemonize_begin(void)
 		if (setsid() == -1) {
 			rumpuser_daemonize_done(errno);
 		}
-		return 0;
+		rv = 0;
+		break;
 	case -1:
-		return errno;
+		rv = errno;
+		break;
 	default:
 		close(daemonpipe[1]);
 		n = recv(daemonpipe[0], &error, sizeof(error), MSG_NOSIGNAL);
@@ -88,16 +102,21 @@ rumpuser_daemonize_begin(void)
 		_exit(error);
 		/*NOTREACHED*/
 	}
+
+ out:
+	ET(rv);
 }
 
 int
 rumpuser_daemonize_done(int error)
 {
 	ssize_t n;
-	int fd;
+	int fd, rv = 0;
 
-	if (!isdaemonizing)
-		return ENOENT;
+	if (!isdaemonizing) {
+		rv = ENOENT;
+		goto outout;
+	}
 
 	if (error == 0) {
 		fd = open(_PATH_DEVNULL, O_RDWR);
@@ -114,12 +133,15 @@ rumpuser_daemonize_done(int error)
 
  out:
 	n = send(daemonpipe[1], &error, sizeof(error), MSG_NOSIGNAL);
-	if (n != sizeof(error))
-		return EPIPE;
-	else if (n == -1)
-		return errno;
-	close(daemonpipe[0]);
-	close(daemonpipe[1]);
+	if (n != sizeof(error)) {
+		rv = EPIPE;
+	} else if (n == -1) {
+		rv = errno;
+	} else {
+		close(daemonpipe[0]);
+		close(daemonpipe[1]);
+	}
 
-	return 0;
+ outout:
+	ET(rv);
 }

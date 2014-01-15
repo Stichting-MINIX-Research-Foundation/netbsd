@@ -1,4 +1,4 @@
-/* $NetBSD: mfi.c,v 1.47 2012/09/19 21:24:29 bouyer Exp $ */
+/* $NetBSD: mfi.c,v 1.50 2013/10/17 21:24:24 christos Exp $ */
 /* $OpenBSD: mfi.c,v 1.66 2006/11/28 23:59:45 dlg Exp $ */
 
 /*
@@ -73,7 +73,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: mfi.c,v 1.47 2012/09/19 21:24:29 bouyer Exp $");
+__KERNEL_RCSID(0, "$NetBSD: mfi.c,v 1.50 2013/10/17 21:24:24 christos Exp $");
 
 #include "bio.h"
 
@@ -370,15 +370,15 @@ mfi_init_ccb(struct mfi_softc *sc)
 
 	sc->sc_ccb = malloc(sizeof(struct mfi_ccb) * sc->sc_max_cmds,
 	    M_DEVBUF, M_WAITOK|M_ZERO);
+	io_req_base = (uint8_t *)MFIMEM_KVA(sc->sc_tbolt_reqmsgpool);
+	io_req_base_phys = MFIMEM_DVA(sc->sc_tbolt_reqmsgpool);
 	if (sc->sc_ioptype == MFI_IOP_TBOLT) {
 		/*
 		 * The first 256 bytes (SMID 0) is not used.
 		 * Don't add to the cmd list.
 		 */
-		io_req_base = (uint8_t *)MFIMEM_KVA(sc->sc_tbolt_reqmsgpool) +
-			MEGASAS_THUNDERBOLT_NEW_MSG_SIZE;
-		io_req_base_phys = MFIMEM_DVA(sc->sc_tbolt_reqmsgpool) +
-			MEGASAS_THUNDERBOLT_NEW_MSG_SIZE;
+		io_req_base += MEGASAS_THUNDERBOLT_NEW_MSG_SIZE;
+		io_req_base_phys += MEGASAS_THUNDERBOLT_NEW_MSG_SIZE;
 	}
 
 	for (i = 0; i < sc->sc_max_cmds; i++) {
@@ -587,12 +587,14 @@ mfi_transition_firmware(struct mfi_softc *sc)
 			max_wait = 20;
 			break;
 		case MFI_STATE_BOOT_MESSAGE_PENDING:
-			if (sc->sc_ioptype == MFI_IOP_TBOLT) {
+			if (sc->sc_ioptype == MFI_IOP_SKINNY ||
+			    sc->sc_ioptype == MFI_IOP_TBOLT) {
 				mfi_write(sc, MFI_SKINNY_IDB, MFI_INIT_HOTPLUG);
-				max_wait = 180;
-				break;
+			} else {
+				mfi_write(sc, MFI_IDB, MFI_INIT_HOTPLUG);
 			}
-			/* FALLTHROUGH */
+			max_wait = 180;
+			break;
 		default:
 			aprint_error_dev(sc->sc_dev,
 			    "unknown firmware state %d\n", fw_state);
@@ -2338,7 +2340,6 @@ mfi_ioctl_setstate(struct mfi_softc *sc, struct bioc_setstate *bs)
 	struct mfi_pd_list	*pd;
 	int			i, found, rv = EINVAL;
 	uint8_t			mbox[MFI_MBOX_SIZE];
-	uint32_t		cmd;
 
 	DNPRINTF(MFI_D_IOCTL, "%s: mfi_ioctl_setstate %x\n", DEVNAME(sc),
 	    bs->bs_status);
@@ -2366,21 +2367,17 @@ mfi_ioctl_setstate(struct mfi_softc *sc, struct bioc_setstate *bs)
 	switch (bs->bs_status) {
 	case BIOC_SSONLINE:
 		mbox[2] = MFI_PD_ONLINE;
-		cmd = MD_DCMD_PD_SET_STATE;
 		break;
 
 	case BIOC_SSOFFLINE:
 		mbox[2] = MFI_PD_OFFLINE;
-		cmd = MD_DCMD_PD_SET_STATE;
 		break;
 
 	case BIOC_SSHOTSPARE:
 		mbox[2] = MFI_PD_HOTSPARE;
-		cmd = MD_DCMD_PD_SET_STATE;
 		break;
 /*
 	case BIOC_SSREBUILD:
-		cmd = MD_DCMD_PD_REBUILD;
 		break;
 */
 	default:
@@ -3499,9 +3496,6 @@ mfifopen(dev_t dev, int flag, int mode, struct lwp *l)
 static int
 mfifclose(dev_t dev, int flag, int mode, struct lwp *l)
 {
-	struct mfi_softc *sc;
-
-	sc = device_lookup_private(&mfi_cd, minor(dev));
 	return (0);
 }
 

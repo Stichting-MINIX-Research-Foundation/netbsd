@@ -1,4 +1,4 @@
-/*	$NetBSD: if_ppp.c,v 1.137 2012/10/11 20:05:50 christos Exp $	*/
+/*	$NetBSD: if_ppp.c,v 1.141 2013/09/18 23:34:55 rmind Exp $	*/
 /*	Id: if_ppp.c,v 1.6 1997/03/04 03:33:00 paulus Exp 	*/
 
 /*
@@ -102,7 +102,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_ppp.c,v 1.137 2012/10/11 20:05:50 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_ppp.c,v 1.141 2013/09/18 23:34:55 rmind Exp $");
 
 #include "ppp.h"
 
@@ -946,8 +946,8 @@ pppoutput(struct ifnet *ifp, struct mbuf *m0, const struct sockaddr *dst,
 	 * but only if it is a data packet.
 	 */
 	if (sc->sc_pass_filt_out.bf_insns != 0
-	    && bpf_filter(sc->sc_pass_filt_out.bf_insns, (u_char *) m0,
-			  len, 0) == 0) {
+	    && bpf_filter(sc->sc_pass_filt_out.bf_insns,
+			  (u_char *)m0, len, 0) == 0) {
 	    error = 0;		/* drop this packet */
 	    goto bad;
 	}
@@ -956,8 +956,8 @@ pppoutput(struct ifnet *ifp, struct mbuf *m0, const struct sockaddr *dst,
 	 * Update the time we sent the most recent packet.
 	 */
 	if (sc->sc_active_filt_out.bf_insns == 0
-	    || bpf_filter(sc->sc_active_filt_out.bf_insns, (u_char *) m0,
-	    		  len, 0))
+	    || bpf_filter(sc->sc_active_filt_out.bf_insns,
+			  (u_char *)m0, len, 0))
 	    sc->sc_last_sent = time_second;
 #else
 	/*
@@ -1266,7 +1266,7 @@ ppp_ccp(struct ppp_softc *sc, struct mbuf *m, int rcvd)
 	mp = m->m_next;
 	if (mp == NULL)
 	    return;
-	dp = (mp != NULL)? mtod(mp, u_char *): NULL;
+	dp = mtod(mp, u_char *);
     } else {
 	mp = m;
 	dp = mtod(mp, u_char *) + PPP_HDRLEN;
@@ -1584,15 +1584,15 @@ ppp_inproc(struct ppp_softc *sc, struct mbuf *m)
 	 * if it counts as link activity.
 	 */
 	if (sc->sc_pass_filt_in.bf_insns != 0
-	    && bpf_filter(sc->sc_pass_filt_in.bf_insns, (u_char *) m,
-			  ilen, 0) == 0) {
+	    && bpf_filter(sc->sc_pass_filt_in.bf_insns,
+			  (u_char *)m, ilen, 0) == 0) {
 	    /* drop this packet */
 	    m_freem(m);
 	    return;
 	}
 	if (sc->sc_active_filt_in.bf_insns == 0
-	    || bpf_filter(sc->sc_active_filt_in.bf_insns, (u_char *) m,
-	    		  ilen, 0))
+	    || bpf_filter(sc->sc_active_filt_in.bf_insns,
+			  (u_char *)m, ilen, 0))
 	    sc->sc_last_recv = time_second;
 #else
 	/*

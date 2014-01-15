@@ -1,4 +1,4 @@
-/*	$NetBSD: a9tmr.c,v 1.3 2012/09/27 00:23:27 matt Exp $	*/
+/*	$NetBSD: a9tmr.c,v 1.6 2013/06/20 05:30:21 matt Exp $	*/
 
 /*-
  * Copyright (c) 2012 The NetBSD Foundation, Inc.
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: a9tmr.c,v 1.3 2012/09/27 00:23:27 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: a9tmr.c,v 1.6 2013/06/20 05:30:21 matt Exp $");
 
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -92,6 +92,9 @@ a9tmr_match(device_t parent, cfdata_t cf, void *aux)
 	if (a9tmr_sc.sc_dev != NULL)
 		return 0;
 
+	if ((armreg_pfr1_read() & ARM_PFR1_GTIMER_MASK) != 0)
+		return 0;
+
 	if (!CPU_ID_CORTEX_A9_P(curcpu()->ci_arm_cpuid))
 		return 0;
 
@@ -120,9 +123,7 @@ a9tmr_attach(device_t parent, device_t self, void *aux)
 	 * This runs at the ARM PERIPHCLOCK which should be 1/2 of the CPU clock.
 	 * The MD code should have setup our frequency for us.
 	 */
-	prop_number_t pn = prop_dictionary_get(dict, "frequency");
-	KASSERT(pn != NULL);
-	sc->sc_freq = prop_number_unsigned_integer_value(pn);
+	prop_dictionary_get_uint32(dict, "frequency", &sc->sc_freq);
 
 	humanize_number(freqbuf, sizeof(freqbuf), sc->sc_freq, "Hz", 1000);
 
@@ -196,7 +197,7 @@ a9tmr_init_cpu_clock(struct cpu_info *ci)
 	 * Re-enable the comparator and now enable interrupts.
 	 */
 	a9tmr_global_write(sc, TMR_GBL_INT, 1);	/* clear interrupt pending */
-	ctl |= TMR_GBL_CTL_CMP_ENABLE | TMR_GBL_CTL_INT_ENABLE | TMR_GBL_CTL_AUTO_INC;
+	ctl |= TMR_GBL_CTL_CMP_ENABLE | TMR_GBL_CTL_INT_ENABLE | TMR_GBL_CTL_AUTO_INC | TMR_CTL_ENABLE;
 	a9tmr_global_write(sc, TMR_GBL_CTL, ctl);
 #if 0
 	printf("%s: %s: ctl %#x autoinc %u cmp %#x%08x now %#"PRIx64"\n",

@@ -1,4 +1,4 @@
-/*	$NetBSD: mscp_disk.c,v 1.75 2012/07/11 16:41:16 abs Exp $	*/
+/*	$NetBSD: mscp_disk.c,v 1.77 2013/10/25 16:00:35 martin Exp $	*/
 /*
  * Copyright (c) 1988 Regents of the University of California.
  * All rights reserved.
@@ -82,7 +82,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: mscp_disk.c,v 1.75 2012/07/11 16:41:16 abs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: mscp_disk.c,v 1.77 2013/10/25 16:00:35 martin Exp $");
 
 #include <sys/param.h>
 #include <sys/buf.h>
@@ -116,7 +116,7 @@ __KERNEL_RCSID(0, "$NetBSD: mscp_disk.c,v 1.75 2012/07/11 16:41:16 abs Exp $");
  * Drive status, per drive
  */
 struct ra_softc {
-	struct	device ra_dev;	/* Autoconf struct */
+	device_t ra_dev;	/* Autoconf struct */
 	struct	disk ra_disk;
 	int	ra_state;	/* open/closed state */
 	u_long	ra_mediaid;	/* media id */
@@ -138,7 +138,7 @@ static inline struct ra_softc *mscp_device_lookup(dev_t);
 
 int	ramatch(device_t, cfdata_t, void *);
 
-CFATTACH_DECL(ra, sizeof(struct ra_softc),
+CFATTACH_DECL_NEW(ra, sizeof(struct ra_softc),
     ramatch, raattach, NULL, NULL);
 
 #endif /* NRA */
@@ -320,13 +320,11 @@ void
 rastrategy(struct buf *bp)
 {
 	struct ra_softc *ra = mscp_device_lookup(bp->b_dev);
-	int unit;
 	int b;
 
 	/*
 	 * Make sure this is a reasonable drive to use.
 	 */
-	unit = DISKUNIT(bp->b_dev);
 	if (ra == NULL) {
 		bp->b_error = ENXIO;
 		goto done;
@@ -339,7 +337,7 @@ rastrategy(struct buf *bp)
 	        b = splbio();
 	        disk_busy(&ra->ra_disk);
 		splx(b);
-		mscp_strategy(bp, device_parent(&ra->ra_dev));
+		mscp_strategy(bp, device_parent(ra->ra_dev));
 		return;
 	}
 
@@ -361,7 +359,7 @@ rastrategy(struct buf *bp)
 	b = splbio();
 	disk_busy(&ra->ra_disk);
 	splx(b);
-	mscp_strategy(bp, device_parent(&ra->ra_dev));
+	mscp_strategy(bp, device_parent(ra->ra_dev));
 	return;
 
 done:
@@ -490,7 +488,7 @@ raioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 			return (EBADF);
 
 		/* If the ioctl happens here, the parent is us. */
-		strlcpy(dkw->dkw_parent, device_xname(&ra->ra_dev),
+		strlcpy(dkw->dkw_parent, device_xname(ra->ra_dev),
 			sizeof(dkw->dkw_parent));
 		return (dkwedge_add(dkw));
 	    }
@@ -503,7 +501,7 @@ raioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 			return (EBADF);
 
 		/* If the ioctl happens here, the parent is us. */
-		strlcpy(dkw->dkw_parent, device_xname(&ra->ra_dev),
+		strlcpy(dkw->dkw_parent, device_xname(ra->ra_dev),
 			sizeof(dkw->dkw_parent));
 		return (dkwedge_del(dkw));
 	    }
@@ -553,7 +551,7 @@ rasize(dev_t dev)
 
 int	rxmatch(device_t, cfdata_t, void *);
 
-CFATTACH_DECL(rx, sizeof(struct rx_softc),
+CFATTACH_DECL_NEW(rx, sizeof(struct rx_softc),
     rxmatch, raattach, NULL, NULL);
 
 dev_type_open(rxopen);
@@ -609,7 +607,7 @@ rxmatch(device_t parent, cfdata_t cf, void *aux)
 
 int	racdmatch(device_t, cfdata_t, void *);
 
-CFATTACH_DECL(racd, sizeof(struct racd_softc),
+CFATTACH_DECL_NEW(racd, sizeof(struct racd_softc),
     racdmatch, raattach, NULL, NULL);
 
 dev_type_open(raopen);
@@ -669,9 +667,10 @@ raattach(device_t parent, device_t self, void *aux)
 	struct	rx_softc *rx = device_private(self);
 	struct	drive_attach_args *da = aux;
 	struct	mscp *mp = da->da_mp;
-	struct	mscp_softc *mi = (void *)parent;
+	struct	mscp_softc *mi = device_private(parent);
 	struct	disklabel *dl;
 
+	rx->ra_dev = self;
 	rx->ra_mediaid = mp->mscp_guse.guse_mediaid;
 	rx->ra_state = DK_CLOSED;
 	rx->ra_hwunit = mp->mscp_unit;
@@ -679,21 +678,21 @@ raattach(device_t parent, device_t self, void *aux)
 
 #if NRX
 	if (MSCP_MID_ECH(1, mp->mscp_guse.guse_mediaid) == 'X' - '@')
-		disk_init((struct disk *)&rx->ra_disk, device_xname(&rx->ra_dev), 
+		disk_init((struct disk *)&rx->ra_disk, device_xname(rx->ra_dev), 
 		    &rxdkdriver);
 #endif
 #if NRACD
 	if (MSCP_MID_ECH(1, mp->mscp_guse.guse_mediaid) == 'R' - '@')
-		disk_init((struct disk *)&rx->ra_disk, device_xname(&rx->ra_dev), 
+		disk_init((struct disk *)&rx->ra_disk, device_xname(rx->ra_dev), 
 		    &racddkdriver);
 #endif
 #if NRA
 	if (MSCP_MID_ECH(1, mp->mscp_guse.guse_mediaid) != 'X' - '@' &&
 	    MSCP_MID_ECH(1, mp->mscp_guse.guse_mediaid) != 'R' - '@')
-		disk_init((struct disk *)&rx->ra_disk, device_xname(&rx->ra_dev), 
+		disk_init((struct disk *)&rx->ra_disk, device_xname(rx->ra_dev), 
 		    &radkdriver);
 #endif
-	disk_attach((struct disk *)&rx->ra_disk);
+	disk_attach(&rx->ra_disk);
 
 	/* Fill in what we know. The actual size is gotten later */
 	dl = rx->ra_disk.dk_label;
@@ -726,9 +725,7 @@ int
 rx_putonline(struct rx_softc *rx)
 {
 	struct	mscp *mp;
-	struct	mscp_softc *mi =
-	    (struct mscp_softc *)device_parent(&rx->ra_dev);
-	volatile int i;
+	struct	mscp_softc *mi = device_private(device_parent(rx->ra_dev));
 
 	rx->ra_state = DK_CLOSED;
 	mp = mscp_getcp(mi, MSCP_WAIT);
@@ -738,7 +735,7 @@ rx_putonline(struct rx_softc *rx)
 	*mp->mscp_addr |= MSCP_OWN | MSCP_INT;
 
 	/* Poll away */
-	i = bus_space_read_2(mi->mi_iot, mi->mi_iph, 0);
+	bus_space_read_2(mi->mi_iot, mi->mi_iph, 0);
 	if (tsleep(&rx->ra_state, PRIBIO, "rxonline", 100*100))
 		rx->ra_state = DK_CLOSED;
 
@@ -822,7 +819,7 @@ rxstrategy(struct buf *bp)
 	b = splbio();
 	disk_busy(&rx->ra_disk);
 	splx(b);
-	mscp_strategy(bp, device_parent(&rx->ra_dev));
+	mscp_strategy(bp, device_parent(rx->ra_dev));
 	return;
 
 done:
@@ -1118,9 +1115,9 @@ ra_putonline(dev_t dev, struct ra_softc *ra)
 	dl = ra->ra_disk.dk_label;
 
 	ra->ra_state = DK_RDLABEL;
-	printf("%s", device_xname(&ra->ra_dev));
+	printf("%s", device_xname(ra->ra_dev));
 	if ((msg = readdisklabel(
-	    MAKEDISKDEV(major(dev), device_unit(&ra->ra_dev), RAW_PART),
+	    MAKEDISKDEV(major(dev), device_unit(ra->ra_dev), RAW_PART),
 	    rastrategy, dl, NULL)) == NULL) {
 		ra->ra_havelabel = 1;
 		ra->ra_state = DK_OPEN;

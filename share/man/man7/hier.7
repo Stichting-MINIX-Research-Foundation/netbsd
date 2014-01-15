@@ -1,4 +1,4 @@
-.\"	$NetBSD: hier.7,v 1.101 2012/06/03 23:19:10 joerg Exp $
+.\"	$NetBSD: hier.7,v 1.105 2013/09/10 00:41:51 jnemeth Exp $
 .\"
 .\" Copyright (c) 1990, 1993, 1994
 .\"	The Regents of the University of California.  All rights reserved.
@@ -29,7 +29,7 @@
 .\"
 .\"	@(#)hier.7	8.5 (Berkeley) 6/1/94
 .\"
-.Dd June 3, 2012
+.Dd September 9, 2013
 .Dt HIER 7
 .Os
 .Sh NAME
@@ -208,13 +208,13 @@ see
 .Xr ctime 3
 .It Sy mail/
 configuration files for
-.Xr sendmail 8
+.Xr sendmail 1
 .Pp
 .Bl -tag -width "sendmail.*" -compact
 .It Sy aliases*
 name alias files
 .It Sy sendmail.*
-.Xr sendmail 8
+.Xr sendmail 1
 configuration information
 .El
 .It Sy mail.rc
@@ -437,9 +437,6 @@ include files for Internet standard protocols; see
 .It Sy netinet6/
 include files for Internet protocol version 6; see
 .Xr inet6 4
-.It Sy netiso/
-include files for ISO standard protocols; see
-.Xr iso 4
 .It Sy netkey/
 include files for secret key management, used for security protocols; see
 .Xr ipsec 4
@@ -1007,8 +1004,6 @@ AppleTalk networking support
 IP networking support
 .It Sy netinet6/
 IPv6 networking support
-.It Sy netiso/
-ISO networking support
 .It Sy netkey/
 Key database for IPsec networking support
 .It Sy netnatm/
@@ -1122,7 +1117,7 @@ system last time logged in log; see
 printer daemon error logs; see
 .Xr lpd 8
 .It Sy maillog.*
-.Xr sendmail 8
+.Xr sendmail 1
 log files
 .It Sy messages.*
 general system information log
@@ -1133,7 +1128,7 @@ script
 .It Sy secure
 sensitive security information log
 .It Sy sendmail.st
-.Xr sendmail 8
+.Xr sendmail 1
 statistics
 .It Sy timed.*
 .Xr timed 8
@@ -1179,7 +1174,7 @@ and
 .It Sy spool/
 miscellaneous printer and mail system spooling directories
 .Pp
-.Bl -tag -width "uucppublic/" -compact
+.Bl -tag -width "postfix/" -compact
 .It Sy ftp/
 commonly
 .Dq ~ftp ,
@@ -1188,7 +1183,7 @@ the anonymous ftp root directory; see
 .It Sy mqueue/
 sendmail mail queue;
 see
-.Xr sendmail 8
+.Xr sendmail 1
 .It Sy news/
 Network news archival and spooling directories
 .It Sy output/
@@ -1197,13 +1192,6 @@ printer spooling directories
 postfix mail queue;
 see
 .Xr postfix 1
-.It Sy uucp/
-uucp spool directory
-.It Sy uucppublic/
-commonly
-.Dq ~uucp ,
-the uucp public temporary directory; see
-.Xr uucp 1
 .El
 .Pp
 .It Sy tmp/

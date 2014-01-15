@@ -1,4 +1,4 @@
-/*	$NetBSD: pmap.c,v 1.348 2012/01/29 11:49:58 para Exp $ */
+/*	$NetBSD: pmap.c,v 1.353 2013/11/25 02:59:14 christos Exp $ */
 
 /*
  * Copyright (c) 1996
@@ -56,7 +56,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: pmap.c,v 1.348 2012/01/29 11:49:58 para Exp $");
+__KERNEL_RCSID(0, "$NetBSD: pmap.c,v 1.353 2013/11/25 02:59:14 christos Exp $");
 
 #include "opt_ddb.h"
 #include "opt_kgdb.h"
@@ -279,10 +279,12 @@ pvhead4m(u_int pte)
  * by flushing (and invalidating) a TLB entry when appropriate before
  * altering an in-memory page table entry.
  */
+struct mmuq;
 struct mmuentry {
-	CIRCLEQ_ENTRY(mmuentry)	me_list;	/* usage list link */
+	TAILQ_ENTRY(mmuentry)	me_list;	/* usage list link */
 	TAILQ_ENTRY(mmuentry)	me_pmchain;	/* pmap owner link */
 	struct	pmap *me_pmap;		/* pmap, if in use */
+	struct	mmuq *me_queue;		/* where do we live */
 	u_short	me_vreg;		/* associated virtual region/segment */
 	u_short	me_vseg;		/* associated virtual region/segment */
 	u_short	me_cookie;		/* hardware SMEG/PMEG number */
@@ -293,24 +295,24 @@ struct mmuentry {
 struct mmuentry *mmusegments;	/* allocated in pmap_bootstrap */
 struct mmuentry *mmuregions;	/* allocated in pmap_bootstrap */
 
-CIRCLEQ_HEAD(mmuq, mmuentry);
+TAILQ_HEAD(mmuq, mmuentry);
 struct mmuq segm_freelist, segm_lru, segm_locked;
 struct mmuq region_freelist, region_lru, region_locked;
-/*
- * We use a circular queue, since that allows us to remove an element
- * from a list without knowing the list header.
- */
-#define CIRCLEQ_REMOVE_NOH(elm, field) do {				\
-	(elm)->field.cqe_next->field.cqe_prev = (elm)->field.cqe_prev;	\
-	(elm)->field.cqe_prev->field.cqe_next = (elm)->field.cqe_next;	\
+
+#define MMUQ_INIT(head)			TAILQ_INIT(head)
+
+#define MMUQ_REMOVE(elm, field)		do { 	\
+	TAILQ_REMOVE(elm->me_queue, elm,field); \
+	elm->me_queue = NULL;			\
 } while (/*CONSTCOND*/0)
 
-#define MMUQ_INIT(head)			CIRCLEQ_INIT(head)
-#define MMUQ_REMOVE(elm,field)		CIRCLEQ_REMOVE_NOH(elm,field)
-#define MMUQ_INSERT_TAIL(head,elm,field)CIRCLEQ_INSERT_TAIL(head,elm,field)
-#define MMUQ_EMPTY(head)		CIRCLEQ_EMPTY(head)
-#define MMUQ_FIRST(head)		CIRCLEQ_FIRST(head)
+#define MMUQ_INSERT_TAIL(head, elm, field) do {	\
+	TAILQ_INSERT_TAIL(head, elm, field);	\
+	elm->me_queue = head;			\
+} while (/*CONSTCOND*/0)
 
+#define MMUQ_EMPTY(head)		TAILQ_EMPTY(head)
+#define MMUQ_FIRST(head)		TAILQ_FIRST(head)
 
 int	seginval;		/* [4/4c] the invalid segment number */
 int	reginval;		/* [4/3mmu] the invalid region number */
@@ -910,7 +912,7 @@ pgt_page_free(struct pool *pp, void *v)
 {
 	vaddr_t va;
 	paddr_t pa;
-	bool rv;
+	bool rv __diagused;
 
 	va = (vaddr_t)v;
 	rv = pmap_extract(pmap_kernel(), va, &pa);
@@ -2289,7 +2291,7 @@ ctx_free(struct pmap *pm)
 
 #if defined(SUN4M) || defined(SUN4D)
 	if (CPU_HAS_SRMMU) {
-		int i;
+		CPU_INFO_ITERATOR i;
 
 		cache_flush_context(ctx);
 		tlb_flush_context(ctx, PMAP_CPUSET(pm));
@@ -2635,7 +2637,7 @@ pv_changepte4m(struct vm_page *pg, int bis, int bic)
 		return;
 
 	for (; pv != NULL; pv = pv->pv_next) {
-		int tpte;
+		int tpte __diagused;
 		pm = pv->pv_pmap;
 		/* XXXSMP: should lock pm */
 		va = pv->pv_va;
@@ -7408,21 +7410,32 @@ kvm_iocache(char *va, int npages)
  * (This will just seg-align mappings.)
  */
 void
-pmap_prefer(vaddr_t foff, vaddr_t *vap)
+pmap_prefer(vaddr_t foff, vaddr_t *vap, size_t size, int td)
 {
 	vaddr_t va = *vap;
-	long d, m;
-
-	if (VA_INHOLE(va))
-		va = MMU_HOLE_END;
+	long m;
 
 	m = CACHE_ALIAS_DIST;
 	if (m == 0)		/* m=0 => no cache aliasing */
 		return;
 
-	d = foff - va;
-	d &= (m - 1);
-	*vap = va + d;
+	if (VA_INHOLE(va)) {
+		if (td)
+			va = MMU_HOLE_START - size;
+		else
+			va = MMU_HOLE_END;
+	}
+
+	va = (va & ~(m - 1)) | (foff & (m - 1));
+
+	if (td) {
+		if (va > *vap)
+			va -= m;
+	} else {
+		if (va < *vap)
+			va += m;
+	}
+	*vap = va;
 }
 
 void
@@ -7440,31 +7453,19 @@ void
 pmap_activate(struct lwp *l)
 {
 	pmap_t pm = l->l_proc->p_vmspace->vm_map.pmap;
-	int s;
 
-	/*
-	 * This is essentially the same thing that happens in cpu_switch()
-	 * when the newly selected process is about to run, except that we
-	 * have to make sure to clean the register windows before we set
-	 * the new context.
-	 */
-
-	s = splvm();
-	if (l == curlwp) {
-		write_user_windows();
-		if (pm->pm_ctx == NULL) {
-			ctx_alloc(pm);	/* performs setcontext() */
-		} else {
-			/* Do any cache flush needed on context switch */
-			(*cpuinfo.pure_vcache_flush)();
-			setcontext(pm->pm_ctxnum);
-		}
-#if defined(MULTIPROCESSOR)
-		if (pm != pmap_kernel())
-			PMAP_SET_CPUSET(pm, &cpuinfo);
-#endif
+	if (pm == pmap_kernel() || l != curlwp) {
+		return;
 	}
-	splx(s);
+
+	PMAP_LOCK();
+	if (pm->pm_ctx == NULL) {
+		ctx_alloc(pm);	/* performs setcontext() */
+	} else {
+		setcontext(pm->pm_ctxnum);
+	}
+	PMAP_SET_CPUSET(pm, &cpuinfo);
+	PMAP_UNLOCK();
 }
 
 /*
@@ -7473,22 +7474,27 @@ pmap_activate(struct lwp *l)
 void
 pmap_deactivate(struct lwp *l)
 {
-#if defined(MULTIPROCESSOR)
-	pmap_t pm;
-	struct proc *p;
+	struct proc *p = l->l_proc;
+	pmap_t pm = p->p_vmspace->vm_map.pmap;
 
-	p = l->l_proc;
-	if (p->p_vmspace &&
-	    (pm = p->p_vmspace->vm_map.pmap) != pmap_kernel()) {
+	if (pm == pmap_kernel() || l != curlwp) {
+		return;
+	}
+
+	write_user_windows();
+	PMAP_LOCK();
+	if (pm->pm_ctx) {
+		(*cpuinfo.pure_vcache_flush)();
+
 #if defined(SUN4M) || defined(SUN4D)
-		if (pm->pm_ctx && CPU_HAS_SRMMU)
+		if (CPU_HAS_SRMMU)
 			sp_tlb_flush(0, pm->pm_ctxnum, ASI_SRMMUFP_L0);
 #endif
-
-		/* we no longer need broadcast tlb flushes for this pmap. */
-		PMAP_CLR_CPUSET(pm, &cpuinfo);
 	}
-#endif
+
+	/* we no longer need broadcast tlb flushes for this pmap. */
+	PMAP_CLR_CPUSET(pm, &cpuinfo);
+	PMAP_UNLOCK();
 }
 
 #ifdef DEBUG

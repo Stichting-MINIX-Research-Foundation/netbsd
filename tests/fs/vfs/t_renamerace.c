@@ -1,4 +1,4 @@
-/*	$NetBSD: t_renamerace.c,v 1.26 2012/05/09 00:22:26 riastradh Exp $	*/
+/*	$NetBSD: t_renamerace.c,v 1.29 2013/07/10 18:55:00 reinoud Exp $	*/
 
 /*
  * Modified for rump and atf from a program supplied
@@ -20,6 +20,18 @@
 
 #include <rump/rump.h>
 #include <rump/rump_syscalls.h>
+
+/* Bump the size of the test file system image to a larger value.
+ *
+ * These tests cause a lot of churn in the file system by creating and
+ * deleting files/directories in quick succession.  A faster CPU will cause
+ * more churn because the tests are capped by a run time period in seconds,
+ * not number of operations.
+ *
+ * This is all fine except for LFS, because the lfs_cleanerd cannot keep up
+ * with the churn and thus causes the test to fail on fast machines.  Hence
+ * the reason for this hack. */
+#define FSTEST_IMGSIZE (50000 * 512)
 
 #include "../common/h_fsmacros.h"
 #include "../../h_macros.h"
@@ -84,6 +96,9 @@ renamerace(const atf_tc_t *tc, const char *mp)
 	if (FSTYPE_RUMPFS(tc))
 		atf_tc_skip("rename not supported by file system");
 
+	if (FSTYPE_UDF(tc))
+		atf_tc_expect_fail("Test expected to fail");
+
 	RZ(rump_pub_lwproc_rfork(RUMP_RFCFDG));
 	RL(wrkpid = rump_sys_getpid());
 
@@ -127,6 +142,9 @@ renamerace_dirs(const atf_tc_t *tc, const char *mp)
 
 	if (FSTYPE_RUMPFS(tc))
 		atf_tc_skip("rename not supported by file system");
+
+	if (FSTYPE_UDF(tc))
+		atf_tc_expect_fail("Test expected to fail");
 
 	/* XXX: msdosfs also sometimes hangs */
 	if (FSTYPE_MSDOS(tc))

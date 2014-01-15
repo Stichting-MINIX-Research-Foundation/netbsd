@@ -1,4 +1,4 @@
-/*  $NetBSD: ops.c,v 1.59 2012/07/21 05:49:42 manu Exp $ */
+/*  $NetBSD: ops.c,v 1.62 2013/07/19 07:32:35 manu Exp $ */
 
 /*-
  *  Copyright (c) 2010-2011 Emmanuel Dreyfus. All rights reserved.
@@ -432,6 +432,16 @@ node_lookup_common(struct puffs_usermount *pu, puffs_cookie_t opc,
 		return error;
 
 	feo = GET_OUTPAYLOAD(ps, pm, fuse_entry_out);
+
+	/* 
+	 * Starting with ABI 7.4, inode number 0 means ENOENT, 
+	 * with entry_valid / entry_valid_nsec giving negative
+	 * cache timeout (which we do not implement yet).
+	 */
+	if (feo->attr.ino == 0) {
+		ps->ps_destroy_msg(pm);
+		return ENOENT;
+	}
 
 	/*
 	 * Check for a known node, not reclaimed, with another name.
@@ -1359,10 +1369,33 @@ perfuse_node_open(struct puffs_usermount *pu, puffs_cookie_t opc, int mode,
 	 * Do not open twice, and do not reopen for reading
 	 * if we already have write handle.
 	 */
-	if (((mode & FREAD) && (pnd->pnd_flags & PND_RFH)) ||
-	    ((mode & FREAD) && (pnd->pnd_flags & PND_WFH)) ||
-	    ((mode & FWRITE) && (pnd->pnd_flags & PND_WFH)))
+	switch (mode & (FREAD|FWRITE)) {
+	case FREAD:
+		if (pnd->pnd_flags & (PND_RFH|PND_WFH))
+			goto out;
+		break;
+	case FWRITE:
+		if (pnd->pnd_flags & PND_WFH)
+			goto out;
+		break;
+	case FREAD|FWRITE:
+		if (pnd->pnd_flags & PND_WFH)
+			goto out;
+
+		/*
+		 * Corner case: if already open for reading (PND_RFH)
+		 * and re-opening FREAD|FWRITE, we need to reopen, 
+		 * but only for writing. Note the change on mode 
+		 * will only affect perfuse_new_fh()
+		 */
+		if (pnd->pnd_flags & PND_RFH)
+			mode &= ~FREAD;
+		break;
+	default:
+		DWARNX("open without either FREAD nor FWRITE");
+		error = EPERM;
 		goto out;
+	}
 	
 	/*
 	 * Queue open on a node so that we do not open
@@ -2713,8 +2746,8 @@ perfuse_node_reclaim(struct puffs_usermount *pu, puffs_cookie_t opc)
 #ifdef PERFUSE_DEBUG
 	if ((pnd->pnd_flags & PND_OPEN) ||
 	       !TAILQ_EMPTY(&pnd->pnd_pcq))
-		DERRX(EX_SOFTWARE, "%s: opc = %p: still open",
-		      __func__, opc);
+		DERRX(EX_SOFTWARE, "%s: opc = %p \"%s\": still open",
+		      __func__, opc, pnd->pnd_name);
 
 	if ((pnd->pnd_flags & PND_BUSY) ||
 	       !TAILQ_EMPTY(&pnd->pnd_pcq))

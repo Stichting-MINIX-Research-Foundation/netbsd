@@ -1,13 +1,4 @@
-# $NetBSD: Makefile,v 1.1 2012/09/16 13:47:42 rmind Exp $
+# $NetBSD: Makefile,v 1.3 2013/03/10 21:41:06 christos Exp $
 
-.include <bsd.own.mk>
-
-LIBISMODULE= yes
-LIBDIR=	/usr/lib/npf
-
-LIB=	ext_log
-
-SRCS=	npfext_log.c
-WARNS=	5
-
-.include <bsd.lib.mk>
+MOD=	ext_log
+.include "${.CURDIR}/../mod.mk"

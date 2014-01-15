@@ -1,4 +1,4 @@
-/*	$NetBSD: cd9660_lookup.c,v 1.20 2012/07/22 00:53:18 rmind Exp $	*/
+/*	$NetBSD: cd9660_lookup.c,v 1.25 2013/06/23 07:28:36 dholland Exp $	*/
 
 /*-
  * Copyright (c) 1989, 1993, 1994
@@ -39,7 +39,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: cd9660_lookup.c,v 1.20 2012/07/22 00:53:18 rmind Exp $");
+__KERNEL_RCSID(0, "$NetBSD: cd9660_lookup.c,v 1.25 2013/06/23 07:28:36 dholland Exp $");
 
 #include <sys/param.h>
 #include <sys/namei.h>
@@ -151,8 +151,10 @@ cd9660_lookup(void *v)
 	 * check the name cache to see if the directory/name pair
 	 * we are looking for is known already.
 	 */
-	if ((error = cache_lookup(vdp, vpp, cnp)) >= 0)
-		return (error);
+	if (cache_lookup(vdp, cnp->cn_nameptr, cnp->cn_namelen,
+			 cnp->cn_nameiop, cnp->cn_flags, NULL, vpp)) {
+		return *vpp == NULLVP ? ENOENT : 0;
+	}
 
 	len = cnp->cn_namelen;
 	name = cnp->cn_nameptr;
@@ -304,8 +306,8 @@ searchloop:
 foundino:
 		dp->i_ino = ino;
 		if (saveoffset != dp->i_offset) {
-			if (lblkno(imp, dp->i_offset) !=
-			    lblkno(imp, saveoffset)) {
+			if (cd9660_lblkno(imp, dp->i_offset) !=
+			    cd9660_lblkno(imp, saveoffset)) {
 				if (bp != NULL)
 					brelse(bp, 0);
 				if ((error = cd9660_blkatoff(vdp,
@@ -336,7 +338,7 @@ notfound:
 	/*
 	 * Insert name into cache (as non-existent) if appropriate.
 	 */
-	cache_enter(vdp, *vpp, cnp);
+	cache_enter(vdp, *vpp, cnp->cn_nameptr, cnp->cn_namelen, cnp->cn_flags);
 	return (nameiop == CREATE || nameiop == RENAME) ? EROFS : ENOENT;
 
 found:
@@ -399,7 +401,7 @@ found:
 	/*
 	 * Insert name into cache if appropriate.
 	 */
-	cache_enter(vdp, *vpp, cnp);
+	cache_enter(vdp, *vpp, cnp->cn_nameptr, cnp->cn_namelen, cnp->cn_flags);
 	return 0;
 }
 
@@ -419,16 +421,15 @@ cd9660_blkatoff(struct vnode *vp, off_t offset, char **res, struct buf **bpp)
 
 	ip = VTOI(vp);
 	imp = ip->i_mnt;
-	lbn = lblkno(imp, offset);
-	bsize = blksize(imp, ip, lbn);
+	lbn = cd9660_lblkno(imp, offset);
+	bsize = cd9660_blksize(imp, ip, lbn);
 
 	if ((error = bread(vp, lbn, bsize, NOCRED, 0, &bp)) != 0) {
-		brelse(bp, 0);
 		*bpp = NULL;
 		return (error);
 	}
 	if (res)
-		*res = (char *)bp->b_data + blkoff(imp, offset);
+		*res = (char *)bp->b_data + cd9660_blkoff(imp, offset);
 	*bpp = bp;
 	return (0);
 }

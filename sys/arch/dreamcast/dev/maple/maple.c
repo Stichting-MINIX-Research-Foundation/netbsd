@@ -1,4 +1,4 @@
-/*	$NetBSD: maple.c,v 1.44 2011/07/19 15:52:30 dyoung Exp $	*/
+/*	$NetBSD: maple.c,v 1.46 2013/10/13 06:55:34 riz Exp $	*/
 
 /*-
  * Copyright (c) 2002 The NetBSD Foundation, Inc.
@@ -62,7 +62,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: maple.c,v 1.44 2011/07/19 15:52:30 dyoung Exp $");
+__KERNEL_RCSID(0, "$NetBSD: maple.c,v 1.46 2013/10/13 06:55:34 riz Exp $");
 
 #include <sys/param.h>
 #include <sys/device.h>
@@ -125,8 +125,7 @@ static void	maple_check_subunit_change(struct maple_softc *,
 static void	maple_check_unit_change(struct maple_softc *,
 		    struct maple_unit *);
 static void	maple_print_unit(void *, const char *);
-static int	maplesubmatch(struct device *, struct cfdata *,
-		    const int *, void *);
+static int	maplesubmatch(device_t, cfdata_t, const int *, void *);
 static int	mapleprint(void *, const char *);
 static void	maple_attach_unit(struct maple_softc *, struct maple_unit *);
 static void	maple_detach_unit_nofix(struct maple_softc *,
@@ -243,7 +242,7 @@ mapleattach(device_t parent, device_t self, void *aux)
 	sc->sc_intrhand = sysasic_intr_establish(SYSASIC_EVENT_MAPLE_DMADONE,
 	    IPL_MAPLE, IRL_MAPLE, maple_intr, sc);
 
-	config_pending_incr();	/* create thread before mounting root */
+	config_pending_incr(self); /* create thread before mounting root */
 
 	if (kthread_create(PRI_NONE, 0, NULL, maple_event_thread, sc,
 	    &sc->event_thread, "%s", device_xname(self)) == 0)
@@ -624,8 +623,7 @@ maple_print_unit(void *aux, const char *pnp)
 }
 
 static int
-maplesubmatch(struct device *parent, struct cfdata *match,
-	      const int *ldesc, void *aux)
+maplesubmatch(device_t parent, cfdata_t match, const int *ldesc, void *aux)
 {
 	struct maple_attach_args *ma = aux;
 
@@ -711,7 +709,7 @@ static void
 maple_detach_unit_nofix(struct maple_softc *sc, struct maple_unit *u)
 {
 	struct maple_func *fn;
-	struct device *dev;
+	device_t dev;
 	struct maple_unit *u1;
 	int port;
 	int error;
@@ -1430,7 +1428,7 @@ maple_event_thread(void *arg)
 
 	/* OK, continue booting system */
 	maple_polling = 0;
-	config_pending_decr();
+	config_pending_decr(sc->sc_dev);
 
 	for (;;) {
 		/*

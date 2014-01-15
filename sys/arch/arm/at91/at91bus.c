@@ -1,4 +1,4 @@
-/*	$NetBSD: at91bus.c,v 1.14 2012/09/01 14:48:06 matt Exp $	*/
+/*	$NetBSD: at91bus.c,v 1.17 2013/08/18 15:58:19 matt Exp $	*/
 
 /*
  * Copyright (c) 2007 Embedtronics Oy
@@ -27,11 +27,12 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: at91bus.c,v 1.14 2012/09/01 14:48:06 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: at91bus.c,v 1.17 2013/08/18 15:58:19 matt Exp $");
 
 #include "opt_ddb.h"
 #include "opt_kgdb.h"
 #include "opt_pmap_debug.h"
+#include "locators.h"
 
 /* Define various stack sizes in pages */
 #define IRQ_STACK_SIZE	8
@@ -52,8 +53,10 @@ __KERNEL_RCSID(0, "$NetBSD: at91bus.c,v 1.14 2012/09/01 14:48:06 matt Exp $");
 #include <sys/reboot.h>
 #include <sys/termios.h>
 #include <sys/ksyms.h>
+#include <sys/bus.h>
+#include <sys/cpu.h>
+#include <sys/termios.h>
 
-#include <machine/bootconfig.h>
 #include <uvm/uvm_extern.h>
 
 #include <dev/cons.h>
@@ -62,22 +65,16 @@ __KERNEL_RCSID(0, "$NetBSD: at91bus.c,v 1.14 2012/09/01 14:48:06 matt Exp $");
 #include <ddb/db_sym.h>
 #include <ddb/db_extern.h>
 
-#include <sys/bus.h>
-#include <machine/cpu.h>
-#include <machine/frame.h>
+#include <arm/locore.h>
 #include <arm/undefined.h>
 
 #include <arm/arm32/machdep.h>
-#include <arm/cpufunc.h>
 
 #include <arm/at91/at91var.h>
 #include <arm/at91/at91busvar.h>
 #include <arm/at91/at91dbgureg.h>
 
-//#include <dev/cons.h>
-#include <sys/termios.h>
-
-#include "locators.h"
+#include <machine/bootconfig.h>
 
 /* console stuff: */
 #ifndef	CONSPEED
@@ -160,7 +157,7 @@ struct at91bus_softc *at91bus_sc = NULL;
 #endif
 
 static const struct {
-	u_int32_t	cidr;
+	uint32_t	cidr;
 	const char *	name;
 	const struct at91bus_machdep *machdep;
 } at91_types[] = {
@@ -196,7 +193,7 @@ static const struct {
 	}
 };
 
-u_int32_t at91_chip_id;
+uint32_t at91_chip_id;
 static int at91_chip_ndx = -1;
 struct at91bus_machdep at91bus_machdep = { 0 };
 at91bus_tag_t at91bus_tag = 0;
@@ -204,7 +201,7 @@ at91bus_tag_t at91bus_tag = 0;
 static int
 match_cid(void)
 {
-	u_int32_t		cidr;
+	uint32_t		cidr;
 	int			i;
 
 	/* get chip id */
@@ -448,7 +445,7 @@ at91bus_setup(BootConfig *mem)
 	printf("switching to new L1 page table  @%#lx...", kernel_l1pt.pv_pa);
 #endif
 	cpu_domains((DOMAIN_CLIENT << (PMAP_DOMAIN_KERNEL*2)) | DOMAIN_CLIENT);
-	cpu_setttb(kernel_l1pt.pv_pa);
+	cpu_setttb(kernel_l1pt.pv_pa, true);
 	cpu_tlb_flushID();
 	cpu_domains(DOMAIN_CLIENT << (PMAP_DOMAIN_KERNEL*2));
 

@@ -1,5 +1,5 @@
 %{
-/* $NetBSD: scan.l,v 1.50 2012/03/27 19:24:03 christos Exp $ */
+/* $NetBSD: scan.l,v 1.53 2013/10/18 20:46:09 christos Exp $ */
 
 /*
  * Copyright (c) 1996 Christopher G. Demetriou.  All Rights Reserved.
@@ -35,7 +35,7 @@
 
 #include <sys/cdefs.h>
 #if defined(__RCSID) && !defined(lint)
-__RCSID("$NetBSD: scan.l,v 1.50 2012/03/27 19:24:03 christos Exp $");
+__RCSID("$NetBSD: scan.l,v 1.53 2013/10/18 20:46:09 christos Exp $");
 #endif
 
 #include <stdlib.h>
@@ -318,7 +318,8 @@ initscan(void)
 		h = hash(sym->s_name);
 		if ((sym->s_link = symtab[h]) != NULL)
 			symtab[h]->s_rlink = &sym->s_link;
-		(symtab[h] = sym)->s_rlink = &symtab[h];
+		sym->s_rlink = &symtab[h];
+		symtab[h] = sym;
 	}
 
 	/* initialize bit-masks for quads */
@@ -604,7 +605,7 @@ icon(int base)
 			warning(252);
 		}
 		break;
-		/* LINTED (enumeration values not handled in switch) */
+		/* LINTED206: (enumeration values not handled in switch) */
 	case STRUCT:
 	case VOID:
 	case LDOUBLE:
@@ -1084,7 +1085,7 @@ directive(void)
  *	CONSTCOND CONSTANTCOND CONSTANTCONDITION
  *	FALLTHRU FALLTHROUGH
  *	LINTLIBRARY
- *	LINTED NOSTRICT
+ *	LINTEDn NOSTRICTn
  *	LONGLONG
  *	NOTREACHED
  *	PRINTFLIKEn
@@ -1111,9 +1112,9 @@ comment(void)
 		{ "FALLTHRU",		0,	fallthru	},
 		{ "FALLTHROUGH",	0,	fallthru	},
 		{ "LINTLIBRARY",	0,	lintlib		},
-		{ "LINTED",		0,	linted		},
+		{ "LINTED",		1,	linted		},
 		{ "LONGLONG",		0,	longlong	},
-		{ "NOSTRICT",		0,	linted		},
+		{ "NOSTRICT",		1,	linted		},
 		{ "NOTREACHED",		0,	notreach	},
 		{ "PRINTFLIKE",		1,	printflike	},
 		{ "PROTOLIB",		1,	protolib	},
@@ -1222,7 +1223,7 @@ void
 clrwflgs(void)
 {
 
-	nowarn = 0;
+	lwarn = LWARN_ALL;
 	quadflg = 0;
 	ccflg = 0;
 }
@@ -1391,7 +1392,8 @@ getsym(sbuf_t *sb)
 
 	if ((sym->s_link = symtab[sb->sb_hash]) != NULL)
 		symtab[sb->sb_hash]->s_rlink = &sym->s_link;
-	(symtab[sb->sb_hash] = sym)->s_rlink = &symtab[sb->sb_hash];
+	sym->s_rlink = &symtab[sb->sb_hash];
+	symtab[sb->sb_hash] = sym;
 
 	*di->d_ldlsym = sym;
 	di->d_ldlsym = &sym->s_dlnxt;
@@ -1425,7 +1427,8 @@ mktempsym(type_t *t)
 
 	if ((sym->s_link = symtab[h]) != NULL)
 		symtab[h]->s_rlink = &sym->s_link;
-	(symtab[h] = sym)->s_rlink = &symtab[h];
+	sym->s_rlink = &symtab[h];
+	symtab[h] = sym;
 
 	*dcs->d_ldlsym = sym;
 	dcs->d_ldlsym = &sym->s_dlnxt;
@@ -1478,7 +1481,8 @@ inssym(int bl, sym_t *sym)
 	h = hash(sym->s_name);
 	if ((sym->s_link = symtab[h]) != NULL)
 		symtab[h]->s_rlink = &sym->s_link;
-	(symtab[h] = sym)->s_rlink = &symtab[h];
+	sym->s_rlink = &symtab[h];
+	symtab[h] = sym;
 	sym->s_blklev = bl;
 	if (sym->s_link != NULL && sym->s_blklev < sym->s_link->s_blklev)
 		LERROR("inssym()");
@@ -1530,7 +1534,8 @@ pushdown(sym_t *sym)
 
 	if ((nsym->s_link = symtab[h]) != NULL)
 		symtab[h]->s_rlink = &nsym->s_link;
-	(symtab[h] = nsym)->s_rlink = &symtab[h];
+	nsym->s_rlink = &symtab[h];
+	symtab[h] = nsym;
 
 	*dcs->d_ldlsym = nsym;
 	dcs->d_ldlsym = &nsym->s_dlnxt;

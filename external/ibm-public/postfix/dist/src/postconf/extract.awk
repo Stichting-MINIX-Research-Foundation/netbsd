@@ -34,6 +34,15 @@
 	}
     }
 }
+/^(static| )*(const +)?CONFIG_STR_FN_TABLE .*\{/,/\};/ { 
+    if ($1 ~ /^VAR/) {
+	str_fn_vars["char *" substr($3,2,length($3)-2) ";"] = 1
+	$2 = "pc_" $2
+	if (++stab[$1 $2 $4 $5 $6 $7 $8 $9] == 1) {
+	    str_fn_table[$0] = 1
+	}
+    }
+}
 /^(static| )*(const +)?CONFIG_RAW_TABLE .*\{/,/\};/ { 
     if ($1 ~ /^VAR/) {
 	raw_vars["char *" substr($3,2,length($3)-2) ";"] = 1
@@ -74,6 +83,14 @@
 	}
     }
 }
+/^(static| )*(const +)?CONFIG_LONG_TABLE .*\{/,/\};/ { 
+    if ($1 ~ /VAR/) {
+	long_vars["long " substr($3,2,length($3)-2) ";"] = 1
+	if (++itab[$1 $2 $4 $5 $6 $7 $8 $9] == 1) {
+	    long_table[$0] = 1
+	}
+    }
+}
 
 END { 
     # Print parameter declarations without busting old AWK's file limit.
@@ -84,6 +101,11 @@ END {
 
     print "cat >str_vars.h <<'EOF'"
     for (key in str_vars)
+	print key
+    print "EOF"
+
+    print "cat >str_fn_vars.h <<'EOF'"
+    for (key in str_fn_vars)
 	print key
     print "EOF"
 
@@ -112,6 +134,11 @@ END {
 	print key
     print "EOF"
 
+    print "cat >long_vars.h <<'EOF'"
+    for (key in long_vars)
+	print key
+    print "EOF"
+
     # Print parameter initializations without busting old AWK's file limit.
     print "sed 's/[ 	][ 	]*/ /g' >int_table.h <<'EOF'"
     for (key in int_table)
@@ -120,6 +147,11 @@ END {
 
     print "sed 's/[ 	][ 	]*/ /g' >str_table.h <<'EOF'"
     for (key in str_table)
+	print key
+    print "EOF"
+
+    print "sed 's/[ 	][ 	]*/ /g' >str_fn_table.h <<'EOF'"
+    for (key in str_fn_table)
 	print key
     print "EOF"
 
@@ -145,6 +177,11 @@ END {
 
     print "sed 's/[ 	][ 	]*/ /g' >nbool_table.h <<'EOF'"
     for (key in nbool_table)
+	print key
+    print "EOF"
+
+    print "sed 's/[ 	][ 	]*/ /g' >long_table.h <<'EOF'"
+    for (key in long_table)
 	print key
     print "EOF"
 

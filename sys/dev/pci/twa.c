@@ -1,4 +1,4 @@
-/*	$NetBSD: twa.c,v 1.42 2012/07/28 00:42:47 matt Exp $ */
+/*	$NetBSD: twa.c,v 1.45 2013/10/17 21:06:15 christos Exp $ */
 /*	$wasabi: twa.c,v 1.27 2006/07/28 18:17:21 wrstuden Exp $	*/
 
 /*-
@@ -67,7 +67,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: twa.c,v 1.42 2012/07/28 00:42:47 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: twa.c,v 1.45 2013/10/17 21:06:15 christos Exp $");
 
 //#define TWA_DEBUG
 
@@ -86,9 +86,6 @@ __KERNEL_RCSID(0, "$NetBSD: twa.c,v 1.42 2012/07/28 00:42:47 matt Exp $");
 #include <sys/disk.h>
 #include <sys/sysctl.h>
 #include <sys/syslog.h>
-#if 1
-#include <sys/ktrace.h>
-#endif
 
 #include <sys/bus.h>
 
@@ -265,6 +262,7 @@ static const char	*twa_aen_severity_table[] = {
 	NULL
 };
 
+#if 0
 /* Error messages. */
 static const struct twa_message	twa_error_table[] = {
 	{0x0100, "SGL entry contains zero data"},
@@ -371,7 +369,7 @@ static const struct twa_message	twa_error_table[] = {
 	{0x0253, "Inadequate disk space to support descriptor in CreateUnit"},
 	{0x0254, "Unable to create data channel for this unit descriptor"},
 	{0x0255, "CreateUnit descriptor specifies a drive already in use"},
-       {0x0256, "Unable to write configuration to all disks during CreateUnit"},
+	{0x0256, "Unable to write configuration to all disks during CreateUnit"},
 	{0x0257, "CreateUnit does not support this descriptor version"},
 	{0x0258, "Invalid subunit for RAID 0 or 5 in CreateUnit"},
 	{0x0259, "Too many descriptors in CreateUnit"},
@@ -381,6 +379,7 @@ static const struct twa_message	twa_error_table[] = {
 	{0x0260, "SMART attribute exceeded threshold"},
 	{0xFFFFFFFF, NULL}
 };
+#endif
 
 struct twa_pci_identity {
 	uint32_t	vendor_id;
@@ -388,7 +387,7 @@ struct twa_pci_identity {
 	const char	*name;
 };
 
-static const struct twa_pci_identity pci_twa_products[] = {
+static const struct twa_pci_identity twa_pci_products[] = {
 	{ PCI_VENDOR_3WARE,
 	  PCI_PRODUCT_3WARE_9000,
 	  "3ware 9000 series",
@@ -436,23 +435,31 @@ twa_request_wait_handler(struct twa_request *tr)
 	wakeup(tr);
 }
 
-static int
-twa_match(device_t parent, cfdata_t cfdata,
-    void *aux)
+static const struct twa_pci_identity *
+twa_lookup(pcireg_t id)
 {
+	const struct twa_pci_identity *entry;
 	int i;
-	struct pci_attach_args *pa = aux;
-	const struct twa_pci_identity *entry = 0;
 
-	if (PCI_VENDOR(pa->pa_id) == PCI_VENDOR_3WARE) {
-		for (i = 0; (pci_twa_products[i].product_id); i++) {
-			entry = &pci_twa_products[i];
-			if (entry->product_id == PCI_PRODUCT(pa->pa_id)) {
-				aprint_normal("%s: (rev. 0x%02x)\n",
-				    entry->name, PCI_REVISION(pa->pa_class));
-				return (1);
-			}
+	for (i = 0; i < __arraycount(twa_pci_products); i++) {
+		entry = &twa_pci_products[i];
+		if (entry->vendor_id == PCI_VENDOR(id) &&
+		    entry->product_id == PCI_PRODUCT(id)) {
+			return entry;
 		}
+	}
+	return NULL;
+}
+
+static int
+twa_match(device_t parent, cfdata_t cfdata, void *aux)
+{
+	struct pci_attach_args *pa = aux;
+	const struct twa_pci_identity *entry;
+
+	entry = twa_lookup(pa->pa_id);
+	if (entry != NULL) {
+		return 1;
 	}
 	return (0);
 }
@@ -715,7 +722,6 @@ twa_inquiry(struct twa_request *tr, int lunid)
 		SID_QUAL_LU_NOTPRESENT;
 
 	error = twa_immediate_request(tr, TWA_REQUEST_TIMEOUT_PERIOD);
-
 	if (error != 0)
 		return (error);
 
@@ -1122,7 +1128,6 @@ out:
 static int
 twa_drain_response_queue(struct twa_softc *sc)
 {
-	union twa_response_queue	rq;
 	uint32_t			status_reg;
 
 	for (;;) {
@@ -1131,7 +1136,7 @@ twa_drain_response_queue(struct twa_softc *sc)
 			return(1);
 		if (status_reg & TWA_STATUS_RESPONSE_QUEUE_EMPTY)
 			return(0); /* no more response queue entries */
-		rq.value = twa_inl(sc, TWA_RESPONSE_QUEUE_OFFSET);
+		(void)twa_inl(sc, TWA_RESPONSE_QUEUE_OFFSET);
 	}
 }
 
@@ -1497,6 +1502,7 @@ twa_attach(device_t parent, device_t self, void *aux)
 	pci_intr_handle_t ih;
 	const char *intrstr;
 	const struct sysctlnode *node; 
+	const struct twa_pci_identity *entry;
 	int i;
 	bool use_64bit;
 
@@ -1509,7 +1515,8 @@ twa_attach(device_t parent, device_t self, void *aux)
 	sc->pc = pa->pa_pc;
 	sc->tag = pa->pa_tag;
 
-	pci_aprint_devinfo_fancy(pa, "RAID controller", "3ware Apache", 0);
+	entry = twa_lookup(pa->pa_id);
+	pci_aprint_devinfo_fancy(pa, "RAID controller", entry->name, 1);
 
 	sc->sc_quirks = 0;
 		
@@ -1635,7 +1642,7 @@ twa_shutdown(void *arg)
 {
 	extern struct cfdriver twa_cd;
 	struct twa_softc *sc;
-	int i, rv, unit;
+	int i, unit;
 
 	for (i = 0; i < twa_cd.cd_ndevs; i++) {
 		if ((sc = device_lookup_private(&twa_cd, i)) == NULL)
@@ -1650,7 +1657,7 @@ twa_shutdown(void *arg)
 			TWA_CONTROL_DISABLE_INTERRUPTS);
 
 		/* Let the controller know that we are going down. */
-		rv = twa_init_connection(sc, TWA_SHUTDOWN_MESSAGE_CREDITS,
+		(void)twa_init_connection(sc, TWA_SHUTDOWN_MESSAGE_CREDITS,
 				0, 0, 0, 0, 0,
 				NULL, NULL, NULL, NULL, NULL);
 	}

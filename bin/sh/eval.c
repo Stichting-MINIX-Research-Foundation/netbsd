@@ -1,4 +1,4 @@
-/*	$NetBSD: eval.c,v 1.104 2012/06/14 18:56:54 joerg Exp $	*/
+/*	$NetBSD: eval.c,v 1.107 2013/06/27 23:22:04 yamt Exp $	*/
 
 /*-
  * Copyright (c) 1993
@@ -37,7 +37,7 @@
 #if 0
 static char sccsid[] = "@(#)eval.c	8.9 (Berkeley) 6/8/95";
 #else
-__RCSID("$NetBSD: eval.c,v 1.104 2012/06/14 18:56:54 joerg Exp $");
+__RCSID("$NetBSD: eval.c,v 1.107 2013/06/27 23:22:04 yamt Exp $");
 #endif
 #endif /* not lint */
 
@@ -46,6 +46,7 @@ __RCSID("$NetBSD: eval.c,v 1.104 2012/06/14 18:56:54 joerg Exp $");
 #include <signal.h>
 #include <stdio.h>
 #include <errno.h>
+#include <limits.h>
 #include <unistd.h>
 #include <sys/fcntl.h>
 #include <sys/times.h>
@@ -946,7 +947,7 @@ normal_fork:
 		}
 		savehandler = handler;
 		handler = &jmploc;
-		listmklocal(varlist.list, 0);
+		listmklocal(varlist.list, VEXPORT);
 		/* stop shell blowing its stack */
 		if (++funcnest > 1000)
 			error("too many nested function calls");
@@ -1052,7 +1053,6 @@ normal_fork:
 #ifdef DEBUG
 		trputs("normal command:  ");  trargs(argv);
 #endif
-		clearredir(vforked);
 		redirect(cmd->ncmd.redirect, vforked ? REDIR_VFORK : 0);
 		if (!vforked)
 			for (sp = varlist.list ; sp ; sp = sp->next)

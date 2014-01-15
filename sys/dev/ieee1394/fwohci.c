@@ -1,4 +1,4 @@
-/*	$NetBSD: fwohci.c,v 1.133 2012/08/04 03:55:43 riastradh Exp $	*/
+/*	$NetBSD: fwohci.c,v 1.136 2013/10/16 17:40:55 christos Exp $	*/
 
 /*-
  * Copyright (c) 2003 Hidetoshi Shimokawa
@@ -37,7 +37,7 @@
  *
  */
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: fwohci.c,v 1.133 2012/08/04 03:55:43 riastradh Exp $");
+__KERNEL_RCSID(0, "$NetBSD: fwohci.c,v 1.136 2013/10/16 17:40:55 christos Exp $");
 
 #include <sys/param.h>
 #include <sys/atomic.h>
@@ -448,7 +448,7 @@ fwohci_attach(struct fwohci_softc *sc)
 	sc->fc.config_rom = fwdma_alloc_setup(sc->fc.dev, sc->fc.dmat,
 	    CROMSIZE, &sc->crom_dma, CROMSIZE, BUS_DMA_NOWAIT);
 	if (sc->fc.config_rom == NULL) {
-		aprint_error_dev(sc->fc.dev, "config_rom alloc failed.");
+		aprint_error_dev(sc->fc.dev, "config_rom alloc failed.\n");
 		return ENOMEM;
 	}
 
@@ -919,13 +919,10 @@ fwohci_itxbuf_enable(struct firewire_comm *fc, int dmach)
 	struct fw_xferq *it;
 	uint32_t stat;
 	int cycle_match, cycle_now, ldesc, err = 0;
-	unsigned short tag, ich;
 
 	dbch = &sc->it[dmach];
 	it = &dbch->xferq;
 
-	tag = (it->flag >> 6) & 3;
-	ich = it->flag & 0x3f;
 	if ((dbch->flags & FWOHCI_DBCH_INIT) == 0) {
 		dbch->ndb = it->bnpacket * it->bnchunk;
 		dbch->ndesc = 3;
@@ -2194,7 +2191,10 @@ fwohci_tbuf_update(struct fwohci_softc *sc, int dmach)
 	struct fwohcidb *db;
 	struct fw_bulkxfer *chunk;
 	struct fw_xferq *it;
-	uint32_t stat, count;
+	uint32_t stat;
+#if 0
+	uint32_t count;
+#endif
 	int w = 0, ldesc;
 
 	it = fc->it[dmach];
@@ -2209,8 +2209,12 @@ fwohci_tbuf_update(struct fwohci_softc *sc, int dmach)
 		    FWOHCI_DMA_READ(db[ldesc].db.desc.res) >> OHCI_STATUS_SHIFT;
 		db = ((struct fwohcidb_tr *)(chunk->start))->db;
 		/* timestamp */
+#if 0
 		count =
 		    FWOHCI_DMA_READ(db[ldesc].db.desc.res) & OHCI_COUNT_MASK;
+#else
+		(void)FWOHCI_DMA_READ(db[ldesc].db.desc.res);
+#endif
 		if (stat == 0)
 			break;
 		STAILQ_REMOVE_HEAD(&it->stdma, link);
@@ -2344,8 +2348,12 @@ static void
 dump_db(struct fwohci_softc *sc, uint32_t ch)
 {
 	struct fwohci_dbch *dbch;
-	struct fwohcidb_tr *cp = NULL, *pp, *np = NULL;
-	struct fwohcidb *curr = NULL, *prev, *next = NULL;
+	struct fwohcidb_tr *cp = NULL, *pp;
+	struct fwohcidb *curr = NULL;
+#if 0
+	struct fwohcidb_tr *np = NULL;
+	struct fwohcidb *prev, *next = NULL;
+#endif
 	int idb, jdb;
 	uint32_t cmd;
 
@@ -2368,21 +2376,27 @@ dump_db(struct fwohci_softc *sc, uint32_t ch)
 		return;
 	}
 	pp = dbch->top;
+#if 0
 	prev = pp->db;
+#endif
 	for (idb = 0; idb < dbch->ndb; idb++) {
 		cp = STAILQ_NEXT(pp, link);
 		if (cp == NULL) {
 			curr = NULL;
 			goto outdb;
 		}
+#if 0
 		np = STAILQ_NEXT(cp, link);
+#endif
 		for (jdb = 0; jdb < dbch->ndesc; jdb++)
 			if ((cmd & 0xfffffff0) == cp->bus_addr) {
 				curr = cp->db;
+#if 0
 				if (np != NULL)
 					next = np->db;
 				else
 					next = NULL;
+#endif
 				goto outdb;
 			}
 		pp = STAILQ_NEXT(pp, link);
@@ -2390,7 +2404,9 @@ dump_db(struct fwohci_softc *sc, uint32_t ch)
 			curr = NULL;
 			goto outdb;
 		}
+#if 0
 		prev = pp->db;
+#endif
 	}
 outdb:
 	if (curr != NULL) {
@@ -2486,7 +2502,7 @@ print_db(struct fwohcidb_tr *db_tr, struct fwohcidb *db, uint32_t ch,
 static void
 fwohci_txbufdb(struct fwohci_softc *sc, int dmach, struct fw_bulkxfer *bulkxfer)
 {
-	struct fwohcidb_tr *db_tr, *fdb_tr;
+	struct fwohcidb_tr *db_tr /*, *fdb_tr */;
 	struct fwohci_dbch *dbch;
 	struct fwohcidb *db;
 	struct fw_pkt *fp;
@@ -2500,8 +2516,8 @@ fwohci_txbufdb(struct fwohci_softc *sc, int dmach, struct fw_bulkxfer *bulkxfer)
 	chtag = sc->it[dmach].xferq.flag & 0xff;
 
 	db_tr = (struct fwohcidb_tr *)(bulkxfer->start);
-	fdb_tr = (struct fwohcidb_tr *)(bulkxfer->end);
 /*
+	fdb_tr = (struct fwohcidb_tr *)(bulkxfer->end);
 aprint_normal(sc->fc.dev, "DB %08x %08x %08x\n", bulkxfer, db_tr->bus_addr, fdb_tr->bus_addr);
 */
 	for (idb = 0; idb < dbch->xferq.bnpacket; idb++) {
@@ -2629,9 +2645,9 @@ fwohci_arcv_swap(struct fw_pkt *fp, int len)
 {
 	struct fw_pkt *fp0;
 	uint32_t ld0;
-	int slen, hlen;
+	int hlen;
 #if BYTE_ORDER == BIG_ENDIAN
-	int i;
+	int slen, i;
 #endif
 
 	ld0 = FWOHCI_DMA_READ(fp->mode.ld[0]);
@@ -2646,7 +2662,9 @@ fwohci_arcv_swap(struct fw_pkt *fp, int len)
 	case FWTCODE_WREQQ:
 	case FWTCODE_RRESQ:
 	case FWOHCITCODE_PHY:
+#if BYTE_ORDER == BIG_ENDIAN
 		slen = 12;
+#endif
 		break;
 
 	case FWTCODE_RREQB:
@@ -2654,7 +2672,9 @@ fwohci_arcv_swap(struct fw_pkt *fp, int len)
 	case FWTCODE_LREQ:
 	case FWTCODE_RRESB:
 	case FWTCODE_LRES:
+#if BYTE_ORDER == BIG_ENDIAN
 		slen = 16;
+#endif
 		break;
 
 	default:

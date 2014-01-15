@@ -1,4 +1,4 @@
-/*	$NetBSD: rumpuser_port.h,v 1.3 2012/09/03 11:33:35 pooka Exp $	*/
+/*	$NetBSD: rumpuser_port.h,v 1.22 2013/10/27 16:39:46 rmind Exp $	*/
 
 /*
  * Portability header for non-NetBSD platforms.
@@ -27,8 +27,17 @@
 #define PLATFORM_HAS_NBSYSCTL
 #define PLATFORM_HAS_NBFILEHANDLE
 
+#define PLATFORM_HAS_DISKLABEL
+#define PLATFORM_HAS_NBMODULES
+#define PLATFORM_HAS_STRSUFTOLL
+#define PLATFORM_HAS_SETGETPROGNAME
+
 #if __NetBSD_Prereq__(5,99,48)
 #define PLATFORM_HAS_NBQUOTA
+#endif
+
+#if __NetBSD_Prereq__(6,99,16)
+#define HAVE_CLOCK_NANOSLEEP
 #endif
 
 /*
@@ -36,6 +45,11 @@
  * reasonably easily emulated on other platforms.
  */
 #define PLATFORM_HAS_NBVFSSTAT
+#endif /* __NetBSD__ */
+
+/* might not be 100% accurate, maybe need to revisit later */
+#if defined(__linux__) || defined(__sun__)
+#define HAVE_CLOCK_NANOSLEEP
 #endif
 
 #ifdef __linux__
@@ -46,13 +60,51 @@
 #include <features.h>
 #endif
 
+#if defined(__sun__)
+#  if defined(RUMPUSER_NO_FILE_OFFSET_BITS)
+#    undef _FILE_OFFSET_BITS
+#  else
+#    define _FILE_OFFSET_BITS 64
+#  endif
+#endif
+
+#if defined(__APPLE__)
+#define	__dead		__attribute__((noreturn))
+#include <sys/cdefs.h>
+
+#include <libkern/OSAtomic.h>
+#define	atomic_inc_uint(x)	OSAtomicIncrement32((volatile int32_t *)(x))
+#define	atomic_dec_uint(x)	OSAtomicDecrement32((volatile int32_t *)(x))
+
+#include <sys/time.h>
+
+#define	CLOCK_REALTIME	0
+typedef int clockid_t;
+
+static inline int
+clock_gettime(clockid_t clk, struct timespec *ts)
+{
+	struct timeval tv;
+
+	if (gettimeofday(&tv, 0) == 0) {
+		ts->tv_sec = tv.tv_sec;
+		ts->tv_nsec = tv.tv_usec * 1000;
+	}
+	return -1;
+}
+
+#endif
+
 #include <sys/types.h>
 #include <sys/param.h>
 
-#if defined(__linux__)
+/* maybe this should be !__NetBSD__ ? */
+#if defined(__linux__) || defined(__sun__) || defined(__FreeBSD__)	\
+    || defined(__DragonFly__) || defined(__APPLE__) || defined(__CYGWIN__)
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
+#include <inttypes.h>
 
 /* this is inline simply to make this header self-contained */
 static inline int 
@@ -74,6 +126,25 @@ getenv_r(const char *name, char *buf, size_t buflen)
 }
 #endif
 
+#if defined(__sun__)
+#include <sys/sysmacros.h>
+
+#if !defined(HAVE_POSIX_MEMALIGN)
+/* Solarisa 10 has memalign() but no posix_memalign() */
+#include <stdlib.h>
+
+static inline int
+posix_memalign(void **ptr, size_t align, size_t size)
+{
+
+	*ptr = memalign(align, size);
+	if (*ptr == NULL)
+		return ENOMEM;
+	return 0;
+}
+#endif /* !HAVE_POSIX_MEMALIGN */
+#endif /* __sun__ */
+
 #ifndef __RCSID
 #define __RCSID(a)
 #endif
@@ -86,10 +157,10 @@ getenv_r(const char *name, char *buf, size_t buflen)
 #define _DIAGASSERT(_p_)
 #endif
 
-#ifdef __linux__
-#define SA_SETLEN(a,b)
+#if defined(__linux__) || defined(__sun__) || defined(__CYGWIN__)
+#define SIN_SETLEN(a,b)
 #else /* BSD */
-#define SA_SETLEN(_sa_, _len_) ((struct sockaddr *)_sa_)->sa_len = _len_
+#define SIN_SETLEN(_sin_, _len_) _sin_.sin_len = _len_
 #endif
 
 #ifndef __predict_true
@@ -98,7 +169,7 @@ getenv_r(const char *name, char *buf, size_t buflen)
 #endif
 
 #ifndef __dead
-#define __dead
+#define __dead __attribute__((__noreturn__))
 #endif
 
 #ifndef __printflike
@@ -121,19 +192,58 @@ getenv_r(const char *name, char *buf, size_t buflen)
 #define __UNCONST(_a_) ((void *)(unsigned long)(const void *)(_a_))
 #endif
 
-#ifdef __linux__
-#define arc4random() random()
+#ifndef __CONCAT
+#define __CONCAT(x,y)	x ## y
+#endif
+
+#ifndef __STRING
+#define __STRING(x)	#x
+#endif
+
+#if defined(__linux__) || defined(__sun__) || defined (__CYGWIN__)
+#define RUMPUSER_RANDOM() random()
+#define RUMPUSER_USE_DEVRANDOM
+#else
+#define RUMPUSER_RANDOM() arc4random()
 #endif
 
 #ifndef __NetBSD_Prereq__
 #define __NetBSD_Prereq__(a,b,c) 0
 #endif
 
-#if !defined(__CMSG_ALIGN)
 #include <sys/socket.h>
+
+#if !defined(__CMSG_ALIGN)
 #ifdef CMSG_ALIGN
 #define __CMSG_ALIGN(a) CMSG_ALIGN(a)
 #endif
+#endif
+
+#ifndef PF_LOCAL
+#define PF_LOCAL PF_UNIX
+#endif
+#ifndef AF_LOCAL
+#define AF_LOCAL AF_UNIX
+#endif
+
+/* pfft, but what are you going to do? */
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0
+#endif
+
+#if defined(__sun__) && !defined(RUMP_REGISTER_T)
+#define RUMP_REGISTER_T long
+typedef RUMP_REGISTER_T register_t;
+#endif
+
+#include <sys/time.h>
+
+#ifndef TIMEVAL_TO_TIMESPEC
+#define TIMEVAL_TO_TIMESPEC(tv, ts)		\
+do {						\
+	(ts)->tv_sec  = (tv)->tv_sec;		\
+	(ts)->tv_nsec = (tv)->tv_usec * 1000;	\
+} while (/*CONSTCOND*/0)
 #endif
 
 #endif /* _LIB_LIBRUMPUSER_RUMPUSER_PORT_H_ */

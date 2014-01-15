@@ -1,4 +1,4 @@
-#	$NetBSD: IPAQ,v 1.68 2012/03/10 21:51:52 joerg Exp $
+#	$NetBSD: IPAQ,v 1.75 2013/06/30 21:38:57 rmind Exp $
 #
 #	iPAQ H3600 -- Windows-CE based PDA
 #
@@ -23,9 +23,6 @@ options 	CPU_SA1110	# Support the SA1110 core
 # Architecture options
 options 	SAEGPIO_BASE="0x49000000"
 				# we have Extended GPIO
-# FPA options
-#options 	ARMFPE		# ARM Ltd FPE
-
 # File systems
 
 file-system	FFS		# UFS
@@ -60,15 +57,10 @@ options 	WAPBL		# File system journaling support
 options 	INET		# IP + ICMP + TCP + UDP
 options 	INET6		# IPV6
 #options 	IPSEC		# IP security
-#options 	IPSEC_ESP	# IP security (encryption part; define w/IPSEC)
-#options 	IPSEC_NAT_T	# IPsec NAT traversal (NAT-T)
 #options 	IPSEC_DEBUG	# debug for IP security
 #options 	MROUTING	# IP multicast routing
 #options 	PIM		# Protocol Independent Multicast
-options 	ISO,TPIP	# OSI
-#options 	EON		# OSI tunneling over IP
 options 	NETATALK	# AppleTalk networking
-options 	PFIL_HOOKS	# pfil(9) packet filter hooks
 options 	PPP_BSDCOMP	# BSD-Compress compression support for PPP
 options 	PPP_DEFLATE	# Deflate compression support for PPP
 options 	PPP_FILTER	# Active filter support for PPP (requires bpf)
@@ -190,13 +182,13 @@ wi*	at pcmcia? function ?		# Lucent WaveLan IEEE (802.11)
 # Workstation Console attachments
 #wsdisplay*	at	hpcfb? console?
 
-pseudo-device	loop	1		# network loopback
+pseudo-device	loop			# network loopback
 pseudo-device	bpfilter		# packet filter
 pseudo-device	sl			# CSLIP
 pseudo-device	ppp			# PPP
 pseudo-device	tun			# network tunneling over tty
 #pseudo-device	gre			# generic L3 over IP tunnel
-#pseudo-device	ipfilter 1		# ip filter
+#pseudo-device	ipfilter 		# ip filter
 pseudo-device	gif			# IPv[46] over IPv[46] tunnel (RFC1933)
 #pseudo-device	faith			# IPv[46] tcp relay translation i/f
 pseudo-device	stf			# 6to4 IPv6 over IPv4 encapsulation
@@ -205,9 +197,9 @@ pseudo-device	vlan			# IEEE 802.1q encapsulation
 
 pseudo-device	pty			# pseudo-terminals
 #pseudo-device	vnd			# disk-like interface to files
-#pseudo-device	ccd	2		# concatenated disk devices
-#pseudo-device	cgd	2		# cryptographic disk devices
-#pseudo-device	raid	4		# RAIDframe disk driver
+#pseudo-device	ccd			# concatenated disk devices
+#pseudo-device	cgd			# cryptographic disk devices
+#pseudo-device	raid			# RAIDframe disk driver
 #options 	RAID_AUTOCONFIG		# auto-configuration of RAID components
 #pseudo-device	fss			# file system snapshot device
 

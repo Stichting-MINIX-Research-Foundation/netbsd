@@ -1,4 +1,4 @@
-/*	$NetBSD: if_atu.c,v 1.44 2012/09/23 01:08:17 chs Exp $ */
+/*	$NetBSD: if_atu.c,v 1.49 2013/03/30 03:15:52 christos Exp $ */
 /*	$OpenBSD: if_atu.c,v 1.48 2004/12/30 01:53:21 dlg Exp $ */
 /*
  * Copyright (c) 2003, 2004
@@ -48,8 +48,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_atu.c,v 1.44 2012/09/23 01:08:17 chs Exp $");
-
+__KERNEL_RCSID(0, "$NetBSD: if_atu.c,v 1.49 2013/03/30 03:15:52 christos Exp $");
 
 #include <sys/param.h>
 #include <sys/sockio.h>
@@ -91,10 +90,6 @@ __KERNEL_RCSID(0, "$NetBSD: if_atu.c,v 1.44 2012/09/23 01:08:17 chs Exp $");
 
 #include <net80211/ieee80211_var.h>
 #include <net80211/ieee80211_radiotap.h>
-
-#ifdef USB_DEBUG
-#define ATU_DEBUG
-#endif
 
 #include <dev/usb/if_atureg.h>
 
@@ -698,8 +693,8 @@ atu_initial_config(struct atu_softc *sc)
 
 		cmd.WEP_DefaultKeyID = ic->ic_def_txkey;
 		for (i = 0; i < IEEE80211_WEP_NKID; i++) {
-			memcpy(cmd.WEP_DefaultKey[i], ic->ic_nw_keys[i].wk_key, 
-			    ic->ic_nw_keys[i].wk_keylen); 
+			memcpy(cmd.WEP_DefaultKey[i], ic->ic_nw_keys[i].wk_key,
+			    ic->ic_nw_keys[i].wk_keylen);
 		}
 	}
 
@@ -1257,7 +1252,8 @@ atu_attach(device_t parent, device_t self, void *aux)
 
 	err = usbd_set_config_no(dev, ATU_CONFIG_NO, 1);
 	if (err) {
-		aprint_error_dev(self, "setting config no failed\n");
+		aprint_error_dev(self, "failed to set configuration"
+		    ", err=%s\n", usbd_errstr(err));
 		return;
 	}
 
@@ -1465,7 +1461,7 @@ atu_complete_attach(struct atu_softc *sc)
 	/* setup ifmedia interface */
 	ieee80211_media_init(ic, atu_media_change, atu_media_status);
 
-	usb_init_task(&sc->sc_task, atu_task, sc);
+	usb_init_task(&sc->sc_task, atu_task, sc, 0);
 
 	sc->sc_state = ATU_S_OK;
 }

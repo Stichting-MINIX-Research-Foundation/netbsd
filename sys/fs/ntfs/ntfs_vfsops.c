@@ -1,4 +1,4 @@
-/*	$NetBSD: ntfs_vfsops.c,v 1.87 2011/11/14 18:35:13 hannken Exp $	*/
+/*	$NetBSD: ntfs_vfsops.c,v 1.90 2013/11/23 13:35:36 christos Exp $	*/
 
 /*-
  * Copyright (c) 1998, 1999 Semen Ustimenko
@@ -29,7 +29,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ntfs_vfsops.c,v 1.87 2011/11/14 18:35:13 hannken Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ntfs_vfsops.c,v 1.90 2013/11/23 13:35:36 christos Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -118,9 +118,7 @@ ntfs_mountroot(void)
 		return (error);
 	}
 
-	mutex_enter(&mountlist_lock);
-	CIRCLEQ_INSERT_TAIL(&mountlist, mp, mnt_list);
-	mutex_exit(&mountlist_lock);
+	mountlist_append(mp);
 	(void)ntfs_statvfs(mp, &mp->mnt_stat);
 	vfs_unbusy(mp, false, NULL);
 	return (0);
@@ -307,7 +305,7 @@ ntfs_mountfs(struct vnode *devvp, struct mount *mp, struct ntfs_args *argsp, str
 	struct buf *bp;
 	struct ntfsmount *ntmp;
 	dev_t dev = devvp->v_rdev;
-	int error, ronly, i;
+	int error, i;
 	struct vnode *vp;
 
 	ntmp = NULL;
@@ -320,8 +318,6 @@ ntfs_mountfs(struct vnode *devvp, struct mount *mp, struct ntfs_args *argsp, str
 	VOP_UNLOCK(devvp);
 	if (error)
 		return (error);
-
-	ronly = (mp->mnt_flag & MNT_RDONLY) != 0;
 
 	bp = NULL;
 
@@ -455,7 +451,7 @@ ntfs_mountfs(struct vnode *devvp, struct mount *mp, struct ntfs_args *argsp, str
 	mp->mnt_stat.f_fsid = mp->mnt_stat.f_fsidx.__fsid_val[0];
 	mp->mnt_stat.f_namemax = NTFS_MAXFILENAME;
 	mp->mnt_flag |= MNT_LOCAL;
-	devvp->v_specmountpoint = mp;
+	spec_node_setmountedfs(devvp, mp);
 	return (0);
 
 out1:
@@ -466,7 +462,7 @@ out1:
 		dprintf(("ntfs_mountfs: vflush failed\n"));
 	}
 out:
-	devvp->v_specmountpoint = NULL;
+	spec_node_setmountedfs(devvp, NULL);
 	if (bp)
 		brelse(bp, 0);
 
@@ -532,7 +528,7 @@ ntfs_unmount(
 	 * field is NULL and touching it causes null pointer derefercence.
 	 */
 	if (ntmp->ntm_devvp->v_type != VBAD)
-		ntmp->ntm_devvp->v_specmountpoint = NULL;
+		spec_node_setmountedfs(ntmp->ntm_devvp, NULL);
 
 	vinvalbuf(ntmp->ntm_devvp, V_SAVE, NOCRED, l, 0, 0);
 

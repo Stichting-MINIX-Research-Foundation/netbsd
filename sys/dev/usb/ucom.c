@@ -1,4 +1,4 @@
-/*	$NetBSD: ucom.c,v 1.99 2012/03/06 03:35:29 mrg Exp $	*/
+/*	$NetBSD: ucom.c,v 1.102 2012/12/15 04:10:05 jakllsch Exp $	*/
 
 /*
  * Copyright (c) 1998, 2000 The NetBSD Foundation, Inc.
@@ -34,7 +34,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ucom.c,v 1.99 2012/03/06 03:35:29 mrg Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ucom.c,v 1.102 2012/12/15 04:10:05 jakllsch Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -442,7 +442,7 @@ ucomopen(dev_t dev, int flag, int mode, struct lwp *l)
 		 * unless explicitly requested to deassert it.  Ditto RTS.
 		 */
 		ucom_dtr(sc, 1);
-		ucom_rts(sc, 1);		
+		ucom_rts(sc, 1);
 
 		DPRINTF(("ucomopen: open pipes in=%d out=%d\n",
 			 sc->sc_bulkin_no, sc->sc_bulkout_no));
@@ -580,10 +580,16 @@ int
 ucomclose(dev_t dev, int flag, int mode, struct lwp *l)
 {
 	struct ucom_softc *sc = device_lookup_private(&ucom_cd, UCOMUNIT(dev));
-	struct tty *tp = sc->sc_tty;
+	struct tty *tp;
 	int s;
 
 	DPRINTF(("ucomclose: unit=%d\n", UCOMUNIT(dev)));
+
+	if (sc == NULL)
+		return 0;
+
+	tp = sc->sc_tty;
+
 	if (!ISSET(tp->t_state, TS_ISOPEN))
 		return (0);
 
@@ -616,11 +622,13 @@ int
 ucomread(dev_t dev, struct uio *uio, int flag)
 {
 	struct ucom_softc *sc = device_lookup_private(&ucom_cd, UCOMUNIT(dev));
-	struct tty *tp = sc->sc_tty;
+	struct tty *tp;
 	int error;
 
-	if (sc->sc_dying)
+	if (sc == NULL || sc->sc_dying)
 		return (EIO);
+
+	tp = sc->sc_tty;
 
 	sc->sc_refcnt++;
 	error = ((*tp->t_linesw->l_read)(tp, uio, flag));
@@ -633,11 +641,13 @@ int
 ucomwrite(dev_t dev, struct uio *uio, int flag)
 {
 	struct ucom_softc *sc = device_lookup_private(&ucom_cd, UCOMUNIT(dev));
-	struct tty *tp = sc->sc_tty;
+	struct tty *tp;
 	int error;
 
-	if (sc->sc_dying)
+	if (sc == NULL || sc->sc_dying)
 		return (EIO);
+
+	tp = sc->sc_tty;
 
 	sc->sc_refcnt++;
 	error = ((*tp->t_linesw->l_write)(tp, uio, flag));
@@ -670,9 +680,8 @@ struct tty *
 ucomtty(dev_t dev)
 {
 	struct ucom_softc *sc = device_lookup_private(&ucom_cd, UCOMUNIT(dev));
-	struct tty *tp = sc->sc_tty;
 
-	return (tp);
+	return ((sc != NULL) ? sc->sc_tty : NULL);
 }
 
 int
@@ -680,6 +689,9 @@ ucomioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 {
 	struct ucom_softc *sc = device_lookup_private(&ucom_cd, UCOMUNIT(dev));
 	int error;
+
+	if (sc == NULL || sc->sc_dying)
+		return (EIO);
 
 	sc->sc_refcnt++;
 	error = ucom_do_ioctl(sc, cmd, data, flag, l);
@@ -695,9 +707,6 @@ ucom_do_ioctl(struct ucom_softc *sc, u_long cmd, void *data,
 	struct tty *tp = sc->sc_tty;
 	int error;
 	int s;
-
-	if (sc->sc_dying)
-		return (EIO);
 
 	DPRINTF(("ucomioctl: cmd=0x%08lx\n", cmd));
 
@@ -890,7 +899,7 @@ ucomparam(struct tty *tp, struct termios *t)
 	    UCOMUNIT(tp->t_dev));
 	int error;
 
-	if (sc->sc_dying)
+	if (sc == NULL || sc->sc_dying)
 		return (EIO);
 
 	/* Check requested parameters. */
@@ -959,6 +968,9 @@ ucomhwiflow(struct tty *tp, int block)
 	    UCOMUNIT(tp->t_dev));
 	int old;
 
+	if (sc == NULL)
+		return (0);
+
 	old = sc->sc_rx_stopped;
 	sc->sc_rx_stopped = (u_char)block;
 
@@ -982,7 +994,7 @@ ucomstart(struct tty *tp)
 	u_char *data;
 	int cnt;
 
-	if (sc->sc_dying)
+	if (sc == NULL || sc->sc_dying)
 		return;
 
 	s = spltty();
@@ -1002,7 +1014,10 @@ ucomstart(struct tty *tp)
 		goto out;
 
 	ub = SIMPLEQ_FIRST(&sc->sc_obuff_free);
-	KASSERT(ub != NULL);
+	if (ub == NULL) {
+		SET(tp->t_state, TS_BUSY);
+		goto out;
+	}
 	SIMPLEQ_REMOVE_HEAD(&sc->sc_obuff_free, ub_link);
 
 	if (SIMPLEQ_FIRST(&sc->sc_obuff_free) == NULL)
@@ -1070,11 +1085,13 @@ ucom_write_status(struct ucom_softc *sc, struct ucom_buffer *ub,
 		SIMPLEQ_INSERT_TAIL(&sc->sc_obuff_free, ub, ub_link);
 		cc -= sc->sc_opkthdrlen;
 
+		mutex_spin_enter(&tty_lock);
 		CLR(tp->t_state, TS_BUSY);
 		if (ISSET(tp->t_state, TS_FLUSH))
 			CLR(tp->t_state, TS_FLUSH);
 		else
 			ndflush(&tp->t_outq, cc);
+		mutex_spin_exit(&tty_lock);
 
 		if (err != USBD_CANCELLED && err != USBD_IOERROR &&
 		    !sc->sc_dying) {

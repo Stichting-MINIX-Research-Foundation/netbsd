@@ -1,8 +1,11 @@
-/*	$NetBSD: npfctl.h,v 1.20 2012/09/16 13:47:41 rmind Exp $	*/
+/*	$NetBSD: npfctl.h,v 1.34 2013/11/08 00:38:26 rmind Exp $	*/
 
 /*-
- * Copyright (c) 2009-2012 The NetBSD Foundation, Inc.
+ * Copyright (c) 2009-2013 The NetBSD Foundation, Inc.
  * All rights reserved.
+ *
+ * This material is based upon work partially supported by The
+ * NetBSD Foundation under a contract with Mindaugas Rasiukevicius.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,8 +36,9 @@
 #include <stdbool.h>
 #include <inttypes.h>
 #include <assert.h>
+#include <util.h>
 
-#include <net/npf_ncode.h>
+#define	NPF_BPFCOP
 #include <net/npf.h>
 
 #define	_NPF_PRIVATE
@@ -50,8 +54,16 @@ typedef struct fam_addr_mask {
 	sa_family_t	fam_family;
 	npf_addr_t	fam_addr;
 	npf_netmask_t	fam_mask;
-	npfvar_t *	fam_interface;
+	unsigned long	fam_ifindex;
 } fam_addr_mask_t;
+
+typedef struct ifnet_addr {
+	char *		ifna_name;
+	unsigned long	ifna_index;
+	sa_family_t	ifna_family;
+	npfvar_t *	ifna_filter;
+	npfvar_t *	ifna_addrs;
+} ifnet_addr_t;
 
 typedef struct port_range {
 	in_port_t	pr_start;
@@ -76,7 +88,8 @@ typedef struct opt_proto {
 typedef struct rule_group {
 	const char *	rg_name;
 	uint32_t	rg_attr;
-	u_int		rg_ifnum;
+	const char *	rg_ifname;
+	bool		rg_default;
 } rule_group_t;
 
 typedef struct proc_call {
@@ -89,23 +102,25 @@ typedef struct proc_param {
 	const char *	pp_value;
 } proc_param_t;
 
+enum { NPFCTL_PARSE_FILE, NPFCTL_PARSE_STRING };
+
+bool		join(char *, size_t, int, char **, const char *);
 void		yyerror(const char *, ...) __printflike(1, 2) __dead;
-void *		zalloc(size_t);
-void *		xrealloc(void *, size_t);
-char *		xstrdup(const char *);
-char *		xstrndup(const char *, size_t);
+void		npfctl_parse_file(const char *);
+void		npfctl_parse_string(const char *);
 
 void		npfctl_print_error(const nl_error_t *);
+char *		npfctl_print_addrmask(int, const npf_addr_t *, npf_netmask_t);
+void		npfctl_note_interface(const char *);
 bool		npfctl_table_exists_p(const char *);
 int		npfctl_protono(const char *);
 in_port_t	npfctl_portno(const char *);
 uint8_t		npfctl_icmpcode(int, uint8_t, const char *);
 uint8_t		npfctl_icmptype(int, const char *);
-unsigned long   npfctl_find_ifindex(const char *);
+npfvar_t *	npfctl_parse_ifnet(const char *, const int);
 npfvar_t *	npfctl_parse_tcpflag(const char *);
 npfvar_t *	npfctl_parse_table_id(const char *);
 npfvar_t * 	npfctl_parse_icmp(int, int, int);
-npfvar_t *	npfctl_parse_iface(const char *);
 npfvar_t *	npfctl_parse_port_range(in_port_t, in_port_t);
 npfvar_t *	npfctl_parse_port_range_variable(const char *);
 npfvar_t *	npfctl_parse_fam_addr_mask(const char *, const char *,
@@ -123,45 +138,35 @@ int		npf_extmod_param(npf_extmod_t *, nl_ext_t *,
 		    const char *, const char *);
 
 /*
- * N-code generation interface.
+ * BFF byte-code generation interface.
  */
 
-typedef struct nc_ctx nc_ctx_t;
+typedef struct npf_bpf npf_bpf_t;
 
-#define	NC_MATCH_DST		0x01
-#define	NC_MATCH_SRC		0x02
+#define	MATCH_DST	0x01
+#define	MATCH_SRC	0x02
 
-#define	NC_MATCH_TCP		0x04
-#define	NC_MATCH_UDP		0x08
-#define	NC_MATCH_ICMP		0x10
-#define	NC_MATCH_ICMP6		0x20
+enum {
+	BM_IPVER, BM_PROTO, BM_SRC_CIDR, BM_SRC_TABLE, BM_DST_CIDR,
+	BM_DST_TABLE, BM_SRC_PORTS, BM_DST_PORTS, BM_TCPFL, BM_ICMP_TYPE,
+	BM_ICMP_CODE,
+};
 
-nc_ctx_t *	npfctl_ncgen_create(void);
-void *		npfctl_ncgen_complete(nc_ctx_t *, size_t *);
-void		npfctl_ncgen_print(const void *, size_t);
+npf_bpf_t *	npfctl_bpf_create(void);
+struct bpf_program *npfctl_bpf_complete(npf_bpf_t *);
+const void *	npfctl_bpf_bmarks(npf_bpf_t *, size_t *);
+void		npfctl_bpf_destroy(npf_bpf_t *);
 
-void		npfctl_ncgen_group(nc_ctx_t *);
-void		npfctl_ncgen_endgroup(nc_ctx_t *);
+void		npfctl_bpf_group(npf_bpf_t *);
+void		npfctl_bpf_endgroup(npf_bpf_t *);
 
-void		npfctl_gennc_v4cidr(nc_ctx_t *, int, const npf_addr_t *,
-		    const npf_netmask_t);
-void		npfctl_gennc_v6cidr(nc_ctx_t *, int, const npf_addr_t *,
-		    const npf_netmask_t);
-void		npfctl_gennc_ports(nc_ctx_t *, int, in_port_t, in_port_t);
-void		npfctl_gennc_icmp(nc_ctx_t *, int, int);
-void		npfctl_gennc_icmp6(nc_ctx_t *, int, int);
-void		npfctl_gennc_tbl(nc_ctx_t *, int, u_int);
-void		npfctl_gennc_tcpfl(nc_ctx_t *, uint8_t, uint8_t);
-void		npfctl_gennc_proto(nc_ctx_t *ctx, uint8_t, uint8_t);
-
-/*
- * N-code disassembler.
- */
-
-typedef struct nc_inf nc_inf_t;
-
-nc_inf_t *	npfctl_ncode_disinf(FILE *);
-int		npfctl_ncode_disassemble(nc_inf_t *, const void *, size_t);
+void		npfctl_bpf_proto(npf_bpf_t *, sa_family_t, int);
+void		npfctl_bpf_cidr(npf_bpf_t *, u_int, sa_family_t,
+		    const npf_addr_t *, const npf_netmask_t);
+void		npfctl_bpf_ports(npf_bpf_t *, u_int, in_port_t, in_port_t);
+void		npfctl_bpf_tcpfl(npf_bpf_t *, uint8_t, uint8_t);
+void		npfctl_bpf_icmp(npf_bpf_t *, int, int);
+void		npfctl_bpf_table(npf_bpf_t *, u_int, u_int);
 
 /*
  * Configuration building interface.
@@ -172,15 +177,24 @@ int		npfctl_ncode_disassemble(nc_inf_t *, const void *, size_t);
 
 void		npfctl_config_init(bool);
 int		npfctl_config_send(int, const char *);
+nl_config_t *	npfctl_config_ref(void);
 int		npfctl_config_show(int);
-unsigned long	npfctl_debug_addif(const char *);
+int		npfctl_ruleset_show(int, const char *);
 
+nl_rule_t *	npfctl_rule_ref(void);
+bool		npfctl_debug_addif(const char *);
+
+void		npfctl_build_alg(const char *);
 void		npfctl_build_rproc(const char *, npfvar_t *);
-void		npfctl_build_group(const char *, int, u_int);
-void		npfctl_build_rule(int, u_int, sa_family_t,
-		    const opt_proto_t *, const filt_opts_t *, const char *);
-void		npfctl_build_natseg(int, int, u_int, const addr_port_t *,
-		    const addr_port_t *, const filt_opts_t *);
+void		npfctl_build_group(const char *, int, const char *, bool);
+void		npfctl_build_group_end(void);
+void		npfctl_build_rule(uint32_t, const char *, sa_family_t,
+		    const opt_proto_t *, const filt_opts_t *,
+		    const char *, const char *);
+void		npfctl_build_natseg(int, int, const char *,
+		    const addr_port_t *, const addr_port_t *,
+		    const filt_opts_t *);
+void		npfctl_build_maprset(const char *, int, const char *);
 void		npfctl_build_table(const char *, u_int, const char *);
 
 #endif

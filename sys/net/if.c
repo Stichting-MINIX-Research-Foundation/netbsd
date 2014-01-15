@@ -1,4 +1,4 @@
-/*	$NetBSD: if.c,v 1.260 2012/02/03 03:35:30 christos Exp $	*/
+/*	$NetBSD: if.c,v 1.269 2013/10/19 21:39:12 mrg Exp $	*/
 
 /*-
  * Copyright (c) 1999, 2000, 2001, 2008 The NetBSD Foundation, Inc.
@@ -90,13 +90,12 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if.c,v 1.260 2012/02/03 03:35:30 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if.c,v 1.269 2013/10/19 21:39:12 mrg Exp $");
 
 #include "opt_inet.h"
 
 #include "opt_atalk.h"
 #include "opt_natm.h"
-#include "opt_pfil_hooks.h"
 
 #include <sys/param.h>
 #include <sys/mbuf.h>
@@ -124,6 +123,7 @@ __KERNEL_RCSID(0, "$NetBSD: if.c,v 1.260 2012/02/03 03:35:30 christos Exp $");
 #include <net/radix.h>
 #include <net/route.h>
 #include <net/netisr.h>
+#include <sys/module.h>
 #ifdef NETATALK
 #include <netatalk/at_extern.h>
 #include <netatalk/at.h>
@@ -163,9 +163,8 @@ static int if_cloners_count;
 static uint64_t index_gen;
 static kmutex_t index_gen_mtx;
 
-#ifdef PFIL_HOOKS
-struct pfil_head if_pfil;	/* packet filtering hook for interfaces */
-#endif
+/* Packet filtering hook for interfaces. */
+pfil_head_t *	if_pfil;
 
 static kauth_listener_t if_listener;
 
@@ -236,15 +235,9 @@ ifinit(void)
 void
 ifinit1(void)
 {
-
 	mutex_init(&index_gen_mtx, MUTEX_DEFAULT, IPL_NONE);
-
-#ifdef PFIL_HOOKS
-	if_pfil.ph_type = PFIL_TYPE_IFNET;
-	if_pfil.ph_ifnet = NULL;
-	if (pfil_head_register(&if_pfil) != 0)
-		printf("WARNING: unable to register pfil hook\n");
-#endif
+	if_pfil = pfil_head_create(PFIL_TYPE_IFNET, NULL);
+	KASSERT(if_pfil != NULL);
 }
 
 struct ifnet *
@@ -610,15 +603,9 @@ if_attach(struct ifnet *ifp)
 	ifp->if_snd.altq_ifp  = ifp;
 #endif
 
-#ifdef PFIL_HOOKS
-	ifp->if_pfil.ph_type = PFIL_TYPE_IFNET;
-	ifp->if_pfil.ph_ifnet = ifp;
-	if (pfil_head_register(&ifp->if_pfil) != 0)
-		printf("%s: WARNING: unable to register pfil hook\n",
-		    ifp->if_xname);
-	(void)pfil_run_hooks(&if_pfil,
+	ifp->if_pfil = pfil_head_create(PFIL_TYPE_IFNET, ifp);
+	(void)pfil_run_hooks(if_pfil,
 	    (struct mbuf **)PFIL_IFNET_ATTACH, ifp, PFIL_IFNET);
-#endif
 
 	if (!STAILQ_EMPTY(&domains))
 		if_attachdomain1(ifp);
@@ -844,11 +831,9 @@ again:
 		}
 	}
 
-#ifdef PFIL_HOOKS
-	(void)pfil_run_hooks(&if_pfil,
+	(void)pfil_run_hooks(if_pfil,
 	    (struct mbuf **)PFIL_IFNET_DETACH, ifp, PFIL_IFNET);
-	(void)pfil_head_unregister(&ifp->if_pfil);
-#endif
+	(void)pfil_head_destroy(ifp->if_pfil);
 
 	/* Announce that the interface is gone. */
 	rt_ifannouncemsg(ifp, IFAN_DEPARTURE);
@@ -984,25 +969,32 @@ if_clone_lookup(const char *name, int *unitp)
 {
 	struct if_clone *ifc;
 	const char *cp;
+	char *dp, ifname[IFNAMSIZ + 3];
 	int unit;
 
+	strcpy(ifname, "if_");
 	/* separate interface name from unit */
-	for (cp = name;
-	    cp - name < IFNAMSIZ && *cp && (*cp < '0' || *cp > '9');
-	    cp++)
-		continue;
+	for (dp = ifname + 3, cp = name; cp - name < IFNAMSIZ &&
+	    *cp && (*cp < '0' || *cp > '9');)
+		*dp++ = *cp++;
 
 	if (cp == name || cp - name == IFNAMSIZ || !*cp)
 		return NULL;	/* No name or unit number */
+	*dp++ = '\0';
 
+again:
 	LIST_FOREACH(ifc, &if_cloners, ifc_list) {
-		if (strlen(ifc->ifc_name) == cp - name &&
-		    strncmp(name, ifc->ifc_name, cp - name) == 0)
+		if (strcmp(ifname + 3, ifc->ifc_name) == 0)
 			break;
 	}
 
-	if (ifc == NULL)
-		return NULL;
+	if (ifc == NULL) {
+		if (*ifname == '\0' ||
+		    module_autoload(ifname, MODULE_CLASS_DRIVER))
+			return NULL;
+		*ifname = '\0';
+		goto again;
+	}
 
 	unit = 0;
 	while (cp - name < IFNAMSIZ && *cp) {
@@ -1325,19 +1317,68 @@ link_rtrequest(int cmd, struct rtentry *rt, const struct rt_addrinfo *info)
 
 /*
  * Handle a change in the interface link state.
+ * XXX: We should listen to the routing socket in-kernel rather
+ * than calling in6_if_link_* functions directly from here.
  */
 void
 if_link_state_change(struct ifnet *ifp, int link_state)
 {
-	if (ifp->if_link_state == link_state)
+	int s;
+#if defined(DEBUG) || defined(INET6)
+	int old_link_state;
+#endif
+
+	s = splnet();
+	if (ifp->if_link_state == link_state) {
+		splx(s);
 		return;
+	}
+
+#if defined(DEBUG) || defined(INET6)
+	old_link_state = ifp->if_link_state;
+#endif
 	ifp->if_link_state = link_state;
+#ifdef DEBUG
+	log(LOG_DEBUG, "%s: link state %s (was %s)\n", ifp->if_xname,
+		link_state == LINK_STATE_UP ? "UP" :
+		link_state == LINK_STATE_DOWN ? "DOWN" :
+		"UNKNOWN",
+		 old_link_state == LINK_STATE_UP ? "UP" :
+		old_link_state == LINK_STATE_DOWN ? "DOWN" :
+		"UNKNOWN");
+#endif
+
+#ifdef INET6
+	/*
+	 * When going from UNKNOWN to UP, we need to mark existing
+	 * IPv6 addresses as tentative and restart DAD as we may have
+	 * erroneously not found a duplicate.
+	 *
+	 * This needs to happen before rt_ifmsg to avoid a race where
+	 * listeners would have an address and expect it to work right
+	 * away.
+	 */
+	if (link_state == LINK_STATE_UP &&
+	    old_link_state == LINK_STATE_UNKNOWN)
+		in6_if_link_down(ifp);
+#endif
+
 	/* Notify that the link state has changed. */
 	rt_ifmsg(ifp);
+
 #if NCARP > 0
 	if (ifp->if_carp)
 		carp_carpdev_state(ifp);
 #endif
+
+#ifdef INET6
+	if (link_state == LINK_STATE_DOWN)
+		in6_if_link_down(ifp);
+	else if (link_state == LINK_STATE_UP)
+		in6_if_link_up(ifp);
+#endif
+
+	splx(s);
 }
 
 /*
@@ -1360,6 +1401,9 @@ if_down(struct ifnet *ifp)
 		carp_carpdev_state(ifp);
 #endif
 	rt_ifmsg(ifp);
+#ifdef INET6
+	in6_if_down(ifp);
+#endif
 }
 
 /*
@@ -1605,6 +1649,11 @@ ifioctl_common(struct ifnet *ifp, u_long cmd, void *data)
 		ifdr->ifdr_data = ifp->if_data;
 		break;
 
+	case SIOCGIFINDEX:
+		ifr = data;
+		ifr->ifr_index = ifp->if_index;
+		break;
+
 	case SIOCZIFDATA:
 		ifdr = data;
 		ifdr->ifdr_data = ifp->if_data;
@@ -1614,6 +1663,14 @@ ifioctl_common(struct ifnet *ifp, u_long cmd, void *data)
 		 */
 		memset(&ifp->if_data.ifi_ipackets, 0, sizeof(ifp->if_data) -
 		    offsetof(struct if_data, ifi_ipackets));
+		/*
+		 * The memset() clears to the bottm of if_data. In the area,
+		 * if_lastchange is included. Please be careful if new entry
+		 * will be added into if_data or rewite this.
+		 *
+		 * And also, update if_lastchnage.
+		 */
+		getnanotime(&ifp->if_lastchange);
 		break;
 	case SIOCSIFMTU:
 		ifr = data;

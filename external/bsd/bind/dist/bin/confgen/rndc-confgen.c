@@ -1,7 +1,7 @@
-/*	$NetBSD: rndc-confgen.c,v 1.4 2012/06/05 00:38:51 christos Exp $	*/
+/*	$NetBSD: rndc-confgen.c,v 1.6 2013/07/27 19:23:09 christos Exp $	*/
 
 /*
- * Copyright (C) 2004, 2005, 2007-2009, 2011  Internet Systems Consortium, Inc. ("ISC")
+ * Copyright (C) 2004, 2005, 2007-2009, 2011, 2013  Internet Systems Consortium, Inc. ("ISC")
  * Copyright (C) 2001, 2003  Internet Software Consortium.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
@@ -118,6 +118,7 @@ main(int argc, char **argv) {
 	isc_boolean_t keyonly = ISC_FALSE;
 	int len;
 
+	isc__mem_register();
 	keydef = keyfile = RNDC_KEYFILE;
 
 	result = isc_file_progname(*argv, program, sizeof(program));
@@ -142,8 +143,6 @@ main(int argc, char **argv) {
 			keysize = strtol(isc_commandline_argument, &p, 10);
 			if (*p != '\0' || keysize < 0)
 				fatal("-b requires a non-negative number");
-			if (keysize < 1 || keysize > 512)
-				fatal("-b must be in the range 1 through 512");
 			break;
 		case 'c':
 			keyfile = isc_commandline_argument;

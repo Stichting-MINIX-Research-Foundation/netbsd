@@ -1,4 +1,4 @@
-/*	$NetBSD: bcm53xx_var.h,v 1.3 2012/10/07 19:16:39 matt Exp $	*/
+/*	$NetBSD: bcm53xx_var.h,v 1.6 2013/10/28 22:51:16 matt Exp $	*/
 /*-
  * Copyright (c) 2012 The NetBSD Foundation, Inc.
  * All rights reserved.
@@ -40,7 +40,7 @@ struct bcm_locators {
 	bus_size_t loc_size;
 	int loc_port;
 	uint8_t loc_nintrs;
-	u_int loc_intrs[4];
+	u_int loc_intrs[8];
 	int loc_mdio;
 	int loc_phy;
 };
@@ -95,6 +95,7 @@ struct cpu_softc {
 	bus_space_handle_t cpu_armcore_bsh;
 
 	struct bcm53xx_clock_info cpu_clk;
+	uint32_t cpu_chipid;
 };
 
 
@@ -114,7 +115,10 @@ uint32_t	bcm53xx_srab_read_4(u_int);
 uint64_t	bcm53xx_srab_read_8(u_int);
 void	bcm53xx_srab_write_4(u_int, uint32_t);
 void	bcm53xx_srab_write_8(u_int, uint64_t);
-extern struct arm32_bus_dma_tag bcm53xx_dma_tag;
+extern struct arm32_bus_dma_tag bcm53xx_dma_tag, bcm53xx_coherent_dma_tag;
+#ifdef _ARM32_NEED_BUS_DMA_BOUNCE
+extern struct arm32_bus_dma_tag bcm53xx_bounce_dma_tag;
+#endif
 extern struct bus_space bcmgen_bs_tag;
 extern bus_space_tag_t bcm53xx_ioreg_bst;
 extern bus_space_handle_t bcm53xx_ioreg_bsh;

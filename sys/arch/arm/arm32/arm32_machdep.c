@@ -1,4 +1,4 @@
-/*	$NetBSD: arm32_machdep.c,v 1.84 2012/09/16 22:09:33 rmind Exp $	*/
+/*	$NetBSD: arm32_machdep.c,v 1.98 2013/09/10 21:30:21 matt Exp $	*/
 
 /*
  * Copyright (c) 1994-1998 Mark Brinicombe.
@@ -42,7 +42,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: arm32_machdep.c,v 1.84 2012/09/16 22:09:33 rmind Exp $");
+__KERNEL_RCSID(0, "$NetBSD: arm32_machdep.c,v 1.98 2013/09/10 21:30:21 matt Exp $");
 
 #include "opt_modular.h"
 #include "opt_md.h"
@@ -71,6 +71,8 @@ __KERNEL_RCSID(0, "$NetBSD: arm32_machdep.c,v 1.84 2012/09/16 22:09:33 rmind Exp
 #include <dev/cons.h>
 #include <dev/mm.h>
 
+#include <arm/locore.h>
+
 #include <arm/arm32/katelib.h>
 #include <arm/arm32/machdep.h>
 
@@ -97,6 +99,18 @@ void *	msgbufaddr;
 extern paddr_t msgbufphys;
 
 int kernel_debug = 0;
+int cpu_fpu_present;
+int cpu_hwdiv_present;
+int cpu_neon_present;
+int cpu_simd_present;
+int cpu_simdex_present;
+int cpu_umull_present;
+const char *cpu_arch = "";
+
+int cpu_instruction_set_attributes[6];
+int cpu_memory_model_features[4];
+int cpu_processor_features[2];
+int cpu_media_and_vfp_features[2];
 
 /* exported variable to be filled in by the bootloaders */
 char *booted_kernel;
@@ -119,6 +133,30 @@ extern void configure(void);
 void
 arm32_vector_init(vaddr_t va, int which)
 {
+#if defined(CPU_ARMV7) || defined(CPU_ARM11) || defined(ARM_HAS_VBAR)
+	/*
+	 * If this processor has the security extension, don't bother
+	 * to move/map the vector page.  Simply point VBAR to the copy
+	 * that exists in the .text segment.
+	 */
+#ifndef ARM_HAS_VBAR
+	if (va == ARM_VECTORS_LOW
+	    && (armreg_pfr1_read() & ARM_PFR1_SEC_MASK) != 0) {
+#endif
+		extern const uint32_t page0rel[];
+		vector_page = (vaddr_t)page0rel;
+		KASSERT((vector_page & 0x1f) == 0);
+		armreg_vbar_write(vector_page);
+#ifdef VERBOSE_INIT_ARM
+		printf(" vbar=%p", page0rel);
+#endif
+		cpu_control(CPU_CONTROL_VECRELOC, 0);
+		return;
+#ifndef ARM_HAS_VBAR
+	}
+#endif
+#endif
+#ifndef ARM_HAS_VBAR
 	if (CPU_IS_PRIMARY(curcpu())) {
 		extern unsigned int page0[], page0_data[];
 		unsigned int *vectors = (int *) va;
@@ -163,6 +201,7 @@ arm32_vector_init(vaddr_t va, int which)
 		 */
 		cpu_control(CPU_CONTROL_VECRELOC, CPU_CONTROL_VECRELOC);
 	}
+#endif
 }
 
 /*
@@ -177,7 +216,7 @@ halt(void)
 }
 
 
-/* Sync the discs and unmount the filesystems */
+/* Sync the discs, unmount the filesystems, and adjust the todr */
 
 void
 bootsync(void)
@@ -201,6 +240,8 @@ bootsync(void)
 	}
 
 	vfs_shutdown();
+
+	resettodr();
 }
 
 /*
@@ -225,8 +266,10 @@ cpu_startup(void)
 	/* Set the CPU control register */
 	cpu_setup(boot_args);
 
+#ifndef ARM_HAS_VBAR
 	/* Lock down zero page */
 	vector_page_setprot(VM_PROT_READ);
+#endif
 
 	/*
 	 * Give pmap a chance to set up a few more things now the vm
@@ -268,8 +311,8 @@ cpu_startup(void)
 
 	struct lwp * const l = &lwp0;
 	struct pcb * const pcb = lwp_getpcb(l);
-	pcb->pcb_sp = uvm_lwp_getuarea(l) + USPACE_SVC_STACK_TOP;
-	lwp_settrapframe(l, (struct trapframe *)pcb->pcb_sp - 1);
+	pcb->pcb_ksp = uvm_lwp_getuarea(l) + USPACE_SVC_STACK_TOP;
+	lwp_settrapframe(l, (struct trapframe *)pcb->pcb_ksp - 1);
 }
 
 /*
@@ -284,8 +327,8 @@ sysctl_machdep_booted_device(SYSCTLFN_ARGS)
 		return (EOPNOTSUPP);
 
 	node = *rnode;
-	node.sysctl_data = booted_device->dv_xname;
-	node.sysctl_size = strlen(booted_device->dv_xname) + 1;
+	node.sysctl_data = __UNCONST(device_xname(booted_device));
+	node.sysctl_size = strlen(device_xname(booted_device)) + 1;
 	return (sysctl_lookup(SYSCTLFN_CALL(&node)));
 }
 
@@ -301,6 +344,15 @@ sysctl_machdep_booted_kernel(SYSCTLFN_ARGS)
 	node.sysctl_data = booted_kernel;
 	node.sysctl_size = strlen(booted_kernel) + 1;
 	return (sysctl_lookup(SYSCTLFN_CALL(&node)));
+}
+
+static int
+sysctl_machdep_cpu_arch(SYSCTLFN_ARGS)
+{
+	struct sysctlnode node = *rnode;
+	node.sysctl_data = __UNCONST(cpu_arch);
+	node.sysctl_size = strlen(cpu_arch) + 1;
+	return sysctl_lookup(SYSCTLFN_CALL(&node));
 }
 
 static int
@@ -322,6 +374,15 @@ sysctl_machdep_powersave(SYSCTLFN_ARGS)
 	cpu_do_powersave = newval;
 
 	return (0);
+}
+
+static int
+sysctl_hw_machine_arch(SYSCTLFN_ARGS)
+{
+	struct sysctlnode node = *rnode;
+	node.sysctl_data = l->l_proc->p_md.md_march;
+	node.sysctl_size = strlen(l->l_proc->p_md.md_march) + 1;
+	return sysctl_lookup(SYSCTLFN_CALL(&node));
 }
 
 SYSCTL_SETUP(sysctl_machdep_setup, "sysctl machdep subtree setup")
@@ -354,10 +415,96 @@ SYSCTL_SETUP(sysctl_machdep_setup, "sysctl machdep subtree setup")
 		       sysctl_consdev, 0, NULL, sizeof(dev_t),
 		       CTL_MACHDEP, CPU_CONSDEV, CTL_EOL);
 	sysctl_createv(clog, 0, NULL, NULL,
+		       CTLFLAG_PERMANENT,
+		       CTLTYPE_STRING, "cpu_arch", NULL,
+		       sysctl_machdep_cpu_arch, 0, NULL, 0,
+		       CTL_MACHDEP, CTL_CREATE, CTL_EOL);
+	sysctl_createv(clog, 0, NULL, NULL,
 		       CTLFLAG_PERMANENT|CTLFLAG_READWRITE,
 		       CTLTYPE_INT, "powersave", NULL,
 		       sysctl_machdep_powersave, 0, &cpu_do_powersave, 0,
 		       CTL_MACHDEP, CPU_POWERSAVE, CTL_EOL);
+	sysctl_createv(clog, 0, NULL, NULL,
+		       CTLFLAG_PERMANENT|CTLFLAG_IMMEDIATE,
+		       CTLTYPE_INT, "cpu_id", NULL,
+		       NULL, curcpu()->ci_arm_cpuid, NULL, 0,
+		       CTL_MACHDEP, CTL_CREATE, CTL_EOL);
+#ifdef FPU_VFP
+	sysctl_createv(clog, 0, NULL, NULL,
+		       CTLFLAG_PERMANENT|CTLFLAG_READONLY,
+		       CTLTYPE_INT, "fpu_id", NULL,
+		       NULL, 0, &cpu_info_store.ci_vfp_id, 0,
+		       CTL_MACHDEP, CTL_CREATE, CTL_EOL);
+#endif
+	sysctl_createv(clog, 0, NULL, NULL,
+		       CTLFLAG_PERMANENT|CTLFLAG_READONLY,
+		       CTLTYPE_INT, "fpu_present", NULL,
+		       NULL, 0, &cpu_fpu_present, 0,
+		       CTL_MACHDEP, CTL_CREATE, CTL_EOL);
+	sysctl_createv(clog, 0, NULL, NULL,
+		       CTLFLAG_PERMANENT|CTLFLAG_READONLY,
+		       CTLTYPE_INT, "hwdiv_present", NULL,
+		       NULL, 0, &cpu_hwdiv_present, 0,
+		       CTL_MACHDEP, CTL_CREATE, CTL_EOL);
+	sysctl_createv(clog, 0, NULL, NULL,
+		       CTLFLAG_PERMANENT|CTLFLAG_READONLY,
+		       CTLTYPE_INT, "neon_present", NULL,
+		       NULL, 0, &cpu_neon_present, 0,
+		       CTL_MACHDEP, CTL_CREATE, CTL_EOL);
+	sysctl_createv(clog, 0, NULL, NULL,
+		       CTLFLAG_PERMANENT|CTLFLAG_READONLY,
+		       CTLTYPE_STRUCT, "id_isar", NULL,
+		       NULL, 0,
+		       cpu_instruction_set_attributes,
+		       sizeof(cpu_instruction_set_attributes),
+		       CTL_MACHDEP, CTL_CREATE, CTL_EOL);
+	sysctl_createv(clog, 0, NULL, NULL,
+		       CTLFLAG_PERMANENT|CTLFLAG_READONLY,
+		       CTLTYPE_STRUCT, "id_mmfr", NULL,
+		       NULL, 0,
+		       cpu_memory_model_features,
+		       sizeof(cpu_memory_model_features),
+		       CTL_MACHDEP, CTL_CREATE, CTL_EOL);
+	sysctl_createv(clog, 0, NULL, NULL,
+		       CTLFLAG_PERMANENT|CTLFLAG_READONLY,
+		       CTLTYPE_STRUCT, "id_pfr", NULL,
+		       NULL, 0,
+		       cpu_processor_features,
+		       sizeof(cpu_processor_features),
+		       CTL_MACHDEP, CTL_CREATE, CTL_EOL);
+	sysctl_createv(clog, 0, NULL, NULL,
+		       CTLFLAG_PERMANENT|CTLFLAG_READONLY,
+		       CTLTYPE_STRUCT, "id_mvfr", NULL,
+		       NULL, 0,
+		       cpu_media_and_vfp_features,
+		       sizeof(cpu_media_and_vfp_features),
+		       CTL_MACHDEP, CTL_CREATE, CTL_EOL);
+	sysctl_createv(clog, 0, NULL, NULL,
+		       CTLFLAG_PERMANENT|CTLFLAG_READONLY,
+		       CTLTYPE_INT, "simd_present", NULL,
+		       NULL, 0, &cpu_simd_present, 0,
+		       CTL_MACHDEP, CTL_CREATE, CTL_EOL);
+	sysctl_createv(clog, 0, NULL, NULL,
+		       CTLFLAG_PERMANENT|CTLFLAG_READONLY,
+		       CTLTYPE_INT, "simdex_present", NULL,
+		       NULL, 0, &cpu_simdex_present, 0,
+		       CTL_MACHDEP, CTL_CREATE, CTL_EOL);
+
+	/*
+	 * We need override the usual CTL_HW HW_MACHINE_ARCH so we
+	 * return the right machine_arch based on the running executable.
+	 */
+	sysctl_createv(clog, 0, NULL, NULL,
+		       CTLFLAG_PERMANENT,
+		       CTLTYPE_NODE, "hw", NULL,
+		       NULL, 0, NULL, 0,
+		       CTL_HW, CTL_EOL);
+	sysctl_createv(clog, 0, NULL, NULL,
+		       CTLFLAG_PERMANENT|CTLFLAG_READONLY,
+		       CTLTYPE_STRING, "machine_arch",
+		       SYSCTL_DESCR("Machine CPU class"),
+		       sysctl_hw_machine_arch, 0, NULL, 0,
+		       CTL_HW, HW_MACHINE_ARCH, CTL_EOL);
 }
 
 void
@@ -370,7 +517,8 @@ parse_mi_bootargs(char *args)
 		if (integer)
 			boothowto |= RB_SINGLE;
 	if (get_bootconf_option(args, "kdb", BOOTOPT_TYPE_BOOLEAN, &integer)
-	    || get_bootconf_option(args, "-k", BOOTOPT_TYPE_BOOLEAN, &integer))
+	    || get_bootconf_option(args, "-k", BOOTOPT_TYPE_BOOLEAN, &integer)
+	    || get_bootconf_option(args, "-d", BOOTOPT_TYPE_BOOLEAN, &integer))
 		if (integer)
 			boothowto |= RB_KDB;
 	if (get_bootconf_option(args, "ask", BOOTOPT_TYPE_BOOLEAN, &integer)
@@ -561,3 +709,16 @@ xc_send_ipi(struct cpu_info *ci)
 	printf("\n");
 }
 #endif /* MULTIPROCESSOR */
+
+#ifdef __HAVE_MM_MD_DIRECT_MAPPED_PHYS
+bool
+mm_md_direct_mapped_phys(paddr_t pa, vaddr_t *vap)
+{
+	if (physical_start <= pa && pa < physical_end) {
+		*vap = KERNEL_BASE + (pa - physical_start);
+		return true;
+	}
+
+	return false;
+}
+#endif

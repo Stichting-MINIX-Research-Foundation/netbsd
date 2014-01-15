@@ -1,4 +1,4 @@
-/*	$NetBSD: dump.h,v 1.47 2012/05/05 21:03:02 christos Exp $	*/
+/*	$NetBSD: dump.h,v 1.51 2013/06/15 01:27:19 christos Exp $	*/
 
 /*-
  * Copyright (c) 1980, 1993
@@ -32,10 +32,19 @@
  */
 
 #include <machine/bswap.h>
+#ifdef DUMP_LFS
+#include <ufs/lfs/lfs.h>
+#endif
+#include <ufs/ufs/dinode.h>
+#include <protocols/dumprestore.h>
 
 union dinode {
 	struct ufs1_dinode dp1;
 	struct ufs2_dinode dp2;
+#ifdef DUMP_LFS
+	struct ulfs1_dinode dlp1;
+	struct ulfs2_dinode dlp2;
+#endif
 };
 #define DIP(dp, field) \
 	(is_ufs2 ? (dp)->dp2.di_##field : (dp)->dp1.di_##field)
@@ -72,7 +81,7 @@ struct ufsi {
 #define ufs_blkoff(u,loc)   /* calculates (loc % u->ufs_bsize) */ \
 	((loc) & (u)->ufs_qbmask)
 #define ufs_dblksize(u,d,b) \
-	((((b) >= NDADDR || DIP((d), size) >= ((b)+1) << (u)->ufs_bshift \
+	((((b) >= UFS_NDADDR || DIP((d), size) >= ((b)+1) << (u)->ufs_bshift \
 		? (u)->ufs_bsize \
 		: (ufs_fragroundup((u), ufs_blkoff(u, DIP((d), size)))))))
 struct ufsi *ufsib;
@@ -175,14 +184,14 @@ void	fs_mapinodes(ino_t, u_int64_t *, int *);
 /* operator interface functions */
 void	broadcast(const char *);
 void	lastdump(char);
-void	msg(const char *fmt, ...) __attribute__((__format__(__printf__,1,2)));
-void	msgtail(const char *fmt, ...) __attribute__((__format__(__printf__,1,2)));
+void	msg(const char *fmt, ...) __printflike(1, 2);
+void	msgtail(const char *fmt, ...) __printflike(1, 2);
 int	query(const char *);
-void	quit(const char *fmt, ...) __attribute__((__format__(__printf__,1,2)));
+void	quit(const char *fmt, ...) __printflike(1, 2);
 time_t	do_stats(void);
 void	statussig(int);
 void	timeest(void);
-time_t	unctime(char *);
+time_t	unctime(const char *);
 
 /* mapping routines */
 union	dinode;
@@ -212,7 +221,7 @@ void	close_rewind(void);
 void	dumpblock(daddr_t, int);
 void	startnewtape(int);
 void	trewind(int);
-void	writerec(char *, int);
+void	writerec(const char *, int);
 
 void	Exit(int);
 void	dumpabort(int);

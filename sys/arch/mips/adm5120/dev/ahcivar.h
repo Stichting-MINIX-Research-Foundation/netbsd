@@ -1,4 +1,4 @@
-/*	$NetBSD: ahcivar.h,v 1.3 2011/04/04 19:58:56 dyoung Exp $	*/
+/*	$NetBSD: ahcivar.h,v 1.5 2013/09/22 08:30:22 skrll Exp $	*/
 
 /*-
  * Copyright (c) 2007 Ruslan Ermilov and Vsevolod Lobko.
@@ -81,6 +81,8 @@ struct ahci_softc {
 	bus_dma_tag_t		 sc_dmat;
 	void *sc_ih;			/* interrupt cookie */
 
+	kmutex_t		 sc_lock;
+	kmutex_t		 sc_intr_lock;
 
 	void				(*sc_enable_power)(void *, int);
 	void				(*sc_enable_intr)(void *, int);
@@ -93,7 +95,7 @@ struct ahci_softc {
 
 	device_t		 sc_child;
 
-	struct device		*sc_parent;	/* parent device */
+	device_t		 sc_parent;	/* parent device */
 
 	u_int8_t		 sc_addr;	/* device address of root hub */
 	u_int8_t		 sc_conf;
@@ -112,7 +114,6 @@ struct ahci_softc {
 	int				sc_fullspeed;
 	int				sc_connect;	/* XXX */
 	int				sc_change;
-	int				busy;
 };
 
 int  ahci_intr(void *);

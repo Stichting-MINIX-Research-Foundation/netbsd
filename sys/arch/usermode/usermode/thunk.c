@@ -1,4 +1,4 @@
-/* $NetBSD: thunk.c,v 1.82 2012/07/02 12:17:12 reinoud Exp $ */
+/* $NetBSD: thunk.c,v 1.84 2013/11/10 19:51:00 jmcneill Exp $ */
 
 /*-
  * Copyright (c) 2011 Jared D. McNeill <jmcneill@invisible.ca>
@@ -28,7 +28,7 @@
 
 #include <sys/cdefs.h>
 #ifdef __NetBSD__
-__RCSID("$NetBSD: thunk.c,v 1.82 2012/07/02 12:17:12 reinoud Exp $");
+__RCSID("$NetBSD: thunk.c,v 1.84 2013/11/10 19:51:00 jmcneill Exp $");
 #endif
 
 #include <sys/types.h>
@@ -40,6 +40,9 @@ __RCSID("$NetBSD: thunk.c,v 1.82 2012/07/02 12:17:12 reinoud Exp $");
 #include <sys/socket.h>
 #include <sys/audioio.h>
 #include <sys/shm.h>
+#include <sys/ioctl.h>
+
+#define _KMEMUSER
 #include <machine/vmparam.h>
 
 #include <net/if.h>

@@ -1,4 +1,4 @@
-/*	$NetBSD: gumstix_machdep.c,v 1.43 2012/09/22 00:33:38 matt Exp $ */
+/*	$NetBSD: gumstix_machdep.c,v 1.48 2013/09/26 16:14:34 kiyohara Exp $ */
 /*
  * Copyright (C) 2005, 2006, 2007  WIDE Project and SOUM Corporation.
  * All rights reserved.
@@ -162,21 +162,23 @@
 #include <sys/reboot.h>
 #include <sys/systm.h>
 #include <sys/termios.h>
+#include <sys/bus.h>
+#include <sys/cpu.h>
 
 #include <machine/autoconf.h>
 #include <machine/bootconfig.h>
-#include <sys/bus.h>
-#include <machine/cpu.h>
 #include <machine/db_machdep.h>
-#include <machine/frame.h>
+#include <arm/locore.h>
+#include <arm/undefined.h>
 
 #include <arm/arm32/machdep.h>
+#ifdef OVERO
 #include <arm/omap/omap2_gpmcreg.h>
 #include <arm/omap/omap2_prcm.h>
 #include <arm/omap/omap2_reg.h>
 #include <arm/omap/omap_var.h>
 #include <arm/omap/omap_com.h>
-#include <arm/undefined.h>
+#endif
 #include <arm/xscale/pxa2x0reg.h>
 #include <arm/xscale/pxa2x0var.h>
 #include <arm/xscale/pxa2x0_gpio.h>
@@ -246,6 +248,8 @@ pv_addr_t kernel_pt_table[NUM_KERNEL_PTS];
 /* Prototypes */
 #if defined(GUMSTIX)
 static void	read_system_serial(void);
+#elif defined(OVERO)
+static void	find_cpu_clock(void);
 #endif
 static void	process_kernel_args(int, char *[]);
 static void	process_kernel_args_liner(char *);
@@ -496,7 +500,8 @@ initarm(void *arg)
 	psize_t memsize;
 
 	/*
-	 * U-Boot doesn't use the virtual memory.
+	 * We mapped PA == VA in gumstix_start.S.
+	 * Also mapped SDRAM to KERNEL_BASE first 64Mbyte only with cachable.
 	 *
 	 * Gumstix (basix, connex, verdex, verdex-pro):
 	 * Physical Address Range     Description
@@ -504,11 +509,18 @@ initarm(void *arg)
 	 * 0x00000000 - 0x00ffffff    flash Memory   (16MB or 4MB)
 	 * 0x40000000 - 0x480fffff    Processor Registers
 	 * 0xa0000000 - 0xa3ffffff    SDRAM Bank 0 (64MB or 128MB)
+	 * 0xc0000000 - 0xc3ffffff    KERNEL_BASE
 	 *
 	 * Overo:
 	 * Physical Address Range     Description
 	 * -----------------------    ----------------------------------
+	 * 0x80000000 - 0x8fffffff    SDRAM Bank 0 (256MB, 512MB or 1024MB)
+	 * 0x80000000 - 0x83ffffff    KERNEL_BASE
 	 */
+
+#if defined(OVERO)
+	find_cpu_clock();	// find our CPU speed.
+#endif
 
 	/*
 	 * Heads up ... Setup the CPU / MMU / TLB functions
@@ -547,7 +559,7 @@ initarm(void *arg)
 	kgdb_port_init();
 #endif
 
-        /*
+	/*
 	 * Examine the boot args string for options we need to know about
 	 * now.
 	 */
@@ -650,7 +662,7 @@ initarm(void *arg)
 
 #ifdef VERBOSE_INIT_ARM
 	printf("freestart = 0x%08lx, free_pages = %d (0x%08x)\n",
-	       physical_freestart, free_pages, free_pages);
+	    physical_freestart, free_pages, free_pages);
 #endif
 
 	/* Define a macro to simplify memory allocation */
@@ -865,7 +877,7 @@ initarm(void *arg)
 	/* Switch tables */
 #ifdef VERBOSE_INIT_ARM
 	printf("freestart = 0x%08lx, free_pages = %d (0x%x)\n",
-	       physical_freestart, free_pages, free_pages);
+	    physical_freestart, free_pages, free_pages);
 	printf("switching to new L1 page table  @%#lx...", kernel_l1pt.pv_pa);
 #endif
 
@@ -1021,6 +1033,34 @@ read_system_serial(void)
 	for (i = 0; i < sizeof (system_serial); i++)
 		printf("%02x", system_serial[i]);
 	printf("\n");
+}
+#elif defined(OVERO)
+static void
+find_cpu_clock(void)
+{
+	const vaddr_t prm_base = OMAP2_PRM_BASE;
+	const vaddr_t cm_base = OMAP2_CM_BASE;
+	const uint32_t prm_clksel =
+	    *(volatile uint32_t *)(prm_base + PLL_MOD + OMAP3_PRM_CLKSEL);
+	static const uint32_t prm_clksel_freqs[] = OMAP3_PRM_CLKSEL_FREQS;
+	const uint32_t sys_clk =
+	    prm_clksel_freqs[__SHIFTOUT(prm_clksel, OMAP3_PRM_CLKSEL_CLKIN)];
+	const uint32_t dpll1 =
+	    *(volatile uint32_t *)(cm_base + OMAP3_CM_CLKSEL1_PLL_MPU);
+	const uint32_t dpll2 =
+	    *(volatile uint32_t *)(cm_base + OMAP3_CM_CLKSEL2_PLL_MPU);
+	const uint32_t m =
+	    __SHIFTOUT(dpll1, OMAP3_CM_CLKSEL1_PLL_MPU_DPLL_MULT);
+	const uint32_t n = __SHIFTOUT(dpll1, OMAP3_CM_CLKSEL1_PLL_MPU_DPLL_DIV);
+	const uint32_t m2 =
+	    __SHIFTOUT(dpll2, OMAP3_CM_CLKSEL2_PLL_MPU_DPLL_CLKOUT_DIV);
+
+	/*
+	 * MPU_CLK supplies ARM_FCLK which is twice the CPU frequency.
+	 */
+	curcpu()->ci_data.cpu_cc_freq =
+	    ((sys_clk * m) / ((n + 1) * m2 * 2)) * OMAP3_PRM_CLKSEL_MULT;
+	omap_sys_clk = sys_clk * OMAP3_PRM_CLKSEL_MULT;
 }
 #endif
 
@@ -1327,22 +1367,35 @@ kgdb_port_init(void)
 static void
 gumstix_device_register(device_t dev, void *aux)
 {
+	prop_dictionary_t dict = device_properties(dev);
 
+	if (device_is_a(dev, "ehci")) {
+		prop_dictionary_set_cstring(dict, "port0-mode", "none");
+		prop_dictionary_set_cstring(dict, "port1-mode", "phy");
+		prop_dictionary_set_cstring(dict, "port2-mode", "none");
+		prop_dictionary_set_bool(dict, "phy-reset", true);
+		prop_dictionary_set_int16(dict, "port0-gpio", -1);
+		prop_dictionary_set_int16(dict, "port1-gpio", 183);
+		prop_dictionary_set_int16(dict, "port2-gpio", -1);
+		prop_dictionary_set_uint16(dict, "dpll5-m", 443);
+		prop_dictionary_set_uint16(dict, "dpll5-n", 11);
+		prop_dictionary_set_uint16(dict, "dpll5-m2", 4);
+	}
 	if (device_is_a(dev, "ohci")) {
-		if (prop_dictionary_set_bool(device_properties(dev),
+		if (prop_dictionary_set_bool(dict,
 		    "Ganged-power-mask-on-port1", 1) == false) {
 			printf("WARNING: unable to set power-mask for port1"
-			    " property for %s\n", dev->dv_xname);
+			    " property for %s\n", device_xname(dev));
 		}
-		if (prop_dictionary_set_bool(device_properties(dev),
+		if (prop_dictionary_set_bool(dict,
 		    "Ganged-power-mask-on-port2", 1) == false) {
 			printf("WARNING: unable to set power-mask for port2"
-			    " property for %s\n", dev->dv_xname);
+			    " property for %s\n", device_xname(dev));
 		}
-		if (prop_dictionary_set_bool(device_properties(dev),
+		if (prop_dictionary_set_bool(dict,
 		    "Ganged-power-mask-on-port3", 1) == false) {
 			printf("WARNING: unable to set power-mask for port3"
-			    " property for %s\n", dev->dv_xname);
+			    " property for %s\n", device_xname(dev));
 		}
 	}
 }

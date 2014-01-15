@@ -1,4 +1,4 @@
-/*	$NetBSD: mvsocreg.h,v 1.2 2011/02/01 22:54:24 jakllsch Exp $	*/
+/*	$NetBSD: mvsocreg.h,v 1.6 2013/11/20 12:36:16 kiyohara Exp $	*/
 /*
  * Copyright (c) 2007, 2008 KIYOHARA Takashi
  * All rights reserved.
@@ -55,7 +55,6 @@
 #define MVSOC_DSC_CSSR_WINEN		0x00000001
 #define MVSOC_DSC_CSSR_SIZE_MASK	0xff000000
 
-
 /*
  * Device Bus
  */
@@ -64,19 +63,29 @@
 /*
  * General Purpose Port Registers
  */
-#define MVSOC_GPP_BASE			(MVSOC_DEVBUS_BASE + 0x0100)
+#define MVSOC_GPP_BASE		(MVSOC_DEVBUS_BASE + 0x0100)
 
 /*
  * Two-Wire Serial Interface Registers
  */
-#define MVSOC_TWSI_BASE			(MVSOC_DEVBUS_BASE + 0x1000)
+#define MVSOC_TWSI_BASE		(MVSOC_DEVBUS_BASE + 0x1000)
 
 /*
  * UART Interface Registers
  */
-					/* NS16550 compatible */
-#define MVSOC_COM0_BASE			(MVSOC_DEVBUS_BASE + 0x2000)
-#define MVSOC_COM1_BASE			(MVSOC_DEVBUS_BASE + 0x2100)
+				/* NS16550 compatible */
+#define MVSOC_COM0_BASE		(MVSOC_DEVBUS_BASE + 0x2000)
+#define MVSOC_COM1_BASE		(MVSOC_DEVBUS_BASE + 0x2100)
+
+/*
+ * Miscellanseous Register
+ */
+#define MVSOC_MISC_BASE		(MVSOC_DEVBUS_BASE + 0x8200) /* For Armada XP */
+
+#define MVSOC_MISC_RSTOUTNMASKR		  0x60 /* RSTOUTn Mask Register */
+#define MVSOC_MISC_RSTOUTNMASKR_GLOBALSOFTRSTOUTEN (1 << 0)
+#define MVSOC_MISC_SSRR			  0x64	/* System Soft Reset Register */
+#define MVSOC_MISC_SSRR_GLOBALSOFTRST           (1 << 0)
 
 /*
  * Mbus-L to Mbus Bridge Registers
@@ -84,13 +93,15 @@
 #define MVSOC_MLMB_BASE		(UNITID2PHYS(MLMB))	/* 0x20000 */
 
 /* CPU Address Map Registers */
-#define MVSOC_MLMB_WCR(w)		  (((w) << 4) + 0x0)
+#define MVSOC_MLMB_WCR(w)		  ((w) < 8 ? ((w) << 4) + 0x0 :\
+						     (((w) - 8) << 3) + 0x90)
 #define MVSOC_MLMB_WCR_WINEN			(1 << 0)
 #define MVSOC_MLMB_WCR_TARGET(t)		(((t) & 0xf) << 4)
 #define MVSOC_MLMB_WCR_ATTR(a)			(((a) & 0xff) << 8)
 #define MVSOC_MLMB_WCR_SIZE_MASK		0xffff0000
 #define MVSOC_MLMB_WCR_SIZE(s)		  (((s) - 1) & MVSOC_MLMB_WCR_SIZE_MASK)
-#define MVSOC_MLMB_WBR(w)		  (((w) << 4) + 0x4)
+#define MVSOC_MLMB_WBR(w)		  ((w) < 8 ? ((w) << 4) + 0x4 :\
+						     (((w) - 8) << 3) + 0x94)
 #define MVSOC_MLMB_WBR_BASE_MASK		0xffff0000
 #define MVSOC_MLMB_WRLR(w)		  (((w) << 4) + 0x8)
 #define MVSOC_MLMB_WRLR_REMAP_MASK		0xffff0000
@@ -102,17 +113,27 @@
 #define MVSOC_MLMB_CPUCR		  0x100	/* CPU Configuration Register */
 #define MVSOC_MLMB_CPUCSR		  0x104	/* CPU Control/Status Register*/
 #define MVSOC_MLMB_RSTOUTNMASKR		  0x108 /* RSTOUTn Mask Register */
-#define MVSOC_MLMB_RSTOUTNMASKR_PEXRSTOUTEN     (1 << 0)
-#define MVSOC_MLMB_RSTOUTNMASKR_WDRSTOUTEN      (1 << 1)
 #define MVSOC_MLMB_RSTOUTNMASKR_SOFTRSTOUTEN    (1 << 2)
+#define MVSOC_MLMB_RSTOUTNMASKR_WDRSTOUTEN      (1 << 1)
+#define MVSOC_MLMB_RSTOUTNMASKR_PEXRSTOUTEN     (1 << 0)
 #define MVSOC_MLMB_SSRR			  0x10c	/* System Soft Reset Register */
 #define MVSOC_MLMB_SSRR_SYSTEMSOFTRST           (1 << 0)
 #define MVSOC_MLMB_MLMBICR		  0x110	/*Mb-L to Mb Bridge Intr Cause*/
 #define MVSOC_MLMB_MLMBIMR		  0x114	/*Mb-L to Mb Bridge Intr Mask */
 
+#define MVSOC_MLMB_CLKGATING		  0x11c	/* Clock Gating Control */
+#define MVSOC_MLMB_CLKGATING_BIT(n)	  (1 << (n))
+
 #define MVSOC_MLMB_L2CFG		  0x128	/* L2 Cache Config */
 
-#define MVSOC_TMR_BASE			(MVSOC_MLMB_BASE + 0x0300)
+/* Coherent Fabric Control and Status */
+#define MVSOC_MLMB_COHERENCY_FABRIC_CTRL  0x200
+#define MVSOC_MLMB_COHERENCY_FABRIC_CFG	  0x204
+
+/* CIB registers offsets */
+#define MVSOC_MLMB_CIB_CTRL_CFG		  0x280
+
+#define MVSOC_TMR_BASE		(MVSOC_MLMB_BASE + 0x0300)
 
 /* CPU Doorbell Registers */
 #define MVSOC_MLMB_H2CDR		  0x400	/* Host-to-CPU Doorbell */
@@ -127,8 +148,10 @@
 #define MVSOC_MLMB_MLMBI_CPUWDTIMERINTREQ	3
 #define MVSOC_MLMB_MLMBI_ACCESSERR		4
 #define MVSOC_MLMB_MLMBI_BIT64ERR		5
+#define MVSOC_MLMB_MLMBI_CPUTIMER2INTREQ	6
+#define MVSOC_MLMB_MLMBI_CPUTIMER3INTREQ	7
 
-#define MVSOC_MLMB_MLMBI_NIRQ			6
+#define MVSOC_MLMB_MLMBI_NIRQ			8
 
 /*
  * PCI-Express Interface Registers

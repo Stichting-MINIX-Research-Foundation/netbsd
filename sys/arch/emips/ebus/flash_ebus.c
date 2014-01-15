@@ -1,4 +1,4 @@
-/*	$NetBSD: flash_ebus.c,v 1.4 2012/02/02 19:42:59 tls Exp $	*/
+/*	$NetBSD: flash_ebus.c,v 1.7 2013/10/13 06:55:34 riz Exp $	*/
 
 /*-
  * Copyright (c) 2010 The NetBSD Foundation, Inc.
@@ -31,7 +31,7 @@
  */
 
 #include <sys/cdefs.h>			/* RCS ID & Copyright macro defns */
-__KERNEL_RCSID(0, "$NetBSD: flash_ebus.c,v 1.4 2012/02/02 19:42:59 tls Exp $");
+__KERNEL_RCSID(0, "$NetBSD: flash_ebus.c,v 1.7 2013/10/13 06:55:34 riz Exp $");
 
 /* Driver for the Intel 28F320/640/128 (J3A150) StrataFlash memory device
  * Extended to include the Intel JS28F256P30T95.
@@ -223,8 +223,8 @@ struct eflash_softc {
     struct flash_type sc_type;
 };
 
-static int	eflash_ebus_match (struct device *, struct cfdata *, void *);
-static void	eflash_ebus_attach (struct device *, struct device *, void *);
+static int	eflash_ebus_match (device_t, cfdata_t, void *);
+static void	eflash_ebus_attach (device_t, device_t, void *);
 
 CFATTACH_DECL_NEW(flash_ebus, sizeof (struct eflash_softc),
     eflash_ebus_match, eflash_ebus_attach, NULL, NULL);
@@ -243,7 +243,7 @@ static int eflash_write_at(struct eflash_softc *sc, daddr_t start_sector, char *
 /* Config functions
  */
 static int
-eflash_ebus_match(struct device *parent, struct cfdata *match, void *aux)
+eflash_ebus_match(device_t parent, cfdata_t match, void *aux)
 {
 	struct ebus_attach_args *ia = aux;
 	struct _Flash *f = (struct _Flash *)ia->ia_vaddr;
@@ -258,7 +258,7 @@ eflash_ebus_match(struct device *parent, struct cfdata *match, void *aux)
 }
 
 static void
-eflash_ebus_attach(struct device *parent, struct device *self, void *aux)
+eflash_ebus_attach(device_t parent, device_t self, void *aux)
 {
 	struct ebus_attach_args *ia =aux;
 	struct eflash_softc *sc = device_private(self);
@@ -295,7 +295,7 @@ eflash_ebus_attach(struct device *parent, struct device *self, void *aux)
                sc->sc_type.ft_manuf_code, sc->sc_type.ft_device_code);
     }
 
-    config_pending_incr();
+    config_pending_incr(self);
 
 	error = kthread_create(PRI_NONE, 0, NULL,
 	    eflash_thread, sc, NULL, "%s", device_xname(sc->sc_dev));
@@ -1302,7 +1302,7 @@ static int eflash_write_at (struct eflash_softc *sc,
 /* Rest of code lifted with mods from the dev\ata\wd.c driver
  */
 
-/*	$NetBSD: flash_ebus.c,v 1.4 2012/02/02 19:42:59 tls Exp $ */
+/*	$NetBSD: flash_ebus.c,v 1.7 2013/10/13 06:55:34 riz Exp $ */
 
 /*
  * Copyright (c) 1998, 2001 Manuel Bouyer.  All rights reserved.
@@ -1407,14 +1407,14 @@ const struct cdevsw eflash_cdevsw = {
 void  eflashgetdefaultlabel(struct eflash_softc *, struct disklabel *);
 void  eflashgetdisklabel(struct eflash_softc *);
 void  eflashstart(void *);
-void  __eflashstart(struct eflash_softc*, struct buf *);
+void  __eflashstart(struct eflash_softc *, struct buf *);
 void  eflashrestart(void *);
 void  eflashattach(struct eflash_softc *);
-int   eflashdetach(struct device *, int);
-int   eflashactivate(struct device *, enum devact);
+int   eflashdetach(device_t, int);
+int   eflashactivate(device_t, enum devact);
 
 void  eflashdone(struct eflash_softc *);
-static void eflash_params_to_properties(struct eflash_softc *sc);
+static void eflash_set_geometry(struct eflash_softc *sc);
 
 struct dkdriver eflashdkdriver = { eflashstrategy, minphys };
 
@@ -1427,7 +1427,7 @@ static void eflash_wedges(void *arg);
 void
 eflashattach(struct eflash_softc *sc)
 {
-	struct device *self = sc->sc_dev;
+	device_t self = sc->sc_dev;
 	char pbuf[9];
 	DEBUG_PRINT(("%s: eflashattach\n",  device_xname(sc->sc_dev)), DEBUG_FUNCS | DEBUG_PROBE);
 
@@ -1444,10 +1444,10 @@ eflashattach(struct eflash_softc *sc)
 
 	format_bytes(pbuf, sizeof(pbuf), sc->sc_capacity * DEV_BSIZE);
 	aprint_normal("%s: %s, %d cyl, %d head, %d sec, %d bytes/sect x %llu sectors\n",
-	    self->dv_xname, pbuf, 1, 1, sc->sc_capacity,
+	    device_xname(self), pbuf, 1, 1, sc->sc_capacity,
 	    DEV_BSIZE, (unsigned long long)sc->sc_capacity);
 
-    eflash_params_to_properties(sc);
+    eflash_set_geometry(sc);
 
 	/*
 	 * Attach the disk structure. We fill in dk_info later.
@@ -1460,7 +1460,7 @@ eflashattach(struct eflash_softc *sc)
 }
 
 int
-eflashactivate(struct device *self, enum devact act)
+eflashactivate(device_t self, enum devact act)
 {
 	int rv = 0;
 
@@ -1480,7 +1480,7 @@ eflashactivate(struct device *self, enum devact act)
 }
 
 int
-eflashdetach(struct device *self, int flags)
+eflashdetach(device_t self, int flags)
 {
 	struct eflash_softc *sc = device_private(self);
 	int s, bmaj, cmaj, i, mn;
@@ -1537,7 +1537,7 @@ eflash_wedges(void *arg)
     dkwedge_autodiscover = 1;
 	dkwedge_discover(&sc->sc_dk);
 
-    config_pending_decr();
+    config_pending_decr(sc->sc_dev);
 
     DBGME(DEBUG_STATUS,printf("%s: wedges thread done for %p\n", device_xname(sc->sc_dev), sc));
 	kthread_exit(0);
@@ -2293,45 +2293,17 @@ bad144intern(struct eflash_softc *sc)
 #endif
 
 static void
-eflash_params_to_properties(struct eflash_softc *sc)
+eflash_set_geometry(struct eflash_softc *sc)
 {
-	prop_dictionary_t disk_info, odisk_info, geom;
-	const char *cp;
+	struct disk_geom *dg = &sc->sc_dk.dk_geom;
 
-	disk_info = prop_dictionary_create();
+	memset(dg, 0, sizeof(*dg));
 
-    cp = ST506;
+	dg->dg_secperunit = sc->sc_capacity;
+	dg->dg_secsize = DEV_BSIZE /* XXX 512? */;
+	dg->dg_nsectors = sc->sc_capacity;
+	dg->dg_ntracks = 1;
+	dg->dg_ncylinders = sc->sc_capacity;
 
-	prop_dictionary_set_cstring_nocopy(disk_info, "type", cp);
-
-	geom = prop_dictionary_create();
-
-	prop_dictionary_set_uint64(geom, "sectors-per-unit", sc->sc_capacity);
-
-	prop_dictionary_set_uint32(geom, "sector-size",
-				   DEV_BSIZE /* XXX 512? */);
-
-	prop_dictionary_set_uint16(geom, "sectors-per-track",
-				   sc->sc_capacity);
-
-	prop_dictionary_set_uint16(geom, "tracks-per-cylinder", 1);
-
-    prop_dictionary_set_uint64(geom, "cylinders-per-unit", sc->sc_capacity);
-
-	prop_dictionary_set(disk_info, "geometry", geom);
-	prop_object_release(geom);
-
-	prop_dictionary_set(device_properties(sc->sc_dev),
-			    "disk-info", disk_info);
-
-	/*
-	 * Don't release disk_info here; we keep a reference to it.
-	 * disk_detach() will release it when we go away.
-	 */
-
-	odisk_info = sc->sc_dk.dk_info;
-	sc->sc_dk.dk_info = disk_info;
-	if (odisk_info)
-		prop_object_release(odisk_info);
+	disk_set_info(sc->sc_dev, &sc->sc_dk, ST506);
 }
-

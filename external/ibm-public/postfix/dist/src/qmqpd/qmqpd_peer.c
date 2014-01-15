@@ -1,4 +1,4 @@
-/*	$NetBSD: qmqpd_peer.c,v 1.1.1.2 2011/03/02 19:32:30 tron Exp $	*/
+/*	$NetBSD: qmqpd_peer.c,v 1.1.1.4 2013/09/25 19:06:34 tron Exp $	*/
 
 /*++
 /* NAME
@@ -154,11 +154,13 @@ void    qmqpd_peer_init(QMQPD_STATE *state)
 	state->port = mystrdup(client_port.buf);
 
 	/*
-	 * XXX Strip off the IPv6 datalink suffix to avoid false alarms with
-	 * strict address syntax checks.
+	 * XXX Require that the infrastructure strips off the IPv6 datalink
+	 * suffix to avoid false alarms with strict address syntax checks.
 	 */
 #ifdef HAS_IPV6
-	(void) split_at(client_addr.buf, '%');
+	if (strchr(client_addr.buf, '%') != 0)
+	    msg_panic("%s: address %s has datalink suffix",
+		      myname, client_addr.buf);
 #endif
 
 	/*
@@ -248,13 +250,13 @@ void    qmqpd_peer_init(QMQPD_STATE *state)
 	    aierr = hostname_to_sockaddr_pf(state->name, state->addr_family,
 					    (char *) 0, 0, &res0);
 	    if (aierr) {
-		msg_warn("%s: hostname %s verification failed: %s",
-			 state->addr, state->name, MAI_STRERROR(aierr));
+		msg_warn("hostname %s does not resolve to address %s: %s",
+			 state->name, state->addr, MAI_STRERROR(aierr));
 		REJECT_PEER_NAME(state);
 	    } else {
 		for (res = res0; /* void */ ; res = res->ai_next) {
 		    if (res == 0) {
-			msg_warn("%s: address not listed for hostname %s",
+			msg_warn("hostname %s does not resolve to address %s",
 				 state->addr, state->name);
 			REJECT_PEER_NAME(state);
 			break;

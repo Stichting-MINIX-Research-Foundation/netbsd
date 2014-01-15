@@ -1,4 +1,4 @@
-/*	$NetBSD: trap.c,v 1.177 2012/08/01 09:07:35 martin Exp $ */
+/*	$NetBSD: trap.c,v 1.179 2013/09/15 14:49:50 martin Exp $ */
 
 /*
  * Copyright (c) 1996-2002 Eduardo Horvath.  All rights reserved.
@@ -50,7 +50,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: trap.c,v 1.177 2012/08/01 09:07:35 martin Exp $");
+__KERNEL_RCSID(0, "$NetBSD: trap.c,v 1.179 2013/09/15 14:49:50 martin Exp $");
 
 #include "opt_ddb.h"
 #include "opt_multiprocessor.h"
@@ -709,12 +709,16 @@ badtrap:
 	case T_LDDF_ALIGN:
 	case T_STDF_ALIGN:
 		{
-		int64_t dsfsr, dsfar=0, isfsr;
-
+		int64_t dsfsr, dsfar=0;
+#ifdef DEBUG
+		int64_t isfsr;
+#endif
 		dsfsr = ldxa(SFSR, ASI_DMMU);
 		if (dsfsr & SFSR_FV)
 			dsfar = ldxa(SFAR, ASI_DMMU);
+#ifdef DEBUG
 		isfsr = ldxa(SFSR, ASI_IMMU);
+#endif
 		/* 
 		 * If we're busy doing copyin/copyout continue
 		 */
@@ -1288,13 +1292,30 @@ data_access_error(struct trapframe64 *tf, unsigned int type, vaddr_t afva,
 #endif
 
 	curcpu()->ci_data.cpu_ntrap++;
+	pc = tf->tf_pc;
+	tstate = tf->tf_tstate;
+
+	/*
+	 * Catch PCI config space reads.
+	 */
+	if (curcpu()->ci_pci_probe) {
+#ifdef DIAGNOSTIC
+		printf("data_access_error in pci_conf_read: pc=%lx addr=%lx\n",
+		    pc, afva);
+#endif
+		curcpu()->ci_pci_fault = true;
+		/*
+		 * The contents of TNPC are undefined, so make it points to
+		 * the next instruction.
+		 */
+		tf->tf_npc = pc + 4;
+		return;
+	}
+
 	l = curlwp;
 	pcb = lwp_getpcb(l);
 	LWP_CACHE_CREDS(l, l->l_proc);
 	sticks = l->l_proc->p_sticks;
-
-	pc = tf->tf_pc;
-	tstate = tf->tf_tstate;
 
 	printf("data error type %x sfsr=%lx sfva=%lx afsr=%lx afva=%lx tf=%p\n",
 		type, sfsr, sfva, afsr, afva, tf);

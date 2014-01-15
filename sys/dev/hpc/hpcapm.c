@@ -1,4 +1,4 @@
-/*	$NetBSD: hpcapm.c,v 1.18 2009/05/12 14:22:39 cegger Exp $	*/
+/*	$NetBSD: hpcapm.c,v 1.20 2013/11/09 21:31:56 christos Exp $	*/
 
 /*
  * Copyright (c) 2000 Takemura Shin
@@ -29,7 +29,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: hpcapm.c,v 1.18 2009/05/12 14:22:39 cegger Exp $");
+__KERNEL_RCSID(0, "$NetBSD: hpcapm.c,v 1.20 2013/11/09 21:31:56 christos Exp $");
 
 #ifdef _KERNEL_OPT
 #include "opt_hpcapm.h"
@@ -75,7 +75,6 @@ static void	hpcapm_cpu_idle(void *);
 static void	hpcapm_get_capabilities(void *, u_int *, u_int *);
 
 struct apmhpc_softc {
-	struct device sc_dev;
 	void *sc_apmdev;
 	volatile unsigned int events;
 	volatile int power_state;
@@ -89,7 +88,7 @@ struct apmhpc_softc {
 	int minutes_left;
 };
 
-CFATTACH_DECL(hpcapm, sizeof (struct apmhpc_softc),
+CFATTACH_DECL_NEW(hpcapm, sizeof (struct apmhpc_softc),
     hpcapm_match, hpcapm_attach, NULL, NULL);
 
 struct apm_accessops hpcapm_accessops = {
@@ -106,16 +105,14 @@ struct apm_accessops hpcapm_accessops = {
 extern struct cfdriver hpcapm_cd;
 
 static int
-hpcapm_match(device_t parent,
-	     cfdata_t cf, void *aux)
+hpcapm_match(device_t parent, cfdata_t cf, void *aux)
 {
 
 	return 1;
 }
 
 static void
-hpcapm_attach(device_t parent,
-	      device_t self, void *aux)
+hpcapm_attach(device_t parent, device_t self, void *aux)
 {
 	struct apmhpc_softc *sc;
 	struct apmdev_attach_args aaa;
@@ -297,17 +294,11 @@ hpcapm_hook(void *ctx, int type, long id, void *msg)
 static void
 hpcapm_disconnect(void *scx)
 {
-	struct apmhpc_softc *sc;
-
-	sc = scx;
 }
 
 static void
 hpcapm_enable(void *scx, int onoff)
 {
-	struct apmhpc_softc *sc;
-
-	sc = scx;
 }
 
 static int
@@ -435,26 +426,16 @@ hpcapm_get_event(void *scx, u_int *event_type, u_int *event_info)
 static void
 hpcapm_cpu_busy(void *scx)
 {
-	struct apmhpc_softc *sc;
-
-	sc = scx;
 }
 
 static void
 hpcapm_cpu_idle(void *scx)
 {
-	struct apmhpc_softc *sc;
-
-	sc = scx;
 }
 
 static void
 hpcapm_get_capabilities(void *scx, u_int *numbatts, u_int *capflags)
 {
-	struct apmhpc_softc *sc;
-
 	*numbatts = 0;
 	*capflags = APM_GLOBAL_STANDBY | APM_GLOBAL_SUSPEND;
-
-	sc = scx;
 }

@@ -1,4 +1,4 @@
-/*	$NetBSD: bcm2835_emmc.c,v 1.1 2012/07/26 06:21:57 skrll Exp $	*/
+/*	$NetBSD: bcm2835_emmc.c,v 1.9 2013/09/05 07:06:37 skrll Exp $	*/
 
 /*-
  * Copyright (c) 2012 The NetBSD Foundation, Inc.
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: bcm2835_emmc.c,v 1.1 2012/07/26 06:21:57 skrll Exp $");
+__KERNEL_RCSID(0, "$NetBSD: bcm2835_emmc.c,v 1.9 2013/09/05 07:06:37 skrll Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -77,19 +77,32 @@ static void
 bcmemmc_attach(device_t parent, device_t self, void *aux)
 {
 	struct bcmemmc_softc *sc = device_private(self);
+	prop_dictionary_t dict = device_properties(self);
 	struct amba_attach_args *aaa = aux;
+	prop_number_t frequency;
 	int error;
 
 	sc->sc.sc_dev = self;
-// 	sc->sc.sc_dmat = aaa->amba_dmat;
+ 	sc->sc.sc_dmat = aaa->aaa_dmat;
 	sc->sc.sc_flags = 0;
-// 	sc->sc.sc_flags |= SDHC_FLAG_USE_DMA;		/* not available (yet) */
 	sc->sc.sc_flags |= SDHC_FLAG_32BIT_ACCESS;
 	sc->sc.sc_flags |= SDHC_FLAG_HOSTCAPS;
-	sc->sc.sc_caps = SDHC_VOLTAGE_SUPP_3_3V;
+	sc->sc.sc_flags |= SDHC_FLAG_NO_HS_BIT;
+	sc->sc.sc_caps = SDHC_VOLTAGE_SUPP_3_3V | SDHC_HIGH_SPEED_SUPP |
+	    SDHC_MAX_BLK_LEN_1024;
+#if notyet
+ 	sc->sc.sc_flags |= SDHC_FLAG_USE_DMA;
+	sc->sc.sc_caps |= SDHC_DMA_SUPPORT;
+#endif
 	sc->sc.sc_host = sc->sc_hosts;
-	sc->sc.sc_clkbase = 50000;	/* 50MHz */
+	sc->sc.sc_clkbase = 50000;	/* Default to 50MHz */
 	sc->sc_iot = aaa->aaa_iot;
+
+	/* Fetch the EMMC clock frequency from property if set. */
+	frequency = prop_dictionary_get(dict, "frequency");
+	if (frequency != NULL) {
+		sc->sc.sc_clkbase = prop_number_integer_value(frequency) / 1000;
+	}
 
 	error = bus_space_map(sc->sc_iot, aaa->aaa_addr, aaa->aaa_size, 0,
 	    &sc->sc_ioh);
@@ -107,13 +120,13 @@ bcmemmc_attach(device_t parent, device_t self, void *aux)
 
 	if (sc->sc_ih == NULL) {
 		aprint_error_dev(self, "failed to establish interrupt %d\n",
-		     aaa->aaa_intr);
+		    aaa->aaa_intr);
 		goto fail;
 	}
 	aprint_normal_dev(self, "interrupting on intr %d\n", aaa->aaa_intr);
 
 	error = sdhc_host_found(&sc->sc, sc->sc_iot, sc->sc_ioh,
- 	    aaa->aaa_size);
+	    aaa->aaa_size);
 	if (error != 0) {
 		aprint_error_dev(self, "couldn't initialize host, error=%d\n",
 		    error);

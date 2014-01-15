@@ -1,4 +1,4 @@
-/*      $NetBSD: rnd_private.h,v 1.1 2011/11/29 03:50:31 tls Exp $     */
+/*      $NetBSD: rnd_private.h,v 1.4 2013/08/27 19:30:10 riastradh Exp $     */
 
 /*-
  * Copyright (c) 1997 The NetBSD Foundation, Inc.

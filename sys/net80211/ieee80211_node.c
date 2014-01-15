@@ -1,4 +1,4 @@
-/*	$NetBSD: ieee80211_node.c,v 1.63 2009/01/03 03:43:23 yamt Exp $	*/
+/*	$NetBSD: ieee80211_node.c,v 1.67 2013/03/29 02:30:18 christos Exp $	*/
 /*-
  * Copyright (c) 2001 Atsushi Onoe
  * Copyright (c) 2002-2005 Sam Leffler, Errno Consulting
@@ -36,14 +36,14 @@
 __FBSDID("$FreeBSD: src/sys/net80211/ieee80211_node.c,v 1.65 2005/08/13 17:50:21 sam Exp $");
 #endif
 #ifdef __NetBSD__
-__KERNEL_RCSID(0, "$NetBSD: ieee80211_node.c,v 1.63 2009/01/03 03:43:23 yamt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ieee80211_node.c,v 1.67 2013/03/29 02:30:18 christos Exp $");
 #endif
 
 #include "opt_inet.h"
 
 #include <sys/param.h>
-#include <sys/systm.h> 
-#include <sys/mbuf.h>   
+#include <sys/systm.h>
+#include <sys/mbuf.h>
 #include <sys/malloc.h>
 #include <sys/kernel.h>
 
@@ -66,7 +66,7 @@ __KERNEL_RCSID(0, "$NetBSD: ieee80211_node.c,v 1.63 2009/01/03 03:43:23 yamt Exp
 #include <net/bpf.h>
 
 #ifdef INET
-#include <netinet/in.h> 
+#include <netinet/in.h>
 #include <net/if_ether.h>
 #endif
 
@@ -213,7 +213,7 @@ ieee80211_node_detach(struct ieee80211com *ic)
 	}
 }
 
-/* 
+/*
  * Port authorize/unauthorize interfaces for use by an authenticator.
  */
 
@@ -453,7 +453,7 @@ ieee80211_create_ibss(struct ieee80211com* ic, struct ieee80211_channel *chan)
 		else
 			ni->ni_bssid[0] |= 0x02;	/* local bit for IBSS */
 	}
-	/* 
+	/*
 	 * Fix the channel and related attributes.
 	 */
 	ieee80211_set_chan(ic, ni, chan);
@@ -526,7 +526,7 @@ ieee80211_match_bss(struct ieee80211com *ic, struct ieee80211_node *ni)
 		if (ni->ni_capinfo & IEEE80211_CAPINFO_PRIVACY)
 			fail |= 0x04;
 	}
-	rate = ieee80211_fix_rate(ni, IEEE80211_F_DONEGO | IEEE80211_F_DOFRATE);
+	rate = ieee80211_fix_rate(ni, IEEE80211_R_DONEGO | IEEE80211_R_DOFRATE);
 	if (rate & IEEE80211_RATE_BASIC)
 		fail |= 0x08;
 	if (ic->ic_des_esslen != 0 &&
@@ -763,7 +763,7 @@ ieee80211_end_scan(struct ieee80211com *ic)
 		goto notfound;
 	}
 }
- 
+
 /*
  * Handle 802.11 ad hoc network merge.  The
  * convention, set by the Wireless Ethernet Compatibility Alliance
@@ -820,7 +820,7 @@ ieee80211_sta_join(struct ieee80211com *ic, struct ieee80211_node *selbs)
 		 * Delete unusable rates; we've already checked
 		 * that the negotiated rate set is acceptable.
 		 */
-		ieee80211_fix_rate(selbs, IEEE80211_F_DODEL);
+		ieee80211_fix_rate(selbs, IEEE80211_R_DODEL);
 		/*
 		 * Fillin the neighbor table; it will already
 		 * exist if we are simply switching mastership.
@@ -846,7 +846,7 @@ ieee80211_sta_join(struct ieee80211com *ic, struct ieee80211_node *selbs)
 	 * Set the erp state (mostly the slot time) to deal with
 	 * the auto-select case; this should be redundant if the
 	 * mode is locked.
-	 */ 
+	 */
 	ic->ic_curmode = ieee80211_chan2mode(ic, selbs->ni_chan);
 	ic->ic_curchan = selbs->ni_chan;
 	ieee80211_reset_erp(ic);
@@ -1161,7 +1161,7 @@ ieee80211_find_node(struct ieee80211_node_table *nt, const u_int8_t *macaddr)
 
 /*
  * Fake up a node; this handles node discovery in adhoc mode.
- * Note that for the driver's benefit we we treat this like
+ * Note that for the driver's benefit we treat this like
  * an association so the driver has an opportunity to setup
  * it's private state.
  */
@@ -1199,7 +1199,7 @@ dump_probe_beacon(u_int8_t subtype, int isnew,
 	printf("\n");
 
 	if (isnew) {
-		printf("[%s] caps 0x%x bintval %u erp 0x%x", 
+		printf("[%s] caps 0x%x bintval %u erp 0x%x",
 			ether_sprintf(mac), sp->capinfo, sp->bintval, sp->erp);
 		if (sp->country != NULL) {
 #ifdef __FreeBSD__
@@ -1306,7 +1306,7 @@ ieee80211_add_scan(struct ieee80211com *ic,
 	saveie(&ni->ni_wpa_ie, sp->wpa);
 
 	/* NB: must be after ni_chan is setup */
-	ieee80211_setup_rates(ni, sp->rates, sp->xrates, IEEE80211_F_DOSORT);
+	ieee80211_setup_rates(ni, sp->rates, sp->xrates, IEEE80211_R_DOSORT);
 
 	if (!newnode)
 		ieee80211_free_node(ni);
@@ -1336,7 +1336,7 @@ ieee80211_init_neighbor(struct ieee80211com *ic, struct ieee80211_node *ni,
 
 	/* NB: must be after ni_chan is setup */
 	ieee80211_setup_rates(ni, sp->rates, sp->xrates,
-	    IEEE80211_F_DODEL | IEEE80211_F_DONEGO | IEEE80211_F_DOSORT);
+	    IEEE80211_R_DODEL | IEEE80211_R_DONEGO | IEEE80211_R_DOSORT);
 
 	if (ic->ic_newassoc != NULL)
 		ic->ic_newassoc(ni, isnew);
@@ -1374,7 +1374,7 @@ ieee80211_add_neighbor(struct ieee80211com *ic,
  * are required to pass some node so we fall back to ic_bss
  * when this frame is from an unknown sender.  The 802.11 layer
  * knows this means the sender wasn't in the node table and
- * acts accordingly. 
+ * acts accordingly.
  */
 struct ieee80211_node *
 #ifdef IEEE80211_DEBUG_REFCNT
@@ -1908,9 +1908,18 @@ ieee80211_timeout_stations(struct ieee80211_node_table *nt)
 		   ic->ic_opmode == IEEE80211_M_AHDEMO);
 	IEEE80211_SCAN_LOCK(nt);
 	gen = ++nt->nt_scangen;
+	IEEE80211_SCAN_UNLOCK(nt);
 	IEEE80211_DPRINTF(ic, IEEE80211_MSG_NODE,
 		"%s: %s scangen %u\n", __func__, nt->nt_name, gen);
 restart:
+	IEEE80211_SCAN_LOCK(nt);
+	if (gen != nt->nt_scangen) {
+		printf("%s: scan aborted %u\n", __func__, gen);
+		IEEE80211_SCAN_UNLOCK(nt);
+		return;
+	}
+	IEEE80211_SCAN_UNLOCK(nt);
+
 	IEEE80211_NODE_LOCK(nt);
 	TAILQ_FOREACH(ni, &nt->nt_node, ni_list) {
 		if (ni->ni_scangen == gen)	/* previously handled */
@@ -2039,8 +2048,6 @@ IEEE80211_DPRINTF(ic, IEEE80211_MSG_POWER, "[%s] discard frame, age %u\n", ether
 	}
 	IEEE80211_NODE_UNLOCK(nt);
 
-	IEEE80211_SCAN_UNLOCK(nt);
-
 	nt->nt_inact_timer = IEEE80211_INACT_WAIT;
 }
 
@@ -2052,7 +2059,16 @@ ieee80211_iterate_nodes(struct ieee80211_node_table *nt, ieee80211_iter_func *f,
 
 	IEEE80211_SCAN_LOCK(nt);
 	gen = ++nt->nt_scangen;
+	IEEE80211_SCAN_UNLOCK(nt);
 restart:
+	IEEE80211_SCAN_LOCK(nt);
+	if (gen != nt->nt_scangen) {
+		printf("%s: scan aborted %u\n", __func__, gen);
+		IEEE80211_SCAN_UNLOCK(nt);
+		return;
+	}
+	IEEE80211_SCAN_UNLOCK(nt);
+
 	IEEE80211_NODE_LOCK(nt);
 	TAILQ_FOREACH(ni, &nt->nt_node, ni_list) {
 		if (ni->ni_scangen != gen) {
@@ -2065,8 +2081,6 @@ restart:
 		}
 	}
 	IEEE80211_NODE_UNLOCK(nt);
-
-	IEEE80211_SCAN_UNLOCK(nt);
 }
 
 void

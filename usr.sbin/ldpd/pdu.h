@@ -1,4 +1,4 @@
-/* $NetBSD: pdu.h,v 1.1 2010/12/08 07:20:15 kefren Exp $ */
+/* $NetBSD: pdu.h,v 1.3 2013/07/11 05:45:23 kefren Exp $ */
 
 /*-
  * Copyright (c) 2010 The NetBSD Foundation, Inc.
@@ -46,13 +46,14 @@
 struct ldp_pdu {
 	uint16_t version;
 	uint16_t length;
+	/* draft-ietf-mpls-ldp-ipv6-07 keeps this IPv4 only for now */
 	struct in_addr  ldp_id;
 	uint16_t label_space;
 }               __packed;
 
 
-uint	get_pdu(unsigned char *, struct ldp_pdu *);
-int	check_recv_pdu(struct ldp_peer *, struct ldp_pdu *, int);
+uint	get_pdu(const unsigned char *, struct ldp_pdu *);
+int	check_recv_pdu(const struct ldp_peer *, const struct ldp_pdu *, int);
 
 
 #endif	/* !_PDU_H_ */

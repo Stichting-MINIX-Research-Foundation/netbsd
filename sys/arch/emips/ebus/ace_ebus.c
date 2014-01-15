@@ -1,4 +1,4 @@
-/*	$NetBSD: ace_ebus.c,v 1.4 2012/02/02 19:42:58 tls Exp $	*/
+/*	$NetBSD: ace_ebus.c,v 1.9 2013/11/10 18:27:15 christos Exp $	*/
 
 /*-
  * Copyright (c) 2010 The NetBSD Foundation, Inc.
@@ -31,7 +31,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ace_ebus.c,v 1.4 2012/02/02 19:42:58 tls Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ace_ebus.c,v 1.9 2013/11/10 18:27:15 christos Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -198,7 +198,7 @@ int	 acedetach(device_t, int);
 int	 aceactivate(device_t, enum devact);
 
 void  acedone(struct ace_softc *);
-static void ace_params_to_properties(struct ace_softc *ace);
+static void ace_set_geometry(struct ace_softc *ace);
 
 CFATTACH_DECL_NEW(ace_ebus, sizeof(struct ace_softc),
     ace_ebus_match, ace_ebus_attach, acedetach, aceactivate);
@@ -228,11 +228,12 @@ ace_ebus_attach(device_t parent, device_t self, void *aux)
 	struct ebus_attach_args *ia = aux;
 	int error;
 
+	ace->sc_dev = self;
+
 	/*
 	 * It's on the baseboard, with a dedicated interrupt line.
 	 */
 	ace->sc_dr = (struct _Sac *)ia->ia_vaddr;
-	ace->sc_dev = self;
 #if DEBUG
 	printf(" virt=%p", (void*)ace->sc_dr);
 #endif
@@ -241,7 +242,7 @@ ace_ebus_attach(device_t parent, device_t self, void *aux)
 	ebus_intr_establish(parent, (void*)ia->ia_cookie, IPL_BIO,
 	    ace_ebus_intr, ace);
 
-	config_pending_incr();
+	config_pending_incr(self);
 
 	error = kthread_create(PRI_NONE, 0, NULL, sysace_thread,
 	    ace, NULL, "%s", device_xname(ace->sc_dev));
@@ -347,7 +348,7 @@ sysace_wedges(void *arg)
 	dkwedge_autodiscover = 1;
 	dkwedge_discover(&sc->sc_dk);
 
-	config_pending_decr();
+	config_pending_decr(sc->sc_dev);
 
 	DBGME(DEBUG_STATUS, printf("Sysace::thread done for %p\n", sc));
 	kthread_exit(0);
@@ -967,7 +968,7 @@ sysace_identify(struct ace_softc *sc)
 					DBGME(DEBUG_PROBE,
 					    printf("Sysace::sc_capacity x%qx\n",
 					    sc->sc_capacity));
-					ace_params_to_properties(sc);
+					ace_set_geometry(sc);
 				} else {
 					DBGME(DEBUG_ERRORS,
 					    printf("Sysace::Bad card signature?"
@@ -1461,7 +1462,7 @@ sysace_send_config(struct ace_softc *sc, uint32_t *Data, unsigned int nBytes)
  * Rest of code lifted with mods from the dev\ata\wd.c driver
  */
 
-/*	$NetBSD: ace_ebus.c,v 1.4 2012/02/02 19:42:58 tls Exp $ */
+/*	$NetBSD: ace_ebus.c,v 1.9 2013/11/10 18:27:15 christos Exp $ */
 
 /*
  * Copyright (c) 1998, 2001 Manuel Bouyer.  All rights reserved.
@@ -1578,7 +1579,7 @@ static void bad144intern(struct ace_softc *);
 void
 aceattach(struct ace_softc *ace)
 {
-	struct device *self = ace->sc_dev;
+	device_t self = ace->sc_dev;
 	char tbuf[41], pbuf[9], c, *p, *q;
 	int i, blank;
 	DEBUG_PRINT(("aceattach\n"), DEBUG_FUNCS | DEBUG_PROBE);
@@ -1625,7 +1626,7 @@ aceattach(struct ace_softc *ace)
 	format_bytes(pbuf, sizeof(pbuf), ace->sc_capacity * DEV_BSIZE);
 	aprint_normal("%s: %s, %d cyl, %d head, %d sec, "
 	    "%d bytes/sect x %llu sectors\n",
-	    self->dv_xname, pbuf,
+	    device_xname(self), pbuf,
 	    (int)(ace->sc_capacity /
 	    (ace->sc_params.CurrentNumberOfHeads *
 	    ace->sc_params.CurrentSectorsPerTrack)),
@@ -1644,7 +1645,7 @@ aceattach(struct ace_softc *ace)
 }
 
 int
-aceactivate(struct device *self, enum devact act)
+aceactivate(device_t self, enum devact act)
 {
 	int rv = 0;
 
@@ -1661,7 +1662,7 @@ aceactivate(struct device *self, enum devact act)
 }
 
 int
-acedetach(struct device *self, int flags)
+acedetach(device_t self, int flags)
 {
 	struct ace_softc *sc = device_private(self);
 	int s, bmaj, cmaj, i, mn;
@@ -2430,6 +2431,7 @@ acedump(dev_t dev, daddr_t blkno, void *va, size_t size)
 	    va, size, blkno);
 	DELAY(500 * 1000);	/* half a second */
 	err = 0;
+	__USE(err);
 #endif
 
 	acedoingadump = 0;
@@ -2463,48 +2465,16 @@ bad144intern(struct ace_softc *ace)
 #endif
 
 static void
-ace_params_to_properties(struct ace_softc *ace)
+ace_set_geometry(struct ace_softc *ace)
 {
-	prop_dictionary_t disk_info, odisk_info, geom;
-	const char *cp;
+	struct disk_geom *dg = &ace->sc_dk.dk_geom;
 
-	disk_info = prop_dictionary_create();
+	memset(dg, 0, sizeof(*dg));
 
-	cp = ST506;
+	dg->dg_secperunit = ace->sc_capacity;
+	dg->dg_secsize = DEV_BSIZE /* XXX 512? */;
+	dg->dg_nsectors = ace->sc_params.CurrentSectorsPerTrack;
+	dg->dg_ntracks = ace->sc_params.CurrentNumberOfHeads;
 
-	prop_dictionary_set_cstring_nocopy(disk_info, "type", cp);
-
-	geom = prop_dictionary_create();
-
-	prop_dictionary_set_uint64(geom, "sectors-per-unit", ace->sc_capacity);
-
-	prop_dictionary_set_uint32(geom, "sector-size",
-	    DEV_BSIZE /* XXX 512? */);
-
-	prop_dictionary_set_uint16(geom, "sectors-per-track",
-	    ace->sc_params.CurrentSectorsPerTrack);
-
-	prop_dictionary_set_uint16(geom, "tracks-per-cylinder",
-	    ace->sc_params.CurrentNumberOfHeads);
-
-	prop_dictionary_set_uint64(geom, "cylinders-per-unit",
-	    ace->sc_capacity /
-	    (ace->sc_params.CurrentNumberOfHeads *
-	     ace->sc_params.CurrentSectorsPerTrack));
-
-	prop_dictionary_set(disk_info, "geometry", geom);
-	prop_object_release(geom);
-
-	prop_dictionary_set(device_properties(ace->sc_dev),
-	    "disk-info", disk_info);
-
-	/*
-	 * Don't release disk_info here; we keep a reference to it.
-	 * disk_detach() will release it when we go away.
-	 */
-
-	odisk_info = ace->sc_dk.dk_info;
-	ace->sc_dk.dk_info = disk_info;
-	if (odisk_info)
-		prop_object_release(odisk_info);
+	disk_set_info(ace->sc_dev, &ace->sc_dk, ST506);
 }

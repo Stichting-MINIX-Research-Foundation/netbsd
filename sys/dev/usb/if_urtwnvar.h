@@ -1,4 +1,4 @@
-/*	$NetBSD: if_urtwnvar.h,v 1.2 2012/08/20 07:32:49 christos Exp $	*/
+/*	$NetBSD: if_urtwnvar.h,v 1.7 2013/10/15 15:13:18 skrll Exp $	*/
 /*	$OpenBSD: if_urtwnreg.h,v 1.3 2010/11/16 18:02:59 damien Exp $	*/
 
 /*-
@@ -16,12 +16,15 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
+#ifndef _IF_URTWNVAR_H_
+#define _IF_URTWNVAR_H_
 
 /*
  * Driver definitions.
  */
 #define URTWN_RX_LIST_COUNT		1
 #define URTWN_TX_LIST_COUNT		8
+
 #define URTWN_HOST_CMD_RING_COUNT	32
 
 #define URTWN_RXBUFSZ	(16 * 1024)
@@ -126,6 +129,7 @@ struct urtwn_softc {
 	kmutex_t			sc_task_mtx;
 	kmutex_t			sc_fwcmd_mtx;
 	kmutex_t			sc_tx_mtx;
+	kmutex_t			sc_write_mtx;
 
 	usbd_pipe_handle		rx_pipe;
 	int				rx_npipe;
@@ -145,8 +149,8 @@ struct urtwn_softc {
 	int				avg_pwdb;
 	int				thcal_state;
 	int				thcal_lctemp;
-	int				ntxchains;
-	int				nrxchains;
+	size_t				ntxchains;
+	size_t				nrxchains;
 	int				ledlink;
 	bool				iqk_inited;
 
@@ -176,3 +180,5 @@ struct urtwn_softc {
 #define sc_txtap	sc_txtapu.th
 	int				sc_txtap_len;
 };
+
+#endif /* _IF_URTWNVAR_H_ */

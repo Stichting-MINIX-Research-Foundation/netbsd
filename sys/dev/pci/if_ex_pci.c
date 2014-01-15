@@ -1,4 +1,4 @@
-/*	$NetBSD: if_ex_pci.c,v 1.54 2011/07/26 20:51:24 dyoung Exp $	*/
+/*	$NetBSD: if_ex_pci.c,v 1.56 2013/09/13 21:03:04 martin Exp $	*/
 
 /*-
  * Copyright (c) 1998 The NetBSD Foundation, Inc.
@@ -31,7 +31,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_ex_pci.c,v 1.54 2011/07/26 20:51:24 dyoung Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_ex_pci.c,v 1.56 2013/09/13 21:03:04 martin Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -270,7 +270,7 @@ ex_pci_attach(device_t parent, device_t self, void *aux)
 	switch (error) {
 	case EOPNOTSUPP:
 		break;
-	case 0: 
+	case 0:
 		sc->enable = ex_pci_enable;
 		sc->disable = NULL;
 		break;
@@ -327,7 +327,6 @@ ex_d3tod0(pci_chipset_tag_t pc, pcitag_t tag, device_t self, pcireg_t state)
 	uint32_t base0;
 	uint32_t base1;
 	uint32_t romaddr;
-	uint32_t pci_command;
 	uint32_t pci_int_lat;
 	uint32_t pci_cache_lat;
 
@@ -336,7 +335,8 @@ ex_d3tod0(pci_chipset_tag_t pc, pcitag_t tag, device_t self, pcireg_t state)
 
 	aprint_normal_dev(self, "found in power state D%d, "
 	    "attempting to recover.\n", state);
-	pci_command = pci_conf_read(pc, tag, PCI_COMMAND_STATUS_REG);
+	/* XXX is this needed? */
+	(void)pci_conf_read(pc, tag, PCI_COMMAND_STATUS_REG);
 	base0 = pci_conf_read(pc, tag, PCI_BAR0);
 	base1 = pci_conf_read(pc, tag, PCI_BAR1);
 	romaddr	= pci_conf_read(pc, tag, PCI_EXP_ROM_BAR);

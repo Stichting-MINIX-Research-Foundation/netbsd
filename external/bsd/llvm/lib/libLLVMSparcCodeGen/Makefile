@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.3 2012/01/11 23:24:48 joerg Exp $
+#	$NetBSD: Makefile,v 1.5 2013/10/14 01:37:39 joerg Exp $
 
 LIB=	LLVMSparcCodeGen
 
@@ -7,11 +7,12 @@ LIB=	LLVMSparcCodeGen
 .PATH: ${LLVM_SRCDIR}/lib/Target/Sparc
 
 SRCS+=	DelaySlotFiller.cpp \
-	FPMover.cpp \
 	SparcAsmPrinter.cpp \
+	SparcCodeEmitter.cpp \
 	SparcInstrInfo.cpp \
 	SparcISelDAGToDAG.cpp \
 	SparcISelLowering.cpp \
+	SparcJITInfo.cpp \
 	SparcFrameLowering.cpp \
 	SparcMachineFunctionInfo.cpp \
 	SparcRegisterInfo.cpp \
@@ -23,12 +24,13 @@ SRCS+=	DelaySlotFiller.cpp \
 TABLEGEN_SRC=		Sparc.td
 TABLEGEN_INCLUDES=	-I${LLVM_SRCDIR}/lib/Target/Sparc
 TABLEGEN_OUTPUT= \
-	SparcGenRegisterInfo.inc|-gen-register-info \
-	SparcGenInstrInfo.inc|-gen-instr-info \
-	SparcGenAsmWriter.inc|-gen-asm-writer \
 	SparcGenDAGISel.inc|-gen-dag-isel \
-	SparcGenSubtargetInfo.inc|-gen-subtarget \
+	SparcGenAsmWriter.inc|-gen-asm-writer \
 	SparcGenCallingConv.inc|-gen-callingconv \
+	SparcGenCodeEmitter.inc|-gen-emitter \
+	SparcGenInstrInfo.inc|-gen-instr-info \
+	SparcGenRegisterInfo.inc|-gen-register-info \
+	SparcGenSubtargetInfo.inc|-gen-subtarget
 
 .include "${.PARSEDIR}/../../tablegen.mk"
 

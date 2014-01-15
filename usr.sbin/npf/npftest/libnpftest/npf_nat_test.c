@@ -1,4 +1,4 @@
-/*	$NetBSD: npf_nat_test.c,v 1.1 2012/08/12 03:35:14 rmind Exp $	*/
+/*	$NetBSD: npf_nat_test.c,v 1.4 2013/09/24 02:04:21 rmind Exp $	*/
 
 /*
  * NPF NAT test.
@@ -10,18 +10,6 @@
 
 #include "npf_impl.h"
 #include "npf_test.h"
-
-#define	IFNAME_EXT	"npftest0"
-#define	IFNAME_INT	"npftest1"
-
-#define	LOCAL_IP1	"10.1.1.1"
-#define	LOCAL_IP2	"10.1.1.2"
-
-/* Note: RFC 5737 compliant addresses. */
-#define	PUB_IP1		"192.0.2.1"
-#define	PUB_IP2		"192.0.2.2"
-#define	REMOTE_IP1	"192.0.2.3"
-#define	REMOTE_IP2	"192.0.2.4"
 
 #define	RESULT_PASS	0
 #define	RESULT_BLOCK	ENETUNREACH
@@ -126,10 +114,11 @@ nmatch_addr(const char *saddr, const struct in_addr *addr2)
 }
 
 static bool
-checkresult(bool verbose, unsigned i, struct mbuf *m, int error)
+checkresult(bool verbose, unsigned i, struct mbuf *m, ifnet_t *ifp, int error)
 {
 	const struct test_case *t = &test_cases[i];
 	npf_cache_t npc = { .npc_info = 0 };
+	nbuf_t nbuf;
 
 	if (verbose) {
 		printf("packet %d (expected %d ret %d)\n", i+1, t->ret, error);
@@ -137,19 +126,24 @@ checkresult(bool verbose, unsigned i, struct mbuf *m, int error)
 	if (error) {
 		return error == t->ret;
 	}
-	if (!npf_cache_all(&npc, m)) {
+
+	nbuf_init(&nbuf, m, ifp);
+	if (!npf_cache_all(&npc, &nbuf)) {
 		printf("error: could not fetch the packet data");
 		return false;
 	}
 
-	const struct ip *ip = &npc.npc_ip.v4;
-	const struct udphdr *uh = &npc.npc_l4.udp;
+	const struct ip *ip = npc.npc_ip.v4;
+	const struct udphdr *uh = npc.npc_l4.udp;
 
 	if (verbose) {
 		printf("\tpost-translation: src %s (%d)",
 		    inet_ntoa(ip->ip_src), ntohs(uh->uh_sport));
 		printf(" dst %s (%d)\n",
 		    inet_ntoa(ip->ip_dst), ntohs(uh->uh_dport));
+	}
+	if (error != t->ret) {
+		return false;
 	}
 
 	const bool forw = t->di == PFIL_OUT;
@@ -163,8 +157,7 @@ checkresult(bool verbose, unsigned i, struct mbuf *m, int error)
 	defect |= sport != ntohs(uh->uh_sport);
 	defect |= nmatch_addr(daddr, &ip->ip_dst);
 	defect |= dport != ntohs(uh->uh_dport);
-
-	return !defect && error == t->ret;
+	return !defect;
 }
 
 static struct mbuf *
@@ -198,7 +191,7 @@ npf_nat_test(bool verbose)
 			return false;
 		}
 		error = npf_packet_handler(NULL, &m, ifp, t->di);
-		ret = checkresult(verbose, i, m, error);
+		ret = checkresult(verbose, i, m, ifp, error);
 		if (m) {
 			m_freem(m);
 		}

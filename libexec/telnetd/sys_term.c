@@ -1,4 +1,4 @@
-/*	$NetBSD: sys_term.c,v 1.45 2012/01/09 16:36:48 christos Exp $	*/
+/*	$NetBSD: sys_term.c,v 1.47 2013/06/28 15:48:02 christos Exp $	*/
 
 /*
  * Copyright (c) 1989, 1993
@@ -34,7 +34,7 @@
 #if 0
 static char sccsid[] = "@(#)sys_term.c	8.4+1 (Berkeley) 5/30/95";
 #else
-__RCSID("$NetBSD: sys_term.c,v 1.45 2012/01/09 16:36:48 christos Exp $");
+__RCSID("$NetBSD: sys_term.c,v 1.47 2013/06/28 15:48:02 christos Exp $");
 #endif
 #endif /* not lint */
 
@@ -44,8 +44,12 @@ __RCSID("$NetBSD: sys_term.c,v 1.45 2012/01/09 16:36:48 christos Exp $");
 #include <util.h>
 #include <vis.h>
 
+#ifdef SUPPORT_UTMP
 #include <utmp.h>
-struct	utmp wtmp;
+#endif
+#ifdef SUPPORT_UTMPX
+#include <utmpx.h>
+#endif
 
 #define SCPYN(a, b)	(void) strncpy(a, b, sizeof(a))
 #define SCMPN(a, b)	strncmp(a, b, sizeof(a))
@@ -686,7 +690,7 @@ addarg(char **argv, const char *val)
 		/*
 		 * 10 entries, a leading length, and a null
 		 */
-		argv = (char **)malloc(sizeof(*argv) * 12);
+		argv = malloc(sizeof(*argv) * 12);
 		if (argv == NULL)
 			return(NULL);
 		*argv++ = (char *)10;
@@ -696,9 +700,8 @@ addarg(char **argv, const char *val)
 		;
 	if (cpp == &argv[(long)argv[-1]]) {
 		--argv;
-		nargv = (char **)realloc(argv,
-		    sizeof(*argv) * ((long)(*argv) + 10 + 2));
-		if (argv == NULL) {
+		nargv = realloc(argv, sizeof(*argv) * ((long)(*argv) + 10 + 2));
+		if (nargv == NULL) {
 			fatal(net, "not enough memory");
 			/*NOTREACHED*/
 		}

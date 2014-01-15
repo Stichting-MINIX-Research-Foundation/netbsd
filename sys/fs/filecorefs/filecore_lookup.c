@@ -1,4 +1,4 @@
-/*	$NetBSD: filecore_lookup.c,v 1.14 2012/07/22 00:53:19 rmind Exp $	*/
+/*	$NetBSD: filecore_lookup.c,v 1.18 2013/10/20 17:14:48 christos Exp $	*/
 
 /*-
  * Copyright (c) 1989, 1993, 1994 The Regents of the University of California.
@@ -66,7 +66,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: filecore_lookup.c,v 1.14 2012/07/22 00:53:19 rmind Exp $");
+__KERNEL_RCSID(0, "$NetBSD: filecore_lookup.c,v 1.18 2013/10/20 17:14:48 christos Exp $");
 
 #include <sys/param.h>
 #include <sys/namei.h>
@@ -127,7 +127,6 @@ filecore_lookup(void *v)
 	} */ *ap = v;
 	struct vnode *vdp;		/* vnode for directory being searched */
 	struct filecore_node *dp;	/* inode for directory being searched */
-	struct filecore_mnt *fcmp;	/* file system that directory is in */
 	struct buf *bp;			/* a buffer of directory entries */
 	struct filecore_direntry *de;
 	int numdirpasses;		/* strategy for directory search */
@@ -150,7 +149,6 @@ filecore_lookup(void *v)
 	*vpp = NULL;
 	vdp = ap->a_dvp;
 	dp = VTOI(vdp);
-	fcmp = dp->i_mnt;
 
 	/*
 	 * Check accessiblity of directory.
@@ -169,8 +167,10 @@ filecore_lookup(void *v)
 	 * check the name cache to see if the directory/name pair
 	 * we are looking for is known already.
 	 */
-	if ((error = cache_lookup(vdp, vpp, cnp)) >= 0)
-		return (error);
+	if (cache_lookup(vdp, cnp->cn_nameptr, cnp->cn_namelen,
+			 cnp->cn_nameiop, cnp->cn_flags, NULL, vpp)) {
+		return *vpp == NULLVP ? ENOENT : 0;
+	}
 
 	name = cnp->cn_nameptr;
 	namelen = cnp->cn_namelen;
@@ -202,7 +202,6 @@ filecore_lookup(void *v)
 
 	error = filecore_dbread(dp, &bp);
 	if (error) {
-		brelse(bp, 0);
 		return error;
 	}
 
@@ -246,7 +245,8 @@ notfound:
 	/*
 	 * Insert name into cache (as non-existent) if appropriate.
 	 */
-	cache_enter(vdp, *vpp, cnp);
+	cache_enter(vdp, *vpp, cnp->cn_nameptr, cnp->cn_namelen,
+		    cnp->cn_flags);
 	return (nameiop == CREATE || nameiop == RENAME) ? EROFS : ENOENT;
 
 found:
@@ -314,6 +314,7 @@ found:
 	/*
 	 * Insert name into cache if appropriate.
 	 */
-	cache_enter(vdp, *vpp, cnp);
+	cache_enter(vdp, *vpp, cnp->cn_nameptr, cnp->cn_namelen,
+		    cnp->cn_flags);
 	return 0;
 }

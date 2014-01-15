@@ -1,4 +1,4 @@
-/*	$NetBSD: kern_fork.c,v 1.191 2012/07/27 20:52:49 christos Exp $	*/
+/*	$NetBSD: kern_fork.c,v 1.193 2013/11/22 21:04:11 christos Exp $	*/
 
 /*-
  * Copyright (c) 1999, 2001, 2004, 2006, 2007, 2008 The NetBSD Foundation, Inc.
@@ -67,7 +67,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: kern_fork.c,v 1.191 2012/07/27 20:52:49 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: kern_fork.c,v 1.193 2013/11/22 21:04:11 christos Exp $");
 
 #include "opt_ktrace.h"
 
@@ -98,7 +98,7 @@ __KERNEL_RCSID(0, "$NetBSD: kern_fork.c,v 1.191 2012/07/27 20:52:49 christos Exp
 /*
  * DTrace SDT provider definitions
  */
-SDT_PROBE_DEFINE(proc,,,create,
+SDT_PROBE_DEFINE(proc,,,create,create,
 	    "struct proc *", NULL,	/* new process */
 	    "struct proc *", NULL,	/* parent process */
 	    "int", NULL,		/* flags */
@@ -291,7 +291,7 @@ fork1(struct lwp *l1, int flags, int exitsig, void *stack, size_t stacksize,
 	memcpy(&p2->p_startcopy, &p1->p_startcopy,
 	    (unsigned) ((char *)&p2->p_endcopy - (char *)&p2->p_startcopy));
 
-	CIRCLEQ_INIT(&p2->p_sigpend.sp_info);
+	TAILQ_INIT(&p2->p_sigpend.sp_info);
 
 	LIST_INIT(&p2->p_lwps);
 	LIST_INIT(&p2->p_sigwaiters);

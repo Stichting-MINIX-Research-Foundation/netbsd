@@ -1,7 +1,7 @@
-/*	$NetBSD: dnssec-keyfromlabel.c,v 1.7 2012/06/05 00:38:55 christos Exp $	*/
+/*	$NetBSD: dnssec-keyfromlabel.c,v 1.10 2013/07/27 19:23:09 christos Exp $	*/
 
 /*
- * Copyright (C) 2007-2011  Internet Systems Consortium, Inc. ("ISC")
+ * Copyright (C) 2007-2012  Internet Systems Consortium, Inc. ("ISC")
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -57,7 +57,8 @@ int verbose;
 
 static const char *algs = "RSA | RSAMD5 | DH | DSA | RSASHA1 |"
 			  " NSEC3DSA | NSEC3RSASHA1 |"
-			  " RSASHA256 | RSASHA512 | ECCGOST";
+			  " RSASHA256 | RSASHA512 | ECCGOST |"
+			  " ECDSAP256SHA256 | ECDSAP384SHA384";
 
 ISC_PLATFORM_NORETURN_PRE static void
 usage(void) ISC_PLATFORM_NORETURN_POST;
@@ -160,6 +161,7 @@ main(int argc, char **argv) {
 	if (argc == 1)
 		usage();
 
+	isc__mem_register();
 	RUNTIME_CHECK(isc_mem_create(0, 0, &mctx) == ISC_R_SUCCESS);
 
 	dns_result_register();
@@ -366,6 +368,8 @@ main(int argc, char **argv) {
 		fprintf(stderr, "The use of RSA (RSAMD5) is not recommended.\n"
 				"If you still wish to use RSA (RSAMD5) please "
 				"specify \"-a RSAMD5\"\n");
+		if (freeit != NULL)
+			free(freeit);
 		return (1);
 	} else {
 		r.base = algname;
@@ -380,7 +384,8 @@ main(int argc, char **argv) {
 	if (use_nsec3 &&
 	    alg != DST_ALG_NSEC3DSA && alg != DST_ALG_NSEC3RSASHA1 &&
 	    alg != DST_ALG_RSASHA256 && alg != DST_ALG_RSASHA512 &&
-	    alg != DST_ALG_ECCGOST) {
+	    alg != DST_ALG_ECCGOST &&
+	    alg != DST_ALG_ECDSA256 && alg != DST_ALG_ECDSA384) {
 		fatal("%s is incompatible with NSEC3; "
 		      "do not use the -3 option", algname);
 	}

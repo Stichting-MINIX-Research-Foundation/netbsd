@@ -1,4 +1,4 @@
-/*	$NetBSD: uatp.c,v 1.1 2012/08/04 04:34:55 riastradh Exp $	*/
+/*	$NetBSD: uatp.c,v 1.4 2013/11/01 17:09:00 christos Exp $	*/
 
 /*-
  * Copyright (c) 2011, 2012 Taylor R. Campbell
@@ -143,7 +143,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: uatp.c,v 1.1 2012/08/04 04:34:55 riastradh Exp $");
+__KERNEL_RCSID(0, "$NetBSD: uatp.c,v 1.4 2013/11/01 17:09:00 christos Exp $");
 
 #include <sys/atomic.h>
 #include <sys/device.h>
@@ -170,12 +170,6 @@ extern int hz;
 
 #include <dev/wscons/wsconsio.h>
 #include <dev/wscons/wsmousevar.h>
-
-#if 1
-#  define UATP_DEBUG	1
-#else
-#  include "opt_uatp_debug.h"
-#endif
 
 #define CHECK(condition, fail) do {					\
 	if (! (condition)) {						\
@@ -951,7 +945,7 @@ uatp_attach(device_t parent, device_t self, void *aux)
 
 	/* Initialize model-specific parameters.  */
 	sc->sc_parameters = uatp_descriptor->parameters;
-	KASSERT(sc->sc_parameters->input_size == input_size);
+	KASSERT((int)sc->sc_parameters->input_size == input_size);
 	KASSERT(sc->sc_parameters->x_sensors <= UATP_MAX_X_SENSORS);
 	KASSERT(sc->sc_parameters->x_ratio <= UATP_MAX_X_RATIO);
 	KASSERT(sc->sc_parameters->y_sensors <= UATP_MAX_Y_SENSORS);
@@ -1280,9 +1274,8 @@ uatp_disable(void *v)
 static int
 uatp_ioctl(void *v, unsigned long cmd, void *data, int flag, struct lwp *p)
 {
-	struct uatp_softc *sc = v;
 
-	DPRINTF(sc, UATP_DEBUG_IOCTL,
+	DPRINTF((struct uatp_softc*)v, UATP_DEBUG_IOCTL,
 	    ("cmd %lx, data %p, flag %x, lwp %p\n", cmd, data, flag, p));
 
 	/* XXX Implement any relevant wsmouse(4) ioctls.  */

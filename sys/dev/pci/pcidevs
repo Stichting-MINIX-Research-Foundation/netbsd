@@ -1,4 +1,4 @@
-$NetBSD: pcidevs,v 1.1139 2012/09/29 10:26:14 gsutre Exp $
+$NetBSD: pcidevs,v 1.1165 2013/11/13 16:24:33 msaitoh Exp $
 
 /*
  * Copyright (c) 1995, 1996 Christopher G. Demetriou
@@ -621,7 +621,8 @@ vendor S2IO		0x17d5	S2io Technologies
 vendor RDC		0x17F3  RDC Semiconductor
 vendor LINKSYS2		0x17fe	Linksys
 vendor RALINK		0x1814	Ralink Technologies
-vendor RMI		0x182e	Raza Microelectronics Inc. (NetLogic)
+vendor RMI		0x182e	Raza Microelectronics Inc. (Broadcom)
+vendor NETLOGIC		0x184e	Netlogic Microsystems (Broadcom)
 vendor BBELEC		0x1896	B & B Electronics
 vendor XGI		0x18ca	XGI Technology
 vendor RENESAS		0x1912	Renesas Technologies
@@ -632,6 +633,7 @@ vendor EVE		0x1adb	EVE
 vendor QUMRANET		0x1af4	Qumranet
 vendor ASMEDIA		0x1b21  ASMedia
 vendor FRESCO		0x1b73	Fresco Logic
+vendor QINHENG2		0x1c00	Nanjing QinHeng Electronics (PCIe)
 vendor SYMPHONY2	0x1c1c	Symphony Labs (2nd PCI Vendor ID)
 vendor TEKRAM2		0x1de1	Tekram Technology (2nd PCI Vendor ID)
 vendor SUNIX2		0x1fd4	SUNIX Co
@@ -933,6 +935,7 @@ product ALTERA EP4CGX15BF14C8N	0x4c15	EP4CGX15BF14C8N
 product ALTIMA AC1000	0x03e8	AC1000 Gigabit Ethernet
 product ALTIMA AC1001	0x03e9	AC1001 Gigabit Ethernet
 product ALTIMA AC9100	0x03ea	AC9100 Gigabit Ethernet
+product ALTIMA AC1003	0x03eb	AC1003 Gigabit Ethernet
 
 /* AMD products */
 product AMD AMD64_HT	0x1100	K8 AMD64 HyperTransport Configuration
@@ -1039,12 +1042,18 @@ product AMD HUDSON_HDAUDIO	0x780d	Hudson HD Audio Controller
 product AMD HUDSON_LPC		0x780e	Hudson LPC Bridge
 product AMD HUDSON_PCI		0x780f	Hudson PCI Bridge
 product AMD HUDSON_XHCI		0x7812	Hudson USB xHCI Controller
-product AMD RS880_HB		0x9601	RS880 Host Bridge
-product AMD RS780_PPB_GFX	0x9602	RS780 PCI-PCI Bridge (int gfx)
+product AMD RS780_HB		0x9600	RS780 Host Bridge
+product AMD RS880_HB		0x9601	RS785/RS880 Host Bridge
+product AMD RS780_PPB_GFX	0x9602	RS780/RS880 PCI-PCI Bridge (int gfx)
 product AMD RS780_PPB_GFX0	0x9603	RS780 PCI-PCI Bridge (ext gfx port 0)
-product AMD RS780_PPB0		0x9604	RS780 PCI-PCIE Bridge (port 0)
-product AMD RS780_PPB1		0x9605	RS780 PCI-PCIE Bridge (port 1)
+product AMD RS780_PPB0		0x9604	RS780/RS880 PCI-PCIE Bridge (port 0)
+product AMD RS780_PPB1		0x9605	RS780/RS880 PCI-PCIE Bridge (port 1)
 product AMD RS780_PPB2		0x9606	RS780 PCI-PCIE Bridge (port 2)
+product AMD RS780_PPB3		0x9607	RS780 PCI-PCIE Bridge (port 3)
+product AMD RS780_PPB4		0x9608	RS780/RS880 PCI-PCIE Bridge (port 4)
+product AMD RS780_PPB5		0x9609	RS780/RS880 PCI-PCIE Bridge (port 5)
+product AMD RS780_PPB6		0x960a	RS780 PCI-PCIE Bridge (NB-SB link)
+product AMD RS780_PPB7		0x960b	RS780 PCI-PCIE Bridge (ext gfx port 1)
 
 /* American Megatrends products */
 product AMI MEGARAID		0x9010	MegaRAID
@@ -1118,6 +1127,7 @@ product APPLE INTREPID2_PCI2	0x0068	Intrepid 2 PCI
 product APPLE INTREPID2_ATA	0x0069	Intrepid 2 ATA
 product APPLE INTREPID2_FW	0x006a	Intrepid 2 FireWire
 product APPLE INTREPID2_GMAC	0x006b	Intrepid 2 GMAC
+product APPLE BCM5701		0x1645	BCM5701
 
 /* ARC Logic products */
 product ARC 1000PV	0xa091	1000PV
@@ -1148,7 +1158,10 @@ product ARECA ARC1681		0x1681	ARC-1681
 product ASIX AX88140A	0x1400	AX88140A 10/100 Ethernet
 
 /* ASMedia products */
-product ASMEDIA ASM1061		0x0612	ASM1061 AHCI SATA III Controller
+product ASMEDIA ASM1061_01	0x0601	ASM1061 AHCI SATA III Controller
+product ASMEDIA ASM1061_02	0x0602	ASM1061 AHCI SATA III Controller
+product ASMEDIA ASM1061_11	0x0611	ASM1061 AHCI SATA III Controller
+product ASMEDIA ASM1061_12	0x0612	ASM1061 AHCI SATA III Controller
 
 /* Asustek products */
 product ASUSTEK HFCPCI		0x0675	ISDN
@@ -1224,10 +1237,11 @@ product ATI SB400_SATA_2	0x437a	SB400 SATA Controller
 product ATI SB600_SATA_1 	0x4380	SB600 SATA Controller
 product ATI SB600_SATA_2 	0x4381	SB600 SATA Controller
 product ATI SB600_AC97_AUDIO	0x4382	SB600 AC97 Audio
-product ATI SB600_AZALIA	0x4383	SB600 Azalia
-product ATI SB600_PPB_4384	0x4384	SB600 PCI to PCI Bridge
-product ATI SB600_SMB		0x4385	SB600/SB700/SB800 SMBus Controller
+product ATI SB600_AZALIA	0x4383	SBx00 Azalia
+product ATI SB600_PPB		0x4384	SBx00 PCI to PCI Bridge
+product ATI SB600_SMB		0x4385	SBx00 SMBus Controller
 product ATI SB600_USB_EHCI	0x4386	SB600 USB EHCI Controller
+product ATI SB600_USB_OHCI0	0x4387	SB600 USB OHCI0 Controller
 product ATI SB600_USB_OHCI1	0x4388	SB600 USB OHCI1 Controller
 product ATI SB600_USB_OHCI2	0x4389	SB600 USB OHCI2 Controller
 product ATI SB600_USB_OHCI3	0x438a	SB600 USB OHCI3 Controller
@@ -1235,19 +1249,23 @@ product ATI SB600_USB_OHCI4	0x438b	SB600 USB OHCI4 Controller
 product ATI SB600_AC97_MODEM	0x438e	SB600 AC97 Modem
 product ATI IXP_IDE_600 	0x438c	SB600 IXP IDE Controller
 product ATI SB600_PLB_438D	0x438d	SB600 PCI to LPC Bridge
-product	ATI SB700_SATA_IDE	0x4390	SB700/SB800 SATA Controller (IDE mode)
-product	ATI SB700_SATA_AHCI	0x4391	SB700/SB800 SATA Controller (AHCI mode)
-product	ATI SB700_SATA_RAID	0x4392	SB700/SB800 RAID SATA Controller
-product	ATI SB700_SATA_RAID5	0x4393	SB700/SB800 RAID5 SATA Controller
-product	ATI SB700_SATA_FC	0x4394	SB700/SB800 FC SATA Controller
-product	ATI SB700_SATA_AHCI2	0x4395	SB700/SB800 SATA Controller (AHCI mode)
-product	ATI SB700_USB_EHCI	0x4396	SB700/SB800 USB EHCI Controller
-product	ATI SB800_SATA		0x4395	SB800 SATA Controller
-product	ATI SB700_USB_OHCI0	0x4397	SB700/SB800 USB OHCI Controller
-product	ATI SB700_USB_OHCI1	0x4398	SB700/SB800 USB OHCI Controller
-product	ATI SB700_USB_OHCI2	0x4399	SB700/SB800 USB OHCI Controller
-product	ATI SB700_IDE		0x439c	SB700/SB800 IDE Controller
-product	ATI SB700_LPC		0x439d	SB700/SB800 LPC Host Controller
+product ATI SB700_SATA_IDE	0x4390	SB700-SB900 SATA Controller (IDE mode)
+product ATI SB700_SATA_AHCI	0x4391	SB700-SB900 SATA Controller (AHCI mode)
+product ATI SB700_SATA_RAID	0x4392	SB700-SB900 RAID SATA Controller
+product ATI SB700_SATA_RAID5	0x4393	SB700-SB900 RAID5 SATA Controller
+product ATI SB700_SATA_FC	0x4394	SB700-SB900 FC SATA Controller
+product ATI SB700_SATA_AHCI2	0x4395	SB700-SB900 SATA Controller (AHCI mode)
+product ATI SB700_USB_EHCI	0x4396	SB700-SB900 USB EHCI Controller
+product ATI SB800_SATA		0x4395	SB800/SB900 SATA Controller
+product ATI SB700_USB_OHCI0	0x4397	SB700-SB900 USB OHCI Controller
+product ATI SB700_USB_OHCI1	0x4398	SB700-SB900 USB OHCI Controller
+product ATI SB700_USB_OHCI2	0x4399	SB700-SB900 USB OHCI Controller
+product ATI SB700_IDE		0x439c	SB700-SB900 IDE Controller
+product ATI SB700_LPC		0x439d	SB700-SB900 LPC Host Controller
+product ATI SB700_PCIE0		0x43a0	SB700-SB900 PCI to PCI bridge (PCIe 0)
+product ATI SB700_PCIE1		0x43a1	SB700-SB900 PCI to PCI bridge (PCIe 1)
+product ATI SB900_PCIE2		0x43a2	SB900 PCI to PCI bridge (PCIe 2)
+product ATI SB900_PCIE3		0x43a3	SB900 PCI to PCI bridge (PCIe 3)
 product ATI MACH64_CT		0x4354	Mach64 CT
 product ATI MACH64_CX		0x4358	Mach64 CX
 product ATI RADEON_RS250_D7	0x4437	Radeon Mobility 7000 IGP
@@ -1492,6 +1510,7 @@ product ATI RADEON_HD6520G	0x9647	Radeon HD6520G
 product ATI RADEON_HD4200	0x9712	Radeon HD4200 Mobility
 product ATI RADEON_HD4250	0x9715	Radeon HD4250 GPU (RS880)
 product ATI RADEON_HD6310	0x9802	Radeon HD6310 Graphics
+product ATI RADEON_HD7340	0x9808	Radeon HD7340 Graphics
 product ATI RADEON_HD2600_HD	0xaa08	Radeon HD2600 HD Audio Controller
 product ATI RADEON_HD4350_HD	0xaa38	Radeon HD4350 HD Audio Controller
 product ATI RADEON_HD5600_HDMI	0xaa60	Redwood HDMI Audio
@@ -1570,6 +1589,7 @@ product AVM B1			0x0700	Basic Rate B1 ISDN Interface
 product AVM T1			0x1200	Primary Rate T1 ISDN Interface
 
 /* RMI products */
+product RMI XLR_PCIX		0x000b	XLR PCI-X bridge
 product RMI XLS_PCIE		0xabcd	XLS PCIe-PCIe bridge
 
 /* B & B Electronics Products */
@@ -1617,17 +1637,23 @@ product BROADCOM BCM5704S_ALT	0x1649	BCM5704S 1000baseSX Ethernet
 product BROADCOM BCM5706	0x164a	BCM5706 NetXtreme II 1000baseT Ethernet
 product BROADCOM BCM5708	0x164c	BCM5708 NetXtreme II 1000baseT Ethernet
 product BROADCOM BCM5702FE	0x164d	BCM5702FE 10/100 Ethernet
+product BROADCOM BCM57710	0x164e	BCM57710 NetXtreme II 10Gb Ethernet
+product BROADCOM BCM57711	0x164f	BCM57711 NetXtreme II 10Gb Ethernet
+product BROADCOM BCM57711E	0x1650	BCM57711E NetXtreme II 10Gb Ethernet
 product BROADCOM BCM5705	0x1653	BCM5705 10/100/1000 Ethernet
 product BROADCOM BCM5705K	0x1654	BCM5705K 10/100/1000 Ethernet
 product BROADCOM BCM5717	0x1655	BCM5717 10/100/1000 Ethernet
 product BROADCOM BCM5718	0x1656	BCM5718 10/100/1000 Ethernet
-product BROADCOM BCM5720	0x1658	BCM5720 NetXtreme 1000baseT Ethernet
+product BROADCOM BCM5719	0x1657	BCM5719 NetXtreme 1000baseT Ethernet
 product BROADCOM BCM5721	0x1659	BCM5721 NetXtreme 1000baseT Ethernet
 product BROADCOM BCM5722	0x165a	BCM5722 NetXtreme 1000baseT Ethernet
 product BROADCOM BCM5723	0x165b	BCM5723 NetXtreme 1000baseT Ethernet
 product BROADCOM BCM5724	0x165c	BCM5724 10/100/1000 Ethernet
 product BROADCOM BCM5705M	0x165d	BCM5705M 10/100/1000 Ethernet
 product BROADCOM BCM5705M_ALT	0x165e	BCM5705M 10/100/1000 Ethernet
+product BROADCOM BCM5720	0x165f	BCM5720 NetXtreme 1000baseT Ethernet
+product BROADCOM BCM57712	0x1662	BCM57712 NetXtreme II 10Gb Ethernet
+product BROADCOM BCM57712E	0x1663	BCM57712E NetXtreme II 10Gb Ethernet
 product BROADCOM BCM5714	0x1668	BCM5714 1000baseT Ethernet
 product BROADCOM BCM5714S	0x1669	BCM5714S 1000baseSX Ethernet
 product BROADCOM BCM5780	0x166a	BCM5780 NetXtreme 1000baseT Ethernet
@@ -1650,6 +1676,7 @@ product BROADCOM BCM5761E	0x1680	BCM5761E 10/100/1000 Ethernet
 product BROADCOM BCM5761	0x1681	BCM5761 10/100/1000 Ethernet
 product BROADCOM BCM57762	0x1682	BCM57762 Gigabit Ethernet
 product BROADCOM BCM5764	0x1684	BCM5764 NetXtreme 1000baseT Ethernet
+product BROADCOM BCM57766	0x1686	BCM57766 NetXtreme 1000baseT Ethernet
 product BROADCOM BCM5761S	0x1688	BCM5761S 10/100/1000 Ethernet
 product BROADCOM BCM5761SE	0x1689	BCM5761SE 10/100/1000 Ethernet
 product BROADCOM BCM57760	0x1690	BCM57760 NetXtreme 1000baseT Ethernet
@@ -1664,7 +1691,7 @@ product BROADCOM BCM5786	0x169a	BCM5786 NetLink 1000baseT Ethernet
 product BROADCOM BCM5787	0x169b	BCM5787 NetLink 1000baseT Ethernet
 product BROADCOM BCM5788	0x169c	BCM5788 10/100/1000 Ethernet
 product BROADCOM BCM5789	0x169d	BCM5789 NetLink 1000baseT Ethernet
-product BROADCOM BCM5785F	0x16a0	BCM5785F 10/100/1000 Ethernet
+product BROADCOM BCM5785F	0x16a0	BCM5785F 10/100 Ethernet
 product BROADCOM BCM5702X	0x16a6	BCM5702X 10/100/1000 Ethernet
 product BROADCOM BCM5703X	0x16a7	BCM5703X 10/100/1000 Ethernet
 product BROADCOM BCM5704S	0x16a8	BCM5704S 1000baseSX Ethernet
@@ -1673,9 +1700,11 @@ product BROADCOM BCM5708S	0x16ac	BCM5708 NetXtreme II 1000baseSX
 product BROADCOM BCM57761	0x16b0	BCM57761 10/100/1000 Ethernet
 product BROADCOM BCM57781	0x16b1	BCM57781 10/100/1000 Ethernet
 product BROADCOM BCM57791	0x16b2	BCM57791 10/100/1000 Ethernet
+product BROADCOM BCM57786	0x16b3	BCM57786 10/100/1000 Ethernet
 product BROADCOM BCM57765	0x16b4	BCM57765 Integrated Gigabit Ethernet
 product BROADCOM BCM57785	0x16b5	BCM57785 Integrated Gigabit Ethernet
 product BROADCOM BCM57795	0x16b6	BCM57795 10/100/1000 Ethernet
+product BROADCOM BCM57782	0x16b7	BCM57782 10/100/1000 Ethernet
 product BROADCOM BCM5702_ALT	0x16c6	BCM5702 10/100/1000 Ethernet
 product BROADCOM BCM5703_ALT	0x16c7	BCM5703 10/100/1000 Ethernet
 product BROADCOM BCM5781	0x16dd	BCM5781 Integrated Gigabit Ethernet
@@ -2291,7 +2320,12 @@ product MARVELL MV64360		0x6460	MV6436x System Controller
 product MARVELL MV64460		0x6480	MV6446x System Controller
 product MARVELL 88SX7042	0x7042	88SX7042 SATA IIe
 product MARVELL MV78100		0x7810	MV78100 SoC Discovery Innovation
+product MARVELL MV78130		0x7813	MV78130 SoC Armada XP
+product MARVELL MV78160		0x7816	MV78160 SoC Armada XP
 product MARVELL MV78200		0x7820	MV78200 SoC Discovery Innovation
+product MARVELL MV78230		0x7823	MV78230 SoC Armada XP
+product MARVELL MV78260		0x7826	MV78260 SoC Armada XP
+product MARVELL MV78460		0x7846	MV78460 SoC Armada XP
 product MARVELL 88W8660		0x8660	88W8660 SoC Orion1
 
 product MARVELL2 88SE9123	0x9123	88SE9123 SATA II PCI-E AHCI Controller
@@ -2356,6 +2390,7 @@ product HP HPSA_10		0x3239	Smart Array
 product HP HPSA_11		0x323a	Smart Array
 product HP HPSA_12		0x323b	Smart Array
 product HP HPSA_13		0x323c	Smart Array
+product HP RS780_PPB_GFX	0x9602  (AMD) RS780 PCI-PCI Bridge (int gfx)
 
 /* Hifn products */
 product HIFN 7751	0x0005	7751
@@ -2510,6 +2545,8 @@ product INTEL IOP333_B		0x0372	IOP333 PCI Express-to-PCI Bridge #1
 product INTEL SRCZCRX		0x0407	RAID Controller
 product INTEL SRCU42E		0x0408	SCSI RAID Controller
 product INTEL SRCS28X		0x0409	SATA RAID Controller
+product INTEL HASWELL_IGD	0x0402	Haswell Integrated Graphics Device
+product INTEL I347AT4		0x0438	I347-AT4 Gigabit Network Connection
 product INTEL PCEB		0x0482	82375EB/SB PCI-EISA Bridge
 product INTEL CDC		0x0483	82424ZX Cache and DRAM Controller
 product INTEL SIO		0x0484	82378ZB System I/O
@@ -2517,8 +2554,42 @@ product INTEL 82426EX		0x0486	82426EX PCI-ISA Bridge
 product INTEL PCMC		0x04a3	82434LX/NX PCI, Cache and Memory Controller (PCMC)
 product INTEL GDT_RAID1		0x0600	GDT RAID
 product INTEL GDT_RAID2		0x061f	GDT RAID
+product INTEL WIFI_LINK_2230_1	0x0887	Centrino Wireless-N 2230
+product INTEL WIFI_LINK_2230_2	0x0888	Centrino Wireless-N 2230
+product INTEL WIFI_LINK_6235	0x088e	Centrino Advanced-N 6235
+product INTEL X1000_SDIO_EMMC	0x08a7	Quark X1000 SDIO/eMMC
+product INTEL X1000_I2C_GPIO	0x0934	Quark X1000 I2C and GPIO
+product INTEL X1000_SPI		0x0935	Quark X1000 SPI
+product INTEL X1000_HS_UART	0x0936	Quark X1000 HS-UART
+product INTEL X1000_MAC		0x0937	Quark X1000 10/100 Ethernet MAC
+product INTEL X1000_EHCI	0x0939	Quark X1000 EHCI
+product INTEL X1000_OHCI	0x093a	Quark X1000 OHCI
+product INTEL X1000_HB		0x0958	Quark X1000 Host Bridge
+product INTEL X1000_LB		0x095e	Quark X1000 Legacy Bridge
 product INTEL 80960RM		0x0962	i960 RM PCI-PCI
 product INTEL 80960RN		0x0964	i960 RN PCI-PCI
+product INTEL CORE4G_D_ULT_GT1	0x0a02	HD Graphics
+product INTEL CORE4G_M_HOST_DRAM 0x0a04	Core 4G (mobile) Host Bridge, DRAM
+product INTEL CORE4G_M_ULT_GT1	0x0a06	HD Graphics (GT1)
+product INTEL CORE4G_S_ULT_GT1	0x0a0a	HD Graphics
+product INTEL CORE4G_R_ULT_GT1_1 0x0a0b	HD Graphics
+product INTEL CORE4G_M_MINI_HDA	0x0a0c	Core 4G (mobile) Mini HD audio
+product INTEL CORE4G_R_ULT_GT1_2 0x0a0e	HD Graphics
+product INTEL CORE4G_D_ULT_GT2	0x0a12	HD Graphics
+product INTEL CORE4G_M_ULT_GT2	0x0a16	HD Graphics (GT2)
+product INTEL CORE4G_S_ULT_GT2	0x0a1a	HD Graphics
+product INTEL CORE4G_R_ULT_GT2_1 0x0a1b	HD Graphics
+product INTEL CORE4G_R_ULT_GT2_2 0x0a1e	HD Graphics
+product INTEL CORE4G_D_ULT_GT3	0x0a22	HD Graphics
+product INTEL CORE4G_M_ULT_GT3	0x0a26	HD Graphics 5000 (GT3)
+product INTEL CORE4G_S_ULT_GT3	0x0a2a	HD Graphics
+product INTEL CORE4G_R_ULT_GT3_1 0x0a2b	HD Graphics
+product INTEL CORE4G_R_ULT_GT3_2 0x0a2e	Iris Graphics 5100
+product INTEL HASWELL_HOST_DRAM	0x0c00	Haswell Host Bridge, DRAM
+product INTEL HASWELL_PCIE16	0x0c01	Haswell PCI-E x16 Controller
+product INTEL HASWELL_PCIE8	0x0c05	Haswell PCI-E x8 Controller
+product INTEL HASWELL_PCIE4	0x0c09	Haswell PCI-E x4 Controller
+product INTEL HASWELL_MINI_HDA	0x0c0c	Haswell Mini HD Audio Controller
 product INTEL 82542		0x1000	i82542 Gigabit Ethernet
 product INTEL 82543GC_FIBER	0x1001	i82453GC 1000baseX Ethernet
 product INTEL MODEM56		0x1002	56k Modem
@@ -2664,6 +2735,8 @@ product INTEL 82815_FULL_AGP	0x1131	82815 AGP
 product INTEL 82815_FULL_GRAPH	0x1132	82815 Graphics
 product INTEL 82806AA		0x1161	82806AA PCI64 Hub Advanced Programmable Interrupt Controller
 product INTEL ADI_BECC		0x1162	ADI i80200 Big Endian Companion Chip
+product INTEL X1000_PCIE_0	0x11c3  Quark X1000 PCIe Root Port
+product INTEL X1000_PCIE_1	0x11c4  Quark X1000 PCIe Root Port
 product INTEL IXP1200		0x1200	IXP1200 Network Processor
 product INTEL 82559ER		0x1209	82559ER Fast Ethernet LAN Controller
 product INTEL 82092AA		0x1222	82092AA IDE Controller
@@ -2705,6 +2778,17 @@ product INTEL I350_SERDES 	0x1523	I350 Gigabit Backplane Connection
 product INTEL I350_SGMII 	0x1524	I350 Gigabit Connection
 product INTEL 82801J_D_BM_V	0x1525	82567V LAN Controller
 product INTEL 82580_QUAD_FIBER 	0x1527	82580 quad-1000BaseX Ethernet
+product INTEL I210_T1 		0x1533	I210-T1 Ethernet Server Adapter
+product INTEL I210_COPPER_OEM1	0x1534	I210 Ethernet (COPPER OEM)
+product INTEL I210_COPPER_IT	0x1535	I210 Ethernet (COPPER IT)
+product INTEL I210_FIBER	0x1536	I210 Ethernet (FIBER)
+product INTEL I210_SERDES	0x1537	I210 Ethernet (SERDES)
+product INTEL I210_SGMII	0x1538	I210 Ethernet (SGMII)
+product INTEL I211_COPPER	0x1539	I211 Ethernet (COPPER)
+product INTEL I217_LM		0x153a	I217-LM Ethernet Connection
+product INTEL I217_V		0x153b	I217-V Ethernet Connection
+product INTEL I218_V		0x1559	I218-V Ethernet Connection
+product INTEL I218_LM		0x155a	I218-LM Ethernet Connection
 product INTEL 80960_RP		0x1960	ROB-in i960RP Microprocessor
 product INTEL 80960RM_2		0x1962	i960 RM PCI-PCI
 product INTEL 82840_HB		0x1a21	82840 Host
@@ -2765,7 +2849,7 @@ product INTEL C600_PCIE_6	0x1d1a	C600/X79 PCIE
 product INTEL C600_PCIE_7	0x1d1c	C600/X79 PCIE
 product INTEL C600_PCIE_8	0x1d1e	C600/X79 PCIE
 product INTEL C600_HDA		0x1d20	C600 HD Audio
-product INTEL C600_SMB_1	0x1d22	C600/X79 SMBus Controller
+product INTEL C600_SMBUS	0x1d22	C600 SMBus Controller
 product INTEL C600_THERM	0x1d24	C600 Thermal Management Controller
 product INTEL C600_EHCI_1	0x1d26	C600 USB
 product INTEL C600_EHCI_2	0x1d2d	C600 USB
@@ -2791,7 +2875,9 @@ product INTEL C600_SAS_10	0x1d6c	C600 SAS Controller
 product INTEL C600_SAS_11	0x1d6d	C600 SAS Controller
 product INTEL C600_SAS_12	0x1d6e	C600 SAS Controller
 product INTEL C600_SAS_SATA_4	0x1d6f	C600 SAS Controller (SATA)
-product INTEL C600_SMB_2	0x1d70	C600/X79 Series SMBus Controller
+product INTEL C600_SMB_0	0x1d70	C600/X79 Series SMBus Controller
+product INTEL C600_SMB_1	0x1d71	C606/C608 SMBus Controller
+product INTEL C600_SMB_2	0x1d72	C608 SMBus Controller
 product INTEL 7SER_DT_SATA_1	0x1e00	7 Series (desktop) SATA Controller
 product INTEL 7SER_MO_SATA_1	0x1e01	7 Series (mobile) SATA Controller
 product INTEL 7SER_DT_SATA_AHCI	0x1e02	7 Series (desktop) SATA Controller (AHCI)
@@ -2861,6 +2947,7 @@ product INTEL 82801BAM_IDE	0x244a	82801BAM IDE Controller
 product INTEL 82801BA_IDE	0x244b	82801BA IDE Controller
 product INTEL 82801BAM_LPC	0x244c	82801BAM LPC Interface Bridge
 product INTEL 82801BA_HPB	0x244e	82801BA Hub-PCI Bridge
+product INTEL 82801E_LPC	0x2450	82801E LPC Interface Bridge
 product INTEL 82801E_SMB	0x2453	82801E SMBus Controller
 product INTEL 82801E_LAN_1	0x2459	82801E LAN Controller
 product INTEL 82801E_LAN_2	0x245d	82801E LAN Controller
@@ -3020,6 +3107,7 @@ product INTEL 82945GM_IGD	0x27a2	82945GM/PM/GMS Integrated Graphics Device
 product INTEL 82945GM_IGD_1	0x27a6	82945GM/PM/GMS Integrated Graphics Device
 product INTEL 82945GME_HB	0x27ac	82945GME Host Bridge
 product INTEL 82945GME_IGD	0x27ae	82945GME Integrated Graphics Device
+product INTEL 82801GH_LPC	0x27b0	82801GH LPC Interface Bridge
 product INTEL 82801G_LPC	0x27b8	82801GB/GR LPC Interface Bridge
 product INTEL 82801GBM_LPC	0x27b9	82801GBM LPC Interface Bridge
 product INTEL NM10_LPC		0x27bc	NM10 Family LPC Interface Bridge
@@ -3242,7 +3330,18 @@ product INTEL 82801JD_PCIE_4	0x3a76	82801JD PCI Express Port
 product INTEL 82801JD_PCIE_5	0x3a78	82801JD PCI Express Port
 product INTEL 82801JD_PCIE_6	0x3a7a	82801JD PCI Express Port
 product INTEL 82801JD_LAN	0x3a7c	82801JD LAN Controller
-product INTEL 3400_LPC		0x3b14	3400 LPC Interface Bridge
+product INTEL P55_LPC		0x3b02	P55 LPC Interface Bridge
+product INTEL PM55_LPC		0x3b03	PM55 LPC Interface Bridge
+product INTEL H55_LPC		0x3b06	H55 LPC Interface Bridge
+product INTEL QM57_LPC		0x3b07	QM57 LPC Interface Bridge
+product INTEL H57_LPC		0x3b08	H57 LPC Interface Bridge
+product INTEL HM55_LPC		0x3b09	HM55 LPC Interface Bridge
+product INTEL Q57_LPC		0x3b0a	Q57 LPC Interface Bridge
+product INTEL HM57_LPC		0x3b0b	HM57 LPC Interface Bridge
+product INTEL QS57_LPC		0x3b0f	QS57 LPC Interface Bridge
+product INTEL 3400_LPC		0x3b12	3400 LPC Interface Bridge
+product INTEL 3420_LPC		0x3b14	3420 LPC Interface Bridge
+product INTEL 3450_LPC		0x3b16	3450 LPC Interface Bridge
 product INTEL 3400_SATA_1	0x3b20	3400 SATA
 product INTEL 3400_SATA_2	0x3b21	3400 SATA
 product INTEL 3400_AHCI_1	0x3b22	3400 AHCI
@@ -3257,14 +3356,14 @@ product INTEL 3400_SATA_6	0x3b2e	3400 SATA
 product INTEL 3400_AHCI_4	0x3b2f	3400 AHCI
 product INTEL 3400_SMB		0x3b30	3400 SMBus
 product INTEL 3400_THERMAL	0x3b32	3400 Thermal
-product INTEL 3400_EHCI_1	0x3b34	3400 USB
+product INTEL 3400_EHCI_1	0x3b34	3400 USB EHCI
 product INTEL 3400_UHCI_1	0x3b36	3400 USB
 product INTEL 3400_UHCI_2	0x3b37	3400 USB
 product INTEL 3400_UHCI_3	0x3b38	3400 USB
 product INTEL 3400_UHCI_4	0x3b39	3400 USB
 product INTEL 3400_UHCI_5	0x3b3a	3400 USB
 product INTEL 3400_UHCI_6	0x3b3b	3400 USB
-product INTEL 3400_EHCI_2	0x3b3c	3400 USB
+product INTEL 3400_EHCI_2	0x3b3c	3400 USB ECHI
 product INTEL 3400_UHCI_7	0x3b3e	3400 USB
 product INTEL 3400_UHCI_8	0x3b3f	3400 USB
 product INTEL 3400_PCIE_1	0x3b42	3400 PCIE
@@ -3376,6 +3475,7 @@ product INTEL 82443GX_AGP	0x71a1	82443GX AGP Interface
 product INTEL 82443GX_NOAGP	0x71a2	82443GX Host Bridge/Controller (AGP disabled)
 product INTEL I740		0x7800	i740 Graphics Accelerator
 product INTEL SCH_IDE		0x811a  SCH IDE Controller
+product INTEL E600_LPC		0x8186	Atom Processor E6xx LPC Bridge
 product INTEL PCI450_PB		0x84c4	82454KX/GX PCI Bridge (PB)
 product INTEL PCI450_MC		0x84c5	82451KX/GX Memory Controller (MC)
 product INTEL 82451NX_MIOC	0x84ca	82451NX Memory & I/O Controller (MIOC)
@@ -3407,6 +3507,83 @@ product INTEL EG20T_SPI		0x8816	EG20T PCH SPI
 product INTEL EG20T_I2C		0x8817	EG20T PCH I2C Interface
 product INTEL EG20T_CAN		0x8818	EG20T PCH CAN Controller
 product INTEL EG20T_IEEE1588	0x8819	EG20T PCH IEEE1588
+product INTEL 8SER_DT_SATA	0x8c00	8 Series (desktop) SATA Controller
+product INTEL 8SER_MO_SATA	0x8c01	8 Series (mobile) SATA Controller
+product INTEL 8SER_DT_SATA_AHCI	0x8c02	8 Series (desktop) SATA Controller (AHCI)
+product INTEL 8SER_MO_SATA_AHCI	0x8c03	8 Series (mobile) SATA Controller (AHCI)
+product INTEL 8SER_DT_SATA_RAID 0x8c04	8 Series (desktop) SATA Controller (RAID)
+product INTEL 8SER_MO_SATA_RAID 0x8c05	8 Series (mobile) SATA Controller (RAID)
+product INTEL 8SER_DT_SATA_RAID_SR 0x8c06 8 Series (desktop) SATA Controller (RAID) + Smart Response
+product INTEL 8SER_MO_SATA_RAID_SR 0x8c07 8 Series (mobile) SATA Controller (RAID) + Smart Response
+product INTEL 8SER_DT_SATA_2	0x8c08	8 Series (desktop) SATA Controller
+product INTEL 8SER_MO_SATA_2	0x8c09	8 Series (mobile) SATA Controller
+product INTEL 8SER_DT_SATA_RAID1 0x8c0e	8 Series (desktop) SATA Controller (RAID1)
+product INTEL 8SER_MO_SATA_RAID1 0x8c0f	8 Series (mobile) SATA Controller (RAID1)
+product INTEL 8SERIES_PCIE_1	0x8c10	8 Series PCIE
+product INTEL 8SERIES_PCIE_2	0x8c12	8 Series PCIE
+product INTEL 8SERIES_PCIE_3	0x8c14	8 Series PCIE
+product INTEL 8SERIES_PCIE_4	0x8c16	8 Series PCIE
+product INTEL 8SERIES_PCIE_5	0x8c18	8 Series PCIE
+product INTEL 8SERIES_PCIE_6	0x8c1a	8 Series PCIE
+product INTEL 8SERIES_PCIE_7	0x8c1c	8 Series PCIE
+product INTEL 8SERIES_PCIE_8	0x8c1e	8 Series PCIE
+product INTEL 8SERIES_HDA	0x8c20	8 Series HD Audio
+product INTEL 8SERIES_SMB	0x8c22	8 Series SMBus Controller
+product INTEL 8SERIES_THERM	0x8c24	8 Series Thermal
+product INTEL 8SERIES_EHCI_1	0x8c26	8 Series USB EHCI
+product INTEL 8SERIES_EHCI_2	0x8c2d	8 Series USB EHCI
+product INTEL 8SERIES_XHCI	0x8c31	8 Series USB xHCI
+product INTEL 8SERIES_LAN	0x8c33	8 Series LAN
+product INTEL 8SERIES_MEI_1	0x8c3a	8 Series MEI Controller
+product INTEL 8SERIES_MEI_2	0x8c3b	8 Series MEI Controller
+product INTEL 8SERIES_IDE_R	0x8c3c	8 Series IDE-R
+product INTEL 8SERIES_KT	0x8c3d	8 Series KT
+product INTEL 8SERIES_M_LPC	0x8c41	8 Series Mobile Full Featured ES LPC
+product INTEL 8SERIES_D_LPC	0x8c42	8 Series Desktop Full Featured ES LPC
+product INTEL Z87_LPC		0x8c44	Z87 LPC
+product INTEL Z85_LPC		0x8c46	Z85 LPC
+product INTEL HM86_LPC		0x8c49	HM86 LPC
+product INTEL H87_LPC		0x8c4a	H87 LPC
+product INTEL HM87_LPC		0x8c4b	HM87 LPC
+product INTEL Q85_LPC		0x8c4c	Q85 LPC
+product INTEL Q87_LPC		0x8c4e	Q87 LPC
+product INTEL QM87_LPC		0x8c4f	QM87 LPC
+product INTEL B85_LPC		0x8c50	B85 LPC
+product INTEL C222_LPC		0x8c52	C222 LPC
+product INTEL C224_LPC		0x8c54	C224 LPC
+product INTEL C226_LPC		0x8c56	C226 LPC
+product INTEL H81_LPC		0x8c5c	H81 LPC
+product INTEL CORE4G_M_AHCI	0x9c03	Core 4G (mobile) SATA Controller (AHCI)
+product INTEL CORE4G_M_RAID_1	0x9c05	Core 4G (mobile) SATA Controller (RAID)
+product INTEL CORE4G_M_RAID_2	0x9c07	Core 4G (mobile) SATA Controller (RAID) Premium
+product INTEL CORE4G_M_RAID_3	0x9c0f	Core 4G (mobile) SATA Controller (RAID) Premium
+product INTEL CORE4G_M_PCIE_1	0x9c10	Core 4G (mobile) PCIE
+product INTEL CORE4G_M_PCIE_2	0x9c12	Core 4G (mobile) PCIE
+product INTEL CORE4G_M_PCIE_3	0x9c14	Core 4G (mobile) PCIE
+product INTEL CORE4G_M_PCIE_4	0x9c16	Core 4G (mobile) PCIE
+product INTEL CORE4G_M_PCIE_5	0x9c18	Core 4G (mobile) PCIE
+product INTEL CORE4G_M_PCIE_6	0x9c1a	Core 4G (mobile) PCIE
+product INTEL CORE4G_M_HDA	0x9c20	Core 4G (mobile) HD Audio
+product INTEL CORE4G_M_SMB	0x9c22	Core 4G (mobile) SMBus
+product INTEL CORE4G_M_THERM	0x9c24	Core 4G (mobile) Thermal
+product INTEL CORE4G_M_EHCI	0x9c26	Core 4G (mobile) USB EHCI
+product INTEL CORE4G_M_XHCI	0x9c31	Core 4G (mobile) USB xHCI
+product INTEL CORE4G_M_SDIO	0x9c35	Core 4G (mobile) SDIO
+product INTEL CORE4G_M_SSOUND	0x9c36	Core 4G (mobile) Smart Sound
+product INTEL CORE4G_M_MEI_1	0x9c3a	Core 4G (mobile) MEI
+product INTEL CORE4G_M_MEI_2	0x9c3b	Core 4G (mobile) MEI
+product INTEL CORE4G_M_IDE_R	0x9c3c	Core 4G (mobile) IDE-R
+product INTEL CORE4G_M_KT	0x9c3d	Core 4G (mobile) KT
+product INTEL CORE4G_M_LPC_1	0x9c41	Core 4G (mobile) LPC
+product INTEL CORE4G_M_LPC_2	0x9c43	Core 4G (mobile) LPC
+product INTEL CORE4G_M_LPC_3	0x9c45	Core 4G (mobile) LPC
+product INTEL CORE4G_M_S_DMA	0x9c60	Core 4G (mobile) Serial I/O DMA
+product INTEL CORE4G_M_S_I2C_0	0x9c61	Core 4G (mobile) Serial I/O I2C
+product INTEL CORE4G_M_S_I2C_1	0x9c62	Core 4G (mobile) Serial I/O I2C
+product INTEL CORE4G_M_S_UART_0 0x9c63	Core 4G (mobile) Serial I/O UART
+product INTEL CORE4G_M_S_UART_1 0x9c64	Core 4G (mobile) Serial I/O UART
+product INTEL CORE4G_M_S_GSPI_0 0x9c65	Core 4G (mobile) Serial I/O GSPI
+product INTEL CORE4G_M_S_GSPI_1 0x9c66	Core 4G (mobile) Serial I/O GSPI
 product INTEL PINEVIEW_HB	0xa000	Pineview Host Bridge
 product INTEL PINEVIEW_IGD	0xa001	Pineview Integrated Graphics Device
 product INTEL PINEVIEW_M_HB	0xa010	Pineview Host Bridge
@@ -3690,11 +3867,40 @@ product NDC NCP130A2		0x0131 NCP130 rev A2 Wireless NIC
 /* Netoctave */
 product NETOCTAVE NSP2K		0x0100	NSP2K
 
-/* NetVin products - XXX better descriptions */
-product NETVIN 5000	0x5000	5000 Ethernet
-
 /* NetBoost (now Intel) products */
 product NETBOOST POLICY	0x0000	Policy Accelerator
+
+/* NetLogic (now Broadcom?) products */
+product NETLOGIC XLP_SBC	0x1001	XLP System Bridge controller
+product NETLOGIC XLP_ICI	0x1002	XLP Inter-Chip interconnect
+product NETLOGIC XLP_PIC	0x1003	XLP Programmable Interrupt controller
+product NETLOGIC XLP_PCIROOT	0x1004	XLP PCI-Express RootComplex/Endpoint port
+product NETLOGIC XLP_INTERLAKEN	0x1005	XLP Interlaken LA interface
+product NETLOGIC XLP_DEVUSB	0x1006	XLP Device USB controller
+product NETLOGIC XLP_EHCIUSB	0x1007	XLP EHCI USB controller
+product NETLOGIC XLP_OHCIUSB	0x1008	XLP OHCI USB controller
+product NETLOGIC XLP_NAE	0x1009	XLP Network Acceleration engine
+product NETLOGIC XLP_POE	0x100A	XLP Packet Ordering engine
+product NETLOGIC XLP_FMN	0x100B	XLP Fast Messaging Network
+product NETLOGIC XLP_DMA	0x100C	XLP Data Transfer and RAID engine
+product NETLOGIC XLP_SAE	0x100D	XLP Security accelerator
+product NETLOGIC XLP_PKE	0x100E	XLP RSA/ECC accelerator
+product NETLOGIC XLP_CDE	0x100F	XLP Compress/Decompression engine
+product NETLOGIC XLP_UART	0x1010	XLP UART controller
+product NETLOGIC XLP_I2C	0x1011	XLP I2C controller
+product NETLOGIC XLP_GPIO	0x1012	XLP GPIO controller
+product NETLOGIC XLP_SYSTEM	0x1013	XLP System controller
+product NETLOGIC XLP_JTAG	0x1014	XLP JTAG interface
+product NETLOGIC XLP_NOR	0x1015	XLP NOR flash controller
+product NETLOGIC XLP_NAND	0x1016	XLP NAND flash controller
+product NETLOGIC XLP_SPI	0x1017	XLP SPI controller
+product NETLOGIC XLP_SDHC	0x1018	XLP eMMC/SD/SDIO controller
+product NETLOGIC XLP_RXE	0x1019	XLP Regular Expression accelerator
+product NETLOGIC XLP_AHCISATA	0x101a	XLP AHCI SATA controller
+product NETLOGIC XLP_SRIO	0x101b	XLP SRIO (Serial Rapid IO) controller
+
+/* NetVin products - XXX better descriptions */
+product NETVIN 5000	0x5000	5000 Ethernet
 
 /* Newbridge / Tundra products */
 product NEWBRIDGE CA91CX42		0x0000	Universe VME Bridge
@@ -3861,8 +4067,10 @@ product NETMOS NM9845	0x9845	Quad UART and 1284 Printer Port
 product NETMOS NM9855	0x9855	9855 Quad UART and 1284 Printer Port
 product NETMOS NM9865	0x9865	9865 Quad UART and 1284 Printer Port
 product NETMOS MCS9990	0x9990	MCS9990 Quad USB 2.0 Port
+product NETMOS NM9900	0x9900	Single PCI-E UART
 product NETMOS NM9901	0x9901	Dual PCI-E UART
 product NETMOS NM9904	0x9904	Quad PCI-E UART
+product NETMOS NM9912	0x9912	Dual PCI-E UART and 1284 Printer Port
 product NETMOS NM9922	0x9922	Dual PCI-E UART
 
 /* Network Security Technologies */
@@ -4275,6 +4483,7 @@ product OPTI 82C701	0xc701	82C701
 product OXFORDSEMI VSCOM_PCI011H 0x8403	011H
 product OXFORDSEMI OX16PCI954	0x9501	OX16PCI954
 product OXFORDSEMI OX16PCI954K	0x9504	OX16PCI954K
+product OXFORDSEMI OXUPCI952	0x9505	OXuPCI952
 product OXFORDSEMI EXSYS_EX41092 0x950a	Exsys EX-41092
 product OXFORDSEMI OXCB950	0x950b	OXCB950
 product OXFORDSEMI OXMPCI954	0x950c	OXmPCI954
@@ -4367,8 +4576,27 @@ product PROMISE PDC20619	0x6629	PDC20619 Dual Ultra/133 IDE Controller
 product PROMISE PDC20277	0x7275	PDC20277 Ultra/133 IDE Controller
 
 /* Nanjing QinHeng Electronics */
-product QINHENG CH352		0x3253	CH352
-product QINHENG CH353		0x7053	CH353
+product QINHENG CH352_2S	0x3253	CH352 2S
+product QINHENG CH353_4S	0x3453	CH353 4S
+product QINHENG CH356_8S	0x3853	CH356 8S
+product QINHENG CH356_6S	0x3873	CH356 6S
+product QINHENG CH353_2S1PAR	0x5046	CH353 2S, 1P (fixed address)
+product QINHENG CH352_1S1P	0x5053	CH352 1S, 1P
+product QINHENG CH357_4S	0x5334	CH357 4S
+product QINHENG CH358_4S1P	0x5334	CH358 4S, 1P
+product QINHENG CH358_8S	0x5338	CH358 8S
+product QINHENG CH359_16S	0x5838	CH359 16S
+product QINHENG CH353_2S1P	0x7053	CH353 2S, 1P
+product QINHENG CH356_4S1P	0x7073	CH356 4S, 1P
+product QINHENG CH355_4S	0x7173	CH355 4S
+
+/* Nanjing QinHeng Electronics (PCIe) */
+product QINHENG2 CH384_4S1P	0x3450	CH384 4S, 1P
+product QINHENG2 CH384_4S	0x3470	CH384 4S
+product QINHENG2 CH382_2S1P	0x3250	CH382 2S, 1P
+product QINHENG2 CH382_2S	0x3253	CH382 2S
+product QINHENG2 CH384_8S	0x3853	CH384 8S
+product QINHENG2 CH384_28S	0x4353	CH384 28S
 
 /* QLogic products */
 product QLOGIC QLA200	0x0119	QLA200
@@ -4491,11 +4719,16 @@ product REALTEK RTL8188CE	0x8176	RTL8188CE Wireless LAN 802.11n PCI-E NIC
 product REALTEK RT8180		0x8180	8180 802.11b
 product REALTEK RT8185		0x8185	8185 802.11a/b/g
 
-/* RENESAS products */
-product RENESAS SH7780	0x0002	SH7780 PCI Controller
-product RENESAS SH7785	0x0007	SH7785 PCI Controller
+/* Renesas products */
+product RENESAS SH7780		0x0002	SH7780 PCI Controller
+product RENESAS SH7785		0x0007	SH7785 PCI Controller
+product RENESAS SH7757_PBI	0x0011	SH7757 PCIe End-Point [PBI]
+product RENESAS SH7757_PPB	0x0012	SH7757 PCIe-PCI Bridge [PPB]
+product RENESAS SH7757_PS	0x0013	SH7757 PCIe Switch [PS]
+product RENESAS PD720201	0x0014	uPD720201 USB 3.0 Host Controller
+product RENESAS PD720202	0x0015	uPD720202 USB 3.0 Host Controller
 
-/* RICOH products */
+/* Ricoh products */
 product RICOH Rx5C465	0x0465 5C465 PCI-CardBus Bridge
 product RICOH Rx5C466	0x0466 5C466 PCI-CardBus Bridge
 product RICOH Rx5C475	0x0475 5C475 PCI-CardBus Bridge

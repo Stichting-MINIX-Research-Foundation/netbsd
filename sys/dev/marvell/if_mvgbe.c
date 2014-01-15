@@ -1,4 +1,4 @@
-/*	$NetBSD: if_mvgbe.c,v 1.25 2012/10/16 19:49:41 msaitoh Exp $	*/
+/*	$NetBSD: if_mvgbe.c,v 1.34 2012/12/28 08:16:53 msaitoh Exp $	*/
 /*
  * Copyright (c) 2007, 2008 KIYOHARA Takashi
  * All rights reserved.
@@ -25,13 +25,16 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_mvgbe.c,v 1.25 2012/10/16 19:49:41 msaitoh Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_mvgbe.c,v 1.34 2012/12/28 08:16:53 msaitoh Exp $");
 
 #include <sys/param.h>
 #include <sys/bus.h>
+#include <sys/callout.h>
 #include <sys/device.h>
 #include <sys/endian.h>
 #include <sys/errno.h>
+#include <sys/evcnt.h>
+#include <sys/kernel.h>
 #include <sys/kmem.h>
 #include <sys/mutex.h>
 #include <sys/sockio.h>
@@ -90,7 +93,9 @@ CTASSERT(MVGBE_RX_RING_CNT > 1 && MVGBE_RX_RING_NEXT(MVGBE_RX_RING_CNT) ==
 	(MVGBE_RX_RING_CNT + 1) % MVGBE_RX_RING_CNT);
 
 #define MVGBE_JSLOTS		384	/* XXXX */
-#define MVGBE_JLEN		((MVGBE_MRU + MVGBE_RXBUF_ALIGN)&~MVGBE_RXBUF_MASK)
+#define MVGBE_JLEN \
+    ((MVGBE_MRU + MVGBE_HWHEADER_SIZE + MVGBE_RXBUF_ALIGN - 1) & \
+    ~MVGBE_RXBUF_MASK)
 #define MVGBE_NTXSEG		30
 #define MVGBE_JPAGESZ		PAGE_SIZE
 #define MVGBE_RESID \
@@ -140,6 +145,14 @@ do {									\
 
 #define MVGBE_IPGINTTX_DEFAULT	768
 #define MVGBE_IPGINTRX_DEFAULT	768
+
+#ifdef MVGBE_EVENT_COUNTERS
+#define	MVGBE_EVCNT_INCR(ev)		(ev)->ev_count++
+#define	MVGBE_EVCNT_ADD(ev, val)	(ev)->ev_count += (val)
+#else
+#define	MVGBE_EVCNT_INCR(ev)		/* nothing */
+#define	MVGBE_EVCNT_ADD(ev, val)	/* nothing */
+#endif
 
 struct mvgbe_jpool_entry {
 	int slot;
@@ -198,12 +211,14 @@ struct mvgbe_softc {
 
 	bus_space_tag_t sc_iot;
 	bus_space_handle_t sc_ioh;
-	bus_space_handle_t sc_dafh;		/* dest address filter handle */
+	bus_space_handle_t sc_dafh;	/* dest address filter handle */
 	bus_dma_tag_t sc_dmat;
 
 	struct ethercom sc_ethercom;
 	struct mii_data sc_mii;
 	u_int8_t sc_enaddr[ETHER_ADDR_LEN];	/* station addr */
+
+	callout_t sc_tick_ch;		/* tick callout */
 
 	struct mvgbe_chain_data sc_cdata;
 	struct mvgbe_ring_data *sc_rdata;
@@ -219,6 +234,10 @@ struct mvgbe_softc {
 
 	krndsource_t sc_rnd_source;
 	struct sysctllog *mvgbe_clog;
+#ifdef MVGBE_EVENT_COUNTERS
+	struct evcnt sc_ev_rxoverrun;
+	struct evcnt sc_ev_wdogsoft;
+#endif
 };
 
 
@@ -242,6 +261,7 @@ static void mvgbec_wininit(struct mvgbec_softc *);
 static int mvgbe_match(device_t, struct cfdata *, void *);
 static void mvgbe_attach(device_t, device_t, void *);
 
+static void mvgbe_tick(void *);
 static int mvgbe_intr(void *);
 
 static void mvgbe_start(struct ifnet *);
@@ -269,8 +289,10 @@ static void mvgbe_filter_setup(struct mvgbe_softc *);
 #ifdef MVGBE_DEBUG
 static void mvgbe_dump_txdesc(struct mvgbe_tx_desc *, int);
 #endif
-static int mvgbe_ipginttx(struct mvgbec_softc *, struct mvgbe_softc *, unsigned int);
-static int mvgbe_ipgintrx(struct mvgbec_softc *, struct mvgbe_softc *, unsigned int);
+static int mvgbe_ipginttx(struct mvgbec_softc *, struct mvgbe_softc *,
+    unsigned int);
+static int mvgbe_ipgintrx(struct mvgbec_softc *, struct mvgbe_softc *,
+    unsigned int);
 static void sysctl_mvgbe_init(struct mvgbe_softc *);
 static int mvgbe_sysctl_ipginttx(SYSCTLFN_PROTO);
 static int mvgbe_sysctl_ipgintrx(SYSCTLFN_PROTO);
@@ -353,7 +375,7 @@ mvgbec_match(device_t parent, cfdata_t match, void *aux)
 static void
 mvgbec_attach(device_t parent, device_t self, void *aux)
 {
-	struct mvgbec_softc *sc = device_private(self);
+	struct mvgbec_softc *csc = device_private(self);
 	struct marvell_attach_args *mva = aux, gbea;
 	struct mvgbe_softc *port;
 	struct mii_softc *mii;
@@ -364,10 +386,10 @@ mvgbec_attach(device_t parent, device_t self, void *aux)
 	aprint_naive("\n");
 	aprint_normal(": Marvell Gigabit Ethernet Controller\n");
 
-	sc->sc_dev = self;
-	sc->sc_iot = mva->mva_iot;
+	csc->sc_dev = self;
+	csc->sc_iot = mva->mva_iot;
 	if (bus_space_subregion(mva->mva_iot, mva->mva_ioh, mva->mva_offset,
-	    mva->mva_size, &sc->sc_ioh)) {
+	    mva->mva_size, &csc->sc_ioh)) {
 		aprint_error_dev(self, "Cannot map registers\n");
 		return;
 	}
@@ -376,15 +398,15 @@ mvgbec_attach(device_t parent, device_t self, void *aux)
 		mvgbec0 = self;
 
 	phyaddr = 0;
-	MVGBE_WRITE(sc, MVGBE_PHYADDR, phyaddr);
+	MVGBE_WRITE(csc, MVGBE_PHYADDR, phyaddr);
 
-	mutex_init(&sc->sc_mtx, MUTEX_DEFAULT, IPL_NET);
+	mutex_init(&csc->sc_mtx, MUTEX_DEFAULT, IPL_NET);
 
 	/* Disable and clear Gigabit Ethernet Unit interrupts */
-	MVGBE_WRITE(sc, MVGBE_EUIM, 0);
-	MVGBE_WRITE(sc, MVGBE_EUIC, 0);
+	MVGBE_WRITE(csc, MVGBE_EUIM, 0);
+	MVGBE_WRITE(csc, MVGBE_EUIC, 0);
 
-	mvgbec_wininit(sc);
+	mvgbec_wininit(csc);
 
 	memset(&gbea, 0, sizeof(gbea));
 	for (i = 0; i < __arraycount(mvgbe_ports); i++) {
@@ -392,27 +414,29 @@ mvgbec_attach(device_t parent, device_t self, void *aux)
 		    mvgbe_ports[i].unit != mva->mva_unit)
 			continue;
 
-		sc->sc_flags = mvgbe_ports[i].flags;
+		csc->sc_flags = mvgbe_ports[i].flags;
 
 		for (j = 0; j < mvgbe_ports[i].ports; j++) {
 			gbea.mva_name = "mvgbe";
 			gbea.mva_model = mva->mva_model;
-			gbea.mva_iot = sc->sc_iot;
-			gbea.mva_ioh = sc->sc_ioh;
+			gbea.mva_iot = csc->sc_iot;
+			gbea.mva_ioh = csc->sc_ioh;
 			gbea.mva_unit = j;
 			gbea.mva_dmat = mva->mva_dmat;
 			gbea.mva_irq = mvgbe_ports[i].irqs[j];
-			child = config_found_sm_loc(sc->sc_dev, "mvgbec", NULL,
+			child = config_found_sm_loc(csc->sc_dev, "mvgbec", NULL,
 			    &gbea, mvgbec_print, mvgbec_search);
 			if (child) {
 				port = device_private(child);
 				mii  = LIST_FIRST(&port->sc_mii.mii_phys);
-				phyaddr |= MVGBE_PHYADDR_PHYAD(j, mii->mii_phy);
+				if (mii != NULL)
+					phyaddr |= MVGBE_PHYADDR_PHYAD(j,
+					    mii->mii_phy);
 			}
 		}
 		break;
 	}
-	MVGBE_WRITE(sc, MVGBE_PHYADDR, phyaddr);
+	MVGBE_WRITE(csc, MVGBE_PHYADDR, phyaddr);
 }
 
 static int
@@ -646,6 +670,8 @@ mvgbe_attach(device_t parent, device_t self, void *aux)
 	sc->sc_dev = self;
 	sc->sc_port = mva->mva_unit;
 	sc->sc_iot = mva->mva_iot;
+	callout_init(&sc->sc_tick_ch, 0);
+	callout_setfunc(&sc->sc_tick_ch, mvgbe_tick, sc);
 	if (bus_space_subregion(mva->mva_iot, mva->mva_ioh,
 	    MVGBE_PORTR_BASE + mva->mva_unit * MVGBE_PORTR_SIZE,
 	    MVGBE_PORTR_SIZE, &sc->sc_ioh)) {
@@ -796,6 +822,13 @@ mvgbe_attach(device_t parent, device_t self, void *aux)
 	ether_set_ifflags_cb(&sc->sc_ethercom, mvgbe_ifflags_cb);
 
 	sysctl_mvgbe_init(sc);
+#ifdef MVGBE_EVENT_COUNTERS
+	/* Attach event counters. */
+	evcnt_attach_dynamic(&sc->sc_ev_rxoverrun, EVCNT_TYPE_MISC,
+	    NULL, device_xname(sc->sc_dev), "rxoverrrun");
+	evcnt_attach_dynamic(&sc->sc_ev_wdogsoft, EVCNT_TYPE_MISC,
+	    NULL, device_xname(sc->sc_dev), "wdogsoft");
+#endif
 	rnd_attach_source(&sc->sc_rnd_source, device_xname(sc->sc_dev),
 	    RND_TYPE_NET, 0);
 
@@ -862,6 +895,22 @@ mvgbe_ipgintrx(struct mvgbec_softc *csc, struct mvgbe_softc *sc,
 	return 0;
 }
 
+static void
+mvgbe_tick(void *arg)
+{
+	struct mvgbe_softc *sc = arg;
+	struct mii_data *mii = &sc->sc_mii;
+	int s;
+
+	s = splnet();
+	mii_tick(mii);
+	/* Need more work */
+	MVGBE_EVCNT_ADD(&sc->sc_ev_rxoverrun, MVGBE_READ(sc, MVGBE_POFC));
+	splx(s);
+
+	callout_schedule(&sc->sc_tick_ch, hz);
+}
+
 static int
 mvgbe_intr(void *arg)
 {
@@ -885,6 +934,9 @@ mvgbe_intr(void *arg)
 
 		claimed = 1;
 
+		if (!(ifp->if_flags & IFF_RUNNING))
+			break;
+
 		if (ice & MVGBE_ICE_LINKCHG) {
 			if (MVGBE_READ(sc, MVGBE_PS) & MVGBE_PS_LINKUP) {
 				/* Enable port RX and TX. */
@@ -894,6 +946,9 @@ mvgbe_intr(void *arg)
 				MVGBE_WRITE(sc, MVGBE_RQC, MVGBE_RQC_DISQ(0));
 				MVGBE_WRITE(sc, MVGBE_TQC, MVGBE_TQC_DISQ);
 			}
+
+			/* Notify link change event to mii layer */
+			mii_pollstat(&sc->sc_mii);
 		}
 
 		if (ic & (MVGBE_IC_RXBUF | MVGBE_IC_RXERROR))
@@ -1116,6 +1171,8 @@ mvgbe_init(struct ifnet *ifp)
 	    MVGBE_ICE_TXERR |
 	    MVGBE_ICE_LINKCHG);
 
+	callout_schedule(&sc->sc_tick_ch, hz);
+
 	ifp->if_flags |= IFF_RUNNING;
 	ifp->if_flags &= ~IFF_OACTIVE;
 
@@ -1127,11 +1184,14 @@ static void
 mvgbe_stop(struct ifnet *ifp, int disable)
 {
 	struct mvgbe_softc *sc = ifp->if_softc;
+	struct mvgbec_softc *csc = device_private(device_parent(sc->sc_dev));
 	struct mvgbe_chain_data *cdata = &sc->sc_cdata;
 	uint32_t reg;
 	int i, cnt;
 
 	DPRINTFN(2, ("mvgbe_stop\n"));
+
+	callout_stop(&sc->sc_tick_ch);
 
 	/* Stop Rx port activity. Check port Rx activity. */
 	reg = MVGBE_READ(sc, MVGBE_RQC);
@@ -1199,7 +1259,16 @@ mvgbe_stop(struct ifnet *ifp, int disable)
 	reg = MVGBE_READ(sc, MVGBE_PSC);
 	MVGBE_WRITE(sc, MVGBE_PSC, reg & ~MVGBE_PSC_PORTEN);
 
-	/* Disable interrupts */
+	/*
+	 * Disable and clear interrupts
+	 * 0) controller interrupt
+	 * 1) port interrupt cause
+	 * 2) port interrupt mask
+	 */
+	MVGBE_WRITE(csc, MVGBE_EUIM, 0);
+	MVGBE_WRITE(csc, MVGBE_EUIC, 0);
+	MVGBE_WRITE(sc, MVGBE_IC, 0);
+	MVGBE_WRITE(sc, MVGBE_ICE, 0);
 	MVGBE_WRITE(sc, MVGBE_PIM, 0);
 	MVGBE_WRITE(sc, MVGBE_PEIM, 0);
 
@@ -1240,6 +1309,7 @@ mvgbe_watchdog(struct ifnet *ifp)
 			MVGBE_WRITE(sc, MVGBE_TQC, MVGBE_TQC_ENQ);
 			ifp->if_timer = 5;
 			sc->sc_wdogsoft = 0;
+			MVGBE_EVCNT_INCR(&sc->sc_ev_wdogsoft);
 		} else {
 			aprint_error_ifnet(ifp, "watchdog timeout\n");
 
@@ -1781,7 +1851,7 @@ mvgbe_rxeof(struct mvgbe_softc *sc)
 
 		m = cdata->mvgbe_rx_chain[idx].mvgbe_mbuf;
 		cdata->mvgbe_rx_chain[idx].mvgbe_mbuf = NULL;
-		total_len = cur_rx->bytecnt;
+		total_len = cur_rx->bytecnt - ETHER_CRC_LEN;
 		rxstat = cur_rx->cmdsts;
 		bufsize = cur_rx->bufsize;
 
@@ -1866,7 +1936,6 @@ mvgbe_rxeof(struct mvgbe_softc *sc)
 
 		/* Skip on first 2byte (HW header) */
 		m_adj(m,  MVGBE_HWHEADER_SIZE);
-		m->m_flags |= M_HASFCS;
 
 		ifp->if_ipackets++;
 
@@ -1990,11 +2059,11 @@ mvgbe_filter_setup(struct mvgbe_softc *sc)
 		/* chip handles some IPv4 multicast specially */
 		if (memcmp(enm->enm_addrlo, special, 5) == 0) {
 			i = enm->enm_addrlo[5];
-			dfsmt[i>>2] =
+			dfsmt[i>>2] |=
 			    MVGBE_DF(i&3, MVGBE_DF_QUEUE(0) | MVGBE_DF_PASS);
 		} else {
 			i = mvgbe_crc8(enm->enm_addrlo, ETHER_ADDR_LEN);
-			dfomt[i>>2] =
+			dfomt[i>>2] |=
 			    MVGBE_DF(i&3, MVGBE_DF_QUEUE(0) | MVGBE_DF_PASS);
 		}
 

@@ -1,4 +1,4 @@
-/*	$NetBSD: arm32_reboot.c,v 1.2 2012/09/05 06:29:09 skrll Exp $	*/
+/*	$NetBSD: arm32_reboot.c,v 1.6 2013/08/18 06:28:18 matt Exp $	*/
 
 /*
  * Copyright (c) 2002, 2003, 2005  Genetec Corporation.  All rights reserved.
@@ -122,7 +122,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: arm32_reboot.c,v 1.2 2012/09/05 06:29:09 skrll Exp $");
+__KERNEL_RCSID(0, "$NetBSD: arm32_reboot.c,v 1.6 2013/08/18 06:28:18 matt Exp $");
 
 #include <sys/param.h>
 #include <sys/device.h>
@@ -133,6 +133,7 @@ __KERNEL_RCSID(0, "$NetBSD: arm32_reboot.c,v 1.2 2012/09/05 06:29:09 skrll Exp $
 
 #include <uvm/uvm_extern.h>
 
+#include <arm/locore.h>
 #include <arm/arm32/machdep.h>
 
 void
@@ -147,7 +148,9 @@ cpu_reboot(int howto, char *bootstr)
 		doshutdownhooks();
 		printf("The operating system has halted.\r\n");
 		printf("Please press any key to reboot.\r\n");
+		cnpollc(true);	/* for proper keyboard command handling */
 		cngetc();
+		cnpollc(false);		
 		printf("rebooting...\r\n");
 		if (cpu_reset_address)
 			(*cpu_reset_address)();
@@ -164,17 +167,22 @@ cpu_reboot(int howto, char *bootstr)
 	if (!(howto & RB_NOSYNC))
 		bootsync();
 
-	/* Say NO to interrupts */
-	splhigh();
+	/* Say NO to interrupts for the duration of the dump */
+	int s = splhigh();
 
 	/* Do a dump if requested. */
 	if ((howto & (RB_DUMP | RB_HALT)) == RB_DUMP)
 		dumpsys();
 
-	/* Run any shutdown hooks */
-	doshutdownhooks();
+	splx(s);
 
 	pmf_system_shutdown(boothowto);
+
+	/* Say NO to interrupts for good */
+	splhigh();
+
+	/* Run any shutdown hooks */
+	doshutdownhooks();
 
 	/* Make sure IRQ's are disabled */
 	IRQdisable;
@@ -182,7 +190,9 @@ cpu_reboot(int howto, char *bootstr)
 	if (howto & RB_HALT) {
 		printf("The operating system has halted.\r\n");
 		printf("Please press any key to reboot.\r\n");
+		cnpollc(true);	/* for proper keyboard command handling */
 		cngetc();
+		cnpollc(false);		
 	}
 
 	printf("rebooting...\r\n");

@@ -1,4 +1,4 @@
-/*	$NetBSD: pyro.c,v 1.11 2012/03/18 05:26:58 mrg Exp $	*/
+/*	$NetBSD: pyro.c,v 1.15 2013/08/10 00:48:04 mrg Exp $	*/
 /*	from: $OpenBSD: pyro.c,v 1.20 2010/12/05 15:15:14 kettenis Exp $	*/
 
 /*
@@ -31,7 +31,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: pyro.c,v 1.11 2012/03/18 05:26:58 mrg Exp $");
+__KERNEL_RCSID(0, "$NetBSD: pyro.c,v 1.15 2013/08/10 00:48:04 mrg Exp $");
 
 #include <sys/param.h>
 #include <sys/device.h>
@@ -59,7 +59,7 @@ __KERNEL_RCSID(0, "$NetBSD: pyro.c,v 1.11 2012/03/18 05:26:58 mrg Exp $");
 #define PDB_BUSMAP      0x02
 #define PDB_INTR        0x04
 #define PDB_CONF        0x08
-int pyro_debug = 0x0 | PDB_INTR;
+int pyro_debug = 0x0;
 #define DPRINTF(l, s)   do { if (pyro_debug & l) printf s; } while (0)
 #else
 #define DPRINTF(l, s)
@@ -122,7 +122,7 @@ int pyro_dmamap_create(bus_dma_tag_t, bus_size_t, int,
     bus_size_t, bus_size_t, int, bus_dmamap_t *);
 
 int
-pyro_match(struct device *parent, cfdata_t match, void *aux)
+pyro_match(device_t parent, cfdata_t match, void *aux)
 {
 	struct mainbus_attach_args *ma = aux;
 	char *str;
@@ -139,7 +139,7 @@ pyro_match(struct device *parent, cfdata_t match, void *aux)
 }
 
 void
-pyro_attach(struct device *parent, struct device *self, void *aux)
+pyro_attach(device_t parent, device_t self, void *aux)
 {
 	struct pyro_softc *sc = device_private(self);
 	struct mainbus_attach_args *ma = aux;
@@ -223,7 +223,7 @@ pyro_init(struct pyro_softc *sc, int busa)
 	pbm->pp_pc->spc_busnode = malloc(sizeof(*pbm->pp_pc->spc_busnode),
 	    M_DEVBUF, M_NOWAIT | M_ZERO);
 	if (pbm->pp_pc->spc_busnode == NULL)
-		panic("schizo: malloc busnode");
+		panic("pyro: malloc busnode");
 
 #if 0
 	pbm->pp_pc->bustag = pbm->pp_cfgt;
@@ -290,12 +290,23 @@ pcireg_t
 pyro_conf_read(pci_chipset_tag_t pc, pcitag_t tag, int reg)
 {
 	struct pyro_pbm *pp = pc->cookie;
+	struct cpu_info *ci = curcpu();
 	pcireg_t val = (pcireg_t)~0;
+	int s;
 
 	DPRINTF(PDB_CONF, ("%s: tag %lx reg %x ", __func__, (long)tag, reg));
-	if (PCITAG_NODE(tag) != -1)
+	if (PCITAG_NODE(tag) != -1) {
+		s = splhigh();
+		ci->ci_pci_probe = true;
+		membar_Sync();
 		val = bus_space_read_4(pp->pp_cfgt, pp->pp_cfgh,
 		    (PCITAG_OFFSET(tag) << 4) + reg);
+		membar_Sync();
+		if (ci->ci_pci_fault)
+			val = (pcireg_t)~0;
+		ci->ci_pci_probe = ci->ci_pci_fault = false;
+		splx(s);
+	}
 	DPRINTF(PDB_CONF, (" returning %08x\n", (u_int)val));
 	return (val);
 }

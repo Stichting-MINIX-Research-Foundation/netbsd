@@ -1,4 +1,4 @@
-/*	$NetBSD: isakmp_xauth.c,v 1.24 2011/11/15 13:51:23 tteras Exp $	*/
+/*	$NetBSD: isakmp_xauth.c,v 1.26 2013/07/19 10:54:52 tteras Exp $	*/
 
 /* Id: isakmp_xauth.c,v 1.38 2006/08/22 18:17:17 manubsd Exp */
 
@@ -458,10 +458,14 @@ xauth_radius_init_conf(int free)
 			vfree(xauth_rad_config.acct_server_list[i].host);
 			vfree(xauth_rad_config.acct_server_list[i].secret);
 		}
-		if (radius_auth_state != NULL)
+		if (radius_auth_state != NULL) {
 			rad_close(radius_auth_state);
-		if (radius_acct_state != NULL)
+			radius_auth_state = NULL;
+		}
+		if (radius_acct_state != NULL) {
 			rad_close(radius_acct_state);
+			radius_acct_state = NULL;
+		}
 	}
 
 	/* initialize radius config */
@@ -587,6 +591,10 @@ xauth_login_radius(iph1, usr, pwd)
 		    rad_strerror(radius_auth_state));
 		return -1;
 	}
+
+	if (rad_put_string(radius_auth_state, RAD_CALLING_STATION_ID,
+			   saddr2str(iph1->remote)) != 0)
+		return -1;
 
 	if (isakmp_cfg_radius_common(radius_auth_state, iph1->mode_cfg->port) != 0)
 		return -1;

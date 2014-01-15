@@ -1,4 +1,4 @@
-/*	$NetBSD: machdep.c,v 1.733 2012/10/03 18:58:32 dsl Exp $	*/
+/*	$NetBSD: machdep.c,v 1.739 2013/12/01 01:05:16 christos Exp $	*/
 
 /*-
  * Copyright (c) 1996, 1997, 1998, 2000, 2004, 2006, 2008, 2009
@@ -67,7 +67,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.733 2012/10/03 18:58:32 dsl Exp $");
+__KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.739 2013/12/01 01:05:16 christos Exp $");
 
 #include "opt_beep.h"
 #include "opt_compat_ibcs2.h"
@@ -529,12 +529,10 @@ void i386_tls_switch(lwp_t *);
 void
 i386_switch_context(lwp_t *l)
 {
-	struct cpu_info *ci;
 	struct pcb *pcb;
 	struct physdev_op physop;
 
 	pcb = lwp_getpcb(l);
-	ci = curcpu();
 
 	HYPERVISOR_stack_switch(GSEL(GDATA_SEL, SEL_KPL), pcb->pcb_esp0);
 
@@ -591,59 +589,12 @@ cpu_init_tss(struct cpu_info *ci)
 #endif /* XEN */
 
 /*
- * sysctl helper routine for machdep.booted_kernel
- */
-static int
-sysctl_machdep_booted_kernel(SYSCTLFN_ARGS)
-{
-	struct btinfo_bootpath *bibp;
-	struct sysctlnode node;
-
-	bibp = lookup_bootinfo(BTINFO_BOOTPATH);
-	if(!bibp)
-		return(ENOENT); /* ??? */
-
-	node = *rnode;
-	node.sysctl_data = bibp->bootpath;
-	node.sysctl_size = sizeof(bibp->bootpath);
-	return (sysctl_lookup(SYSCTLFN_CALL(&node)));
-}
-
-/*
- * sysctl helper routine for machdep.diskinfo
- */
-static int
-sysctl_machdep_diskinfo(SYSCTLFN_ARGS)
-{
-	struct sysctlnode node;
-
-	node = *rnode;
-	if (x86_alldisks == NULL)
-		return(EOPNOTSUPP);
-	node.sysctl_data = x86_alldisks;
-	node.sysctl_size = sizeof(struct disklist) +
-	    (x86_ndisks - 1) * sizeof(struct nativedisk_info);
-	return (sysctl_lookup(SYSCTLFN_CALL(&node)));
-}
-
-/*
  * machine dependent system variables.
  */
 SYSCTL_SETUP(sysctl_machdep_setup, "sysctl machdep subtree setup")
 {
-	extern uint64_t tsc_freq;
+	x86_sysctl_machdep_setup(clog);
 
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
-		       CTLTYPE_NODE, "machdep", NULL,
-		       NULL, 0, NULL, 0,
-		       CTL_MACHDEP, CTL_EOL);
-
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
-		       CTLTYPE_STRUCT, "console_device", NULL,
-		       sysctl_consdev, 0, NULL, sizeof(dev_t),
-		       CTL_MACHDEP, CPU_CONSDEV, CTL_EOL);
 #ifndef XEN
 	sysctl_createv(clog, 0, NULL, NULL,
 		       CTLFLAG_PERMANENT,
@@ -658,24 +609,14 @@ SYSCTL_SETUP(sysctl_machdep_setup, "sysctl machdep subtree setup")
 #endif /* XEN */
 	sysctl_createv(clog, 0, NULL, NULL,
 		       CTLFLAG_PERMANENT,
-		       CTLTYPE_STRING, "booted_kernel", NULL,
-		       sysctl_machdep_booted_kernel, 0, NULL, 0,
-		       CTL_MACHDEP, CPU_BOOTED_KERNEL, CTL_EOL);
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
-		       CTLTYPE_STRUCT, "diskinfo", NULL,
-		       sysctl_machdep_diskinfo, 0, NULL, 0,
-		       CTL_MACHDEP, CPU_DISKINFO, CTL_EOL);
+		       CTLTYPE_INT, "osfxsr", NULL,
+		       NULL, 0, &i386_use_fxsave, 0,
+		       CTL_MACHDEP, CPU_OSFXSR, CTL_EOL);
 	sysctl_createv(clog, 0, NULL, NULL,
 		       CTLFLAG_PERMANENT,
 		       CTLTYPE_INT, "fpu_present", NULL,
 		       NULL, 0, &i386_fpu_present, 0,
 		       CTL_MACHDEP, CPU_FPU_PRESENT, CTL_EOL);
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
-		       CTLTYPE_INT, "osfxsr", NULL,
-		       NULL, 0, &i386_use_fxsave, 0,
-		       CTL_MACHDEP, CPU_OSFXSR, CTL_EOL);
 	sysctl_createv(clog, 0, NULL, NULL,
 		       CTLFLAG_PERMANENT,
 		       CTLTYPE_INT, "sse", NULL,
@@ -686,27 +627,6 @@ SYSCTL_SETUP(sysctl_machdep_setup, "sysctl machdep subtree setup")
 		       CTLTYPE_INT, "sse2", NULL,
 		       NULL, 0, &i386_has_sse2, 0,
 		       CTL_MACHDEP, CPU_SSE2, CTL_EOL);
-	sysctl_createv(clog, 0, NULL, NULL, 
-	    	       CTLFLAG_PERMANENT,
-		       CTLTYPE_STRING, "cpu_brand", NULL,
-		       NULL, 0, cpu_brand_string, 0,
-		       CTL_MACHDEP, CTL_CREATE, CTL_EOL);
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT|CTLFLAG_READWRITE,
-		       CTLTYPE_INT, "sparse_dump", NULL,
-		       NULL, 0, &sparse_dump, 0,
-		       CTL_MACHDEP, CTL_CREATE, CTL_EOL);
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
-		       CTLTYPE_QUAD, "tsc_freq", NULL,
-		       NULL, 0, &tsc_freq, 0,
-		       CTL_MACHDEP, CTL_CREATE, CTL_EOL);
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
-		       CTLTYPE_INT, "pae", 
-		       SYSCTL_DESCR("Whether the kernel uses PAE"),
-		       NULL, 0, &use_pae, 0,
-		       CTL_MACHDEP, CTL_CREATE, CTL_EOL);
 }
 
 void *
@@ -888,6 +808,8 @@ haltsys:
 			splx(s);
 
 		acpi_enter_sleep_state(ACPI_STATE_S5);
+#else
+		__USE(s);
 #endif
 	}
 
@@ -944,6 +866,7 @@ setregs(struct lwp *l, struct exec_package *pack, vaddr_t stack)
 	struct pmap *pmap = vm_map_pmap(&l->l_proc->p_vmspace->vm_map);
 	struct pcb *pcb = lwp_getpcb(l);
 	struct trapframe *tf;
+	uint16_t control;
 
 #if NNPX > 0
 	/* If we were using the FPU, forget about it. */
@@ -956,12 +879,17 @@ setregs(struct lwp *l, struct exec_package *pack, vaddr_t stack)
 	pmap_ldt_cleanup(l);
 #endif
 
+	if (pack->ep_osversion >= 699002600)
+		control = __INITIAL_NPXCW__;
+	else
+		control = __NetBSD_COMPAT_NPXCW__;
+
 	l->l_md.md_flags &= ~MDL_USEDFPU;
 	if (i386_use_fxsave) {
-		pcb->pcb_savefpu.sv_xmm.sv_env.en_cw = __NetBSD_NPXCW__;
+		pcb->pcb_savefpu.sv_xmm.sv_env.en_cw = control;
 		pcb->pcb_savefpu.sv_xmm.sv_env.en_mxcsr = __INITIAL_MXCSR__;
 	} else
-		pcb->pcb_savefpu.sv_87.sv_env.en_cw = __NetBSD_NPXCW__;
+		pcb->pcb_savefpu.sv_87.sv_env.en_cw = control;
 	memcpy(&pcb->pcb_fsd, &gdt[GUDATA_SEL], sizeof(pcb->pcb_fsd));
 	memcpy(&pcb->pcb_gsd, &gdt[GUDATA_SEL], sizeof(pcb->pcb_gsd));
 
@@ -1251,7 +1179,6 @@ void
 init386(paddr_t first_avail)
 {
 	extern void consinit(void);
-	struct pcb *pcb;
 	int x;
 #ifndef XEN
 	union descriptor *tgdt;
@@ -1273,7 +1200,6 @@ init386(paddr_t first_avail)
 	cpu_probe(&cpu_info_primary);
 
 	uvm_lwp_setuarea(&lwp0, lwp0uarea);
-	pcb = lwp_getpcb(&lwp0);
 
 	cpu_init_msrs(&cpu_info_primary, true);
 
@@ -1284,6 +1210,7 @@ init386(paddr_t first_avail)
 #endif
 
 #ifdef XEN
+	struct pcb *pcb = lwp_getpcb(&lwp0);
 	pcb->pcb_cr3 = PDPpaddr;
 	__PRINTK(("pcb_cr3 0x%lx cr3 0x%lx\n",
 	    PDPpaddr, xpmap_ptom(PDPpaddr)));

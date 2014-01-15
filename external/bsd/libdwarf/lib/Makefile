@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.1 2009/12/23 00:10:15 darran Exp $
+#	$NetBSD: Makefile,v 1.3 2013/09/11 23:04:10 joerg Exp $
 
 .include <bsd.init.mk>
 
@@ -15,6 +15,7 @@ SRCS=	dwarf_abbrev.c		\
 	dwarf_errno.c		\
 	dwarf_finish.c		\
 	dwarf_form.c		\
+	dwarf_func.c		\
 	dwarf_init.c		\
 	dwarf_loc.c
 
@@ -24,5 +25,7 @@ INCSDIR=	/usr/include
 CPPFLAGS+=	-I${.CURDIR}
 
 WITHOUT_MAN=	yes
+
+LIBDPLIBS+=	elf		${NETBSDSRCDIR}/external/bsd/libelf/lib
 
 .include <bsd.lib.mk>

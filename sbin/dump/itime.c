@@ -1,4 +1,4 @@
-/*	$NetBSD: itime.c,v 1.18 2010/03/11 01:32:59 christos Exp $	*/
+/*	$NetBSD: itime.c,v 1.20 2013/06/15 01:27:19 christos Exp $	*/
 
 /*-
  * Copyright (c) 1980, 1993
@@ -34,16 +34,13 @@
 #if 0
 static char sccsid[] = "@(#)itime.c	8.1 (Berkeley) 6/5/93";
 #else
-__RCSID("$NetBSD: itime.c,v 1.18 2010/03/11 01:32:59 christos Exp $");
+__RCSID("$NetBSD: itime.c,v 1.20 2013/06/15 01:27:19 christos Exp $");
 #endif
 #endif /* not lint */
 
 #include <sys/param.h>
 #include <sys/queue.h>
 #include <sys/time.h>
-#include <ufs/ufs/dinode.h>
-
-#include <protocols/dumprestore.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -65,7 +62,7 @@ int	nddates = 0;
 
 static	void dumprecout(FILE *, struct dumpdates *);
 static	int getrecord(FILE *, struct dumpdates *);
-static	int makedumpdate(struct dumpdates *, char *);
+static	int makedumpdate(struct dumpdates *, const char *);
 static	void readdumptimes(FILE *);
 
 void
@@ -256,7 +253,7 @@ getrecord(FILE *df, struct dumpdates *ddatep)
 }
 
 static int
-makedumpdate(struct dumpdates *ddp, char *tbuf)
+makedumpdate(struct dumpdates *ddp, const char *tbuf)
 {
 	char un_buf[128];
 

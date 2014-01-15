@@ -1,4 +1,4 @@
-/*	$NetBSD: ip_nat6.c,v 1.3 2012/07/22 14:27:51 darrenr Exp $	*/
+/*	$NetBSD: ip_nat6.c,v 1.6 2013/09/14 12:39:09 joerg Exp $	*/
 
 /*
  * Copyright (C) 2012 by Darren Reed.
@@ -109,9 +109,7 @@ extern struct ifnet vpnif;
 #undef	SOCKADDR_IN
 #define	SOCKADDR_IN	struct sockaddr_in
 
-#if !defined(lint)
-static const char rcsid[] = "@(#)Id: ip_nat6.c,v 1.1.1.2 2012/07/22 13:45:29 darrenr Exp";
-#endif
+__KERNEL_RCSID(0, "@(#)Id: ip_nat6.c,v 1.1.1.2 2012/07/22 13:45:29 darrenr Exp");
 
 #ifdef USE_INET6
 static struct hostmap *ipf_nat6_hostmap(ipf_nat_softc_t *, ipnat_t *,
@@ -1141,9 +1139,6 @@ ipf_nat6_finalise(fr_info_t *fin, nat_t *nat)
 	ipf_nat_softc_t *softn = softc->ipf_nat_soft;
 	u_32_t sum1, sum2, sumd;
 	frentry_t *fr;
-	u_32_t flags;
-
-	flags = nat->nat_flags;
 
 	switch (fin->fin_p)
 	{
@@ -1256,7 +1251,7 @@ ipf_nat6_finalise(fr_info_t *fin, nat_t *nat)
 static int
 ipf_nat6_insert(ipf_main_softc_t *softc, ipf_nat_softc_t *softn, nat_t *nat)
 {
-	u_int hv1, hv2;
+	u_int hv0, hv1;
 	u_32_t sp, dp;
 	ipnat_t *in;
 
@@ -1275,13 +1270,13 @@ ipf_nat6_insert(ipf_main_softc_t *softc, ipf_nat_softc_t *softn, nat_t *nat)
 			sp = 0;
 			dp = 0;
 		}
-		hv1 = NAT_HASH_FN6(&nat->nat_osrc6, sp, 0xffffffff);
-		hv1 = NAT_HASH_FN6(&nat->nat_odst6, hv1 + dp,
+		hv0 = NAT_HASH_FN6(&nat->nat_osrc6, sp, 0xffffffff);
+		hv0 = NAT_HASH_FN6(&nat->nat_odst6, hv0 + dp,
 				   softn->ipf_nat_table_sz);
 
 		/*
 		 * TRACE nat6_osrc6, nat6_osport, nat6_odst6,
-		 * nat6_odport, hv1
+		 * nat6_odport, hv0
 		 */
 
 		if ((nat->nat_flags & IPN_TCPUDP) != 0) {
@@ -1294,27 +1289,32 @@ ipf_nat6_insert(ipf_main_softc_t *softc, ipf_nat_softc_t *softn, nat_t *nat)
 			sp = 0;
 			dp = 0;
 		}
-		hv2 = NAT_HASH_FN6(&nat->nat_nsrc6, sp, 0xffffffff);
-		hv2 = NAT_HASH_FN6(&nat->nat_ndst6, hv2 + dp,
+		hv1 = NAT_HASH_FN6(&nat->nat_nsrc6, sp, 0xffffffff);
+		hv1 = NAT_HASH_FN6(&nat->nat_ndst6, hv1 + dp,
 				   softn->ipf_nat_table_sz);
 		/*
 		 * TRACE nat6_nsrcaddr, nat6_nsport, nat6_ndstaddr,
-		 * nat6_ndport, hv1
+		 * nat6_ndport, hv0
 		 */
 	} else {
-		hv1 = NAT_HASH_FN6(&nat->nat_osrc6, 0, 0xffffffff);
-		hv1 = NAT_HASH_FN6(&nat->nat_odst6, hv1,
+		hv0 = NAT_HASH_FN6(&nat->nat_osrc6, 0, 0xffffffff);
+		hv0 = NAT_HASH_FN6(&nat->nat_odst6, hv0,
 				   softn->ipf_nat_table_sz);
-		/* TRACE nat6_osrcip6, nat6_odstip6, hv1 */
+		/* TRACE nat6_osrcip6, nat6_odstip6, hv0 */
 
-		hv2 = NAT_HASH_FN6(&nat->nat_nsrc6, 0, 0xffffffff);
-		hv2 = NAT_HASH_FN6(&nat->nat_ndst6, hv2,
+		hv1 = NAT_HASH_FN6(&nat->nat_nsrc6, 0, 0xffffffff);
+		hv1 = NAT_HASH_FN6(&nat->nat_ndst6, hv1,
 				   softn->ipf_nat_table_sz);
-		/* TRACE nat6_nsrcip6, nat6_ndstip6, hv2 */
+		/* TRACE nat6_nsrcip6, nat6_ndstip6, hv1 */
 	}
 
-	nat->nat_hv[0] = hv1;
-	nat->nat_hv[1] = hv2;
+	if ((nat->nat_dir & NAT_OUTBOUND) == NAT_OUTBOUND) {
+		nat->nat_hv[0] = hv0;
+		nat->nat_hv[1] = hv1;
+	} else {
+		nat->nat_hv[0] = hv1;
+		nat->nat_hv[1] = hv0;
+	}
 
 	MUTEX_INIT(&nat->nat_lock, "nat entry lock");
 
@@ -1366,8 +1366,8 @@ ipf_nat6_icmperrorlookup(fr_info_t *fin, int dir)
 {
 	ipf_main_softc_t *softc = fin->fin_main_soft;
 	ipf_nat_softc_t *softn = softc->ipf_nat_soft;
-	struct icmp6_hdr *icmp6, *orgicmp;
-	int flags = 0, type, minlen;
+	struct icmp6_hdr *orgicmp;
+	int flags = 0, minlen;
 	nat_stat_side_t *nside;
 	tcphdr_t *tcp = NULL;
 	u_short data[2];
@@ -1376,8 +1376,6 @@ ipf_nat6_icmperrorlookup(fr_info_t *fin, int dir)
 	u_int p;
 
 	minlen = 40;
-	icmp6 = fin->fin_dp;
-	type = icmp6->icmp6_type;
 	nside = &softn->ipf_nat_stats.ns_side6[fin->fin_out];
 	/*
 	 * Does it at least have the return (basic) IP header ?
@@ -1511,9 +1509,8 @@ ipf_nat6_ip6subtract(i6addr_t *ip1, i6addr_t *ip2)
 	i6addr_t l1, l2, d;
 	u_short *s1, *s2, *ds;
 	u_32_t r;
-	int i, neg;
+	int i;
 
-	neg = 0;
 	l1 = *ip1;
 	l2 = *ip2;
 	s1 = (u_short *)&l1;
@@ -1530,7 +1527,6 @@ ipf_nat6_ip6subtract(i6addr_t *ip1, i6addr_t *ip2)
 	}
 	if (s2[0] > s1[0]) {
 		ds[0] = s2[0] + 0x10000 - s1[0];
-		neg = 1;
 	} else {
 		ds[0] = s2[0] - s1[0];
 	}
@@ -1880,9 +1876,6 @@ ipf_nat6_inlookup(fr_info_t *fin, u_int flags, u_int p, struct in6_addr *src,
 	ipf_main_softc_t *softc = fin->fin_main_soft;
 	ipf_nat_softc_t *softn = softc->ipf_nat_soft;
 	u_short sport, dport;
-	grehdr_t *gre;
-	ipnat_t *ipn;
-	u_int sflags;
 	nat_t *nat;
 	int nflags;
 	i6addr_t dst;
@@ -1892,9 +1885,7 @@ ipf_nat6_inlookup(fr_info_t *fin, u_int flags, u_int p, struct in6_addr *src,
 	ifp = fin->fin_ifp;
 	sport = 0;
 	dport = 0;
-	gre = NULL;
 	dst.in6 = *mapdst;
-	sflags = flags & NAT_TCPUDPICMP;
 
 	switch (p)
 	{
@@ -1973,9 +1964,8 @@ ipf_nat6_inlookup(fr_info_t *fin, u_int flags, u_int p, struct in6_addr *src,
 
 
 		if ((nat->nat_flags & IPN_TCPUDP) != 0) {
-			ipn = nat->nat_ptr;
 #ifdef IPF_V6_PROXIES
-			if ((ipn != NULL) && (nat->nat_aps != NULL))
+			if ((nat->nat_ptr != NULL) && (nat->nat_aps != NULL))
 				if (appr_match(fin, nat) != 0)
 					continue;
 #endif
@@ -2108,8 +2098,8 @@ find_in_wild_ports:
 static void
 ipf_nat6_tabmove(ipf_nat_softc_t *softn, nat_t *nat)
 {
+	u_int rhv0, rhv1, hv0, hv1;
 	nat_t **natp;
-	u_int hv0, hv1;
 
 	if (nat->nat_flags & SI_CLONE)
 		return;
@@ -2130,25 +2120,27 @@ ipf_nat6_tabmove(ipf_nat_softc_t *softn, nat_t *nat)
 	/*
 	 * Add into the NAT table in the new position
 	 */
-	hv0 = NAT_HASH_FN6(&nat->nat_osrc6, nat->nat_osport, 0xffffffff);
-	hv0 = NAT_HASH_FN6(&nat->nat_odst6, hv0 + nat->nat_odport,
-			   softn->ipf_nat_table_sz);
-	hv1 = NAT_HASH_FN6(&nat->nat_nsrc6, nat->nat_nsport, 0xffffffff);
-	hv1 = NAT_HASH_FN6(&nat->nat_ndst6, hv1 + nat->nat_ndport,
-			   softn->ipf_nat_table_sz);
+	rhv0 = NAT_HASH_FN6(&nat->nat_osrc6, nat->nat_osport, 0xffffffff);
+	rhv0 = NAT_HASH_FN6(&nat->nat_odst6, rhv0 + nat->nat_odport,
+			    softn->ipf_nat_table_sz);
+	rhv1 = NAT_HASH_FN6(&nat->nat_nsrc6, nat->nat_nsport, 0xffffffff);
+	rhv1 = NAT_HASH_FN6(&nat->nat_ndst6, rhv1 + nat->nat_ndport,
+			    softn->ipf_nat_table_sz);
 
-	if (nat->nat_dir == NAT_INBOUND || nat->nat_dir == NAT_DIVERTIN) {
-		u_int swap;
-
-		swap = hv0;
-		hv0 = hv1;
-		hv1 = swap;
+	if ((nat->nat_dir & NAT_OUTBOUND) == NAT_OUTBOUND) {
+		nat->nat_hv[0] = rhv0;
+		nat->nat_hv[1] = rhv1;
+	} else {
+		nat->nat_hv[0] = rhv1;
+		nat->nat_hv[1] = rhv0;
 	}
+
+	hv0 = nat->nat_hv[0] % softn->ipf_nat_table_sz;
+        hv1 = nat->nat_hv[1] % softn->ipf_nat_table_sz;
 
 	/* TRACE nat_osrc6, nat_osport, nat_odst6, nat_odport, hv0 */
 	/* TRACE nat_nsrc6, nat_nsport, nat_ndst6, nat_ndport, hv1 */
 
-	nat->nat_hv[0] = hv0;
 	natp = &softn->ipf_nat_table[0][hv0];
 	if (*natp)
 		(*natp)->nat_phnext[0] = &nat->nat_hnext[0];
@@ -2157,7 +2149,6 @@ ipf_nat6_tabmove(ipf_nat_softc_t *softn, nat_t *nat)
 	*natp = nat;
 	softn->ipf_nat_stats.ns_side[0].ns_bucketlen[hv0]++;
 
-	nat->nat_hv[1] = hv1;
 	natp = &softn->ipf_nat_table[1][hv1];
 	if (*natp)
 		(*natp)->nat_phnext[1] = &nat->nat_hnext[1];
@@ -2198,14 +2189,11 @@ ipf_nat6_outlookup(fr_info_t *fin, u_int flags, u_int p, struct in6_addr *src,
 	ipf_main_softc_t *softc = fin->fin_main_soft;
 	ipf_nat_softc_t *softn = softc->ipf_nat_soft;
 	u_short sport, dport;
-	u_int sflags;
-	ipnat_t *ipn;
 	nat_t *nat;
 	void *ifp;
 	u_int hv;
 
 	ifp = fin->fin_ifp;
-	sflags = flags & IPN_TCPUDPICMP;
 	sport = 0;
 	dport = 0;
 
@@ -2286,9 +2274,8 @@ ipf_nat6_outlookup(fr_info_t *fin, u_int flags, u_int p, struct in6_addr *src,
 			break;
 		}
 
-		ipn = nat->nat_ptr;
 #ifdef IPF_V6_PROXIES
-		if ((ipn != NULL) && (nat->nat_aps != NULL))
+		if ((nat->nat_ptr != NULL) && (nat->nat_aps != NULL))
 			if (appr_match(fin, nat) != 0)
 				continue;
 #endif
@@ -2574,7 +2561,9 @@ ipf_nat6_checkout(fr_info_t *fin, u_32_t *passp)
 	ipf_nat_softc_t *softn = softc->ipf_nat_soft;
 	struct icmp6_hdr *icmp6 = NULL;
 	struct ifnet *ifp, *sifp;
+#ifdef IPF_V6_PROXIES
 	tcphdr_t *tcp = NULL;
+#endif
 	int rval, natfailed;
 	ipnat_t *np = NULL;
 	u_int nflags = 0;
@@ -2628,8 +2617,10 @@ ipf_nat6_checkout(fr_info_t *fin, u_32_t *passp)
 			break;
 		}
 
+#ifdef IPF_V6_PROXIES
 		if ((nflags & IPN_TCPUDP))
 			tcp = fin->fin_dp;
+#endif
 	}
 
 	ipa = fin->fin_src6;
@@ -2973,7 +2964,9 @@ ipf_nat6_checkin(fr_info_t *fin, u_32_t *passp)
 	int rval, natfailed;
 	struct ifnet *ifp;
 	i6addr_t ipa, iph;
+#ifdef IPF_V6_PROXIES
 	tcphdr_t *tcp;
+#endif
 	u_short dport;
 	ipnat_t *np;
 	nat_t *nat;
@@ -2981,7 +2974,9 @@ ipf_nat6_checkin(fr_info_t *fin, u_32_t *passp)
 	if (softn->ipf_nat_stats.ns_rules == 0 || softn->ipf_nat_lock != 0)
 		return 0;
 
+#ifdef IPF_V6_PROXIES
 	tcp = NULL;
+#endif
 	icmp6 = NULL;
 	dport = 0;
 	natadd = 1;
@@ -3022,7 +3017,9 @@ ipf_nat6_checkin(fr_info_t *fin, u_32_t *passp)
 		}
 
 		if ((nflags & IPN_TCPUDP)) {
+#ifdef IPF_V6_PROXIES
 			tcp = fin->fin_dp;
+#endif
 			dport = fin->fin_data[1];
 		}
 	}

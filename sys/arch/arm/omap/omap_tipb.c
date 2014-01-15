@@ -1,4 +1,4 @@
-/*	$NetBSD: omap_tipb.c,v 1.5 2011/07/01 20:30:21 dyoung Exp $ */
+/*	$NetBSD: omap_tipb.c,v 1.6 2013/10/02 16:48:26 matt Exp $ */
 
 /*
  * Autoconfiguration support for the Texas Instruments OMAP TIPB.
@@ -97,7 +97,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: omap_tipb.c,v 1.5 2011/07/01 20:30:21 dyoung Exp $");
+__KERNEL_RCSID(0, "$NetBSD: omap_tipb.c,v 1.6 2013/10/02 16:48:26 matt Exp $");
 
 #include "locators.h"
 
@@ -112,7 +112,10 @@ __KERNEL_RCSID(0, "$NetBSD: omap_tipb.c,v 1.5 2011/07/01 20:30:21 dyoung Exp $")
 
 #include <arm/cpufunc.h>
 #include <arm/mainbus/mainbus.h>
-#include <arm/omap/omap_reg.h>
+/* 
+ * XXX. Do we really need this ? #include <arm/omap/omap_reg.h> 
+ * Atleast commenting this makes it more generic.
+ */
 #include <arm/omap/omap_tipb.h>
 
 struct tipb_softc {

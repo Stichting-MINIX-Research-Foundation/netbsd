@@ -1,16 +1,18 @@
-#	$NetBSD: Makefile.evbarm.inc,v 1.22 2012/02/16 08:08:25 matt Exp $
+#	$NetBSD: Makefile.evbarm.inc,v 1.27 2013/08/09 04:24:19 matt Exp $
 
 #
 # If this is a install kernel and the ramdisk image exists in the object
 # tree, insert it into the kernel *before* we make the u-boot images.
 #
+RAMDISKNAME?=	ramdisk
 .if ${KERNEL_BUILD:T:M*INSTALL} != ""
-RAMDISKDIR!=	cd ${NETBSDSRCDIR}/distrib/${THISARM:T}/instkernel/ramdisk && ${PRINTOBJDIR}
+RAMDISKDIR!=	cd ${NETBSDSRCDIR}/distrib/${THISARM:T}/instkernel/${RAMDISKNAME} && ${PRINTOBJDIR}
 
-.if exists(${RAMDISKDIR}/ramdisk.fs)
+.if exists(${RAMDISKDIR}/${RAMDISKNAME}.fs)
+SYSTEM_DEP+=	${RAMDISKDIR}/${RAMDISKNAME}.fs
 SYSTEM_LD_TAIL_EXTRA+=; \
-	echo ${TOOL_MDSETIMAGE} -s $@ ${RAMDISKDIR}/ramdisk.fs; \
-	${TOOL_MDSETIMAGE} -s $@ ${RAMDISKDIR}/ramdisk.fs
+	echo ${TOOL_MDSETIMAGE} -s $@ ${RAMDISKDIR}/${RAMDISKNAME}.fs; \
+	${TOOL_MDSETIMAGE} -s $@ ${RAMDISKDIR}/${RAMDISKNAME}.fs
 .endif
 .endif
 
@@ -21,10 +23,9 @@ SYSTEM_LD_TAIL_EXTRA+=; \
 EXTRA_CLEAN+= ldscript tmp ${KERNELS:=.map}
 
 .if defined(KERNEL_BASE_PHYS)
-
-LINKFLAGS=	-T ldscript
-
-netbsd: ldscript             # XXX
+LINKTEXT=
+KERNLDSCRIPT=	ldscript
+EXTRA_LINKFLAGS+=	-T ldscript
 
 # generate ldscript from common template
 ldscript: ${THISARM}/conf/ldscript.evbarm ${THISARM}/conf/Makefile.evbarm.inc Makefile ${BOARDMKFRAG}
@@ -33,4 +34,6 @@ ldscript: ${THISARM}/conf/ldscript.evbarm ${THISARM}/conf/Makefile.evbarm.inc Ma
 	    -e 's/@KERNEL_BASE_VIRT@/${KERNEL_BASE_VIRT}/' \
 	    ${THISARM}/conf/ldscript.evbarm > tmp && mv tmp $@
 
+.else
+LINKTEXT=	-Ttext ${LOADADDRESS}
 .endif	# KERNEL_BASE_PHYS

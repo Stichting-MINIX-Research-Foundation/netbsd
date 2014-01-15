@@ -1,4 +1,4 @@
-/*	$NetBSD: dirs.c,v 1.48 2009/04/07 12:38:12 lukem Exp $	*/
+/*	$NetBSD: dirs.c,v 1.50 2013/06/09 17:57:09 dholland Exp $	*/
 
 /*
  * Copyright (c) 1983, 1993
@@ -39,7 +39,7 @@
 #if 0
 static char sccsid[] = "@(#)dirs.c	8.7 (Berkeley) 5/1/95";
 #else
-__RCSID("$NetBSD: dirs.c,v 1.48 2009/04/07 12:38:12 lukem Exp $");
+__RCSID("$NetBSD: dirs.c,v 1.50 2013/06/09 17:57:09 dholland Exp $");
 #endif
 #endif /* not lint */
 
@@ -184,7 +184,7 @@ extractdirs(int genmode)
 	nulldir.d_type = DT_DIR;
 	nulldir.d_namlen = 1;
 	(void) strcpy(nulldir.d_name, "/");
-	nulldir.d_reclen = DIRSIZ(0, &nulldir, 0);
+	nulldir.d_reclen = UFS_DIRSIZ(0, &nulldir, 0);
 	for (;;) {
 		curfile.name = "<directory file - name unknown>";
 		curfile.action = USING;
@@ -286,7 +286,7 @@ treescan(const char *pname, ino_t ino, long (*todo)(const char *, ino_t, int))
 }
 
 /*
- * Lookup a pathname which is always assumed to start from the ROOTINO.
+ * Lookup a pathname which is always assumed to start from the root inode.
  */
 struct direct *
 pathsearch(const char *pathname)
@@ -297,7 +297,7 @@ pathsearch(const char *pathname)
 
 	strcpy(buffer, pathname);
 	path = buffer;
-	ino = ROOTINO;
+	ino = UFS_ROOTINO;
 	while (*path == '/')
 		path++;
 	dp = NULL;
@@ -372,16 +372,16 @@ putdir(char *buf, long size)
 			i = DIRBLKSIZ - (loc & (DIRBLKSIZ - 1));
 			if ((dp->d_reclen & 0x3) != 0 ||
 			    dp->d_reclen > i ||
-			    dp->d_reclen < DIRSIZ(0, dp, 0) /* ||
+			    dp->d_reclen < UFS_DIRSIZ(0, dp, 0) /* ||
 			    dp->d_namlen > NAME_MAX */) {
 				vprintf(stdout, "Mangled directory: ");
 				if ((dp->d_reclen & 0x3) != 0)
 					vprintf(stdout,
 					   "reclen not multiple of 4 ");
-				if (dp->d_reclen < DIRSIZ(0, dp, 0))
+				if (dp->d_reclen < UFS_DIRSIZ(0, dp, 0))
 					vprintf(stdout,
-					   "reclen less than DIRSIZ (%d < %lu) ",
-					   dp->d_reclen, (u_long)DIRSIZ(0, dp, 0));
+					   "reclen less than UFS_DIRSIZ (%d < %lu) ",
+					   dp->d_reclen, (u_long)UFS_DIRSIZ(0, dp, 0));
 #if 0	/* dp->d_namlen is a uint8_t, always < NAME_MAX */
 				if (dp->d_namlen > NAME_MAX)
 					vprintf(stdout,
@@ -413,7 +413,7 @@ long prev = 0;
 static void
 putent(struct direct *dp)
 {
-	dp->d_reclen = DIRSIZ(0, dp, 0);
+	dp->d_reclen = UFS_DIRSIZ(0, dp, 0);
 	if (dirloc + dp->d_reclen > DIRBLKSIZ) {
 		((struct direct *)(dirbuf + prev))->d_reclen =
 		    DIRBLKSIZ - prev;
@@ -449,7 +449,7 @@ dcvt(struct odirect *odp, struct direct *ndp)
 	ndp->d_type = DT_UNKNOWN;
 	(void) strncpy(ndp->d_name, odp->d_name, ODIRSIZ);
 	ndp->d_namlen = strlen(ndp->d_name);
-	ndp->d_reclen = DIRSIZ(0, ndp, 0);
+	ndp->d_reclen = UFS_DIRSIZ(0, ndp, 0);
 }
 
 /*
@@ -616,7 +616,7 @@ setdirmodes(int flags)
 				ep->e_flags &= ~NEW;
 				continue;
 			}
-			if (node.ino == ROOTINO && dotflag == 0)
+			if (node.ino == UFS_ROOTINO && dotflag == 0)
 				continue;
 		}
 		if (ep == NULL) {

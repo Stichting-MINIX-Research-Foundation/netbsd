@@ -1,4 +1,4 @@
-.\"	$NetBSD: sysctl.7,v 1.73 2012/06/23 03:13:41 christos Exp $
+.\"	$NetBSD: sysctl.7,v 1.77 2013/10/27 10:09:28 apb Exp $
 .\"
 .\" Copyright (c) 1993
 .\"	The Regents of the University of California.  All rights reserved.
@@ -29,7 +29,7 @@
 .\"
 .\"	@(#)sysctl.3	8.4 (Berkeley) 5/9/95
 .\"
-.Dd June 22, 2012
+.Dd October 27, 2013
 .Dt SYSCTL 7
 .Os
 .Sh NAME
@@ -164,8 +164,8 @@ capabilities with the following third level identifiers:
 .Bl -tag -width "123456"
 .It Li vfs.wapbl.flush_disk_cache
 Controls whether to attempt to flush the disk cache on each commit.
-It defaults to 1 and it should always be on to ensure data integrity in
-case of a crash.
+It defaults to 1 and it should always be on to ensure integrity
+of file system metadata in the event of a power loss.
 For slow disks, turning it off can improve performance.
 .It Li vfs.wapbl.verbose_commit
 For each transaction log commit, print the number of bytes written
@@ -1225,6 +1225,7 @@ The currently defined protocols and names are:
 .It ip	allowsrcrt	integer	yes
 .It ip 	anonportalgo.selected	string	yes
 .It ip 	anonportalgo.available	string	yes
+.It ip 	anonportalgo.reserve	struct	yes
 .It ip	anonportmax	integer	yes
 .It ip	anonportmin	integer	yes
 .It ip	checkinterface	integer	yes
@@ -1329,6 +1330,9 @@ Disabled by default.
 If set to 1, the host accepts source routed packets.
 .It Li ip.anonportalgo.available
 The available RFC 6056 port randomization algorithms.
+.It Li ip.anonportalgo.reserve
+A bitmask of ports that will not be used during anonymous or privileged
+port selection.
 .It Li ip.anonportalgo.selected
 The currently selected RFC 6056 port randomization algorithm.
 .It Li ip.anonportmax
@@ -1468,9 +1472,9 @@ Number of ticks to delay sending an ACK.
 Perform TCP checksum on loopback.
 .It Li tcp.init_win
 A value indicating the TCP initial congestion window.
-If this value is 0, an auto-tuning algorithm designed to use an initial
-window of approximately 4K bytes is in use.
-Otherwise, this value indicates a fixed number of packets.
+The valid range
+is 0 to 10 (maximum specified by draft-ietf-tcpm-initcwnd-08.txt),
+with a default of 4 (approximately 4K per RFC3390).
 .It Li tcp.init_win_local
 Like
 .Li tcp.init_win ,
@@ -1599,6 +1603,7 @@ The currently defined protocols and names are:
 .It ip6	accept_rtadv	integer	yes
 .It ip6	anonportalgo.selected	string	yes
 .It ip6	anonportalgo.available	string	yes
+.It ip6 anonportalgo.reserve	struct	yes
 .It ip6	anonportmax	integer	yes
 .It ip6	anonportmin	integer	yes
 .It ip6	auto_flowlabel	integer	yes
@@ -1640,6 +1645,9 @@ The node must be a host
 for the option to be meaningful.
 .It Li ip6.anonportalgo.available
 The available RFC 6056 port randomization algorithms.
+.It Li ip6.anonportalgo.reserve
+A bitmask of ports that will not be used during anonymous or privileged
+port selection.
 .It Li ip6.anonportalgo.selected
 The currently selected RFC 6056 port randomization algorithm.
 .It Li ip6.anonportmax

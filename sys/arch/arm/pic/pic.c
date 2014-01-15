@@ -1,4 +1,4 @@
-/*	$NetBSD: pic.c,v 1.14 2012/09/01 01:44:16 matt Exp $	*/
+/*	$NetBSD: pic.c,v 1.17 2013/09/07 00:32:02 matt Exp $	*/
 /*-
  * Copyright (c) 2008 The NetBSD Foundation, Inc.
  * All rights reserved.
@@ -28,7 +28,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: pic.c,v 1.14 2012/09/01 01:44:16 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: pic.c,v 1.17 2013/09/07 00:32:02 matt Exp $");
 
 #define _INTR_PRIVATE
 #include <sys/param.h>
@@ -256,7 +256,6 @@ void
 pic_dispatch(struct intrsource *is, void *frame)
 {
 	int rv;
-
 
 	if (__predict_false(is->is_arg == NULL)
 	    && __predict_true(frame != NULL)) {
@@ -528,7 +527,8 @@ pic_add(struct pic_softc *pic, int irqbase)
 	printf("%s: pic_sourcebase=%zu pic_maxsources=%zu\n",
 	    pic->pic_name, pic_sourcebase, pic->pic_maxsources);
 #endif
-	KASSERT(pic->pic_maxsources <= PIC_MAXSOURCES);
+	KASSERTMSG(pic->pic_maxsources <= PIC_MAXSOURCES, "%zu",
+	    pic->pic_maxsources);
 	KASSERT(pic_sourcebase + pic->pic_maxsources <= PIC_MAXMAXSOURCES);
 
 	/*
@@ -684,7 +684,7 @@ pic_disestablish_source(struct intrsource *is)
 
 	KASSERT(is == pic->pic_sources[irq]);
 
-	(*pic->pic_ops->pic_block_irqs)(pic, irq & ~31, __BIT(irq));
+	(*pic->pic_ops->pic_block_irqs)(pic, irq & ~0x1f, __BIT(irq & 0x1f));
 	pic->pic_sources[irq] = NULL;
 	pic__iplsources[pic_ipl_offset[is->is_ipl] + is->is_iplidx] = NULL;
 	/*

@@ -1,4 +1,4 @@
-# $NetBSD: GENERIC,v 1.171 2012/08/17 20:11:39 abs Exp $
+# $NetBSD: GENERIC,v 1.180 2013/08/16 13:39:47 tsutsui Exp $
 #
 # GENERIC machine description file
 #
@@ -22,7 +22,7 @@ include 	"arch/hp300/conf/std.hp300"
 
 options 	INCLUDE_CONFIG_FILE	# embed config file in kernel binary
 
-#ident 		"GENERIC-$Revision: 1.171 $"
+#ident 		"GENERIC-$Revision: 1.180 $"
 
 maxusers	32		# estimated number of users
 
@@ -43,6 +43,7 @@ options 	HP400
 options 	HP425
 options 	HP433
 options 	FPSP		# floating point interface for 68040
+#options 	FPU_EMULATE	# software fpu emulation for MC68030
 
 # Standard system options
 options 	KTRACE		# system call tracing support
@@ -87,6 +88,7 @@ options 	COMPAT_20	# compatibility with NetBSD 2.0
 options 	COMPAT_30	# compatibility with NetBSD 3.0
 options 	COMPAT_40	# compatibility with NetBSD 4.0
 options 	COMPAT_50	# compatibility with NetBSD 5.0
+options 	COMPAT_60	# NetBSD 6.0 compatibility.
 #options 	TCP_COMPAT_42	# 4.2BSD TCP/IP bug compat. Not recommended.
 
 # Binary compatibility.
@@ -132,19 +134,14 @@ options 	NFS_BOOT_BOOTP	# use bootp for NFS boot
 options 	INET		# Internet protocols
 options 	INET6		# IPV6
 #options 	IPSEC		# IP security
-#options 	IPSEC_ESP	# IP security (encryption part; define w/IPSEC)
-#options 	IPSEC_NAT_T	# IPsec NAT traversal (NAT-T)
 #options 	IPSEC_DEBUG	# debug for IP security
 options 	GATEWAY		# IP forwarding
 options 	MROUTING	# Multicast routing
 options 	PIM		# Protocol Independent Multicast
-#options 	ISO,TPIP	# OSI
-#options 	EON		# OSI tunneling over IP
 options 	NETATALK	# AppleTalk networking protocols
 options 	PPP_BSDCOMP	# BSD-Compress compression support for PPP
 options 	PPP_DEFLATE	# Deflate compression support for PPP
 options 	PPP_FILTER	# Active filter support for PPP (requires bpf)
-options 	PFIL_HOOKS	# packet filter hooks
 options 	IPFILTER_LOG	# ipmon(8) log support
 options 	IPFILTER_LOOKUP	# ippool(8) support
 options 	IPFILTER_COMPAT # Compat for IP-Filter
@@ -195,7 +192,7 @@ mainbus0	at root			# root "bus"
 
 intio0		at mainbus0		# internal i/o space
 dio0		at mainbus0		# DIO/DIO-II bus
-#sgc0		at mainbus0		# SGC bus
+sgc0		at mainbus0		# SGC bus
 
 # Human Interface Loop devices
 hil0		at intio?		# HIL controller
@@ -241,8 +238,8 @@ wsdisplay*	at tvrx?
 gendiofb*	at dio? scode ?		# dumb framebuffer support for 362/382
 wsdisplay*	at gendiofb?
 
-#sti*		at sgc?	slot ?		# SGC EVRX framebuffers
-#wsdisplay*	at sti?
+sti*		at sgc?	slot ?		# SGC EVRX framebuffers
+wsdisplay*	at sti?
 
 com0		at dio0 scode 9		# DCA serial interfaces
 com*		at dio? scode ?
@@ -280,9 +277,9 @@ uk*		at scsibus? target ? lun ?	# unknown SCSI devices
 #
 
 # disk pseudo-devices
-pseudo-device	ccd		4	# concatenated disk devices
-#pseudo-device	cgd		4	# cryptographic disk devices
-pseudo-device	raid		8	# RAIDframe disk driver
+pseudo-device	ccd			# concatenated disk devices
+#pseudo-device	cgd			# cryptographic disk devices
+pseudo-device	raid			# RAIDframe disk driver
 options 	RAID_AUTOCONFIG		# auto-configuration of RAID components
 # Options to enable various other RAIDframe RAID types.
 #options 	RF_INCLUDE_EVENODD=1
@@ -324,7 +321,7 @@ pseudo-device   accf_http		# "httpready" accept filter
 # miscellaneous pseudo-devices
 pseudo-device	clockctl		# user control of clock subsystem
 pseudo-device	pty			# pseudo-terminals
-pseudo-device	vcoda		4	# coda minicache <-> venus comm.
+pseudo-device	vcoda			# coda minicache <-> venus comm.
 pseudo-device	ksyms			# /dev/ksyms
 #pseudo-device	pf			# PF packet filter
 #pseudo-device	pflog			# PF log if
@@ -337,7 +334,7 @@ pseudo-device	wsfont
 # Veriexec
 #
 # a pseudo device needed for veriexec
-#pseudo-device	veriexec		1
+#pseudo-device	veriexec
 #
 # Uncomment the fingerprint methods below that are desired. Note that
 # removing fingerprint methods will have almost no impact on the kernel

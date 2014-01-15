@@ -1,7 +1,7 @@
-/*	$NetBSD: shutdown_test.c,v 1.3 2012/06/05 00:39:26 christos Exp $	*/
+/*	$NetBSD: shutdown_test.c,v 1.5 2013/07/27 19:23:10 christos Exp $	*/
 
 /*
- * Copyright (C) 2004, 2007, 2011  Internet Systems Consortium, Inc. ("ISC")
+ * Copyright (C) 2004, 2007, 2011, 2013  Internet Systems Consortium, Inc. ("ISC")
  * Copyright (C) 1998-2001  Internet Software Consortium.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
@@ -174,11 +174,19 @@ main(int argc, char *argv[]) {
 	isc_task_t *task;
 	isc_mem_t *mctx, *mctx2;
 
+	isc__mem_register();
+	isc__task_register();
+	isc__timer_register();
+	isc__socket_register();
 	RUNTIME_CHECK(isc_app_start() == ISC_R_SUCCESS);
 
-	if (argc > 1)
+	if (argc > 1) {
 		workers = atoi(argv[1]);
-	else
+		if (workers < 1)
+			workers = 1;
+		if (workers > 8192)
+			workers = 8192;
+	} else
 		workers = 2;
 	printf("%d workers\n", workers);
 

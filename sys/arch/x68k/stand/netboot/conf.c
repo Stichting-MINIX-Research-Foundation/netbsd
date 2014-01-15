@@ -1,5 +1,4 @@
-/*	$NetBSD: conf.c,v 1.1 2012/10/12 20:15:53 tsutsui Exp $	*/
-/*	Id: conf.c,v 1.7 2011/04/10 09:20:27 isaki Exp 	*/
+/*	$NetBSD: conf.c,v 1.3 2013/01/13 14:27:06 tsutsui Exp $	*/
 
 /*
  * Copyright (c) 2001 Minoura Makoto
@@ -53,8 +52,6 @@ struct fs_ops file_system[] = {
 	FS_OPS(nfs),
 };
 int nfsys = sizeof(file_system) / sizeof(file_system[0]);
-
-struct open_file files[SOPEN_MAX];
 
 extern struct netif_driver ne_netif_driver;
 

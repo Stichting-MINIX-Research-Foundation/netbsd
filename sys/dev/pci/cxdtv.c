@@ -1,4 +1,4 @@
-/* $NetBSD: cxdtv.c,v 1.11 2012/01/30 19:41:19 drochner Exp $ */
+/* $NetBSD: cxdtv.c,v 1.13 2013/10/16 18:20:16 christos Exp $ */
 
 /*
  * Copyright (c) 2008, 2011 Jonathan A. Kollasch
@@ -27,7 +27,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: cxdtv.c,v 1.11 2012/01/30 19:41:19 drochner Exp $");
+__KERNEL_RCSID(0, "$NetBSD: cxdtv.c,v 1.13 2013/10/16 18:20:16 christos Exp $");
 
 #include <sys/param.h>
 #include <sys/kernel.h>
@@ -61,11 +61,11 @@ __KERNEL_RCSID(0, "$NetBSD: cxdtv.c,v 1.11 2012/01/30 19:41:19 drochner Exp $");
 #define CXDTV_SRAM_CH_MPEG	0
 #define CXDTV_TS_PKTSIZE	(188 * 8)
 
-static int cxdtv_match(struct device *, struct cfdata *, void *);
-static void cxdtv_attach(struct device *, struct device *, void *);
-static int cxdtv_detach(struct device *, int);
-static int cxdtv_rescan(struct device *, const char *, const int *);
-static void cxdtv_childdet(struct device *, struct device *);
+static int cxdtv_match(device_t, cfdata_t, void *);
+static void cxdtv_attach(device_t, device_t, void *);
+static int cxdtv_detach(device_t, int);
+static int cxdtv_rescan(device_t, const char *, const int *);
+static void cxdtv_childdet(device_t, device_t);
 static int cxdtv_intr(void *);
 
 static bool cxdtv_resume(device_t, const pmf_qual_t *);
@@ -313,9 +313,6 @@ cxdtv_childdet(device_t self, device_t child)
 static bool
 cxdtv_resume(device_t dv, const pmf_qual_t *qual)
 {
-	struct cxdtv_softc *sc;
-	sc = device_private(dv);
-
 	/* XXX revisit */
 
 	aprint_debug_dev(dv, "%s\n", __func__);
@@ -353,11 +350,10 @@ static void
 cxdtv_i2cbb_set_bits(void *cookie, uint32_t bits)
 {
 	struct cxdtv_softc *sc = cookie;
-	uint32_t value;
 
 	bus_space_write_4(sc->sc_memt, sc->sc_memh,
 	    CXDTV_I2C_C_DATACONTROL, bits);
-	value = bus_space_read_4(sc->sc_memt, sc->sc_memh,
+	(void)bus_space_read_4(sc->sc_memt, sc->sc_memh,
 	    CXDTV_I2C_C_DATACONTROL);
 
 	return;
@@ -687,12 +683,10 @@ cxdtv_dtv_stop_transfer(void *priv)
 int
 cxdtv_mpeg_reset(struct cxdtv_softc *sc)
 {
-	struct cxdtv_sram_ch *ch;
 	uint32_t v;
 
 	CX_DPRINTF(("cxdtv_mpeg_reset\n"));
 
-	ch = &cxdtv_sram_chs[CXDTV_SRAM_CH_MPEG];
 	v = (uint32_t)-1; 
 
 	/* shutdown */

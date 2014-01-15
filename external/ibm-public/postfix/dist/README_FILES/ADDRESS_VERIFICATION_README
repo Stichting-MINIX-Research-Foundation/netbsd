@@ -123,6 +123,13 @@ LLiimmiittaattiioonnss ooff aaddddrreessss vveerriiffi
     fail with mis-configured sites that reject MAIL FROM: <>, while probes from
     "double-bounce@$myorigin" would succeed.
 
+  * The downside of using a non-empty sender address is that the address may
+    end op on spammer mailing lists. Although Postfix always discards mail to
+    the double-bounce address, this still results in wasted network bandwidth
+    and server capacity. To defeat address harvesting, Postfix 2.9 and later
+    support time-dependent sender addresses when you specify a non-zero
+    address_verify_sender_ttl value.
+
 RReecciippiieenntt aaddddrreessss vveerriiffiiccaattiioonn
 
 As mentioned earlier, recipient address verification is useful to block mail
@@ -145,6 +152,9 @@ same address repeatedly.
     /etc/postfix/main.cf:
         smtpd_recipient_restrictions =
             permit_mynetworks
+            # reject_unauth_destination is not needed here if the mail
+            # relay policy is specified under smtpd_relay_restrictions
+            # (available with Postfix 2.10 and later).
             reject_unauth_destination
             ...
             reject_unknown_recipient_domain
@@ -266,7 +276,7 @@ probe fails with some temporary error. Specify a valid 2xx or 4xx code.
 
 The unverified_sender_reject_reason parameter (default: empty) specifies fixed
 text that Postfix will send to remote SMTP clients, instead of sending actual
-addres verification details. Do not specify the SMTP status code or enhanced
+address verification details. Do not specify the SMTP status code or enhanced
 status code.
 
 The unverified_sender_tempfail_action parameter (default: defer_if_permit)
@@ -286,6 +296,16 @@ results are lost after "postfix reload" or "postfix stop".
         # Default setting for Postfix 2.7 and later.
         # Note: avoid hash files here. Use btree instead.
         address_verify_map = btree:$data_directory/verify_cache
+
+        # Shared persistent cache (requires Postfix 2.9 or later).
+        address_verify_map = proxy:btree:$data_directory/verify_cache
+        # Disable automatic cache cleanup in all Postfix instances except
+        # for one instance that will be responsible for cache cleanup.
+        # address_verify_cache_cleanup_interval = 0
+
+        # Shared memory cache (requires Postfix 2.9 or later).
+        # See memcache_table(5) for details.
+        address_verify_map = memcache:/etc/postfix/verify-memcache.cf
 
         # Default setting for Postfix 2.6 and earlier.
         # This uses non-persistent storage only.

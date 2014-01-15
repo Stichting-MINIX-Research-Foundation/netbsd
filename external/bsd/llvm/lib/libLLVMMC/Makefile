@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.10 2012/08/09 14:37:06 joerg Exp $
+#	$NetBSD: Makefile,v 1.14 2013/10/20 14:53:23 joerg Exp $
 
 LIB=	LLVMMC
 
@@ -11,6 +11,7 @@ SRCS+=	ELFObjectWriter.cpp \
 	MCAsmInfo.cpp \
 	MCAsmInfoCOFF.cpp \
 	MCAsmInfoDarwin.cpp \
+	MCAsmInfoELF.cpp \
 	MCAsmStreamer.cpp \
 	MCAssembler.cpp \
 	MCAtom.cpp \
@@ -23,6 +24,8 @@ SRCS+=	ELFObjectWriter.cpp \
 	MCELFObjectTargetWriter.cpp \
 	MCELFStreamer.cpp \
 	MCExpr.cpp \
+	MCExternalSymbolizer.cpp \
+	MCFunction.cpp \
 	MCInst.cpp \
 	MCInstrAnalysis.cpp \
 	MCInstPrinter.cpp \
@@ -30,20 +33,24 @@ SRCS+=	ELFObjectWriter.cpp \
 	MCModule.cpp \
 	MCMachOStreamer.cpp \
 	MCMachObjectTargetWriter.cpp \
+	MCModuleYAML.cpp \
 	MCNullStreamer.cpp \
+	MCObjectDisassembler.cpp \
 	MCObjectFileInfo.cpp \
 	MCObjectStreamer.cpp \
+	MCObjectSymbolizer.cpp \
 	MCObjectWriter.cpp \
 	MCPureStreamer.cpp \
 	MCRegisterInfo.cpp \
+	MCRelocationInfo.cpp \
 	MCSection.cpp \
 	MCSectionCOFF.cpp \
 	MCSectionELF.cpp \
 	MCSectionMachO.cpp \
 	MCStreamer.cpp \
 	MCSubtargetInfo.cpp \
+	MCSymbolizer.cpp \
 	MCSymbol.cpp \
-	MCTargetAsmLexer.cpp \
 	MCValue.cpp \
 	MCWin64EH.cpp \
 	MachObjectWriter.cpp \

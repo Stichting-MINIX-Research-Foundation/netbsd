@@ -1,4 +1,4 @@
-/*	$NetBSD: openpam_dynamic.c,v 1.4 2012/08/15 06:16:41 christos Exp $	*/
+/*	$NetBSD: openpam_dynamic.c,v 1.6 2013/04/06 02:20:31 christos Exp $	*/
 
 /*-
  * Copyright (c) 2002-2003 Networks Associates Technology, Inc.
@@ -34,7 +34,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * Id: openpam_dynamic.c 502 2011-12-18 13:59:22Z des
+ * Id: openpam_dynamic.c 607 2012-04-20 11:09:37Z des 
  */
 
 #ifdef HAVE_CONFIG_H
@@ -42,6 +42,7 @@
 #endif
 
 #include <dlfcn.h>
+#include <fcntl.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -62,15 +63,50 @@
  * Perform sanity checks and attempt to load a module
  */
 
+#ifdef HAVE_FDLOPEN
+static void *
+try_dlopen(const char *modfn, int *error)
+{
+	void *dlh;
+	int fd;
+
+	if ((fd = open(modfn, O_RDONLY)) < 0)
+		return (NULL);
+	if (OPENPAM_FEATURE(VERIFY_MODULE_FILE) &&
+	    openpam_check_desc_owner_perms(modfn, fd) != 0) {
+		close(fd);
+		return (NULL);
+	}
+	if ((dlh = fdlopen(fd, RTLD_NOW)) == NULL) {
+		openpam_log(PAM_LOG_ERROR, "%s: %s", modfn, dlerror());
+		close(fd);
+		errno = 0;
+		return (NULL);
+	}
+	close(fd);
+	return (dlh);
+}
+#else
 static void *
 try_dlopen(const char *modfn)
 {
+	int check_module_file;
+	void *dlh;
 
-	if (openpam_check_path_owner_perms(modfn) != 0)
+	openpam_get_feature(OPENPAM_VERIFY_MODULE_FILE,
+	    &check_module_file);
+	if (check_module_file &&
+	    openpam_check_path_owner_perms(modfn) != 0)
 		return (NULL);
-	return (dlopen(modfn, RTLD_NOW));
+	if ((dlh = dlopen(modfn, RTLD_NOW)) == NULL) {
+		openpam_log(PAM_LOG_ERROR, "%s: %s", modfn, dlerror());
+		errno = 0;
+		return (NULL);
+	}
+	return (dlh);
 }
-    
+#endif
+
 /*
  * OpenPAM internal
  *
@@ -82,12 +118,13 @@ openpam_dynamic(const char *path)
 {
 	const pam_module_t *dlmodule;
 	pam_module_t *module;
-	const char *prefix, *epath = path;
+	const char *prefix;
 	char *vpath;
 	void *dlh;
 	int i, serrno;
 
 	dlh = NULL;
+	module = NULL;
 
 	/* Prepend the standard prefix if not an absolute pathname. */
 	if (path[0] != '/')
@@ -98,29 +135,41 @@ openpam_dynamic(const char *path)
 	/* try versioned module first, then unversioned module */
 	if (asprintf(&vpath, "%s/%s.%d", prefix, path, LIB_MAJ) < 0)
 		goto err;
-	epath = vpath;
 	if ((dlh = try_dlopen(vpath)) == NULL && errno == ENOENT) {
 		*strrchr(vpath, '.') = '\0';
 		dlh = try_dlopen(vpath);
 	}
-	serrno = errno;
-	FREE(vpath);
-	errno = serrno;
 	if (dlh == NULL)
 		goto err;
-	if ((module = calloc((size_t)1, sizeof *module)) == NULL)
+	if ((module = calloc(1, sizeof *module)) == NULL)
 		goto buf_err;
 	if ((module->path = strdup(path)) == NULL)
 		goto buf_err;
 	module->dlh = dlh;
 	dlmodule = dlsym(dlh, "_pam_module");
 	for (i = 0; i < PAM_NUM_PRIMITIVES; ++i) {
-		module->func[i] = dlmodule ? dlmodule->func[i] :
-		    (pam_func_t)dlsym(dlh, pam_sm_func_name[i]);
-		if (module->func[i] == NULL)
-			openpam_log(PAM_LOG_DEBUG, "%s: %s(): %s",
-			    path, pam_sm_func_name[i], dlerror());
+		if (dlmodule) {
+			module->func[i] = dlmodule->func[i];
+		} else {
+			module->func[i] =
+			    (pam_func_t)dlsym(dlh, pam_sm_func_name[i]);
+			/*
+			 * This openpam_log() call is a major source of
+			 * log spam, and the cases that matter are caught
+			 * and logged in openpam_dispatch().  This would
+			 * be less problematic if dlerror() returned an
+			 * error code so we could log an error only when
+			 * dlsym() failed for a reason other than "no such
+			 * symbol".
+			 */
+#if 0
+			if (module->func[i] == NULL)
+				openpam_log(PAM_LOG_DEBUG, "%s: %s(): %s",
+				    path, pam_sm_func_name[i], dlerror());
+#endif
+		}
 	}
+	FREE(vpath);
 	return (module);
 buf_err:
 	serrno = errno;
@@ -129,8 +178,11 @@ buf_err:
 	FREE(module);
 	errno = serrno;
 err:
-	openpam_log(errno == ENOENT ? PAM_LOG_DEBUG : PAM_LOG_ERROR, "%s: %s",
-	    epath, strerror(errno));
+	serrno = errno;
+	if (errno != 0)
+		openpam_log(PAM_LOG_ERROR, "%s: %m", vpath);
+	FREE(vpath);
+	errno = serrno;
 	return (NULL);
 }
 

@@ -1,4 +1,4 @@
-#	$NetBSD: files.i386,v 1.367 2012/10/03 18:58:31 dsl Exp $
+#	$NetBSD: files.i386,v 1.371 2013/07/17 21:26:28 soren Exp $
 #
 # new style config file for i386 architecture
 #
@@ -91,6 +91,12 @@ file	crypto/des/arch/i386/des_cbc.S		des
 
 file	crypto/blowfish/arch/i386/bf_enc.S	blowfish
 file	crypto/blowfish/arch/i386/bf_cbc.S	blowfish & !i386_cpu
+
+#
+# Stack-less Just-In-Time compiler
+#
+
+include	"external/bsd/sljit/conf/files.sljit"
 
 #
 # Machine-independent SCSI drivers
@@ -239,12 +245,10 @@ file	arch/i386/pci/p64h2apic.c	p64h2apic
 
 include	"dev/isa/files.isa"
 
-# PC clock
-file	arch/x86/isa/clock.c		isa
-file	arch/x86/isa/rtc.c		isa
-
-# TSC support
-file	arch/x86/x86/tsc.c
+# Protech PS3100 cash drawer
+device	ptcd: gpiobus
+attach	ptcd at isa
+file	dev/isa/ptcd.c			ptcd
 
 # Numeric Processing Extension; Math Co-processor
 device	npx
@@ -451,7 +455,7 @@ obsolete	defflag	opt_vesafb.h	VESAFB_PM
 
 # AMD Geode LX Security Block
 device	glxsb: opencrypto
-attach	glxsb at pci    
+attach	glxsb at pci
 file	arch/i386/pci/glxsb.c		glxsb
 
 include "arch/i386/conf/majors.i386"

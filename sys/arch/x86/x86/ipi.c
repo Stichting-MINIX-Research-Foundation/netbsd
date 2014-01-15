@@ -1,4 +1,4 @@
-/*	$NetBSD: ipi.c,v 1.18 2010/06/22 18:29:03 rmind Exp $	*/
+/*	$NetBSD: ipi.c,v 1.20 2013/12/01 01:05:16 christos Exp $	*/
 
 /*-
  * Copyright (c) 2000, 2008, 2009 The NetBSD Foundation, Inc.
@@ -32,7 +32,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ipi.c,v 1.18 2010/06/22 18:29:03 rmind Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ipi.c,v 1.20 2013/12/01 01:05:16 christos Exp $");
 
 #include "opt_mtrr.h"
 

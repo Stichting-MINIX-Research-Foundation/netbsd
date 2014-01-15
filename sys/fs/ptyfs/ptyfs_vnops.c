@@ -1,4 +1,4 @@
-/*	$NetBSD: ptyfs_vnops.c,v 1.39 2012/03/13 18:40:49 elad Exp $	*/
+/*	$NetBSD: ptyfs_vnops.c,v 1.42 2013/11/05 00:40:33 christos Exp $	*/
 
 /*
  * Copyright (c) 1993, 1995
@@ -76,7 +76,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ptyfs_vnops.c,v 1.39 2012/03/13 18:40:49 elad Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ptyfs_vnops.c,v 1.42 2013/11/05 00:40:33 christos Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -148,7 +148,7 @@ int	ptyfs_reclaim	(void *);
 int	ptyfs_print	(void *);
 int	ptyfs_pathconf	(void *);
 #define	ptyfs_islocked	genfs_islocked
-#define	ptyfs_advlock	genfs_einval
+int	ptyfs_advlock	(void *);
 #define	ptyfs_bwrite	genfs_eopnotsupp
 #define ptyfs_putpages	genfs_null_putpages
 
@@ -283,6 +283,26 @@ ptyfs_print(void *v)
 }
 
 /*
+ * support advisory locking on pty nodes
+ */
+int
+ptyfs_advlock(void *v)
+{
+	struct vop_print_args /* {
+		struct vnode *a_vp;
+	} */ *ap = v;
+	struct ptyfsnode *ptyfs = VTOPTYFS(ap->a_vp);
+
+	switch (ptyfs->ptyfs_type) {
+	case PTYFSpts:
+	case PTYFSptc:
+		return spec_advlock(v);
+	default:
+		return EOPNOTSUPP;
+	}
+}
+
+/*
  * Invent attributes for ptyfsnode (vp) and store
  * them in (vap).
  * Directories lengths are returned as zero since
@@ -313,7 +333,6 @@ ptyfs_getattr(void *v)
 	vap->va_fileid = ptyfs->ptyfs_fileno;
 	vap->va_gen = 0;
 	vap->va_flags = 0;
-	vap->va_nlink = 1;
 	vap->va_blocksize = PAGE_SIZE;
 
 	vap->va_atime = ptyfs->ptyfs_atime;
@@ -332,12 +351,13 @@ ptyfs_getattr(void *v)
 			return ENOENT;
 		vap->va_bytes = vap->va_size = 0;
 		vap->va_rdev = ap->a_vp->v_rdev;
+		vap->va_nlink = 1;
 		break;
 	case PTYFSroot:
 		vap->va_rdev = 0;
 		vap->va_bytes = vap->va_size = DEV_BSIZE;
+		vap->va_nlink = 2;
 		break;
-
 	default:
 		return EOPNOTSUPP;
 	}
@@ -405,7 +425,7 @@ ptyfs_setattr(void *v)
 			ptyfs->ptyfs_flags &= SF_SETTABLE;
 			ptyfs->ptyfs_flags |= (vap->va_flags & UF_SETTABLE);
 		}
-		ptyfs->ptyfs_flag |= PTYFS_CHANGE;
+		ptyfs->ptyfs_status |= PTYFS_CHANGE;
 	}
 
 	/*
@@ -434,15 +454,15 @@ ptyfs_setattr(void *v)
 			return (error);
 		if (vap->va_atime.tv_sec != VNOVAL)
 			if (!(vp->v_mount->mnt_flag & MNT_NOATIME))
-				ptyfs->ptyfs_flag |= PTYFS_ACCESS;
+				ptyfs->ptyfs_status |= PTYFS_ACCESS;
 		if (vap->va_mtime.tv_sec != VNOVAL) {
-			ptyfs->ptyfs_flag |= PTYFS_CHANGE | PTYFS_MODIFY;
+			ptyfs->ptyfs_status |= PTYFS_CHANGE | PTYFS_MODIFY;
 			if (vp->v_mount->mnt_flag & MNT_RELATIME)
-				ptyfs->ptyfs_flag |= PTYFS_ACCESS;
+				ptyfs->ptyfs_status |= PTYFS_ACCESS;
 		}
 		if (vap->va_birthtime.tv_sec != VNOVAL)
 			ptyfs->ptyfs_birthtime = vap->va_birthtime;
-		ptyfs->ptyfs_flag |= PTYFS_CHANGE;
+		ptyfs->ptyfs_status |= PTYFS_CHANGE;
 		error = ptyfs_update(vp, &vap->va_atime, &vap->va_mtime, 0);
 		if (error)
 			return error;
@@ -536,7 +556,7 @@ ptyfs_access(void *v)
 		return error;
 
 	return kauth_authorize_vnode(ap->a_cred,
-	    kauth_access_action(ap->a_mode, ap->a_vp->v_type, va.va_mode),
+	    KAUTH_ACCESS_ACTION(ap->a_mode, ap->a_vp->v_type, va.va_mode),
 	    ap->a_vp, NULL, genfs_can_access(va.va_type, va.va_mode, va.va_uid,
 	    va.va_gid, ap->a_mode, ap->a_cred));
 
@@ -786,7 +806,7 @@ ptyfs_read(void *v)
 	if (vp->v_type == VDIR)
 		return EISDIR;
 
-	ptyfs->ptyfs_flag |= PTYFS_ACCESS;
+	ptyfs->ptyfs_status |= PTYFS_ACCESS;
 	/* hardclock() resolution is good enough for ptyfs */
 	getnanotime(&ts);
 	(void)ptyfs_update(vp, &ts, &ts, 0);
@@ -817,7 +837,7 @@ ptyfs_write(void *v)
 	struct ptyfsnode *ptyfs = VTOPTYFS(vp);
 	int error;
 
-	ptyfs->ptyfs_flag |= PTYFS_MODIFY;
+	ptyfs->ptyfs_status |= PTYFS_MODIFY;
 	getnanotime(&ts);
 	(void)ptyfs_update(vp, &ts, &ts, 0);
 
@@ -913,25 +933,25 @@ ptyfs_itimes(struct ptyfsnode *ptyfs, const struct timespec *acc,
 {
 	struct timespec now;
  
-	KASSERT(ptyfs->ptyfs_flag & (PTYFS_ACCESS|PTYFS_CHANGE|PTYFS_MODIFY));
+	KASSERT(ptyfs->ptyfs_status & (PTYFS_ACCESS|PTYFS_CHANGE|PTYFS_MODIFY));
 
 	getnanotime(&now);
-	if (ptyfs->ptyfs_flag & PTYFS_ACCESS) {
+	if (ptyfs->ptyfs_status & PTYFS_ACCESS) {
 		if (acc == NULL)
 			acc = &now;
 		ptyfs->ptyfs_atime = *acc;
 	}
-	if (ptyfs->ptyfs_flag & PTYFS_MODIFY) {
+	if (ptyfs->ptyfs_status & PTYFS_MODIFY) {
 		if (mod == NULL)
 			mod = &now;
 		ptyfs->ptyfs_mtime = *mod;
 	}
-	if (ptyfs->ptyfs_flag & PTYFS_CHANGE) {
+	if (ptyfs->ptyfs_status & PTYFS_CHANGE) {
 		if (cre == NULL)
 			cre = &now;
 		ptyfs->ptyfs_ctime = *cre;
 	}
-	ptyfs->ptyfs_flag &= ~(PTYFS_ACCESS|PTYFS_CHANGE|PTYFS_MODIFY);
+	ptyfs->ptyfs_status &= ~(PTYFS_ACCESS|PTYFS_CHANGE|PTYFS_MODIFY);
 }
 
 /*

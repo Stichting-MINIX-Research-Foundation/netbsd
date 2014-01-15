@@ -1,4 +1,4 @@
-/*	$NetBSD: mvsata_mv.c,v 1.4 2012/07/18 09:18:30 kiyohara Exp $	*/
+/*	$NetBSD: mvsata_mv.c,v 1.6 2013/09/28 05:37:31 kiyohara Exp $	*/
 /*
  * Copyright (c) 2008 KIYOHARA Takashi
  * All rights reserved.
@@ -26,7 +26,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: mvsata_mv.c,v 1.4 2012/07/18 09:18:30 kiyohara Exp $");
+__KERNEL_RCSID(0, "$NetBSD: mvsata_mv.c,v 1.6 2013/09/28 05:37:31 kiyohara Exp $");
 
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -98,6 +98,13 @@ struct mvsata_product mvsata_products[] = {
 	/* Discovery Innovation */
 	{ PCI_VENDOR_MARVELL, PCI_PRODUCT_MARVELL_MV78100, 1, 2, gen2e, 0 },
 	{ PCI_VENDOR_MARVELL, PCI_PRODUCT_MARVELL_MV78200, 1, 2, gen2e, 0 },
+
+	/* Armada XP */
+	{ PCI_VENDOR_MARVELL, PCI_PRODUCT_MARVELL_MV78130, 1, 2, gen2e, 0 },
+	{ PCI_VENDOR_MARVELL, PCI_PRODUCT_MARVELL_MV78160, 1, 2, gen2e, 0 },
+	{ PCI_VENDOR_MARVELL, PCI_PRODUCT_MARVELL_MV78230, 1, 2, gen2e, 0 },
+	{ PCI_VENDOR_MARVELL, PCI_PRODUCT_MARVELL_MV78260, 1, 2, gen2e, 0 },
+	{ PCI_VENDOR_MARVELL, PCI_PRODUCT_MARVELL_MV78460, 1, 2, gen2e, 0 },
 };
 
 

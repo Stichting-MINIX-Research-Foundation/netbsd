@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.16 2012/09/23 17:22:25 joerg Exp $
+#	$NetBSD: Makefile,v 1.22 2013/11/11 23:51:36 joerg Exp $
 
 LIB=	clangStaticAnalyzerCheckers
 
@@ -6,10 +6,10 @@ LIB=	clangStaticAnalyzerCheckers
 
 .PATH: ${CLANG_SRCDIR}/lib/StaticAnalyzer/Checkers
 
-SRCS+=	AnalyzerStatsChecker.cpp \
+SRCS+=	AllocationDiagnostics.cpp \
+	AnalyzerStatsChecker.cpp \
 	ArrayBoundChecker.cpp \
 	ArrayBoundCheckerV2.cpp \
-	AttrNonNullChecker.cpp \
 	BasicObjCFoundationChecks.cpp \
 	BoolAssignmentChecker.cpp \
 	BuiltinFunctionChecker.cpp \
@@ -25,16 +25,18 @@ SRCS+=	AnalyzerStatsChecker.cpp \
 	CheckSizeofPointer.cpp \
 	CheckerDocumentation.cpp \
 	ChrootChecker.cpp \
-	CommonBugCategories.cpp \
 	DeadStoresChecker.cpp \
 	DebugCheckers.cpp \
 	DereferenceChecker.cpp \
+	DirectIvarAssignment.cpp \
 	DivZeroChecker.cpp \
 	DynamicTypePropagation.cpp \
 	ExprInspectionChecker.cpp \
 	FixedAddressChecker.cpp \
 	GenericTaintChecker.cpp \
 	IdempotentOperationChecker.cpp \
+	IdenticalExprChecker.cpp \
+	IvarInvalidationChecker.cpp \
 	LLVMConventionsChecker.cpp \
 	MacOSKeychainAPIChecker.cpp \
 	MacOSXAPIChecker.cpp \
@@ -44,10 +46,11 @@ SRCS+=	AnalyzerStatsChecker.cpp \
 	NSAutoreleasePoolChecker.cpp \
 	NSErrorChecker.cpp \
 	NoReturnFunctionChecker.cpp \
-	OSAtomicChecker.cpp \
+	NonNullParamChecker.cpp \
 	ObjCAtSyncChecker.cpp \
 	ObjCContainersASTChecker.cpp \
 	ObjCContainersChecker.cpp \
+	ObjCMissingSuperCallChecker.cpp \
 	ObjCSelfInitChecker.cpp \
 	ObjCUnusedIVarsChecker.cpp \
 	PointerArithChecker.cpp \
@@ -56,6 +59,7 @@ SRCS+=	AnalyzerStatsChecker.cpp \
 	RetainCountChecker.cpp \
 	ReturnPointerRangeChecker.cpp \
 	ReturnUndefChecker.cpp \
+	SimpleStreamChecker.cpp \
 	StackAddrEscapeChecker.cpp \
 	StreamChecker.cpp \
 	TaintTesterChecker.cpp \

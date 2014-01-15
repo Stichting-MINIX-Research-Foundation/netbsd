@@ -1,4 +1,4 @@
-/*	$NetBSD: dump.c,v 1.9 2011/12/10 19:14:29 roy Exp $	*/
+/*	$NetBSD: dump.c,v 1.11 2013/07/09 09:34:59 roy Exp $	*/
 /*	$KAME: dump.c,v 1.34 2004/06/14 05:35:59 itojun Exp $	*/
 
 /*
@@ -35,6 +35,9 @@
 
 #include <net/if.h>
 #include <net/if_dl.h>
+#ifdef __FreeBSD__
+#include <net/if_var.h>
+#endif
 
 #include <netinet/in.h>
 
@@ -103,8 +106,7 @@ if_dump(void)
 		fprintf(fp, "%s:\n", rai->ifname);
 
 		fprintf(fp, "  Status: %s\n",
-			(iflist[rai->ifindex]->ifm_flags & IFF_UP) ? "UP" :
-			"DOWN");
+			(rai->ifflags & IFF_UP) ? "UP" : "DOWN");
 
 		/* control information */
 		if (rai->lastsent.tv_sec) {
@@ -267,7 +269,7 @@ rtadvd_dump_file(const char *dumpfile)
 	    dumpfile);
 
 	if ((fp = fopen(dumpfile, "w")) == NULL) {
-		syslog(LOG_WARNING, "<%s> open a dump file(%s)",
+		syslog(LOG_WARNING, "<%s> open a dump file(%s): %m",
 		       __func__, dumpfile);
 		return;
 	}

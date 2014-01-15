@@ -1,4 +1,4 @@
-/*	$NetBSD: smtpd.h,v 1.1.1.3 2011/03/02 19:32:34 tron Exp $	*/
+/*	$NetBSD: smtpd.h,v 1.1.1.5 2013/09/25 19:06:35 tron Exp $	*/
 
 /*++
 /* NAME
@@ -81,7 +81,9 @@ typedef struct {
     char   *namaddr;			/* name[address]:port */
     char   *rfc_addr;			/* address for RFC 2821 */
     int     addr_family;		/* address family */
+    char   *dest_addr;			/* for Dovecot AUTH */
     struct sockaddr_storage sockaddr;	/* binary client endpoint */
+    SOCKADDR_SIZE sockaddr_len;		/* binary client endpoint */
     int     name_status;		/* 2=ok 4=soft 5=hard 6=forged */
     int     reverse_name_status;	/* 2=ok 4=soft 5=hard */
     int     conn_count;			/* connections from this client */
@@ -179,11 +181,19 @@ typedef struct {
     const char **milter_argv;		/* SMTP command vector */
     ssize_t milter_argc;		/* SMTP command vector */
     const char *milter_reject_text;	/* input to call-back from Milter */
+
+    /*
+     * EHLO temporary space.
+     */
+    VSTRING *ehlo_buf;
+    ARGV   *ehlo_argv;
 } SMTPD_STATE;
 
 #define SMTPD_FLAG_HANGUP	   (1<<0)	/* 421/521 disconnect */
 #define SMTPD_FLAG_ILL_PIPELINING  (1<<1)	/* inappropriate pipelining */
+#define SMTPD_FLAG_AUTH_USED	   (1<<2)	/* don't reuse SASL state */
 
+ /* Security: don't reset SMTPD_FLAG_AUTH_USED. */
 #define SMTPD_MASK_MAIL_KEEP		~0	/* keep all after MAIL reset */
 
 #define SMTPD_STATE_XFORWARD_INIT  (1<<0)	/* xforward preset done */
@@ -267,6 +277,7 @@ extern void smtpd_state_reset(SMTPD_STATE *);
 #define CLIENT_PROTO_UNKNOWN	CLIENT_ATTR_UNKNOWN
 #define CLIENT_IDENT_UNKNOWN	0
 #define CLIENT_DOMAIN_UNKNOWN	0
+#define CLIENT_LOGIN_UNKNOWN	0
 
 #define IS_AVAIL_CLIENT_ATTR(v)	((v) && strcmp((v), CLIENT_ATTR_UNKNOWN))
 
@@ -283,6 +294,9 @@ extern void smtpd_state_reset(SMTPD_STATE *);
   * If running in stand-alone mode, do not try to talk to Postfix daemons but
   * write to queue file instead.
   */
+#define SMTPD_STAND_ALONE_STREAM(stream) \
+	(stream == VSTREAM_IN && getuid() != var_owner_uid)
+
 #define SMTPD_STAND_ALONE(state) \
 	(state->client == VSTREAM_IN && getuid() != var_owner_uid)
 
@@ -294,10 +308,16 @@ extern void smtpd_state_reset(SMTPD_STATE *);
 	(SMTPD_STAND_ALONE(state) == 0 && *var_smtpd_proxy_filt)
 
  /*
+  * Are we in a MAIL transaction?
+  */
+#define SMTPD_IN_MAIL_TRANSACTION(state) ((state)->sender != 0)
+
+ /*
   * SMTPD peer information lookup.
   */
 extern void smtpd_peer_init(SMTPD_STATE *state);
 extern void smtpd_peer_reset(SMTPD_STATE *state);
+extern int smtpd_peer_from_haproxy(SMTPD_STATE *state);
 
 #define	SMTPD_PEER_CODE_OK	2
 #define SMTPD_PEER_CODE_TEMP	4

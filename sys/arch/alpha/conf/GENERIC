@@ -1,4 +1,4 @@
-# $NetBSD: GENERIC,v 1.345 2012/08/17 20:11:37 abs Exp $
+# $NetBSD: GENERIC,v 1.354 2013/10/15 19:27:48 jdc Exp $
 #
 # This machine description file is used to generate the default NetBSD
 # kernel.
@@ -19,7 +19,7 @@ include 	"arch/alpha/conf/std.alpha"
 
 options 	INCLUDE_CONFIG_FILE	# embed config file in kernel binary
 
-ident		"GENERIC-$Revision: 1.345 $"
+ident		"GENERIC-$Revision: 1.354 $"
 
 maxusers 32
 
@@ -104,18 +104,13 @@ options 	NFSSERVER	# Sun NFS-compatible file system server
 options 	INET		# IP + ICMP + TCP + UDP
 options 	INET6		# IPV6
 #options 	IPSEC		# IP security
-#options 	IPSEC_ESP	# IP security (encryption part; define w/IPSEC)
-#options 	IPSEC_NAT_T	# IPsec NAT traversal (NAT-T)
 #options 	IPSEC_DEBUG	# debug for IP security
 #options 	MROUTING	# IP multicast routing
 #options 	PIM		# Protocol Independent Multicast
-#options 	ISO,TPIP	# OSI
-#options 	EON		# OSI tunneling over IP
 options 	NETATALK	# AppleTalk networking protocols
 options 	PPP_BSDCOMP	# BSD-Compress compression support for PPP
 options 	PPP_DEFLATE	# Deflate compression support for PPP
 options 	PPP_FILTER	# Active filter support for PPP (requires bpf)
-options 	PFIL_HOOKS	# pfil(9) packet filter hooks
 options 	IPFILTER_LOG	# ipmon(8) log support
 options 	IPFILTER_LOOKUP	# ippool(8) support
 options 	IPFILTER_COMPAT # Compat for IP-Filter
@@ -151,6 +146,7 @@ options 	COMPAT_20
 options 	COMPAT_30	# NetBSD 3.0 compatibility.
 options 	COMPAT_40	# NetBSD 4.0 compatibility.
 options 	COMPAT_50	# NetBSD 5.0 compatibility.
+options 	COMPAT_60	# NetBSD 6.0 compatibility.
 #options 	TCP_COMPAT_42	# 4.2BSD TCP/IP bug compat. Not recommended.
 # OSF/1 binary compatibility
 options 	COMPAT_OSF1
@@ -316,6 +312,7 @@ adw*	at	pci? dev ? function ?		# AdvanSys Wide SCSI
 #options 	SCSI_ADW_TAGQ_DISABLE		# 	disable Tag Queuing
 ahc*	at	pci? dev ? function ?		# Adaptec [23]94x, aic78x0 SCSI
 autri*	at	pci? dev ? function ?		# Trident 4DWAVE based AC'97 Audio
+bge*	at	pci? dev ? function ?		# Broadcom 570x gigabit Ethernet
 bha*	at	pci? dev ? function ?		# BusLogic 9xx SCSI (untested)
 cac*	at	pci? dev ? function ?		# Compaq array controller (untested)
 cmpci*	at	pci? dev ? function ?		# C-Media CMI8338/8738 Audio
@@ -381,11 +378,13 @@ yds*	at	pci? dev ? function ?		# Yamaha DS-1 PCI Audio
 
 opl*	at	cmpci? flags 1
 opl*	at	eso?
+opl*	at	sb?
 #opl*	at	sv?
 opl*	at	yds?
 
 mpu*	at	cmpci?
 mpu*	at	eso?
+mpu*	at	sb?
 mpu*	at	yds?
 
 # I2O devices
@@ -539,6 +538,16 @@ fd*	at	fdc? drive ?
 ld*	at	cac? unit ?
 ld*	at	mlx? unit ?
 
+# Acer Labs M7101 SMBus controller
+alipm* 	at pci? dev ? function ?
+iic* 	at alipm?
+
+# AlphaServer DS20L enviromental monitoring
+#lmenv* 	at iic? addr 0x2c
+#lmenv* 	at iic? addr 0x2d
+#lmenv* 	at iic? addr 0x2e
+#lmenv* 	at iic? addr 0x2f
+
 # PCMCIA USB controllers
 slhci*	at pcmcia? function ?			# ScanLogic SL811HS
 
@@ -676,6 +685,7 @@ btsco* at bthub?
 audio*	at audiobus?
 midi*	at midibus?
 midi*	at pcppi?
+midi*	at sb?
 
 # Workstation Console attachments
 wsdisplay*	at	cfb?
@@ -702,9 +712,9 @@ pseudo-device	swcrypto		# software crypto implementation
 
 pseudo-device	bpfilter
 #pseudo-device	carp			# Common Address Redundancy Protocol
-pseudo-device	ccd		4
-pseudo-device	cgd		4	# cryptographic disk devices
-pseudo-device	raid		8	# RAIDframe disk driver
+pseudo-device	ccd		
+pseudo-device	cgd			# cryptographic disk devices
+pseudo-device	raid			# RAIDframe disk driver
 options 	RAID_AUTOCONFIG		# auto-configuration of RAID components
 # Options to enable various other RAIDframe RAID types.
 #options 	RF_INCLUDE_EVENODD=1
@@ -715,8 +725,8 @@ options 	RAID_AUTOCONFIG		# auto-configuration of RAID components
 #options 	RF_INCLUDE_PARITY_DECLUSTERING=1
 #options 	RF_INCLUDE_PARITY_DECLUSTERING_DS=1
 pseudo-device	fss			# file system snapshot device
-pseudo-device	ipfilter	1
-pseudo-device	loop		1
+pseudo-device	ipfilter
+pseudo-device	loop
 pseudo-device	md		
 pseudo-device	ppp		
 pseudo-device	pppoe			# PPP over Ethernet (RFC 2516)
@@ -735,10 +745,10 @@ pseudo-device	vlan			# IEEE 802.1q encapsulation
 pseudo-device	bridge			# simple inter-network bridging
 #options 	BRIDGE_IPF		# bridge uses IP/IPv6 pfil hooks too
 pseudo-device	agr			# IEEE 802.3ad link aggregation
-pseudo-device	sequencer	1	# MIDI sequencer
+pseudo-device	sequencer		# MIDI sequencer
 #options 	RND_COM			# use "com" randomness too
 # a pseudo device needed for Coda	# also needs CODA (above)
-pseudo-device	vcoda		4	# coda minicache <-> venus comm.
+pseudo-device	vcoda			# coda minicache <-> venus comm.
 # a pseudo device needed for SMBFS
 pseudo-device	nsmb			# experimental - SMB requester
 pseudo-device	clockctl		# user control of clock subsystem
@@ -757,7 +767,7 @@ pseudo-device	putter			# for puffs and pud
 # Veriexec
 #
 # a pseudo device needed for veriexec
-#pseudo-device	veriexec		1
+#pseudo-device	veriexec
 #
 # Uncomment the fingerprint methods below that are desired. Note that
 # removing fingerprint methods will have almost no impact on the kernel

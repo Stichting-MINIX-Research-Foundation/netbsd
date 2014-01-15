@@ -1,4 +1,4 @@
-/*	$NetBSD: mail_trigger.c,v 1.1.1.1 2009/06/23 10:08:47 tron Exp $	*/
+/*	$NetBSD: mail_trigger.c,v 1.1.1.3 2013/09/25 19:06:31 tron Exp $	*/
 
 /*++
 /* NAME
@@ -15,7 +15,9 @@
 /*	ssize_t	length;
 /* DESCRIPTION
 /*	mail_trigger() wakes up the specified mail subsystem, by
-/*	sending it the specified request.
+/*	sending it the specified request. In the case of non-FIFO
+/*	server endpoints, a short-running program should invoke
+/*	event_drain() to ensure proper request delivery.
 /*
 /*	Arguments:
 /* .IP class
@@ -60,6 +62,7 @@
 #include <mymalloc.h>
 #include <iostuff.h>
 #include <trigger.h>
+#include <warn_stat.h>
 
 /* Global library. */
 

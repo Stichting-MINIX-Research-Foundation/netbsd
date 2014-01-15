@@ -1,4 +1,4 @@
-/* $NetBSD: if_tr_mca.c,v 1.21 2009/05/12 14:31:00 cegger Exp $ */
+/* $NetBSD: if_tr_mca.c,v 1.23 2013/11/08 03:12:17 christos Exp $ */
 
 /*_
  * Copyright (c) 2000 The NetBSD Foundation, Inc.
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_tr_mca.c,v 1.21 2009/05/12 14:31:00 cegger Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_tr_mca.c,v 1.23 2013/11/08 03:12:17 christos Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -64,7 +64,7 @@ __KERNEL_RCSID(0, "$NetBSD: if_tr_mca.c,v 1.21 2009/05/12 14:31:00 cegger Exp $"
 int	tr_mca_probe(device_t, cfdata_t, void *);
 void	tr_mca_attach(device_t, device_t, void *);
 
-CFATTACH_DECL(tr_mca, sizeof(struct tr_softc),
+CFATTACH_DECL_NEW(tr_mca, sizeof(struct tr_softc),
     tr_mca_probe, tr_mca_attach, NULL, NULL);
 
 /* supported products */
@@ -117,6 +117,7 @@ tr_mca_attach(device_t parent, device_t self, void *aux)
 	pos3 = mca_conf_read(ma->ma_mc, ma->ma_slot, 3);
 	pos4 = mca_conf_read(ma->ma_mc, ma->ma_slot, 4);
 	pos5 = mca_conf_read(ma->ma_mc, ma->ma_slot, 5);
+	__USE(pos5);
 
 	/*
 	 * POS register 2: (adf pos0)
@@ -169,22 +170,23 @@ tr_mca_attach(device_t parent, device_t self, void *aux)
 
 	/* map the pio registers */
 	if (bus_space_map(ma->ma_iot, iobase, TR_PIOSIZE, 0, &pioh)) {
-		aprint_error_dev(&sc->sc_dev, "unable to map PIO space\n");
+		aprint_error_dev(self, "unable to map PIO space\n");
 		return;
 	}
 
 	/* map the mmio registers */
 	if (bus_space_map(ma->ma_memt, rom_addr, TR_MMIOSIZE, 0, &mmioh)) {
-		aprint_error_dev(&sc->sc_dev, "unable to map MMIO space\n");
+		aprint_error_dev(self, "unable to map MMIO space\n");
 		return;
 	}
 
 	/* map the sram space */
 	if (bus_space_map(ma->ma_memt, sram_addr, sram_size, 0, &sramh)) {
-		aprint_error_dev(&sc->sc_dev, "unable to map SRAM space\n");
+		aprint_error_dev(self, "unable to map SRAM space\n");
 		return;
 	}
 
+	sc->sc_dev = self;
 	sc->sc_piot = ma->ma_iot;
 	sc->sc_pioh = pioh;
 	sc->sc_memt = ma->ma_memt;
@@ -217,7 +219,7 @@ tr_mca_attach(device_t parent, device_t self, void *aux)
 	/* establish interrupt handler */
 	sc->sc_ih = mca_intr_establish(ma->ma_mc, irq, IPL_NET, tr_intr, sc);
 	if (sc->sc_ih == NULL) {
-		aprint_error_dev(&sc->sc_dev, "couldn't establish interrupt handler\n");
+		aprint_error_dev(self, "couldn't establish interrupt handler\n");
 		return;
 	}
 

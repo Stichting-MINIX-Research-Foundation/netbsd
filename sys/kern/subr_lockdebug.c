@@ -1,4 +1,4 @@
-/*	$NetBSD: subr_lockdebug.c,v 1.46 2012/08/04 12:38:20 christos Exp $	*/
+/*	$NetBSD: subr_lockdebug.c,v 1.50 2013/10/12 16:42:27 christos Exp $	*/
 
 /*-
  * Copyright (c) 2006, 2007, 2008 The NetBSD Foundation, Inc.
@@ -34,7 +34,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: subr_lockdebug.c,v 1.46 2012/08/04 12:38:20 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: subr_lockdebug.c,v 1.50 2013/10/12 16:42:27 christos Exp $");
 
 #include "opt_ddb.h"
 
@@ -411,8 +411,7 @@ lockdebug_more(int s)
  *	Process the preamble to a lock acquire.
  */
 void
-lockdebug_wantlock(volatile void *lock, uintptr_t where, bool shared,
-		   bool trylock)
+lockdebug_wantlock(volatile void *lock, uintptr_t where, int shared)
 {
 	struct lwp *l = curlwp;
 	lockdebug_t *ld;
@@ -432,7 +431,7 @@ lockdebug_wantlock(volatile void *lock, uintptr_t where, bool shared,
 	}
 	if ((ld->ld_flags & LD_LOCKED) != 0 || ld->ld_shares != 0) {
 		if ((ld->ld_flags & LD_SLEEPER) != 0) {
-			if (ld->ld_lwp == l && !(shared && trylock))
+			if (ld->ld_lwp == l)
 				recurse = true;
 		} else if (ld->ld_cpu == (uint16_t)cpu_index(curcpu()))
 			recurse = true;
@@ -714,7 +713,8 @@ lockdebug_mem_check(const char *func, void *base, size_t sz)
  *	Dump information about a lock on panic, or for DDB.
  */
 static void
-lockdebug_dump(lockdebug_t *ld, void (*pr)(const char *, ...))
+lockdebug_dump(lockdebug_t *ld, void (*pr)(const char *, ...)
+    __printflike(1, 2))
 {
 	int sleeper = (ld->ld_flags & LD_SLEEPER);
 
@@ -725,7 +725,7 @@ lockdebug_dump(lockdebug_t *ld, void (*pr)(const char *, ...))
 	    (long)ld->ld_initaddr);
 
 	if (ld->ld_lockops->lo_type == LOCKOPS_CV) {
-		(*pr)(" interlock: %#018lx\n", ld->ld_locked);
+		(*pr)(" interlock: %#018lx\n", (long)ld->ld_locked);
 	} else {
 		(*pr)("\n"
 		    "shared holds : %18u exclusive: %18u\n"
@@ -780,7 +780,8 @@ lockdebug_abort1(lockdebug_t *ld, int s, const char *func,
 	splx(s);
 	printf_nolog("\n");
 	if (dopanic)
-		panic("LOCKDEBUG");
+		panic("LOCKDEBUG: %s error: %s: %s", ld->ld_lockops->lo_name,
+		    func, msg);
 }
 
 #endif	/* LOCKDEBUG */

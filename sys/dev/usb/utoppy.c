@@ -1,4 +1,4 @@
-/*	$NetBSD: utoppy.c,v 1.20 2012/06/10 06:15:55 mrg Exp $	*/
+/*	$NetBSD: utoppy.c,v 1.22 2013/08/30 12:59:19 skrll Exp $	*/
 
 /*-
  * Copyright (c) 2006 The NetBSD Foundation, Inc.
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: utoppy.c,v 1.20 2012/06/10 06:15:55 mrg Exp $");
+__KERNEL_RCSID(0, "$NetBSD: utoppy.c,v 1.22 2013/08/30 12:59:19 skrll Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -352,7 +352,7 @@ utoppy_detach(device_t self, int flags)
 	maj = cdevsw_lookup_major(&utoppy_cdevsw);
 
 	/* Nuke the vnodes for any open instances (calls close). */
-	mn = self->dv_unit;
+	mn = device_unit(self);
 	vdevgone(maj, mn, mn, VCHR);
 
 	usbd_add_drv_event(USB_EVENT_DRIVER_DETACH, sc->sc_udev,
@@ -512,47 +512,18 @@ utoppy_dump_packet(const void *b, size_t len)
 }
 #endif
 
-/*
- * Very much like usbd_bulk_transfer(), except don't catch signals
- */
-static void
-utoppy_bulk_transfer_cb(usbd_xfer_handle xfer,
-    usbd_private_handle priv,
-    usbd_status status)
-{
-
-	if (xfer->pipe->device->bus->lock)
-		cv_broadcast(&xfer->cv);
-	else
-		wakeup(xfer);
-}
-
 static usbd_status
 utoppy_bulk_transfer(usbd_xfer_handle xfer, usbd_pipe_handle pipe,
     u_int16_t flags, u_int32_t timeout, void *buf, u_int32_t *size,
     const char *lbl)
 {
 	usbd_status err;
-	int s, error;
 
-	usbd_setup_xfer(xfer, pipe, 0, buf, *size, flags, timeout,
-	    utoppy_bulk_transfer_cb);
-	usbd_lock_pipe(pipe);	/* don't want callback until tsleep() */
-	err = usbd_transfer(xfer);
-	if (err != USBD_IN_PROGRESS) {
-		usbd_unlock_pipe(pipe);
-		return (err);
-	}
-	if (pipe->device->bus->lock)
-		error = cv_wait_sig(&xfer->cv, pipe->device->bus->lock);
-	else
-		error = tsleep((void *)xfer, PZERO, lbl, 0);
-	usbd_unlock_pipe(pipe);
-	if (error) {
-		usbd_abort_pipe(pipe);
-		return (USBD_INTERRUPTED);
-	}
-	usbd_get_xfer_status(xfer, NULL, NULL, size, &err);
+	usbd_setup_xfer(xfer, pipe, 0, buf, *size, flags, timeout, NULL);
+
+	err = usbd_sync_transfer_sig(xfer);
+
+	usbd_get_xfer_status(xfer, NULL, NULL, size, NULL);
 	return (err);
 }
 

@@ -1,4 +1,4 @@
-/*	$NetBSD: tsc.c,v 1.30 2011/08/08 17:00:23 jmcneill Exp $	*/
+/*	$NetBSD: tsc.c,v 1.33 2013/11/15 08:47:55 msaitoh Exp $	*/
 
 /*-
  * Copyright (c) 2008 The NetBSD Foundation, Inc.
@@ -27,7 +27,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: tsc.c,v 1.30 2011/08/08 17:00:23 jmcneill Exp $");
+__KERNEL_RCSID(0, "$NetBSD: tsc.c,v 1.33 2013/11/15 08:47:55 msaitoh Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -51,6 +51,7 @@ u_int	tsc_get_timecount(struct timecounter *);
 uint64_t	tsc_freq; /* exported for sysctl */
 static int64_t	tsc_drift_max = 250;	/* max cycles */
 static int64_t	tsc_drift_observed;
+static bool	tsc_good;
 
 static volatile int64_t	tsc_sync_val;
 static volatile struct cpu_info	*tsc_sync_cpu;
@@ -76,6 +77,8 @@ tsc_tc_init(void)
 	ci = curcpu();
 	safe = false;
 	tsc_freq = ci->ci_data.cpu_cc_freq;
+	tsc_good = (cpu_feature[0] & CPUID_MSR) != 0 &&
+	    (rdmsr(MSR_TSC) != 0 || rdmsr(MSR_TSC) != 0);
 
 	if (cpu_vendor == CPUVENDOR_INTEL) {
 		/*
@@ -92,17 +95,17 @@ tsc_tc_init(void)
 		 * that it's safe on P-II and P-III Xeons due to the
 		 * typical configuration of those systems.
 		 */
-		switch (CPUID2FAMILY(ci->ci_signature)) {
+		switch (CPUID_TO_BASEFAMILY(ci->ci_signature)) {
 		case 0x05:
 			safe = true;
 			break;
 		case 0x06:
-			safe = CPUID2MODEL(ci->ci_signature) == 0x0e ||
-			    CPUID2MODEL(ci->ci_signature) == 0x0f ||
-			    CPUID2MODEL(ci->ci_signature) == 0x0a;
+			safe = CPUID_TO_MODEL(ci->ci_signature) == 0x0e ||
+			    CPUID_TO_MODEL(ci->ci_signature) == 0x0f ||
+			    CPUID_TO_MODEL(ci->ci_signature) == 0x0a;
 			break;
 		case 0x0f:
-			safe = CPUID2MODEL(ci->ci_signature) >= 0x03;
+			safe = CPUID_TO_MODEL(ci->ci_signature) >= 0x03;
 			break;
 		}
 	} else if (cpu_vendor == CPUVENDOR_AMD) {
@@ -115,7 +118,7 @@ tsc_tc_init(void)
 		 * We're only going to follow the simple, reliable
 		 * ones.
 		 */
-		switch (CPUID2FAMILY(ci->ci_signature)) {
+		switch (CPUID_TO_BASEFAMILY(ci->ci_signature)) {
 		case 0x06:
 		case 0x07:
 			/*
@@ -261,7 +264,7 @@ cpu_hascounter(void)
 uint64_t
 cpu_counter_serializing(void)
 {
-	if (cpu_feature[0] & CPUID_MSR)
+	if (tsc_good)
 		return rdmsr(MSR_TSC);
 	else
 		return cpu_counter();

@@ -1,4 +1,4 @@
-#	$NetBSD: makesyscalls.sh,v 1.126 2012/09/20 17:46:21 pooka Exp $
+#	$NetBSD: makesyscalls.sh,v 1.134 2013/10/08 11:47:57 njoly Exp $
 #
 # Copyright (c) 1994, 1996, 2000 Christopher G. Demetriou
 # All rights reserved.
@@ -41,7 +41,7 @@ case $# in
 esac
 
 # the config file sets the following variables:
-#	sysalign	check for alignment of off_t
+#	sysalign	check for alignment of off_t/dev_t/time_t
 #	sysnames	the syscall names file
 #	sysnumhdr	the syscall numbers file
 #	syssw		the syscall switch file
@@ -219,6 +219,9 @@ NR == 1 {
 	printf "#include <sys/cdefs.h>\n__KERNEL_RCSID(0, \"%s\");\n\n", tag > sysnames
 
 	printf " * created from%s\n */\n\n", $0 > rumpcalls
+	printf "#ifdef RUMP_CLIENT\n" > rumpcalls
+	printf "#include <rump/rumpuser_port.h>\n" > rumpcalls
+	printf "#endif /* RUMP_CLIENT */\n\n" > rumpcalls
 	printf "#include <sys/param.h>\n\n" > rumpcalls
 	printf "#ifdef __NetBSD__\n" > rumpcalls
 	printf "#include <sys/cdefs.h>\n__KERNEL_RCSID(0, \"%s\");\n\n", tag > rumpcalls
@@ -236,22 +239,28 @@ NR == 1 {
 	printf "#define rsys_syscall(num, data, dlen, retval)\t\\\n" > rumpcalls
 	printf "    rumpclient_syscall(num, data, dlen, retval)\n" > rumpcalls
 	printf "#define rsys_seterrno(error) errno = error\n" > rumpcalls
-	printf "#define rsys_alias(a,b)\n#else\n" > rumpcalls
+	printf "#define rsys_define(nam)\n" > rumpcalls
+	printf "#else\n" > rumpcalls
 	printf "#include <sys/syscall.h>\n" > rumpcalls
 	printf "#include <sys/syscallargs.h>\n\n" > rumpcalls
 	printf "#include <sys/syscallvar.h>\n\n" > rumpcalls
 	printf "#include <rump/rumpuser.h>\n" > rumpcalls
 	printf "#include \"rump_private.h\"\n\n" > rumpcalls
-	printf "static int\nrsys_syscall" > rumpcalls
-	printf "(int num, void *data, size_t dlen, register_t *retval)" > rumpcalls
-	printf "\n{\n\tstruct sysent *callp = rump_sysent + num;\n" > rumpcalls
-	printf "\tint rv;\n" > rumpcalls
-	printf "\n\tKASSERT(num > 0 && num < SYS_NSYSENT);\n\n" > rumpcalls
-	printf "\trump_schedule();\n" > rumpcalls
-	printf "\trv = sy_call(callp, curlwp, data, retval);\n" > rumpcalls
-	printf "\trump_unschedule();\n\n\treturn rv;\n}\n\n" > rumpcalls
-	printf "#define rsys_seterrno(error) rumpuser_seterrno(error)\n" > rumpcalls
-	printf "#define rsys_alias(a,b) __weak_alias(a,b);\n#endif\n\n" > rumpcalls
+	printf "#define rsys_syscall(num, data, dlen, retval)\t\\\n" > rumpcalls
+	printf "    rump_syscall(num, data, dlen, retval)\n\n" > rumpcalls
+	printf "#define rsys_seterrno(error) rumpuser_seterrno(error)\n" \
+	    > rumpcalls
+	printf "#define rsys_define(nam) \\\n" > rumpcalls
+	printf "\tint nam(struct lwp *, const void *, register_t *);\t\\\n" \
+	    > rumpcalls
+	printf "\t__weak_alias(nam,rump_enosys);\n" > rumpcalls
+	printf "#endif\n\n" > rumpcalls
+
+	printf "#ifdef RUMP_KERNEL_IS_LIBC\n" > rumpcalls
+	printf "#define rsys_aliases(what,where) \\\n" > rumpcalls
+	printf "\t__strong_alias(what,where); \\\n" > rumpcalls
+	printf "\t__strong_alias(_##what,where);\n" > rumpcalls
+	printf "#else\n#define rsys_aliases(a,b)\n#endif\n\n" > rumpcalls
 
 	printf "#if\tBYTE_ORDER == BIG_ENDIAN\n" > rumpcalls
 	printf "#define SPARG(p,k)\t((p)->k.be.datum)\n" > rumpcalls
@@ -262,6 +271,7 @@ NR == 1 {
 	printf "int rump_enosys(void);\n" > rumpcalls
 	printf "int\nrump_enosys()\n{\n\n\treturn ENOSYS;\n}\n" > rumpcalls
 	printf "#endif\n" > rumpcalls
+	printf "\nvoid rumpns_sys_nomodule(void);\n" > rumpcalls
 
 	printf "\n#ifndef RUMP_CLIENT\n" > rumpsysent
 	printf "#define\ts(type)\tsizeof(type)\n" > rumpsysent
@@ -290,10 +300,6 @@ NR == 1 {
 	printf "#ifdef _KERNEL\n" > rumpcallshdr
 	printf "#error Interface not supported inside kernel\n" > rumpcallshdr
 	printf "#endif /* _KERNEL */\n\n" > rumpcallshdr
-	printf "#include <sys/types.h> /* typedefs */\n" > rumpcallshdr
-	printf "#include <sys/select.h> /* typedefs */\n" > rumpcallshdr
-	printf "#include <sys/socket.h> /* typedefs */\n\n" > rumpcallshdr
-	printf "#include <signal.h> /* typedefs */\n\n" > rumpcallshdr
 	printf "#include <rump/rump_syscalls_compat.h>\n\n" > rumpcallshdr
 
 	printf "%s", sysarghdrextra > sysarghdr
@@ -642,7 +648,7 @@ function printproto(wrap) {
 function printrumpsysent(insysent, compatwrap) {
 	if (!insysent) {
 		eno[0] = "rump_enosys"
-		eno[1] = "sys_nomodule"
+		eno[1] = "rumpns_sys_nomodule"
 		flags[0] = "SYCALL_NOSYS"
 		flags[1] = "0"
 		printf("\t{ 0, 0, %s,\n\t    (sy_call_t *)%s }, \t"	\
@@ -661,12 +667,17 @@ function printrumpsysent(insysent, compatwrap) {
 
 	if (compatwrap == "") {
 		if (modular)
-			rfn = "(sy_call_t *)sys_nomodule"
+			rfn = "sys_nomodule"
 		else
-			rfn = "(sy_call_t *)" funcname
+			rfn = funcname
 	} else {
-		rfn = "(sy_call_t *)" compatwrap "_" funcname
+		rfn = compatwrap "_" funcname
 	}
+
+	if (match(rfn, "rump") != 1) {
+		rfn = "rumpns_" rfn
+	}
+	rfn = "(sy_call_t *)" rfn
 
 	printf("0,\n\t    %s },", rfn) > rumpsysent
 	for (i = 0; i < (33 - length(rfn)) / 8; i++)
@@ -862,8 +873,10 @@ function putent(type, compatwrap) {
 		printf("\treturn rv;\n") > rumpcalls
 	}
 	printf("}\n") > rumpcalls
-	printf("rsys_alias(%s%s,rump_enosys)\n", \
+	printf("rsys_define(rumpns_%s%s);\n", \
 	    compatwrap_, funcname) > rumpcalls
+	printf("rsys_aliases(%s%s,rump___sysimpl_%s);\n", \
+	    compatwrap_, funcalias, rumpfname) > rumpcalls
 
 }
 $2 == "STD" || $2 == "NODEF" || $2 == "NOARGS" || $2 == "INDIR" \
@@ -934,6 +947,8 @@ END {
 		printf("\t} else {\n\t\tfd[0] = retval[0];\n") > rumpcalls
 		printf("\t\tfd[1] = retval[1];\n\t}\n") > rumpcalls
 		printf("\treturn error ? -1 : 0;\n}\n") > rumpcalls
+		printf("rsys_define(rumpns_sys_pipe);\n") > rumpcalls
+		printf "rsys_aliases(pipe,rump_sys_pipe);\n" > rumpcalls
 	}
 
 	# print default rump syscall interfaces
@@ -964,7 +979,7 @@ END {
 	printf("};\n") > sysent
 	printf("};\n") > rumpsysent
 	printf("CTASSERT(__arraycount(rump_sysent) == SYS_NSYSENT);\n") > rumpsysent
-	printf("__strong_alias(sysent,rump_sysent);\n") > rumpsysent
+	printf("__strong_alias(rumpns_sysent,rump_sysent);\n") > rumpsysent
 	printf("#endif /* RUMP_CLIENT */\n") > rumpsysent
 	if (haverumpcalls)
 		printf("#endif /* !RUMP_CLIENT */\n") > sysprotos

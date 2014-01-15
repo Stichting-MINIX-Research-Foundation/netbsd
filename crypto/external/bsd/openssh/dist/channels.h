@@ -1,5 +1,5 @@
-/*	$NetBSD: channels.h,v 1.6 2012/05/02 02:41:08 christos Exp $	*/
-/* $OpenBSD: channels.h,v 1.109 2011/09/23 07:45:05 markus Exp $ */
+/*	$NetBSD: channels.h,v 1.8 2013/11/08 19:18:24 christos Exp $	*/
+/* $OpenBSD: channels.h,v 1.113 2013/06/07 15:37:52 dtucker Exp $ */
 
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
@@ -56,7 +56,8 @@
 #define SSH_CHANNEL_ZOMBIE		14	/* Almost dead. */
 #define SSH_CHANNEL_MUX_LISTENER	15	/* Listener for mux conn. */
 #define SSH_CHANNEL_MUX_CLIENT		16	/* Conn. to mux slave */
-#define SSH_CHANNEL_MAX_TYPE		17
+#define SSH_CHANNEL_ABANDONED		17	/* Abandoned session, eg mux */
+#define SSH_CHANNEL_MAX_TYPE		18
 
 #define CHANNEL_CANCEL_PORT_STATIC	-1
 
@@ -105,11 +106,12 @@ struct Channel {
 	int     isatty;		/* rfd is a tty */
 	int	client_tty;	/* (client) TTY has been requested */
 	int     force_drain;	/* force close on iEOF */
+	time_t	notbefore;	/* Pause IO until deadline (time_t) */
 	int     delayed;	/* post-select handlers for newly created
 				 * channels are delayed until the first call
 				 * to a matching pre-select handler. 
 				 * this way post-select handlers are not
-				 * accidenly called if a FD gets reused */
+				 * accidentally called if a FD gets reused */
 	Buffer  input;		/* data read from socket, to be sent over
 				 * encrypted connection */
 	Buffer  output;		/* data received over encrypted connection for
@@ -243,7 +245,8 @@ void	 channel_input_status_confirm(int, u_int32_t, void *);
 
 /* file descriptor handling (read/write) */
 
-void	 channel_prepare_select(fd_set **, fd_set **, int *, u_int*, int);
+void	 channel_prepare_select(fd_set **, fd_set **, int *, u_int*,
+	     time_t*, int);
 void     channel_after_select(fd_set *, fd_set *);
 int	 channel_output_poll(void);
 
@@ -258,6 +261,7 @@ void	 channel_set_af(int af);
 void     channel_permit_all_opens(void);
 void	 channel_add_permitted_opens(char *, int);
 int	 channel_add_adm_permitted_opens(char *, int);
+void	 channel_disable_adm_local_opens(void);
 void	 channel_update_permitted_opens(int, int);
 void	 channel_clear_permitted_opens(void);
 void	 channel_clear_adm_permitted_opens(void);

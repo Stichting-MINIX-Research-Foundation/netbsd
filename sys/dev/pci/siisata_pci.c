@@ -1,4 +1,4 @@
-/* $NetBSD: siisata_pci.c,v 1.10 2012/01/30 19:41:23 drochner Exp $ */
+/* $NetBSD: siisata_pci.c,v 1.12 2013/08/17 14:39:54 jakllsch Exp $ */
 
 /*
  * Copyright (c) 2006 Manuel Bouyer.
@@ -51,7 +51,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: siisata_pci.c,v 1.10 2012/01/30 19:41:23 drochner Exp $");
+__KERNEL_RCSID(0, "$NetBSD: siisata_pci.c,v 1.12 2013/08/17 14:39:54 jakllsch Exp $");
 
 #include <sys/types.h>
 #include <sys/malloc.h>

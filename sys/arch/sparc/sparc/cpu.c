@@ -1,4 +1,4 @@
-/*	$NetBSD: cpu.c,v 1.238 2012/07/31 20:12:27 martin Exp $ */
+/*	$NetBSD: cpu.c,v 1.240 2013/11/16 23:54:01 mrg Exp $ */
 
 /*
  * Copyright (c) 1996
@@ -52,7 +52,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: cpu.c,v 1.238 2012/07/31 20:12:27 martin Exp $");
+__KERNEL_RCSID(0, "$NetBSD: cpu.c,v 1.240 2013/11/16 23:54:01 mrg Exp $");
 
 #include "opt_multiprocessor.h"
 #include "opt_lockdebug.h"
@@ -245,14 +245,14 @@ cpu_mainbus_attach(device_t parent, device_t self, void *aux)
 		 *	 cache congruency!
 		 */
 		if (rrp[0].oa_space == 0)
-			printf("%s: mailbox in mem space\n", self->dv_xname);
+			printf("%s: mailbox in mem space\n", device_xname(self));
 
 		if (bus_space_map(ma->ma_bustag,
 				BUS_ADDR(rrp[0].oa_space, rrp[0].oa_base),
 				rrp[0].oa_size,
 				BUS_SPACE_MAP_LINEAR,
 				&cpi->mailbox) != 0)
-			panic("%s: can't map CPU mailbox", self->dv_xname);
+			panic("%s: can't map CPU mailbox", device_xname(self));
 		free(rrp, M_DEVBUF);
 	}
 
@@ -275,7 +275,7 @@ cpu_mainbus_attach(device_t parent, device_t self, void *aux)
 			rrp[0].oa_size,
 			BUS_SPACE_MAP_LINEAR,
 			&cpi->ci_mbusport) != 0) {
-		panic("%s: can't map CPU regs", self->dv_xname);
+		panic("%s: can't map CPU regs", device_xname(self));
 	}
 	/* register set #1: MCXX control */
 	if (bus_space_map(ma->ma_bustag,
@@ -283,7 +283,7 @@ cpu_mainbus_attach(device_t parent, device_t self, void *aux)
 			rrp[1].oa_size,
 			BUS_SPACE_MAP_LINEAR,
 			&cpi->ci_mxccregs) != 0) {
-		panic("%s: can't map CPU regs", self->dv_xname);
+		panic("%s: can't map CPU regs", device_xname(self));
 	}
 	/* register sets #3 and #4 are E$ cache data and tags */
 
@@ -1823,7 +1823,8 @@ int
 viking_module_error(void)
 {
 	uint64_t v;
-	int n = 0, fatal = 0;
+	int fatal = 0;
+	CPU_INFO_ITERATOR n;
 	struct cpu_info *cpi;
 
 	/* Report on MXCC error registers in each module */

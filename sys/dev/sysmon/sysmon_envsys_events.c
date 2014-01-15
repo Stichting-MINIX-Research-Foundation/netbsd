@@ -1,4 +1,4 @@
-/* $NetBSD: sysmon_envsys_events.c,v 1.105 2012/09/06 12:21:40 pgoyette Exp $ */
+/* $NetBSD: sysmon_envsys_events.c,v 1.110 2013/09/15 14:40:56 martin Exp $ */
 
 /*-
  * Copyright (c) 2007, 2008 Juan Romero Pardines.
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: sysmon_envsys_events.c,v 1.105 2012/09/06 12:21:40 pgoyette Exp $");
+__KERNEL_RCSID(0, "$NetBSD: sysmon_envsys_events.c,v 1.110 2013/09/15 14:40:56 martin Exp $");
 
 #include <sys/param.h>
 #include <sys/types.h>
@@ -65,6 +65,37 @@ static const struct sme_sensor_event sme_sensor_event[] = {
 	{ -1, 					-1 }
 };
 
+static const struct op_t {
+	const char *name;
+	enum envsys_lims idx;
+	uint32_t prop;
+} limit_ops[] = {
+	/* Value-based limits */
+	{ "critical-max", ENVSYS_LIM_CRITMAX, PROP_CRITMAX },
+	{ "warning-max",  ENVSYS_LIM_WARNMAX, PROP_WARNMAX },
+	{ "warning-min",  ENVSYS_LIM_WARNMIN, PROP_WARNMIN },
+	{ "critical-min", ENVSYS_LIM_CRITMIN, PROP_CRITMIN },
+
+	/* %Capacity-based limits */
+	{ "maximum-capacity",  ENVSYS_LIM_CRITMAX,  PROP_BATTMAX },
+	{ "high-capacity",     ENVSYS_LIM_WARNMAX,  PROP_BATTHIGH },
+	{ "warning-capacity",  ENVSYS_LIM_WARNMIN,  PROP_BATTWARN },
+	{ "critical-capacity", ENVSYS_LIM_CRITMIN,  PROP_BATTCAP },
+	{ NULL, 0, 0 }
+};
+
+static const struct ev_reg_t {
+	uint32_t crittype;
+	uint32_t powertype;
+	const char *name;
+} reg_events[] = {
+	{ ENVSYS_FMONCRITICAL,  PENVSYS_EVENT_CRITICAL,      "critical" },
+	{ ENVSYS_FMONSTCHANGED,	PENVSYS_EVENT_STATE_CHANGED, "state-changed" },
+	{ ENVSYS_FMONLIMITS,    PENVSYS_EVENT_LIMITS,        "hw-range-limits" },
+	{ ENVSYS_FHAS_ENTROPY,  PENVSYS_EVENT_NULL,          "refresh-event" },
+	{ 0, 0, NULL }
+};
+
 static bool sysmon_low_power;
 
 #define SME_EVTIMO	(SME_EVENTS_DEFTIMEOUT * hz)
@@ -91,6 +122,7 @@ sme_event_register(prop_dictionary_t sdict, envsys_data_t *edata,
 	prop_object_t obj;
 	int error = 0;
 	const char *objkey;
+	const struct op_t *op;
 
 	KASSERT(sdict != NULL);
 	KASSERT(edata != NULL);
@@ -244,40 +276,29 @@ sme_event_register(prop_dictionary_t sdict, envsys_data_t *edata,
 	/*
 	 * Limit operation requested.
 	 */
-#define	LIMIT_OP(k, l, p)						\
-	if (props & p) {						\
-		objkey = k;						\
-		obj = prop_dictionary_get(sdict, objkey);		\
-		if (obj != NULL &&					\
-		    prop_object_type(obj) != PROP_TYPE_NUMBER) {	\
-			DPRINTF(("%s: (%s) %s object no TYPE_NUMBER\n",	\
-			    __func__, sme->sme_name, objkey));		\
-			error = ENOTSUP;				\
-		} else {						\
-			edata->limits.l = lims->l;			\
-			error = sme_sensor_upint32(sdict, objkey,lims->l); \
-			DPRINTF(("%s: (%s) event [sensor=%s type=%d] "	\
-			    "(%s updated)\n", __func__, sme->sme_name,	\
-			    edata->desc, crittype, objkey));		\
-		}							\
-		if (error && error != EEXIST)				\
-			goto out;					\
-		edata->upropset |= p;					\
+	for (op = limit_ops; op->name != NULL; op++) {
+		if (props & op->prop) {
+			objkey = op->name;
+			obj = prop_dictionary_get(sdict, objkey);
+			if (obj != NULL &&
+			    prop_object_type(obj) != PROP_TYPE_NUMBER) {
+				DPRINTF(("%s: (%s) %s object not TYPE_NUMBER\n",
+				    __func__, sme->sme_name, objkey));
+				error = ENOTSUP;
+			} else {
+				edata->limits.sel_limit_list[op->idx] =
+				    lims->sel_limit_list[op->idx];
+				error = sme_sensor_upint32(sdict, objkey,
+					   lims->sel_limit_list[op->idx]);
+				DPRINTF(("%s: (%s) event [sensor=%s type=%d] "
+				    "(%s updated)\n", __func__, sme->sme_name,
+				    edata->desc, crittype, objkey));
+			}
+			if (error && error != EEXIST)
+				goto out;
+			edata->upropset |= op->prop;
+		}
 	}
-
-	/* Value-based limits */
-	LIMIT_OP("critical-max", sel_critmax, PROP_CRITMAX);
-	LIMIT_OP("warning-max",  sel_warnmax, PROP_WARNMAX);
-	LIMIT_OP("warning-min",  sel_warnmin, PROP_WARNMIN);
-	LIMIT_OP("critical-min", sel_critmin, PROP_CRITMIN);
-
-	/* %Capacity-based limits */
-	LIMIT_OP("maximum-capacity",  sel_critmax,  PROP_BATTMAX);
-	LIMIT_OP("high-capacity",     sel_warnmax,  PROP_BATTHIGH);
-	LIMIT_OP("warning-capacity",  sel_warnmin,  PROP_BATTWARN);
-	LIMIT_OP("critical-capacity", sel_critmin,  PROP_BATTCAP);
-
-#undef LIMIT_OP
 
 	if (props & PROP_DRIVER_LIMITS)
 		edata->upropset |= PROP_DRIVER_LIMITS;
@@ -388,8 +409,8 @@ sme_event_unregister(struct sysmon_envsys *sme, const char *sensor, int type)
 	}
 
 	/*
-	 * Wait for the event to finish its work, remove from the list
-	 * and release resouces.
+	 * Wait for the event to finish its work, remove it from the list
+	 * and release resources.
 	 */
 	while (see->see_flags & SEE_EVENT_WORKING)
 		cv_wait(&sme->sme_condvar, &sme->sme_mtx);
@@ -426,8 +447,8 @@ sme_event_unregister_sensor(struct sysmon_envsys *sme, envsys_data_t *edata)
 		return EINVAL;
 
 	/*
-	 * Wait for the event to finish its work, remove from the list
-	 * and release resouces.
+	 * Wait for the event to finish its work, remove it from the list
+	 * and release resources.
 	 */
 	while (see->see_flags & SEE_EVENT_WORKING)
 		cv_wait(&sme->sme_condvar, &sme->sme_mtx);
@@ -474,33 +495,9 @@ sme_event_drvadd(void *arg)
 	sysmon_envsys_lim_t lims;
 	uint32_t props;
 	int error = 0;
+	const struct ev_reg_t *reg;
 
 	KASSERT(sed_t != NULL);
-
-#define SEE_REGEVENT(a, b, c)						\
-do {									\
-	if (sed_t->sed_edata->flags & (a)) {				\
-		char str[ENVSYS_DESCLEN] = "monitoring-state-";		\
-									\
-		error = sme_event_register(sed_t->sed_sdict,		\
-				      sed_t->sed_edata,			\
-				      sed_t->sed_sme,			\
-				      &lims, props,			\
-				      (b),				\
-				      sed_t->sed_powertype);		\
-		if (error && error != EEXIST)				\
-			printf("%s: failed to add event! "		\
-			    "error=%d sensor=%s event=%s\n",		\
-			    __func__, error,				\
-			    sed_t->sed_edata->desc, (c));		\
-		else {							\
-			(void)strlcat(str, (c), sizeof(str));		\
-			prop_dictionary_set_bool(sed_t->sed_sdict,	\
-						 str,			\
-						 true);			\
-		}							\
-	}								\
-} while (/* CONSTCOND */ 0)
 
 	/*
 	 * If driver provides a method to retrieve its internal limit
@@ -522,21 +519,28 @@ do {									\
 
 	/* Register the events that were specified */
 
-	SEE_REGEVENT(ENVSYS_FMONCRITICAL,
-		     PENVSYS_EVENT_CRITICAL,
-		     "critical");
+	for (reg = reg_events; reg->name != NULL; reg++) {
+		if (sed_t->sed_edata->flags & reg->crittype) {
 
-	SEE_REGEVENT(ENVSYS_FMONSTCHANGED,
-		     PENVSYS_EVENT_STATE_CHANGED,
-		     "state-changed");
-
-	SEE_REGEVENT(ENVSYS_FMONLIMITS,
-		     PENVSYS_EVENT_LIMITS,
-		     "hw-range-limits");
-
-	SEE_REGEVENT(ENVSYS_FHAS_ENTROPY,
-		     PENVSYS_EVENT_NULL,
-		     "refresh-event");
+			error = sme_event_register(sed_t->sed_sdict,
+					      sed_t->sed_edata,
+					      sed_t->sed_sme,
+					      &lims, props,
+					      reg->powertype,
+					      sed_t->sed_powertype);
+			if (error && error != EEXIST)
+				printf("%s: failed to add event! "
+				    "error=%d sensor=%s event=%s\n",
+				    __func__, error,
+				    sed_t->sed_edata->desc, reg->name);
+			else {
+				char str[ENVSYS_DESCLEN] = "monitoring-state-";
+				(void)strlcat(str, reg->name, sizeof(str));
+				prop_dictionary_set_bool(sed_t->sed_sdict,
+							 str, true);
+			}
+		}
+	}
 
 	/* 
 	 * we are done, free memory now.
@@ -701,7 +705,6 @@ sme_events_check(void *arg)
 {
 	struct sysmon_envsys *sme = arg;
 	sme_event_t *see;
-	uint64_t timo;
 
 	KASSERT(sme != NULL);
 
@@ -710,10 +713,6 @@ sme_events_check(void *arg)
 		workqueue_enqueue(sme->sme_wq, &see->see_wk, NULL);
 		see->see_edata->flags |= ENVSYS_FNEED_REFRESH;
 	}
-	if (sme->sme_events_timeout)
-		timo = sme->sme_events_timeout * hz;
-	else
-		timo = SME_EVTIMO;
 	if (!sysmon_low_power)
 		sme_schedule_callout(sme);
 	mutex_exit(&sme->sme_callout_mtx);
@@ -1027,6 +1026,7 @@ sme_acadapter_check(void)
 			sensor = true;
 			/* refresh current sensor */
 			sysmon_envsys_refresh_sensor(sme, edata);
+
 			if (edata->value_cur)
 				return false;
 		}
@@ -1061,10 +1061,16 @@ sme_battery_check(void)
 			continue;
 
 		present = true;
+
+		/*
+		 * XXX
+		 * this assumes that the first valid ENVSYS_INDICATOR is the
+		 * presence indicator
+		 */
 		TAILQ_FOREACH(edata, &sme->sme_sensors_list, sensors_head) {
-			if (edata->units == ENVSYS_INDICATOR &&
-			    !edata->value_cur) {
-				present = false;
+			if ((edata->units == ENVSYS_INDICATOR) &&
+			    (edata->state == ENVSYS_SVALID)) {
+				present = edata->value_cur;
 				break;
 			}
 		}
@@ -1076,6 +1082,9 @@ sme_battery_check(void)
 		batteriesfound++;
 		batterycap = batterycharge = false;
 		TAILQ_FOREACH(edata, &sme->sme_sensors_list, sensors_head) {
+			/* no need to even look at sensors that aren't valid */
+			if (edata->state != ENVSYS_SVALID)
+				continue;
 			if (edata->units == ENVSYS_BATTERY_CAPACITY) {
 				batterycap = true;
 				if (!sme_battery_critical(edata))

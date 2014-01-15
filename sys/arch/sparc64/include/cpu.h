@@ -1,4 +1,4 @@
-/*	$NetBSD: cpu.h,v 1.98 2011/07/30 19:29:12 martin Exp $ */
+/*	$NetBSD: cpu.h,v 1.105 2013/11/10 00:50:13 christos Exp $ */
 
 /*
  * Copyright (c) 1992, 1993
@@ -50,7 +50,8 @@
 #define	CPU_BOOTED_DEVICE	2	/* string: device booted from */
 #define	CPU_BOOT_ARGS		3	/* string: args booted with */
 #define	CPU_ARCH		4	/* integer: cpu architecture version */
-#define	CPU_MAXID		5	/* number of valid machdep ids */
+#define CPU_VIS			5	/* 0 - no VIS, 1 - VIS 1.0, etc. */
+#define	CPU_MAXID		6	/* number of valid machdep ids */
 
 #if defined(_KERNEL) || defined(_KMEMUSER)
 /*
@@ -128,7 +129,8 @@ struct cpu_info {
 
 	/* %tick and cpu frequency information */
 	u_long			ci_tick_increment;
-	uint64_t		ci_cpu_clockrate[2];
+	uint64_t		ci_cpu_clockrate[2];	/* %tick */
+	uint64_t		ci_system_clockrate[2];	/* %stick */
 
 	/* Interrupts */
 	struct intrhand		*ci_intrpending[16];
@@ -172,6 +174,10 @@ struct cpu_info {
 	pte_t			*ci_tsb_dmmu;
 	pte_t			*ci_tsb_immu;
 
+	/* probe fault in PCI config space reads */
+	bool			ci_pci_probe;
+	bool			ci_pci_fault;
+
 	volatile void		*ci_ddb_regs;	/* DDB regs */
 };
 
@@ -214,9 +220,8 @@ extern struct pool_cache *fpstate_cache;
 #define	cpu_number()	(curcpu()->ci_index)
 #define	CPU_IS_PRIMARY(ci)	((ci)->ci_flags & CPUF_PRIMARY)
 
-#define CPU_INFO_ITERATOR		int
-#define CPU_INFO_FOREACH(cii, ci)	cii = 0, ci = cpus; ci != NULL; \
-					ci = ci->ci_next
+#define CPU_INFO_ITERATOR		int __unused
+#define CPU_INFO_FOREACH(cii, ci)	ci = cpus; ci != NULL; ci = ci->ci_next
 
 #define curlwp		curcpu()->ci_curlwp
 #define fplwp		curcpu()->ci_fplwp
@@ -351,10 +356,15 @@ void *	reserve_dumppages(void *);
 /* clock.c */
 struct timeval;
 int	tickintr(void *);	/* level 10/14 (tick) interrupt code */
+int	stickintr(void *);	/* system tick interrupt code */
+int	stick2eintr(void *);	/* system tick interrupt code */
 int	clockintr(void *);	/* level 10 (clock) interrupt code */
 int	statintr(void *);	/* level 14 (statclock) interrupt code */
 int	schedintr(void *);	/* level 10 (schedclock) interrupt code */
 void	tickintr_establish(int, int (*)(void *));
+void	stickintr_establish(int, int (*)(void *));
+void	stick2eintr_establish(int, int (*)(void *));
+
 /* locore.s */
 struct fpstate64;
 void	savefpstate(struct fpstate64 *);
@@ -372,6 +382,7 @@ struct frame *getfp(void);
 void	switchtoctx_us(int);
 void	switchtoctx_usiii(int);
 void	next_tick(long);
+void	next_stick(long);
 /* trap.c */
 void	cpu_vmspace_exec(struct lwp *, vaddr_t, vaddr_t);
 int	rwindow_save(struct lwp *);

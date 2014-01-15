@@ -1,4 +1,4 @@
-/*	$NetBSD: ipsec_doi.c,v 1.47 2012/01/01 15:29:28 tteras Exp $	*/
+/*	$NetBSD: ipsec_doi.c,v 1.49 2013/06/18 05:39:50 tteras Exp $	*/
 
 /* Id: ipsec_doi.c,v 1.55 2006/08/17 09:20:41 vanhu Exp */
 
@@ -1183,7 +1183,6 @@ get_proppair_and_doi_sit(sa, mode, doitype, sittype)
 			"failed to get buffer.\n");
 		goto bad;
 	}
-	memset(pair, 0, sizeof(pair));
 
 	bp = (caddr_t)(sab + 1);
 	tlen = sa->l - sizeof(*sab);
@@ -1973,6 +1972,7 @@ check_trns_esp(t_id)
 	case IPSECDOI_ESP_CAST:
 	case IPSECDOI_ESP_BLOWFISH:
 	case IPSECDOI_ESP_AES:
+	case IPSECDOI_ESP_AESGCM16:
 	case IPSECDOI_ESP_TWOFISH:
 	case IPSECDOI_ESP_CAMELLIA:
 		return 0;

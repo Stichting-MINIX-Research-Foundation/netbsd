@@ -1,4 +1,4 @@
-/*	$NetBSD: proxymap.c,v 1.1.1.2 2010/06/17 18:06:59 tron Exp $	*/
+/*	$NetBSD: proxymap.c,v 1.1.1.4 2013/09/25 19:06:34 tron Exp $	*/
 
 /*++
 /* NAME
@@ -71,6 +71,13 @@
 /*	as with the \fBopen\fR request.
 /* .sp
 /*	This request is supported in Postfix 2.5 and later.
+/* .IP "\fBsequence\fR \fImaptype:mapname flags function\fR"
+/*	Iterate over the specified database. The \fIfunction\fR
+/*	is one of DICT_SEQ_FUN_FIRST or DICT_SEQ_FUN_NEXT.
+/*	The reply is the request completion status code and
+/*	a lookup key and result value, if found.
+/* .sp
+/*	This request is supported in Postfix 2.9 and later.
 /* .PP
 /*	The request completion status is one of OK, RETRY, NOKEY
 /*	(lookup failed because the key was not found), BAD (malformed
@@ -102,7 +109,7 @@
 /*	usability, because it can open only chrooted tables.
 /*
 /*	The \fBproxymap\fR(8) server is not a trusted daemon process, and must
-/*	not be used to look up sensitive information such as user or
+/*	not be used to look up sensitive information such as UNIX user or
 /*	group IDs, mailbox file/directory names or external commands.
 /*
 /*	In Postfix version 2.2 and later, the proxymap client recognizes
@@ -237,6 +244,7 @@
   * aren't too broken. The fix is to gather all parameter default settings in
   * one place.
   */
+char   *var_alias_maps;
 char   *var_local_rcpt_maps;
 char   *var_virt_alias_maps;
 char   *var_virt_alias_doms;
@@ -249,6 +257,9 @@ char   *var_send_canon_maps;
 char   *var_rcpt_canon_maps;
 char   *var_relocated_maps;
 char   *var_transport_maps;
+char   *var_verify_map;
+char   *var_smtpd_snd_auth_maps;
+char   *var_psc_cache_map;
 char   *var_proxy_read_maps;
 char   *var_proxy_write_maps;
 
@@ -297,6 +308,7 @@ static DICT *proxy_map_find(const char *map_type_name, int request_flags,
 
     while (strncmp(map_type_name, PROXY_COLON, PROXY_COLON_LEN) == 0)
 	map_type_name += PROXY_COLON_LEN;
+    /* XXX The following breaks with maps that have ':' in their name. */
     if (strchr(map_type_name, ':') == 0)
 	PROXY_MAP_FIND_ERROR_RETURN(PROXY_STAT_BAD);
     if (htable_locate(proxy_auth_maps, map_type_name) == 0) {
@@ -320,15 +332,71 @@ static DICT *proxy_map_find(const char *map_type_name, int request_flags,
      * of open() flags should be received directly from the client.
      */
     vstring_sprintf(map_type_name_flags, "%s:%s", map_type_name,
-		    dict_flags_str(request_flags & DICT_FLAG_NP_INST_MASK));
-    if ((dict = dict_handle(STR(map_type_name_flags))) == 0)
+		    dict_flags_str(request_flags & DICT_FLAG_INST_MASK));
+    if (msg_verbose)
+	msg_info("proxy_map_find: %s", STR(map_type_name_flags));
+    if ((dict = dict_handle(STR(map_type_name_flags))) == 0) {
 	dict = dict_open(map_type_name, proxy_writer ?
 			 WRITE_OPEN_FLAGS : READ_OPEN_FLAGS,
 			 request_flags);
-    if (dict == 0)
-	msg_panic("proxy_map_find: dict_open null result");
-    dict_register(STR(map_type_name_flags), dict);
+	if (dict == 0)
+	    msg_panic("proxy_map_find: dict_open null result");
+	dict_register(STR(map_type_name_flags), dict);
+    }
+    dict->error = 0;
     return (dict);
+}
+
+/* proxymap_sequence_service - remote sequence service */
+
+static void proxymap_sequence_service(VSTREAM *client_stream)
+{
+    int     request_flags;
+    DICT   *dict;
+    int     request_func;
+    const char *reply_key;
+    const char *reply_value;
+    int     dict_status;
+    int     reply_status;
+
+    /*
+     * Process the request.
+     */
+    if (attr_scan(client_stream, ATTR_FLAG_STRICT,
+		  ATTR_TYPE_STR, MAIL_ATTR_TABLE, request_map,
+		  ATTR_TYPE_INT, MAIL_ATTR_FLAGS, &request_flags,
+		  ATTR_TYPE_INT, MAIL_ATTR_FUNC, &request_func,
+		  ATTR_TYPE_END) != 3
+	|| (request_func != DICT_SEQ_FUN_FIRST
+	    && request_func != DICT_SEQ_FUN_NEXT)) {
+	reply_status = PROXY_STAT_BAD;
+	reply_key = reply_value = "";
+    } else if ((dict = proxy_map_find(STR(request_map), request_flags,
+				      &reply_status)) == 0) {
+	reply_key = reply_value = "";
+    } else {
+	dict->flags = ((dict->flags & ~DICT_FLAG_RQST_MASK)
+		       | (request_flags & DICT_FLAG_RQST_MASK));
+	dict_status = dict_seq(dict, request_func, &reply_key, &reply_value);
+	if (dict_status == 0) {
+	    reply_status = PROXY_STAT_OK;
+	} else if (dict->error == 0) {
+	    reply_status = PROXY_STAT_NOKEY;
+	    reply_key = reply_value = "";
+	} else {
+	    reply_status = PROXY_STAT_RETRY;
+	    reply_key = reply_value = "";
+	}
+    }
+
+    /*
+     * Respond to the client.
+     */
+    attr_print(client_stream, ATTR_FLAG_NONE,
+	       ATTR_TYPE_INT, MAIL_ATTR_STATUS, reply_status,
+	       ATTR_TYPE_STR, MAIL_ATTR_KEY, reply_key,
+	       ATTR_TYPE_STR, MAIL_ATTR_VALUE, reply_value,
+	       ATTR_TYPE_END);
 }
 
 /* proxymap_lookup_service - remote lookup service */
@@ -357,7 +425,7 @@ static void proxymap_lookup_service(VSTREAM *client_stream)
 			      | (request_flags & DICT_FLAG_RQST_MASK)),
 	       (reply_value = dict_get(dict, STR(request_key))) != 0) {
 	reply_status = PROXY_STAT_OK;
-    } else if (dict_errno == 0) {
+    } else if (dict->error == 0) {
 	reply_status = PROXY_STAT_NOKEY;
 	reply_value = "";
     } else {
@@ -380,6 +448,7 @@ static void proxymap_update_service(VSTREAM *client_stream)
 {
     int     request_flags;
     DICT   *dict;
+    int     dict_status;
     int     reply_status;
 
     /*
@@ -409,8 +478,14 @@ static void proxymap_update_service(VSTREAM *client_stream)
 	dict->flags = ((dict->flags & ~DICT_FLAG_RQST_MASK)
 		       | (request_flags & DICT_FLAG_RQST_MASK)
 		       | DICT_FLAG_SYNC_UPDATE | DICT_FLAG_DUP_REPLACE);
-	dict_put(dict, STR(request_key), STR(request_value));
-	reply_status = PROXY_STAT_OK;
+	dict_status = dict_put(dict, STR(request_key), STR(request_value));
+	if (dict_status == 0) {
+	    reply_status = PROXY_STAT_OK;
+	} else if (dict->error == 0) {
+	    reply_status = PROXY_STAT_NOKEY;
+	} else {
+	    reply_status = PROXY_STAT_RETRY;
+	}
     }
 
     /*
@@ -427,6 +502,7 @@ static void proxymap_delete_service(VSTREAM *client_stream)
 {
     int     request_flags;
     DICT   *dict;
+    int     dict_status;
     int     reply_status;
 
     /*
@@ -452,8 +528,14 @@ static void proxymap_delete_service(VSTREAM *client_stream)
 	dict->flags = ((dict->flags & ~DICT_FLAG_RQST_MASK)
 		       | (request_flags & DICT_FLAG_RQST_MASK)
 		       | DICT_FLAG_SYNC_UPDATE);
-	reply_status =
-	    dict_del(dict, STR(request_key)) ? PROXY_STAT_OK : PROXY_STAT_NOKEY;
+	dict_status = dict_del(dict, STR(request_key));
+	if (dict_status == 0) {
+	    reply_status = PROXY_STAT_OK;
+	} else if (dict->error == 0) {
+	    reply_status = PROXY_STAT_NOKEY;
+	} else {
+	    reply_status = PROXY_STAT_RETRY;
+	}
     }
 
     /*
@@ -512,10 +594,21 @@ static void proxymap_service(VSTREAM *client_stream, char *unused_service,
 	msg_fatal("unexpected command-line argument: %s", argv[0]);
 
     /*
+     * Deadline enforcement.
+     */
+    if (vstream_fstat(client_stream, VSTREAM_FLAG_DEADLINE) == 0)
+	vstream_control(client_stream,
+			VSTREAM_CTL_TIMEOUT, 1,
+			VSTREAM_CTL_END);
+
+    /*
      * This routine runs whenever a client connects to the socket dedicated
      * to the proxymap service. All connection-management stuff is handled by
      * the common code in multi_server.c.
      */
+    vstream_control(client_stream,
+		    VSTREAM_CTL_START_DEADLINE,
+		    VSTREAM_CTL_END);
     if (attr_scan(client_stream,
 		  ATTR_FLAG_MORE | ATTR_FLAG_STRICT,
 		  ATTR_TYPE_STR, MAIL_ATTR_REQ, request,
@@ -526,6 +619,8 @@ static void proxymap_service(VSTREAM *client_stream, char *unused_service,
 	    proxymap_update_service(client_stream);
 	} else if (VSTREQ(request, PROXY_REQ_DELETE)) {
 	    proxymap_delete_service(client_stream);
+	} else if (VSTREQ(request, PROXY_REQ_SEQUENCE)) {
+	    proxymap_sequence_service(client_stream);
 	} else if (VSTREQ(request, PROXY_REQ_OPEN)) {
 	    proxymap_open_service(client_stream);
 	} else {
@@ -535,6 +630,9 @@ static void proxymap_service(VSTREAM *client_stream, char *unused_service,
 		       ATTR_TYPE_END);
 	}
     }
+    vstream_control(client_stream,
+		    VSTREAM_CTL_START_DEADLINE,
+		    VSTREAM_CTL_END);
     vstream_fflush(client_stream);
 }
 
@@ -622,6 +720,7 @@ MAIL_VERSION_STAMP_DECLARE;
 int     main(int argc, char **argv)
 {
     static const CONFIG_STR_TABLE str_table[] = {
+	VAR_ALIAS_MAPS, DEF_ALIAS_MAPS, &var_alias_maps, 0, 0,
 	VAR_LOCAL_RCPT_MAPS, DEF_LOCAL_RCPT_MAPS, &var_local_rcpt_maps, 0, 0,
 	VAR_VIRT_ALIAS_MAPS, DEF_VIRT_ALIAS_MAPS, &var_virt_alias_maps, 0, 0,
 	VAR_VIRT_ALIAS_DOMS, DEF_VIRT_ALIAS_DOMS, &var_virt_alias_doms, 0, 0,
@@ -634,6 +733,10 @@ int     main(int argc, char **argv)
 	VAR_RCPT_CANON_MAPS, DEF_RCPT_CANON_MAPS, &var_rcpt_canon_maps, 0, 0,
 	VAR_RELOCATED_MAPS, DEF_RELOCATED_MAPS, &var_relocated_maps, 0, 0,
 	VAR_TRANSPORT_MAPS, DEF_TRANSPORT_MAPS, &var_transport_maps, 0, 0,
+	VAR_VERIFY_MAP, DEF_VERIFY_MAP, &var_verify_map, 0, 0,
+	VAR_SMTPD_SND_AUTH_MAPS, DEF_SMTPD_SND_AUTH_MAPS, &var_smtpd_snd_auth_maps, 0, 0,
+	VAR_PSC_CACHE_MAP, DEF_PSC_CACHE_MAP, &var_psc_cache_map, 0, 0,
+	/* The following two must be last for $mapname to work as expected. */
 	VAR_PROXY_READ_MAPS, DEF_PROXY_READ_MAPS, &var_proxy_read_maps, 0, 0,
 	VAR_PROXY_WRITE_MAPS, DEF_PROXY_WRITE_MAPS, &var_proxy_write_maps, 0, 0,
 	0,

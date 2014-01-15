@@ -1,4 +1,4 @@
-/*	$NetBSD: obio.c,v 1.37 2012/06/02 21:36:42 dsl Exp $	*/
+/*	$NetBSD: obio.c,v 1.40 2013/04/25 11:22:22 macallan Exp $	*/
 
 /*-
  * Copyright (C) 1998	Internet Research Institute, Inc.
@@ -32,7 +32,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: obio.c,v 1.37 2012/06/02 21:36:42 dsl Exp $");
+__KERNEL_RCSID(0, "$NetBSD: obio.c,v 1.40 2013/04/25 11:22:22 macallan Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -112,6 +112,7 @@ obio_match(device_t parent, cfdata_t cf, void *aux)
 		case PCI_PRODUCT_APPLE_PANGEA_MACIO:
 		case PCI_PRODUCT_APPLE_INTREPID:
 		case PCI_PRODUCT_APPLE_K2:
+		case PCI_PRODUCT_APPLE_SHASTA:
 			return 1;
 		}
 
@@ -131,6 +132,7 @@ obio_attach(device_t parent, device_t self, void *aux)
 	int node, child, namelen, error;
 	u_int reg[20];
 	int intr[6], parent_intr = 0, parent_nintr = 0;
+	int map_size = 0x1000;
 	char name[32];
 	char compat[32];
 
@@ -158,7 +160,9 @@ obio_attach(device_t parent, device_t self, void *aux)
 				node = OF_finddevice("/pci/mac-io");
 		break;
 	case PCI_PRODUCT_APPLE_K2:
+	case PCI_PRODUCT_APPLE_SHASTA:
 		node = OF_finddevice("mac-io");
+		map_size = 0x10000;
 		break;
 
 	default:
@@ -194,7 +198,7 @@ obio_attach(device_t parent, device_t self, void *aux)
 	ca.ca_baseaddr = reg[2];
 	ca.ca_tag = pa->pa_memt;
 	sc->sc_tag = pa->pa_memt;
-	error = bus_space_map (pa->pa_memt, ca.ca_baseaddr, 0x80, 0, &bsh);
+	error = bus_space_map (pa->pa_memt, ca.ca_baseaddr, map_size, 0, &bsh);
 	if (error)
 		panic(": failed to map mac-io %#x", ca.ca_baseaddr);
 	sc->sc_bh = bsh;
@@ -204,7 +208,7 @@ obio_attach(device_t parent, device_t self, void *aux)
 	/* Enable internal modem (KeyLargo) */
 	if (PCI_PRODUCT(pa->pa_id) == PCI_PRODUCT_APPLE_KEYLARGO) {
 		aprint_normal("%s: enabling KeyLargo internal modem\n",
-		    self->dv_xname);
+		    device_xname(self));
 		bus_space_write_4(ca.ca_tag, bsh, 0x40, 
 		    bus_space_read_4(ca.ca_tag, bsh, 0x40) & ~(1<<25));
 	}

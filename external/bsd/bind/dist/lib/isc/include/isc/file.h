@@ -1,4 +1,4 @@
-/*	$NetBSD: file.h,v 1.4 2012/06/05 00:42:35 christos Exp $	*/
+/*	$NetBSD: file.h,v 1.6 2013/07/27 19:23:13 christos Exp $	*/
 
 /*
  * Copyright (C) 2004-2007, 2009, 2011, 2012  Internet Systems Consortium, Inc. ("ISC")
@@ -27,12 +27,16 @@
 #include <stdio.h>
 
 #include <isc/lang.h>
+#include <isc/stat.h>
 #include <isc/types.h>
 
 ISC_LANG_BEGINDECLS
 
 isc_result_t
 isc_file_settime(const char *file, isc_time_t *time);
+
+isc_result_t
+isc_file_mode(const char *file, mode_t *modep);
 
 isc_result_t
 isc_file_getmodtime(const char *file, isc_time_t *time);
@@ -99,15 +103,22 @@ isc_file_mktemplate(const char *path, char *buf, size_t buflen);
  *				of the path with the internal template string.
  */
 
-
 isc_result_t
 isc_file_openunique(char *templet, FILE **fp);
 isc_result_t
 isc_file_openuniqueprivate(char *templet, FILE **fp);
 isc_result_t
 isc_file_openuniquemode(char *templet, int mode, FILE **fp);
+isc_result_t
+isc_file_bopenunique(char *templet, FILE **fp);
+isc_result_t
+isc_file_bopenuniqueprivate(char *templet, FILE **fp);
+isc_result_t
+isc_file_bopenuniquemode(char *templet, int mode, FILE **fp);
 /*!<
  * \brief Create and open a file with a unique name based on 'templet'.
+ *	isc_file_bopen*() open the file in binary mode in Windows.
+ *	isc_file_open*() open the file in text mode in Windows.
  *
  * Notes:
  *\li	'template' is a reserved work in C++.  If you want to complain
@@ -204,6 +215,22 @@ isc_file_isplainfile(const char *name);
  *		permitted in addition to ISC_R_SUCCESS. This is done since
  *		the next call in logconf.c is to isc_stdio_open(), which
  *		will create the file if it can.
+ *\li	#other ISC_R_* errors translated from errno
+ *		These occur when stat returns -1 and an errno.
+ */
+
+isc_result_t
+isc_file_isdirectory(const char *name);
+/*!<
+ * \brief Check that 'name' exists and is a directory.
+ *
+ * Returns:
+ *\li	#ISC_R_SUCCESS
+ *		Success, file is a directory.
+ *\li	#ISC_R_INVALIDFILE
+ *		File is not a directory.
+ *\li	#ISC_R_FILENOTFOUND
+ *		File does not exist.
  *\li	#other ISC_R_* errors translated from errno
  *		These occur when stat returns -1 and an errno.
  */

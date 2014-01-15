@@ -1,4 +1,4 @@
-/*	$NetBSD: trap.c,v 1.101 2012/04/23 11:25:03 skrll Exp $	*/
+/*	$NetBSD: trap.c,v 1.104 2013/10/25 09:46:10 martin Exp $	*/
 
 /*-
  * Copyright (c) 2001, 2002 The NetBSD Foundation, Inc.
@@ -58,7 +58,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: trap.c,v 1.101 2012/04/23 11:25:03 skrll Exp $");
+__KERNEL_RCSID(0, "$NetBSD: trap.c,v 1.104 2013/10/25 09:46:10 martin Exp $");
 
 /* #define INTRDEBUG */
 /* #define TRAPDEBUG */
@@ -1237,17 +1237,8 @@ syscall(struct trapframe *frame, int *args)
 	}
 #endif
 
-	error = 0;
-	if (__predict_false(p->p_trace_enabled)) {
-		error = trace_enter(code, args, callp->sy_narg);
-		if (error)
-			goto out;
-	}
+	error = sy_invoke(callp, l, args, rval, code);
 
-	rval[0] = 0;
-	rval[1] = 0;
-	error = sy_call(callp, l, args, rval);
-out:
 	switch (error) {
 	case 0:
 		l = curlwp;			/* changes on exec() */
@@ -1286,9 +1277,6 @@ out:
 		break;
 	}
 
-	if (__predict_false(p->p_trace_enabled))
-		trace_exit(code, rval, error);
-
 	userret(l, frame->tf_iioq_head, 0);
 
 #ifdef DIAGNOSTIC
@@ -1313,7 +1301,7 @@ startlwp(void *arg)
 {
 	ucontext_t *uc = arg;
 	lwp_t *l = curlwp;
-	int error;
+	int error __diagused;
 
 	error = cpu_setmcontext(l, &uc->uc_mcontext, uc->uc_flags);
 	KASSERT(error == 0);

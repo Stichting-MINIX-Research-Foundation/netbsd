@@ -1,4 +1,4 @@
-/*	$NetBSD: filecore_vnops.c,v 1.34 2012/03/13 18:40:37 elad Exp $	*/
+/*	$NetBSD: filecore_vnops.c,v 1.39 2013/10/20 17:14:48 christos Exp $	*/
 
 /*-
  * Copyright (c) 1994 The Regents of the University of California.
@@ -66,7 +66,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: filecore_vnops.c,v 1.34 2012/03/13 18:40:37 elad Exp $");
+__KERNEL_RCSID(0, "$NetBSD: filecore_vnops.c,v 1.39 2013/10/20 17:14:48 christos Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -126,7 +126,7 @@ filecore_check_permitted(struct vnode *vp, struct filecore_node *ip,
 {
 	struct filecore_mnt *fcmp = ip->i_mnt;
 
-	return kauth_authorize_vnode(cred, kauth_access_action(mode,
+	return kauth_authorize_vnode(cred, KAUTH_ACCESS_ACTION(mode,
 	    vp->v_type, filecore_mode(ip)), vp, NULL,
 	    genfs_can_access(vp->v_type, filecore_mode(ip), fcmp->fc_uid,
 	    fcmp->fc_gid, mode, cred));
@@ -204,7 +204,7 @@ filecore_read(void *v)
 	struct filecore_node *ip = VTOI(vp);
 	struct filecore_mnt *fcmp;
 	struct buf *bp;
-	daddr_t lbn, rablock;
+	daddr_t lbn;
 	off_t diff;
 	int error = 0;
 	long size, n, on;
@@ -239,16 +239,15 @@ filecore_read(void *v)
 	}
 
 	do {
-		lbn = lblkno(fcmp, uio->uio_offset);
-		on = blkoff(fcmp, uio->uio_offset);
-		n = MIN(blksize(fcmp, ip, lbn) - on, uio->uio_resid);
+		lbn = filecore_lblkno(fcmp, uio->uio_offset);
+		on = filecore_blkoff(fcmp, uio->uio_offset);
+		n = MIN(filecore_blksize(fcmp, ip, lbn) - on, uio->uio_resid);
 		diff = (off_t)ip->i_size - uio->uio_offset;
 		if (diff <= 0)
 			return (0);
 		if (diff < n)
 			n = diff;
-		size = blksize(fcmp, ip, lbn);
-		rablock = lbn + 1;
+		size = filecore_blksize(fcmp, ip, lbn);
 		if (ip->i_dirent.attr & FILECORE_ATTR_DIR) {
 			error = filecore_dbread(ip, &bp);
 			on = uio->uio_offset;
@@ -261,14 +260,10 @@ filecore_read(void *v)
 			    vp, (long long)lbn, size, bp, error);
 #endif
 		}
-		n = MIN(n, size - bp->b_resid);
 		if (error) {
-#ifdef FILECORE_DEBUG_BR
-			printf("brelse(%p) vn1\n", bp);
-#endif
-			brelse(bp, 0);
 			return (error);
 		}
+		n = MIN(n, size - bp->b_resid);
 
 		error = uiomove((char *)(bp->b_data) + on, (int)n, uio);
 #ifdef FILECORE_DEBUG_BR
@@ -298,7 +293,6 @@ filecore_readdir(void *v)
 	struct uio *uio = ap->a_uio;
 	struct vnode *vdp = ap->a_vp;
 	struct filecore_node *dp;
-	struct filecore_mnt *fcmp;
 	struct buf *bp = NULL;
 	struct dirent *de;
 	struct filecore_direntry *dep = NULL;
@@ -319,11 +313,9 @@ filecore_readdir(void *v)
 	uiooff = uio->uio_offset;
 
 	*ap->a_eofflag = 0;
-	fcmp = dp->i_mnt;
 
 	error = filecore_dbread(dp, &bp);
 	if (error) {
-		brelse(bp, 0);
 		return error;
 	}
 

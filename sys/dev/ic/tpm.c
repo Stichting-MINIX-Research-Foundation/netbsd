@@ -1,4 +1,4 @@
-/*	$NetBSD: tpm.c,v 1.7 2012/02/06 02:03:32 christos Exp $	*/
+/*	$NetBSD: tpm.c,v 1.9 2013/10/17 21:24:24 christos Exp $	*/
 /*
  * Copyright (c) 2008, 2009 Michael Shalayeff
  * Copyright (c) 2009, 2010 Hans-Jörg Höxer
@@ -18,7 +18,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: tpm.c,v 1.7 2012/02/06 02:03:32 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: tpm.c,v 1.9 2013/10/17 21:24:24 christos Exp $");
 
 #if 0
 #define	TPM_DEBUG 
@@ -805,14 +805,6 @@ tpm_legacy_in(bus_space_tag_t iot, bus_space_handle_t ioh, int reg)
 	return bus_space_read_1(iot, ioh, 1);
 }
 
-/* Write single byte using legacy interface. */
-static inline void
-tpm_legacy_out(bus_space_tag_t iot, bus_space_handle_t ioh, int reg, uint8_t v)
-{
-	bus_space_write_1(iot, ioh, 0, reg);
-	bus_space_write_1(iot, ioh, 1, v);
-}
-
 /* Probe for TPM using legacy interface. */
 int
 tpm_legacy_probe(bus_space_tag_t iot, bus_addr_t iobase)
@@ -863,7 +855,6 @@ int
 tpm_legacy_init(struct tpm_softc *sc, int irq, const char *name)
 {
 	char id[8];
-	uint8_t ioh, iol;
 	int i;
 
 	if ((i = bus_space_map(sc->sc_batm, tpm_enabled, 2, 0, &sc->sc_bahm))) {
@@ -878,8 +869,6 @@ tpm_legacy_init(struct tpm_softc *sc, int irq, const char *name)
 
 	aprint_debug_dev(sc->sc_dev, "%.4s %d.%d @0x%x\n", &id[4], id[0],
 	    id[1], tpm_enabled);
-	iol = tpm_enabled & 0xff;
-	ioh = tpm_enabled >> 16;
 	tpm_enabled = 0;
 
 	return 0;

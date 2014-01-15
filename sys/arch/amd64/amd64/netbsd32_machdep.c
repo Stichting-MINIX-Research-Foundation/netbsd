@@ -1,4 +1,4 @@
-/*	$NetBSD: netbsd32_machdep.c,v 1.79 2012/07/15 15:17:56 dsl Exp $	*/
+/*	$NetBSD: netbsd32_machdep.c,v 1.85 2013/12/01 01:05:16 christos Exp $	*/
 
 /*
  * Copyright (c) 2001 Wasabi Systems, Inc.
@@ -36,7 +36,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: netbsd32_machdep.c,v 1.79 2012/07/15 15:17:56 dsl Exp $");
+__KERNEL_RCSID(0, "$NetBSD: netbsd32_machdep.c,v 1.85 2013/12/01 01:05:16 christos Exp $");
 
 #ifdef _KERNEL_OPT
 #include "opt_compat_netbsd.h"
@@ -142,7 +142,10 @@ netbsd32_setregs(struct lwp *l, struct exec_package *pack, vaddr_t stack)
 	l->l_md.md_flags &= ~MDL_USEDFPU;
 	l->l_md.md_flags |= MDL_COMPAT32;	/* Force iret not sysret */
 	pcb->pcb_flags = PCB_COMPAT32;
-        pcb->pcb_savefpu.fp_fxsave.fx_fcw = __NetBSD_NPXCW__;
+	if (pack->ep_osversion >= 699002600)
+		pcb->pcb_savefpu.fp_fxsave.fx_fcw = __NetBSD_NPXCW__;
+	else
+		pcb->pcb_savefpu.fp_fxsave.fx_fcw = __NetBSD_COMPAT_NPXCW__;
         pcb->pcb_savefpu.fp_fxsave.fx_mxcsr = __INITIAL_MXCSR__;  
 	pcb->pcb_savefpu.fp_fxsave.fx_mxcsr_mask = __INITIAL_MXCSR_MASK__;
 
@@ -567,11 +570,26 @@ xmm_to_s87_tag(const uint8_t *fpac, int regno, uint8_t tw)
 int
 netbsd32_process_read_fpregs(struct lwp *l, struct fpreg32 *regs)
 {
-	struct pcb *pcb = lwp_getpcb(l);
-	struct savefpu *sf = &pcb->pcb_savefpu;
 	struct fpreg regs64;
 	struct save87 *s87 = (struct save87 *)regs;
 	int error, i;
+
+	union fp_addr {
+	        uint64_t fa_64; /* Linear address for 64bit systems */
+	        struct {
+	                uint32_t fa_off;        /* Linear address for 32 bit */
+	                uint16_t fa_seg;        /* Code/data (etc) segment */
+	                uint16_t fa_pad;
+	        } fa_32; 
+	} fa;
+
+	/* 
+	 * NOTE: This 'struct fpreg32' is just char[108] and is shorter
+	 * than 'struct save87'.
+	 * If we write to the extra fields we trash the stack when writing
+	 * process coredumps (see coredump_note() in core_elf32.c).
+	 * This code must not set sv_env.en_tw or s87->sv_ex_sw.
+	 */
 
 	/*
 	 * All that stuff makes no sense in i386 code :(
@@ -583,28 +601,23 @@ netbsd32_process_read_fpregs(struct lwp *l, struct fpreg32 *regs)
 
 	s87->sv_env.en_cw = regs64.fxstate.fx_fcw;
 	s87->sv_env.en_sw = regs64.fxstate.fx_fsw;
-	s87->sv_env.en_fip = regs64.fxstate.fx_rip >> 16; /* XXX Order? */
-	s87->sv_env.en_fcs = regs64.fxstate.fx_rip & 0xffff;
+	fa.fa_64 = regs64.fxstate.fx_rip;
+	s87->sv_env.en_fip = fa.fa_32.fa_off;
+	s87->sv_env.en_fcs = fa.fa_32.fa_seg;
 	s87->sv_env.en_opcode = regs64.fxstate.fx_fop;
-	s87->sv_env.en_foo = regs64.fxstate.fx_rdp >> 16; /* XXX See above */
-	s87->sv_env.en_fos = regs64.fxstate.fx_rdp & 0xffff;
+	fa.fa_64 = regs64.fxstate.fx_rdp;
+	s87->sv_env.en_foo = fa.fa_32.fa_off;
+	s87->sv_env.en_fos = fa.fa_32.fa_seg;
 
 	s87->sv_env.en_tw = 0;
-	s87->sv_ex_tw = 0;
 	for (i = 0; i < 8; i++) {
 		s87->sv_env.en_tw |=
 		    (xmm_to_s87_tag((uint8_t *)&regs64.fxstate.fx_st[i][0], i,
 		     regs64.fxstate.fx_ftw) << (i * 2));
 
-		s87->sv_ex_tw |=
-		    (xmm_to_s87_tag((uint8_t *)&regs64.fxstate.fx_st[i][0], i,
-		     sf->fp_ex_tw) << (i * 2));
-
 		memcpy(&s87->sv_ac[i].fp_bytes, &regs64.fxstate.fx_st[i][0],
 		    sizeof(s87->sv_ac[i].fp_bytes));
 	}
-
-	s87->sv_ex_sw = sf->fp_ex_sw;
 
 	return (0);
 }
@@ -952,7 +965,7 @@ startlwp32(void *arg)
 {
 	ucontext32_t *uc = arg;
 	lwp_t *l = curlwp;
-	int error;
+	int error __diagused;
 
 	error = cpu_setmcontext32(l, &uc->uc_mcontext, uc->uc_flags);
 	KASSERT(error == 0);

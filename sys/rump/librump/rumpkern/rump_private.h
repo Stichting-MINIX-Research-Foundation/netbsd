@@ -1,4 +1,4 @@
-/*	$NetBSD: rump_private.h,v 1.71 2012/10/09 13:35:50 pooka Exp $	*/
+/*	$NetBSD: rump_private.h,v 1.78 2013/10/27 20:25:45 pooka Exp $	*/
 
 /*
  * Copyright (c) 2007-2011 Antti Kantee.  All Rights Reserved.
@@ -54,6 +54,7 @@ extern struct sysent rump_sysent[];
 
 enum rump_component_type {
 	RUMP_COMPONENT_DEV,
+		RUMP_COMPONENT_DEV_AFTERMAINBUS,
 	RUMP_COMPONENT_NET,
 		RUMP_COMPONENT_NET_ROUTE,
 		RUMP_COMPONENT_NET_IF,
@@ -61,6 +62,12 @@ enum rump_component_type {
 	RUMP_COMPONENT_VFS,
 	RUMP_COMPONENT_KERN,
 		RUMP_COMPONENT_KERN_VFS,
+	RUMP_COMPONENT_POSTINIT,
+
+	RUMP__FACTION_DEV,
+	RUMP__FACTION_VFS,
+	RUMP__FACTION_NET,
+
 	RUMP_COMPONENT_MAX,
 };
 struct rump_component {
@@ -101,6 +108,8 @@ extern struct cpu_info *rump_cpu;
 extern bool rump_ttycomponent;
 
 struct lwp *	rump__lwproc_alloclwp(struct proc *);
+void		rump__lwproc_lwphold(void);
+void		rump__lwproc_lwprele(void);
 
 void	rump_cpus_bootstrap(int *);
 void	rump_biglock_init(void);
@@ -112,6 +121,7 @@ void 	rump_schedule_cpu_interlock(struct lwp *, void *);
 void	rump_unschedule_cpu(struct lwp *);
 void	rump_unschedule_cpu_interlock(struct lwp *, void *);
 void	rump_unschedule_cpu1(struct lwp *, void *);
+int	rump_syscall(int, void *, size_t, register_t *);
 
 void	rump_schedlock_cv_wait(struct rumpuser_cv *);
 int	rump_schedlock_cv_timedwait(struct rumpuser_cv *,
@@ -132,5 +142,12 @@ void	rump_softint_run(struct cpu_info *);
 
 void	*rump_hypermalloc(size_t, int, bool, const char *);
 void	rump_hyperfree(void *, size_t);
+
+void	rump_xc_highpri(struct cpu_info *);
+
+void	rump_thread_init(void);
+void	rump_thread_allow(void);
+
+void	rump_consdev_init(void);
 
 #endif /* _SYS_RUMP_PRIVATE_H_ */

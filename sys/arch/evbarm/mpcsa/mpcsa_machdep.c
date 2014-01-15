@@ -1,5 +1,5 @@
-/*	$Id: mpcsa_machdep.c,v 1.7 2012/08/16 18:22:45 matt Exp $	*/
-/*	$NetBSD: mpcsa_machdep.c,v 1.7 2012/08/16 18:22:45 matt Exp $	*/
+/*	$Id: mpcsa_machdep.c,v 1.9 2013/08/18 15:58:20 matt Exp $	*/
+/*	$NetBSD: mpcsa_machdep.c,v 1.9 2013/08/18 15:58:20 matt Exp $	*/
 
 /*
  * Copyright (c) 2007 Embedtronics Oy
@@ -77,7 +77,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: mpcsa_machdep.c,v 1.7 2012/08/16 18:22:45 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: mpcsa_machdep.c,v 1.9 2013/08/18 15:58:20 matt Exp $");
 
 #include "opt_ddb.h"
 #include "opt_kgdb.h"
@@ -93,20 +93,21 @@ __KERNEL_RCSID(0, "$NetBSD: mpcsa_machdep.c,v 1.7 2012/08/16 18:22:45 matt Exp $
 #include <sys/reboot.h>
 #include <sys/termios.h>
 #include <sys/ksyms.h>
+#include <sys/bus.h>
+#include <sys/cpu.h>
 
 #include <uvm/uvm_extern.h>
 
 #include <dev/cons.h>
 
+#include <dev/ic/comreg.h>
+#include <dev/ic/comvar.h>
+
 #include <machine/db_machdep.h>
 #include <ddb/db_sym.h>
 #include <ddb/db_extern.h>
 
-#define	DRAM_BLOCKS	1
-#include <machine/bootconfig.h>
-#include <sys/bus.h>
-#include <machine/cpu.h>
-#include <machine/frame.h>
+#include <arm/locore.h>
 #include <arm/undefined.h>
 
 #include <arm/arm32/machdep.h>
@@ -114,9 +115,8 @@ __KERNEL_RCSID(0, "$NetBSD: mpcsa_machdep.c,v 1.7 2012/08/16 18:22:45 matt Exp $
 #include <arm/at91/at91reg.h>
 #include <arm/at91/at91var.h>
 
-#include <dev/ic/comreg.h>
-#include <dev/ic/comvar.h>
-
+#define	DRAM_BLOCKS	1
+#include <machine/bootconfig.h>
 #include <machine/autoconf.h>
 
 #include "seeprom.h"
@@ -365,7 +365,7 @@ static void mpcsa_device_register(device_t dev, void *aux)
 		device_t twi_dev = 0;
 		i2c_tag_t i2c = 0;
 		if (cd && (twi_dev = device_lookup(cd, 0)) != NULL) {
-			struct at91twi_softc *sc = (struct at91twi_softc *)twi_dev;
+			struct at91twi_softc *sc = device_private(twi_dev);
 			i2c = &sc->sc_i2c;
 		}
 		if (i2c && seeprom_bootstrap_read(i2c, 0x50, 0x00, 4096,
@@ -376,12 +376,11 @@ static void mpcsa_device_register(device_t dev, void *aux)
 			if (prop_dictionary_set(device_properties(dev),
 						"mac-address", pd) == FALSE) {
 				printf("WARNING: unable to set mac-addr property "
-				       "for %s\n", dev->dv_xname);
+				       "for %s\n", device_xname(dev));
 			}
 		} else {
 			printf("%s: WARNING: unable to read MAC address from SEEPROM\n",
-			       dev->dv_xname);
+			       device_xname(dev));
 		}
 	}
 }
-

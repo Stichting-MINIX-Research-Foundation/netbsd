@@ -1,4 +1,4 @@
-/*	$NetBSD: npf_scan.l,v 1.6 2012/09/16 13:47:41 rmind Exp $	*/
+/*	$NetBSD: npf_scan.l,v 1.16 2013/11/19 00:28:41 rmind Exp $	*/
 
 /*-
  * Copyright (c) 2011-2012 The NetBSD Foundation, Inc.
@@ -41,15 +41,52 @@ int	yycolumn;
 
 #define	YY_USER_ACTION	yycolumn += yyleng;
 
+extern int		yyparsetarget;
+extern int		yylineno;
+extern const char *	yyfilename;
+extern int		yyparse(void);
+extern void		yyrestart(FILE *);
+
+void
+npfctl_parse_file(const char *name)
+{
+	FILE *fp;
+
+	fp = fopen(name, "r");
+	if (fp == NULL) {
+		err(EXIT_FAILURE, "open '%s'", name);
+	}
+	yyparsetarget = NPFCTL_PARSE_FILE;
+	yyrestart(fp);
+	yylineno = 1;
+	yycolumn = 0;
+	yyfilename = name;
+	yyparse();
+	fclose(fp);
+}
+
+void
+npfctl_parse_string(const char *str)
+{
+	YY_BUFFER_STATE bs;
+
+	yyparsetarget = NPFCTL_PARSE_STRING;
+	bs = yy_scan_string(str);
+	yyfilename = "stdin";
+	yyparse();
+	yy_delete_buffer(bs);
+}
+
 %}
 
 %option noyywrap nounput noinput
 
 ID	[a-zA-Z_][a-zA-Z_0-9]*
-NID	[a-zA-Z_0-9]+
+DID	[a-zA-Z_][a-zA-Z_0-9-]*
 NUMBER	[0-9]+
 
 %%
+alg			return ALG;
 table			return TABLE;
 type			return TYPE;
 hash			return HASH;
@@ -71,18 +108,20 @@ group			return GROUP;
 default			return DEFAULT;
 in			return IN;
 out			return OUT;
+forw			return FORW;
 interface		return INTERFACE;
 all			return ALL;
 block			return BLOCK;
 pass			return PASS;
+pcap-filter		return PCAP_FILTER;
 stateful		return STATEFUL;
 apply			return APPLY;
 final			return FINAL;
 quick			return FINAL;
 on			return ON;
 inet6			return INET6;
-inet4			return INET;
-inet			return INET;
+inet4			return INET4;
+inet			return INET4;
 proto			return PROTO;
 family			return FAMILY;
 tcp			return TCP;
@@ -92,6 +131,7 @@ ipv6-icmp		{ yylval.num = IPPROTO_ICMPV6; return ICMP6; }
 return-rst		return RETURNRST;
 return-icmp		return RETURNICMP;
 return			return RETURN;
+ruleset			return RULESET;
 from			return FROM;
 to			return TO;
 port			return PORT;
@@ -109,7 +149,7 @@ any			return ANY;
 "="			return EQ;
 
 "0x"[0-9a-fA-F]+ {
-			char *endp, *buf = zalloc(yyleng + 1);
+			char *endp, *buf = ecalloc(1, yyleng + 1);
 			buf[yyleng] = 0;
 			yylval.num = strtoul(buf+2, &endp, 16);
 			free(buf);
@@ -117,46 +157,46 @@ any			return ANY;
 		}
 
 {NUMBER}"."{NUMBER} {
-			char *endp, *buf = xstrndup(yytext, yyleng);
+			char *endp, *buf = estrndup(yytext, yyleng);
 			yylval.fpnum = strtod(buf, &endp);
 			free(buf);
 			return FPNUM;
 		}
 
 [0-9a-fA-F]+":"[0-9a-fA-F:]* {
-			yylval.str = xstrndup(yytext, yyleng);
+			yylval.str = estrndup(yytext, yyleng);
 			return IPV6ADDR;
 		}
 
 {NUMBER}"."[0-9][0-9.]* {
-			yylval.str = xstrndup(yytext, yyleng);
+			yylval.str = estrndup(yytext, yyleng);
 			return IPV4ADDR;
 		}
 
 {NUMBER}	{
-			char *endp, *buf = xstrndup(yytext, yyleng);
+			char *endp, *buf = estrndup(yytext, yyleng);
 			yylval.num = strtoul(buf, &endp, 10);
 			free(buf);
 			return NUM;
 		}
 
-"<"{NID}">"	{
-			yylval.str = xstrndup(yytext + 1, yyleng - 2);
+"<"{DID}">"	{
+			yylval.str = estrndup(yytext + 1, yyleng - 2);
 			return TABLE_ID;
 		}
 
-"$"{NID}	{
-			yylval.str = xstrndup(yytext + 1, yyleng - 1);
+"$"{ID}		{
+			yylval.str = estrndup(yytext + 1, yyleng - 1);
 			return VAR_ID;
 		}
 
 {ID}		{
-			yylval.str = xstrndup(yytext, yyleng);
+			yylval.str = estrndup(yytext, yyleng);
 			return IDENTIFIER;
 		}
 
 \"[^\"]*\"	{
-			yylval.str = xstrndup(yytext + 1, yyleng - 2);
+			yylval.str = estrndup(yytext + 1, yyleng - 2);
 			return STRING;
 		}
 

@@ -1,4 +1,4 @@
-/*	$NetBSD: tctrl.c,v 1.55 2012/03/25 08:48:40 martin Exp $	*/
+/*	$NetBSD: tctrl.c,v 1.57 2013/10/19 19:40:23 mrg Exp $	*/
 
 /*-
  * Copyright (c) 1998, 2005, 2006 The NetBSD Foundation, Inc.
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: tctrl.c,v 1.55 2012/03/25 08:48:40 martin Exp $");
+__KERNEL_RCSID(0, "$NetBSD: tctrl.c,v 1.57 2013/10/19 19:40:23 mrg Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -747,7 +747,7 @@ static void
 tctrl_read_event_status(struct tctrl_softc *sc)
 {
 	struct tctrl_req req;
-	int s, lid;
+	int s;
 	uint32_t v;
 
 	req.cmdbuf[0] = TS102_OP_RD_EVENT_STATUS;
@@ -800,7 +800,6 @@ tctrl_read_event_status(struct tctrl_softc *sc)
 		    (sc->sc_ext_status & TS102_EXT_STATUS_LID_DOWN)
 		    ? "closed" : "opened");
 #endif
-		lid = (sc->sc_ext_status & TS102_EXT_STATUS_LID_DOWN) == 0;
 	}
 	if (v & TS102_EVENT_STATUS_EXTERNAL_VGA_STATUS_CHANGE) {
 		int vga;
@@ -1437,7 +1436,7 @@ static void
 tctrl_event_thread(void *v)
 {
 	struct tctrl_softc *sc = v;
-	struct device *dv;
+	device_t dv;
 	struct sd_softc *sd = NULL;
 	struct lance_softc *le = NULL;
 	int ticks = hz/2;

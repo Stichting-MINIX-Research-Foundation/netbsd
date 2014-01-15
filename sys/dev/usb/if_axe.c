@@ -1,4 +1,4 @@
-/*	$NetBSD: if_axe.c,v 1.57 2012/08/24 09:01:23 msaitoh Exp $	*/
+/*	$NetBSD: if_axe.c,v 1.66 2013/11/08 17:46:35 roy Exp $	*/
 /*	$OpenBSD: if_axe.c,v 1.96 2010/01/09 05:33:08 jsg Exp $ */
 
 /*
@@ -89,9 +89,9 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_axe.c,v 1.57 2012/08/24 09:01:23 msaitoh Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_axe.c,v 1.66 2013/11/08 17:46:35 roy Exp $");
 
-#if defined(_KERNEL_OPT)
+#ifdef _KERNEL_OPT
 #include "opt_inet.h"
 #endif
 
@@ -145,6 +145,8 @@ static const struct axe_type axe_devs[] = {
 	{ { USB_VENDOR_ASIX,		USB_PRODUCT_ASIX_AX88172}, 0 },
 	{ { USB_VENDOR_ASIX,		USB_PRODUCT_ASIX_AX88772}, AX772 },
 	{ { USB_VENDOR_ASIX,		USB_PRODUCT_ASIX_AX88772A}, AX772 },
+	{ { USB_VENDOR_ASIX,		USB_PRODUCT_ASIX_AX88772B}, AX772 | AX772B },
+	{ { USB_VENDOR_ASIX,		USB_PRODUCT_ASIX_AX88772B_1}, AX772 | AX772B },
 	{ { USB_VENDOR_ASIX,		USB_PRODUCT_ASIX_AX88178}, AX178 },
 	{ { USB_VENDOR_ATEN,		USB_PRODUCT_ATEN_UC210T}, 0 },
 	{ { USB_VENDOR_BELKIN,		USB_PRODUCT_BELKIN_F5D5055 }, AX178 },
@@ -153,9 +155,11 @@ static const struct axe_type axe_devs[] = {
 	{ { USB_VENDOR_COREGA,		USB_PRODUCT_COREGA_FETHER_USB2_TX }, 0},
 	{ { USB_VENDOR_DLINK,		USB_PRODUCT_DLINK_DUBE100}, 0 },
 	{ { USB_VENDOR_DLINK,		USB_PRODUCT_DLINK_DUBE100B1 }, AX772 },
+	{ { USB_VENDOR_DLINK,		USB_PRODUCT_DLINK_DUBE100C1 }, AX772 | AX772B },
 	{ { USB_VENDOR_GOODWAY,		USB_PRODUCT_GOODWAY_GWUSB2E}, 0 },
 	{ { USB_VENDOR_IODATA,		USB_PRODUCT_IODATA_ETGUS2 }, AX178 },
 	{ { USB_VENDOR_JVC,		USB_PRODUCT_JVC_MP_PRX1}, 0 },
+	{ { USB_VENDOR_LENOVO,		USB_PRODUCT_LENOVO_ETHERNET }, AX772 | AX772B },
 	{ { USB_VENDOR_LINKSYS2,	USB_PRODUCT_LINKSYS2_USB200M}, 0 },
 	{ { USB_VENDOR_LINKSYS4,	USB_PRODUCT_LINKSYS4_USB1000 }, AX178 },
 	{ { USB_VENDOR_LOGITEC,		USB_PRODUCT_LOGITEC_LAN_GTJU2}, AX178 },
@@ -191,7 +195,9 @@ static int	axe_ioctl(struct ifnet *, u_long, void *);
 static int	axe_init(struct ifnet *);
 static void	axe_stop(struct ifnet *, int);
 static void	axe_watchdog(struct ifnet *);
+static int	axe_miibus_readreg_locked(device_t, int, int);
 static int	axe_miibus_readreg(device_t, int, int);
+static void	axe_miibus_writereg_locked(device_t, int, int, int);
 static void	axe_miibus_writereg(device_t, int, int, int);
 static void	axe_miibus_statchg(struct ifnet *);
 static int	axe_cmd(struct axe_softc *, int, int, int, void *);
@@ -254,70 +260,89 @@ axe_cmd(struct axe_softc *sc, int cmd, int index, int val, void *buf)
 }
 
 static int
-axe_miibus_readreg(device_t dev, int phy, int reg)
+axe_miibus_readreg_locked(device_t dev, int phy, int reg)
 {
 	struct axe_softc *sc = device_private(dev);
 	usbd_status err;
 	uint16_t val;
 
-	if (sc->axe_dying) {
-		DPRINTF(("axe: dying\n"));
+	axe_cmd(sc, AXE_CMD_MII_OPMODE_SW, 0, 0, NULL);
+	err = axe_cmd(sc, AXE_CMD_MII_READ_REG, reg, phy, (void *)&val);
+	axe_cmd(sc, AXE_CMD_MII_OPMODE_HW, 0, 0, NULL);
+	if (err) {
+		aprint_error_dev(sc->axe_dev, "read PHY failed\n");
+		return -1;
+	}
+
+	val = le16toh(val);
+	if (sc->axe_flags & AX772 && reg == MII_BMSR) {
+		/*
+		 * BMSR of AX88772 indicates it supports extended
+		 * capability but the extended status register is
+		 * reserverd for embedded ethernet PHY. So clear the
+		 * extended capability bit of BMSR.
+		 */
+		 val &= ~BMSR_EXTCAP;
+	}
+
+	DPRINTF(("axe_miibus_readreg: phy 0x%x reg 0x%x val 0x%x\n",
+	    phy, reg, val));
+
+	return val;
+}
+
+static int
+axe_miibus_readreg(device_t dev, int phy, int reg)
+{
+	struct axe_softc *sc = device_private(dev);
+	int val;
+
+	if (sc->axe_dying)
 		return 0;
+
+	if (sc->axe_phyno != phy)
+		return 0;
+
+	axe_lock_mii(sc);
+	val = axe_miibus_readreg_locked(dev, phy, reg);
+	axe_unlock_mii(sc);
+
+	return val;
+}
+
+static void
+axe_miibus_writereg_locked(device_t dev, int phy, int reg, int aval)
+{
+	struct axe_softc *sc = device_private(dev);
+	usbd_status err;
+	uint16_t val;
+
+	val = htole16(aval);
+
+	axe_cmd(sc, AXE_CMD_MII_OPMODE_SW, 0, 0, NULL);
+	err = axe_cmd(sc, AXE_CMD_MII_WRITE_REG, reg, phy, (void *)&val);
+	axe_cmd(sc, AXE_CMD_MII_OPMODE_HW, 0, 0, NULL);
+
+	if (err) {
+		aprint_error_dev(sc->axe_dev, "write PHY failed\n");
+		return;
 	}
-
-	/*
-	 * The chip tells us the MII address of any supported
-	 * PHYs attached to the chip, so only read from those.
-	 *
-	 * But if the chip lies about its PHYs, read from any.
-	 */
-	val = 0;
-
-	if ((phy == sc->axe_phyaddrs[0]) || (phy == sc->axe_phyaddrs[1]) ||
-	    (sc->axe_flags & AXE_ANY_PHY)) {
-		axe_lock_mii(sc);
-		axe_cmd(sc, AXE_CMD_MII_OPMODE_SW, 0, 0, NULL);
-		err = axe_cmd(sc, AXE_CMD_MII_READ_REG, reg, phy, (void *)&val);
-		axe_cmd(sc, AXE_CMD_MII_OPMODE_HW, 0, 0, NULL);
-		axe_unlock_mii(sc);
-
-		if (err) {
-			aprint_error_dev(sc->axe_dev, "read PHY failed\n");
-			return -1;
-		}
-		DPRINTF(("axe_miibus_readreg: phy 0x%x reg 0x%x val 0x%x\n",
-		    phy, reg, val));
-
-		if (val && val != 0xffff)
-			sc->axe_phyaddrs[0] = phy;
-	} else {
-		DPRINTF(("axe_miibus_readreg: ignore read from phy 0x%x\n",
-		    phy));
-	}
-	return le16toh(val);
 }
 
 static void
 axe_miibus_writereg(device_t dev, int phy, int reg, int aval)
 {
 	struct axe_softc *sc = device_private(dev);
-	usbd_status err;
-	uint16_t val;
 
 	if (sc->axe_dying)
 		return;
 
-	val = htole16(aval);
-	axe_lock_mii(sc);
-	axe_cmd(sc, AXE_CMD_MII_OPMODE_SW, 0, 0, NULL);
-	err = axe_cmd(sc, AXE_CMD_MII_WRITE_REG, reg, phy, (void *)&val);
-	axe_cmd(sc, AXE_CMD_MII_OPMODE_HW, 0, 0, NULL);
-	axe_unlock_mii(sc);
-
-	if (err) {
-		aprint_error_dev(sc->axe_dev, "write PHY failed\n");
+	if (sc->axe_phyno != phy)
 		return;
-	}
+
+	axe_lock_mii(sc);
+	axe_miibus_writereg_locked(dev, phy, reg, aval);
+	axe_unlock_mii(sc);
 }
 
 static void
@@ -334,7 +359,8 @@ axe_miibus_statchg(struct ifnet *ifp)
 
 	if (sc->axe_flags & AX178 || sc->axe_flags & AX772) {
 		val |= (AXE_178_MEDIA_RX_EN | AXE_178_MEDIA_MAGIC);
-
+		if (sc->axe_flags & AX178)
+			val |= AXE_178_MEDIA_ENCK;
 		switch (IFM_SUBTYPE(mii->mii_media_active)) {
 		case IFM_1000_T:
 			val |= AXE_178_MEDIA_GMII | AXE_178_MEDIA_ENCK;
@@ -457,11 +483,41 @@ axe_reset(struct axe_softc *sc)
 	DELAY(1000);
 }
 
+static int
+axe_get_phyno(struct axe_softc *sc, int sel)
+{
+	int phyno;
+
+	switch (AXE_PHY_TYPE(sc->axe_phyaddrs[sel])) {
+	case PHY_TYPE_100_HOME:
+		/* FALLTHROUGH */
+	case PHY_TYPE_GIG:
+		phyno = AXE_PHY_NO(sc->axe_phyaddrs[sel]);
+		break;
+	case PHY_TYPE_SPECIAL:
+		/* FALLTHROUGH */
+	case PHY_TYPE_RSVD:
+		/* FALLTHROUGH */
+	case PHY_TYPE_NON_SUP:
+		/* FALLTHROUGH */
+	default:
+		phyno = -1;
+		break;
+	}
+
+	return phyno;
+}
+
+#define	AXE_GPIO_WRITE(x, y)	do {				\
+	axe_cmd(sc, AXE_CMD_WRITE_GPIO, 0, (x), NULL);		\
+	usbd_delay_ms(sc->axe_udev, hztoms(y));			\
+} while (0)
+
 static void
 axe_ax88178_init(struct axe_softc *sc)
 {
-	int gpio0 = 0, phymode = 0;
-	uint16_t eeprom;
+	int gpio0, ledmode, phymode;
+	uint16_t eeprom, val;
 
 	axe_cmd(sc, AXE_CMD_SROM_WR_ENABLE, 0, 0, NULL);
 	/* XXX magic */
@@ -474,32 +530,89 @@ axe_ax88178_init(struct axe_softc *sc)
 
 	/* if EEPROM is invalid we have to use to GPIO0 */
 	if (eeprom == 0xffff) {
-		phymode = 0;
+		phymode = AXE_PHY_MODE_MARVELL;
 		gpio0 = 1;
+		ledmode = 0;
 	} else {
-		phymode = eeprom & 7;
+		phymode = eeprom & 0x7f;
 		gpio0 = (eeprom & 0x80) ? 0 : 1;
+		ledmode = eeprom >> 8;
 	}
 
 	DPRINTF(("use gpio0: %d, phymode %d\n", gpio0, phymode));
 
-	axe_cmd(sc, AXE_CMD_WRITE_GPIO, 0, 0x008c, NULL);
-	usbd_delay_ms(sc->axe_udev, 40);
-	if ((eeprom >> 8) != 1) {
-		axe_cmd(sc, AXE_CMD_WRITE_GPIO, 0, 0x003c, NULL);
-		usbd_delay_ms(sc->axe_udev, 30);
-
-		axe_cmd(sc, AXE_CMD_WRITE_GPIO, 0, 0x001c, NULL);
-		usbd_delay_ms(sc->axe_udev, 300);
-
-		axe_cmd(sc, AXE_CMD_WRITE_GPIO, 0, 0x003c, NULL);
-		usbd_delay_ms(sc->axe_udev, 30);
-	} else {
-		DPRINTF(("axe gpio phymode == 1 path\n"));
-		axe_cmd(sc, AXE_CMD_WRITE_GPIO, 0, 0x0004, NULL);
-		usbd_delay_ms(sc->axe_udev, 30);
-		axe_cmd(sc, AXE_CMD_WRITE_GPIO, 0, 0x000c, NULL);
-		usbd_delay_ms(sc->axe_udev, 30);
+	/* Program GPIOs depending on PHY hardware. */
+	switch (phymode) {
+	case AXE_PHY_MODE_MARVELL:
+		if (gpio0 == 1) {
+			AXE_GPIO_WRITE(AXE_GPIO_RELOAD_EEPROM | AXE_GPIO0_EN,
+			    hz / 32);
+			AXE_GPIO_WRITE(AXE_GPIO0_EN | AXE_GPIO2 | AXE_GPIO2_EN,
+			    hz / 32);
+			AXE_GPIO_WRITE(AXE_GPIO0_EN | AXE_GPIO2_EN, hz / 4);
+			AXE_GPIO_WRITE(AXE_GPIO0_EN | AXE_GPIO2 | AXE_GPIO2_EN,
+			    hz / 32);
+		} else {
+			AXE_GPIO_WRITE(AXE_GPIO_RELOAD_EEPROM | AXE_GPIO1 |
+			    AXE_GPIO1_EN, hz / 3);
+			if (ledmode == 1) {
+				AXE_GPIO_WRITE(AXE_GPIO1_EN, hz / 3);
+				AXE_GPIO_WRITE(AXE_GPIO1 | AXE_GPIO1_EN,
+				    hz / 3);
+			} else {
+				AXE_GPIO_WRITE(AXE_GPIO1 | AXE_GPIO1_EN |
+				    AXE_GPIO2 | AXE_GPIO2_EN, hz / 32);
+				AXE_GPIO_WRITE(AXE_GPIO1 | AXE_GPIO1_EN |
+				    AXE_GPIO2_EN, hz / 4);
+				AXE_GPIO_WRITE(AXE_GPIO1 | AXE_GPIO1_EN |
+				    AXE_GPIO2 | AXE_GPIO2_EN, hz / 32);
+			}
+		}
+		break;
+	case AXE_PHY_MODE_CICADA:
+	case AXE_PHY_MODE_CICADA_V2:
+	case AXE_PHY_MODE_CICADA_V2_ASIX:
+		if (gpio0 == 1)
+			AXE_GPIO_WRITE(AXE_GPIO_RELOAD_EEPROM | AXE_GPIO0 |
+			    AXE_GPIO0_EN, hz / 32);
+		else
+			AXE_GPIO_WRITE(AXE_GPIO_RELOAD_EEPROM | AXE_GPIO1 |
+			    AXE_GPIO1_EN, hz / 32);
+		break;
+	case AXE_PHY_MODE_AGERE:
+		AXE_GPIO_WRITE(AXE_GPIO_RELOAD_EEPROM | AXE_GPIO1 |
+		    AXE_GPIO1_EN, hz / 32);
+		AXE_GPIO_WRITE(AXE_GPIO1 | AXE_GPIO1_EN | AXE_GPIO2 |
+		    AXE_GPIO2_EN, hz / 32);
+		AXE_GPIO_WRITE(AXE_GPIO1 | AXE_GPIO1_EN | AXE_GPIO2_EN, hz / 4);
+		AXE_GPIO_WRITE(AXE_GPIO1 | AXE_GPIO1_EN | AXE_GPIO2 |
+		    AXE_GPIO2_EN, hz / 32);
+		break;
+	case AXE_PHY_MODE_REALTEK_8211CL:
+	case AXE_PHY_MODE_REALTEK_8211BN:
+	case AXE_PHY_MODE_REALTEK_8251CL:
+		val = gpio0 == 1 ? AXE_GPIO0 | AXE_GPIO0_EN :
+		    AXE_GPIO1 | AXE_GPIO1_EN;
+		AXE_GPIO_WRITE(val, hz / 32);
+		AXE_GPIO_WRITE(val | AXE_GPIO2 | AXE_GPIO2_EN, hz / 32);
+		AXE_GPIO_WRITE(val | AXE_GPIO2_EN, hz / 4);
+		AXE_GPIO_WRITE(val | AXE_GPIO2 | AXE_GPIO2_EN, hz / 32);
+		if (phymode == AXE_PHY_MODE_REALTEK_8211CL) {
+			axe_miibus_writereg_locked(sc->axe_dev,
+			    sc->axe_phyno, 0x1F, 0x0005);
+			axe_miibus_writereg_locked(sc->axe_dev,
+			    sc->axe_phyno, 0x0C, 0x0000);
+			val = axe_miibus_readreg_locked(sc->axe_dev,
+			    sc->axe_phyno, 0x0001);
+			axe_miibus_writereg_locked(sc->axe_dev,
+			    sc->axe_phyno, 0x01, val | 0x0080);
+			axe_miibus_writereg_locked(sc->axe_dev,
+			    sc->axe_phyno, 0x1F, 0x0000);
+		}
+		break;
+	default:
+		/* Unknown PHY model or no need to program GPIOs. */
+		break;
 	}
 
 	/* soft reset */
@@ -521,7 +634,7 @@ axe_ax88772_init(struct axe_softc *sc)
 	axe_cmd(sc, AXE_CMD_WRITE_GPIO, 0, 0x00b0, NULL);
 	usbd_delay_ms(sc->axe_udev, 40);
 
-	if (sc->axe_phyaddrs[1] == AXE_INTPHY) {
+	if (sc->axe_phyno == AXE_772_PHY_NO_EPHY) {
 		/* ask for the embedded PHY */
 		axe_cmd(sc, AXE_CMD_SW_PHY_SELECT, 0, 0x01, NULL);
 		usbd_delay_ms(sc->axe_udev, 10);
@@ -599,14 +712,15 @@ axe_attach(device_t parent, device_t self, void *aux)
 
 	err = usbd_set_config_no(dev, AXE_CONFIG_NO, 1);
 	if (err) {
-		aprint_error_dev(self, "getting interface handle failed\n");
+		aprint_error_dev(self, "failed to set configuration"
+		    ", err=%s\n", usbd_errstr(err));
 		return;
 	}
 
 	sc->axe_flags = axe_lookup(uaa->vendor, uaa->product)->axe_flags;
 
 	mutex_init(&sc->axe_mii_lock, MUTEX_DEFAULT, IPL_NONE);
-	usb_init_task(&sc->axe_tick_task, axe_tick_task, sc);
+	usb_init_task(&sc->axe_tick_task, axe_tick_task, sc, 0);
 
 	err = usbd_device2interface_handle(dev, AXE_IFACE_IDX, &sc->axe_iface);
 	if (err) {
@@ -653,6 +767,13 @@ axe_attach(device_t parent, device_t self, void *aux)
 
 	DPRINTF((" phyaddrs[0]: %x phyaddrs[1]: %x\n",
 	    sc->axe_phyaddrs[0], sc->axe_phyaddrs[1]));
+	sc->axe_phyno = axe_get_phyno(sc, AXE_PHY_SEL_PRI);
+	if (sc->axe_phyno == -1)
+		sc->axe_phyno = axe_get_phyno(sc, AXE_PHY_SEL_SEC);
+	if (sc->axe_phyno == -1) {
+		DPRINTF((" no valid PHY address found, assuming PHY address 0\n"));
+		sc->axe_phyno = 0;
+	}
 
 	if (sc->axe_flags & AX178)
 		axe_ax88178_init(sc);
@@ -918,12 +1039,14 @@ axe_rxeof(usbd_xfer_handle xfer, usbd_private_handle priv, usbd_status status)
 			total_len -= sizeof(hdr);
 			buf += sizeof(hdr);
 
-			if ((hdr.len ^ hdr.ilen) != 0xffff) {
+			if (((le16toh(hdr.len) & AXE_RH1M_RXLEN_MASK) ^
+			    (le16toh(hdr.ilen) & AXE_RH1M_RXLEN_MASK)) !=
+			    AXE_RH1M_RXLEN_MASK) {
 				ifp->if_ierrors++;
 				goto done;
 			}
 
-			rxlen = le16toh(hdr.len);
+			rxlen = le16toh(hdr.len) & AXE_RH1M_RXLEN_MASK;
 			if (total_len < rxlen) {
 				pktlen = total_len;
 				total_len = 0;
@@ -1007,6 +1130,9 @@ axe_txeof(usbd_xfer_handle xfer, usbd_private_handle priv, usbd_status status)
 
 	s = splnet();
 
+	ifp->if_timer = 0;
+	ifp->if_flags &= ~IFF_OACTIVE;
+
 	if (status != USBD_NORMAL_COMPLETION) {
 		if (status == USBD_NOT_STARTED || status == USBD_CANCELLED) {
 			splx(s);
@@ -1020,14 +1146,11 @@ axe_txeof(usbd_xfer_handle xfer, usbd_private_handle priv, usbd_status status)
 		splx(s);
 		return;
 	}
-
-	ifp->if_timer = 0;
-	ifp->if_flags &= ~IFF_OACTIVE;
+	ifp->if_opackets++;
 
 	if (!IFQ_IS_EMPTY(&ifp->if_snd))
 		axe_start(ifp);
 
-	ifp->if_opackets++;
 	splx(s);
 }
 
@@ -1241,7 +1364,9 @@ axe_init(struct ifnet *ifp)
 
 	/* Enable receiver, set RX mode */
 	rxmode = AXE_RXCMD_BROADCAST | AXE_RXCMD_MULTICAST | AXE_RXCMD_ENABLE;
-	if (sc->axe_flags & AX178 || sc->axe_flags & AX772) {
+	if (sc->axe_flags & AX772B)
+		rxmode |= AXE_772B_RXCMD_RH1M;
+	else if (sc->axe_flags & AX178 || sc->axe_flags & AX772) {
 		if (sc->axe_udev->speed == USB_SPEED_HIGH) {
 			/* Largest possible USB buffer size for AX88178 */
 			rxmode |= AXE_178_RXCMD_MFB;

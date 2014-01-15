@@ -1,4 +1,4 @@
-.\"	$NetBSD: syslogd.8,v 1.51 2012/04/08 22:00:41 wiz Exp $
+.\"	$NetBSD: syslogd.8,v 1.54 2013/01/14 03:05:41 dholland Exp $
 .\"
 .\" Copyright (c) 1983, 1986, 1991, 1993
 .\"	The Regents of the University of California.  All rights reserved.
@@ -95,7 +95,7 @@ Multiple
 options create multiple log sockets.
 If no
 .Fl p
-arguments are created, the default socket of
+arguments are given, the default socket of
 .Pa /var/run/log
 is used.
 .It Fl r
@@ -267,3 +267,6 @@ Support for multiple log sockets appeared in
 .Nx 1.4 .
 libwrap support appeared in
 .Nx 1.6 .
+Support for RFC 5424, TLS encryption and authentication, signed messages
+appeared in
+.Nx 6.0 .

@@ -1,4 +1,4 @@
-/*	$NetBSD: fsdb.c,v 1.44 2012/03/20 18:50:31 matt Exp $	*/
+/*	$NetBSD: fsdb.c,v 1.48 2013/06/23 02:06:04 dholland Exp $	*/
 
 /*-
  * Copyright (c) 1996 The NetBSD Foundation, Inc.
@@ -31,7 +31,7 @@
 
 #include <sys/cdefs.h>
 #ifndef lint
-__RCSID("$NetBSD: fsdb.c,v 1.44 2012/03/20 18:50:31 matt Exp $");
+__RCSID("$NetBSD: fsdb.c,v 1.48 2013/06/23 02:06:04 dholland Exp $");
 #endif /* not lint */
 
 #include <sys/types.h>
@@ -251,8 +251,8 @@ cmdloop(void)
 	HistEvent he;
 	EditLine *elptr;
 
-	curinode = ginode(ROOTINO);
-	curinum = ROOTINO;
+	curinode = ginode(UFS_ROOTINO);
+	curinum = UFS_ROOTINO;
 	printactive();
 
 	hist = history_init();
@@ -313,9 +313,9 @@ cmdloop(void)
 static ino_t ocurrent;
 
 #define GETINUM(ac,inum)    inum = strtoull(argv[ac], &cp, 0); \
-    if (inum < ROOTINO || inum >= maxino || cp == argv[ac] || *cp != '\0' ) { \
+    if (inum < UFS_ROOTINO || inum >= maxino || cp == argv[ac] || *cp != '\0' ) { \
 	printf("inode %llu out of range; range is [%llu,%llu]\n", \
-	   (unsigned long long)inum, (unsigned long long)ROOTINO, \
+	   (unsigned long long)inum, (unsigned long long)UFS_ROOTINO, \
 	   (unsigned long long)maxino); \
 	return 1; \
     }
@@ -471,16 +471,16 @@ CMDFUNC(blks)
 	}
 	printf("Direct blocks:\n");
 	if (is_ufs2)
-		print_blks64(curinode->dp2.di_db, NDADDR, &blkno);
+		print_blks64(curinode->dp2.di_db, UFS_NDADDR, &blkno);
 	else
-		print_blks32(curinode->dp1.di_db, NDADDR, &blkno);
+		print_blks32(curinode->dp1.di_db, UFS_NDADDR, &blkno);
 
 	if (is_ufs2) {
-		for (i = 0; i < NIADDR; i++)
+		for (i = 0; i < UFS_NIADDR; i++)
 			print_indirblks64(iswap64(curinode->dp2.di_ib[i]), i,
 			    &blkno);
 	} else {
-		for (i = 0; i < NIADDR; i++)
+		for (i = 0; i < UFS_NIADDR; i++)
 			print_indirblks32(iswap32(curinode->dp1.di_ib[i]), i,
 			    &blkno);
 	}
@@ -508,7 +508,7 @@ CMDFUNC(findblk)
 		memset(wantedblk64, 0, sizeof(uint64_t) * wantedblksize);
 		for (i = 1; i < argc; i++)
 			wantedblk64[i - 1] =
-			    dbtofsb(sblock, strtoull(argv[i], NULL, 0)); 
+			    FFS_DBTOFSB(sblock, strtoull(argv[i], NULL, 0)); 
 	} else {
 		wantedblk32 = malloc(sizeof(uint32_t) * wantedblksize);
 		if (wantedblk32 == NULL) {
@@ -518,7 +518,7 @@ CMDFUNC(findblk)
 		memset(wantedblk32, 0, sizeof(uint32_t) * wantedblksize);
 		for (i = 1; i < argc; i++)
 			wantedblk32[i - 1] =
-			    dbtofsb(sblock, strtoull(argv[i], NULL, 0)); 
+			    FFS_DBTOFSB(sblock, strtoull(argv[i], NULL, 0)); 
 	}
 	findblk_numtofind = wantedblksize;
 	for (c = 0; c < sblock->fs_ncg; c++) {
@@ -532,19 +532,19 @@ CMDFUNC(findblk)
 		else
 			inosused = sblock->fs_ipg;
 		for (; inosused > 0; inum++, inosused--) {
-			if (inum < ROOTINO)
+			if (inum < UFS_ROOTINO)
 				continue;
 			if (is_ufs2 ? compare_blk64(wantedblk64,
 			        ino_to_fsba(sblock, inum)) :
 			    compare_blk32(wantedblk32,
 			        ino_to_fsba(sblock, inum))) {
 				printf("block %llu: inode block (%llu-%llu)\n",
-				    (unsigned long long)fsbtodb(sblock,
+				    (unsigned long long)FFS_FSBTODB(sblock,
 					ino_to_fsba(sblock, inum)),
 				    (unsigned long long)
-				    (inum / INOPB(sblock)) * INOPB(sblock),
+				    (inum / FFS_INOPB(sblock)) * FFS_INOPB(sblock),
 				    (unsigned long long)
-				    (inum / INOPB(sblock) + 1) * INOPB(sblock));
+				    (inum / FFS_INOPB(sblock) + 1) * FFS_INOPB(sblock));
 				findblk_numtofind--;
 				if (findblk_numtofind == 0)
 					goto end;
@@ -571,12 +571,12 @@ CMDFUNC(findblk)
 				continue;
 			}
 			if (is_ufs2 ?
-			    find_blks64(curinode->dp2.di_db, NDADDR,
+			    find_blks64(curinode->dp2.di_db, UFS_NDADDR,
 				wantedblk64) : 
-			    find_blks32(curinode->dp1.di_db, NDADDR,
+			    find_blks32(curinode->dp1.di_db, UFS_NDADDR,
 				wantedblk32))
 				goto end;
-			for (i = 0; i < NIADDR; i++) {
+			for (i = 0; i < UFS_NIADDR; i++) {
 				if (is_ufs2 ?
 				    compare_blk64(wantedblk64,
 					iswap64(curinode->dp2.di_ib[i])) :
@@ -639,7 +639,7 @@ static int
 founddatablk(uint64_t blk)
 {
 	printf("%llu: data block of inode %llu\n",
-	    (unsigned long long)fsbtodb(sblock, blk),
+	    (unsigned long long)FFS_FSBTODB(sblock, blk),
 	    (unsigned long long)curinum);
 	findblk_numtofind--;
 	if (findblk_numtofind == 0)
@@ -669,7 +669,7 @@ find_indirblks32(uint32_t blk, int ind_level, uint32_t *wantedblk)
 	uint32_t idblk[MAXNINDIR];
 	size_t i;
 
-	bread(fsreadfd, (char *)idblk, fsbtodb(sblock, blk),
+	bread(fsreadfd, (char *)idblk, FFS_FSBTODB(sblock, blk),
 	    (int)sblock->fs_bsize);
 	if (ind_level <= 0) {
 		if (find_blks32(idblk,
@@ -715,7 +715,7 @@ find_indirblks64(uint64_t blk, int ind_level, uint64_t *wantedblk)
 	uint64_t idblk[MAXNINDIR];
 	size_t i;
 
-	bread(fsreadfd, (char *)idblk, fsbtodb(sblock, blk),
+	bread(fsreadfd, (char *)idblk, FFS_FSBTODB(sblock, blk),
 	    (int)sblock->fs_bsize);
 	if (ind_level <= 0) {
 		if (find_blks64(idblk,
@@ -808,7 +808,7 @@ print_indirblks32(uint32_t blk, int ind_level, uint64_t *blknum)
  
 	printf("Indirect block %lld (level %d):\n", (long long)blk,
 	    ind_level+1);
-	bread(fsreadfd, (char *)idblk, fsbtodb(sblock, blk),
+	bread(fsreadfd, (char *)idblk, FFS_FSBTODB(sblock, blk),
 	    (int)sblock->fs_bsize);
 	if (ind_level <= 0) {
 		print_blks32(idblk, ptrperblk, blknum);
@@ -836,7 +836,7 @@ print_indirblks64(uint64_t blk, int ind_level, uint64_t *blknum)
  
 	printf("Indirect block %lld (level %d):\n", (long long)blk,
 	    ind_level+1);
-	bread(fsreadfd, (char *)idblk, fsbtodb(sblock, blk),
+	bread(fsreadfd, (char *)idblk, FFS_FSBTODB(sblock, blk),
 	    (int)sblock->fs_bsize);
 	if (ind_level <= 0) {
 		print_blks64(idblk, ptrperblk, blknum);
@@ -881,8 +881,8 @@ CMDFUNC(focusname)
 	ocurrent = curinum;
 
 	if (argv[1][0] == '/') {
-		curinum = ROOTINO;
-		curinode = ginode(ROOTINO);
+		curinum = UFS_ROOTINO;
+		curinode = ginode(UFS_ROOTINO);
 	} else {
 		if (!checkactivedir())
 			return 1;
@@ -990,7 +990,7 @@ chnamefunc(struct inodesc *idesc)
 	if (slotcount++ == desired) {
 		/* will name fit? */
 		testdir.d_namlen = strlen(idesc->id_name);
-		if (DIRSIZ(NEWDIRFMT, &testdir, 0) <= iswap16(dirp->d_reclen)) {
+		if (UFS_DIRSIZ(UFS_NEWDIRFMT, &testdir, 0) <= iswap16(dirp->d_reclen)) {
 			dirp->d_namlen = testdir.d_namlen;
 			strlcpy(dirp->d_name, idesc->id_name,
 			    sizeof(dirp->d_name));

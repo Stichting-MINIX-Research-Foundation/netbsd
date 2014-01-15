@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.112 2012/10/13 19:42:03 alnsn Exp $
+#	$NetBSD: Makefile,v 1.127 2013/11/18 16:23:47 bad Exp $
 
 .include <bsd.own.mk>
 
@@ -32,10 +32,16 @@ SUBDIR+=	gpioow
 SUBDIR+=	gpiosim
 SUBDIR+=	hfs
 SUBDIR+=	if_axe
+SUBDIR+=	if_axen
+SUBDIR+=	if_npflog
+SUBDIR+=	if_smsc
 SUBDIR+=	iic
 SUBDIR+=	kernfs
 SUBDIR+=	layerfs
 SUBDIR+=	lfs
+SUBDIR+=	lua
+SUBDIR+=	luacore
+SUBDIR+=	luapmf
 SUBDIR+=	mfs
 SUBDIR+=	miiverbose
 SUBDIR+=	miniroot
@@ -49,7 +55,8 @@ SUBDIR+=	nilfs
 SUBDIR+=	npf
 SUBDIR+=	npf_alg_icmp
 SUBDIR+=	npf_ext_log
-SUBDIR+=	npf_ext_normalise
+SUBDIR+=	npf_ext_normalize
+SUBDIR+=	npf_ext_rndblock
 SUBDIR+=	ntfs
 SUBDIR+=	null
 SUBDIR+=	onewire
@@ -121,8 +128,14 @@ SUBDIR+=	tprof_amdpmi
 SUBDIR+=	vmt
 .endif
 
-.if ${MACHINE_ARCH} == "x86_64"
+.if ${MKSLJIT} != "no"
+# No modules for arm, mips and powerpc yet.
+.if ${MACHINE_ARCH} == "i386" || \
+    ${MACHINE_ARCH} == "x86_64" || \
+    ${MACHINE_ARCH} == "sparc"
+SUBDIR+=	bpfjit
 SUBDIR+=	sljit
+.endif
 .endif
 
 #
@@ -238,6 +251,7 @@ SUBDIR+= 	dm
 .endif
 
 .if (${MKDTRACE} != "no")
+SUBDIR+=	cyclic
 SUBDIR+=	dtrace
 .endif
 

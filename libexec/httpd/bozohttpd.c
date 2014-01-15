@@ -1,9 +1,9 @@
-/*	$NetBSD: bozohttpd.c,v 1.32 2012/07/19 09:53:06 mrg Exp $	*/
+/*	$NetBSD: bozohttpd.c,v 1.44 2013/10/12 18:46:12 mbalmer Exp $	*/
 
 /*	$eterna: bozohttpd.c,v 1.178 2011/11/18 09:21:15 mrg Exp $	*/
 
 /*
- * Copyright (c) 1997-2011 Matthew R. Green
+ * Copyright (c) 1997-2013 Matthew R. Green
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -99,7 +99,7 @@
  *	- 14.9: we aren't a cache.
  *
  *	- 14.15: content-md5 would be nice...
- *	
+ *
  *	- 14.24/14.26/14.27: be nice to support this...
  *
  *	- 14.44: not sure about this Vary: header.  ignore it for now.
@@ -109,7 +109,7 @@
 #define INDEX_HTML		"index.html"
 #endif
 #ifndef SERVER_SOFTWARE
-#define SERVER_SOFTWARE		"bozohttpd/20111118"
+#define SERVER_SOFTWARE		"bozohttpd/20130711"
 #endif
 #ifndef DIRECT_ACCESS_FILE
 #define DIRECT_ACCESS_FILE	".bzdirect"
@@ -337,6 +337,7 @@ bozo_clean_request(bozo_httpreq_t *request)
 	MF(hr_remotehost);
 	MF(hr_remoteaddr);
 	MF(hr_serverport);
+	MF(hr_virthostname);
 	MF(hr_file);
 	MF(hr_oldfile);
 	MF(hr_query);
@@ -346,12 +347,10 @@ bozo_clean_request(bozo_httpreq_t *request)
 	    hdr = SIMPLEQ_NEXT(hdr, h_next)) {
 		free(hdr->h_value);
 		free(hdr->h_header);
-		if (ohdr)
-			free(ohdr);
+		free(ohdr);
 		ohdr = hdr;
 	}
-	if (ohdr)
-		free(ohdr);
+	free(ohdr);
 
 	free(request);
 }
@@ -539,6 +538,7 @@ bozo_read_request(bozohttpd_t *httpd)
 	request->hr_range = NULL;
 	request->hr_last_byte_pos = -1;
 	request->hr_if_modified_since = NULL;
+	request->hr_virthostname = NULL;
 	request->hr_file = NULL;
 	request->hr_oldfile = NULL;
 
@@ -852,7 +852,7 @@ parse_http_date(const char *val, time_t *timestamp)
  * to be updated for any sort of parallel processing.
  */
 char *
-escape_rfc3986(bozohttpd_t *httpd, const char *url)
+bozo_escape_rfc3986(bozohttpd_t *httpd, const char *url)
 {
 	static char *buf;
 	static size_t buflen = 0;
@@ -865,13 +865,13 @@ escape_rfc3986(bozohttpd_t *httpd, const char *url)
 		buflen = len * 3 + 1;
 		buf = bozorealloc(httpd, buf, buflen);
 	}
-	
+
 	if (url == NULL) {
 		buf[0] = 0;
 		return buf;
 	}
 
-	for (s = url, d = buf; *s;) {
+	for (len = 0, s = url, d = buf; *s;) {
 		if (*s & 0x80)
 			goto encode_it;
 		switch (*s) {
@@ -893,13 +893,16 @@ escape_rfc3986(bozohttpd_t *httpd, const char *url)
 		case ',':
 		case ';':
 		case '=':
+		case '%':
 		encode_it:
 			snprintf(d, 4, "%%%2X", *s++);
 			d += 3;
 			len += 3;
+			break;
 		default:
 			*d++ = *s++;
 			len++;
+			break;
 		}
 	}
 	buf[len] = 0;
@@ -919,7 +922,7 @@ check_direct_access(bozo_httpreq_t *request)
 	char dir[MAXPATHLEN], dirfile[MAXPATHLEN], *basename;
 
 	snprintf(dir, sizeof(dir), "%s", request->hr_file + 1);
-	debug((request->hr_httpd, DEBUG_FAT, "check_bzredirect: dir %s", dir));
+	debug((request->hr_httpd, DEBUG_FAT, "check_direct_access: dir %s", dir));
 	basename = strrchr(dir, '/');
 
 	if ((!basename || basename[1] != '\0') &&
@@ -951,15 +954,16 @@ handle_redirect(bozo_httpreq_t *request,
 	bozohttpd_t *httpd = request->hr_httpd;
 	char *urlbuf;
 	char portbuf[20];
+	const char *hostname = BOZOHOST(httpd, request);
 	int query = 0;
-	
+
 	if (url == NULL) {
 		if (asprintf(&urlbuf, "/%s/", request->hr_file) < 0)
 			bozo_err(httpd, 1, "asprintf");
 		url = urlbuf;
 	} else
 		urlbuf = NULL;
-	url = escape_rfc3986(request->hr_httpd, url);
+	url = bozo_escape_rfc3986(request->hr_httpd, url);
 
 	if (request->hr_query && strlen(request->hr_query))
 		query = 1;
@@ -969,15 +973,18 @@ handle_redirect(bozo_httpreq_t *request,
 		    request->hr_serverport);
 	else
 		portbuf[0] = '\0';
-	bozo_warn(httpd, "redirecting %s%s%s", httpd->virthostname, portbuf, url);
+	if (absolute)
+		bozo_warn(httpd, "redirecting %s", url);
+	else
+		bozo_warn(httpd, "redirecting %s%s%s", hostname, portbuf, url);
 	debug((httpd, DEBUG_FAT, "redirecting %s", url));
 	bozo_printf(httpd, "%s 301 Document Moved\r\n", request->hr_proto);
-	if (request->hr_proto != httpd->consts.http_09) 
+	if (request->hr_proto != httpd->consts.http_09)
 		bozo_print_header(request, NULL, "text/html", NULL);
 	if (request->hr_proto != httpd->consts.http_09) {
 		bozo_printf(httpd, "Location: http://");
 		if (absolute == 0)
-			bozo_printf(httpd, "%s%s", httpd->virthostname, portbuf);
+			bozo_printf(httpd, "%s%s", hostname, portbuf);
 		if (query) {
 			bozo_printf(httpd, "%s?%s\r\n", url, request->hr_query);
 		} else {
@@ -994,21 +1001,20 @@ handle_redirect(bozo_httpreq_t *request,
 		if (absolute)
 			bozo_printf(httpd, "%s?%s", url, request->hr_query);
 		else
-			bozo_printf(httpd, "%s%s%s?%s", httpd->virthostname,
+			bozo_printf(httpd, "%s%s%s?%s", hostname,
 				    portbuf, url, request->hr_query);
 	} else {
 		if (absolute)
 			bozo_printf(httpd, "%s", url);
 		else
-			bozo_printf(httpd, "%s%s%s", httpd->virthostname,
+			bozo_printf(httpd, "%s%s%s", hostname,
 				    portbuf, url);
 	}
 	bozo_printf(httpd, "\">here</a>\n");
 	bozo_printf(httpd, "</body></html>\n");
 head:
 	bozo_flush(httpd, stdout);
-	if (urlbuf)
-		free(urlbuf);
+	free(urlbuf);
 }
 
 /*
@@ -1073,9 +1079,10 @@ check_virtual(bozo_httpreq_t *request)
 				    len) == 0) {
 					/* found it, punch it */
 					debug((httpd, DEBUG_OBESE, "found it punch it"));
-					httpd->virthostname = d->d_name;
+					request->hr_virthostname =
+					    bozostrdup(httpd, d->d_name);
 					if (asprintf(&s, "%s/%s", httpd->virtbase,
-					    httpd->virthostname) < 0)
+					    request->hr_virthostname) < 0)
 						bozo_err(httpd, 1, "asprintf");
 					break;
 				}
@@ -1107,13 +1114,15 @@ use_slashdir:
 
 /*
  * checks to see if this request has a valid .bzredirect file.  returns
- * 0 on failure and 1 on success.
+ * 0 when no redirection happend, or 1 when handle_redirect() has been
+ * called.
  */
-static void
+static int
 check_bzredirect(bozo_httpreq_t *request)
 {
 	struct stat sb;
-	char dir[MAXPATHLEN], redir[MAXPATHLEN], redirpath[MAXPATHLEN + 1];
+	char dir[MAXPATHLEN], redir[MAXPATHLEN], redirpath[MAXPATHLEN + 1],
+	    path[MAXPATHLEN];
 	char *basename, *finalredir;
 	int rv, absolute;
 
@@ -1138,12 +1147,12 @@ check_bzredirect(bozo_httpreq_t *request)
 	snprintf(redir, sizeof(redir), "%s/%s", dir, REDIRECT_FILE);
 	if (lstat(redir, &sb) == 0) {
 		if (!S_ISLNK(sb.st_mode))
-			return;
+			return 0;
 		absolute = 0;
 	} else {
 		snprintf(redir, sizeof(redir), "%s/%s", dir, ABSREDIRECT_FILE);
 		if (lstat(redir, &sb) < 0 || !S_ISLNK(sb.st_mode))
-			return;
+			return 0;
 		absolute = 1;
 	}
 	debug((request->hr_httpd, DEBUG_FAT,
@@ -1151,12 +1160,17 @@ check_bzredirect(bozo_httpreq_t *request)
 	rv = readlink(redir, redirpath, sizeof redirpath - 1);
 	if (rv == -1 || rv == 0) {
 		debug((request->hr_httpd, DEBUG_FAT, "readlink failed"));
-		return;
+		return 0;
 	}
 	redirpath[rv] = '\0';
 	debug((request->hr_httpd, DEBUG_FAT,
 	       "readlink returned \"%s\"", redirpath));
-	
+
+	/* check if we need authentication */
+	snprintf(path, sizeof(path), "%s/", dir);
+	if (bozo_auth_check(request, path))
+		return 1;
+
 	/* now we have the link pointer, redirect to the real place */
 	if (absolute)
 		finalredir = redirpath;
@@ -1167,6 +1181,7 @@ check_bzredirect(bozo_httpreq_t *request)
 	debug((request->hr_httpd, DEBUG_FAT,
 	       "check_bzredirect: new redir %s", finalredir));
 	handle_redirect(request, finalredir, absolute);
+	return 1;
 }
 
 /* this fixes the %HH hack that RFC2396 requires.  */
@@ -1212,7 +1227,7 @@ fix_url_percent(bozo_httpreq_t *request)
 					"percent hack was %2f (/)");
 			goto copy_rest;
 		}
-			
+
 		buf[0] = *++s;
 		buf[1] = *++s;
 		buf[2] = '\0';
@@ -1249,7 +1264,7 @@ copy_rest:
  *	- punt if it doesn't start with /
  *	- check httpd->untrustedref / referrer
  *	- look for "http://myname/" and deal with it.
- *	- maybe call bozo_process_cgi() 
+ *	- maybe call bozo_process_cgi()
  *	- check for ~user and call bozo_user_transform() if so
  *	- if the length > 1, check for trailing slash.  if so,
  *	  add the index.html file
@@ -1265,6 +1280,7 @@ transform_request(bozo_httpreq_t *request, int *isindex)
 	bozohttpd_t *httpd = request->hr_httpd;
 	char	*file, *newfile = NULL;
 	size_t	len;
+	const char *hostname = BOZOHOST(httpd, request);
 
 	file = NULL;
 	*isindex = 0;
@@ -1280,15 +1296,16 @@ transform_request(bozo_httpreq_t *request, int *isindex)
 		goto bad_done;
 	}
 
-	check_bzredirect(request);
+	if (check_bzredirect(request))
+		return 0;
 
 	if (httpd->untrustedref) {
 		int to_indexhtml = 0;
 
 #define TOP_PAGE(x)	(strcmp((x), "/") == 0 || \
 			 strcmp((x) + 1, httpd->index_html) == 0 || \
-			 strcmp((x) + 1, "favicon.ico") == 0) 
-		
+			 strcmp((x) + 1, "favicon.ico") == 0)
+
 		debug((httpd, DEBUG_EXPLODING, "checking httpd->untrustedref"));
 		/*
 		 * first check that this path isn't allowed via .bzdirect file,
@@ -1303,10 +1320,10 @@ transform_request(bozo_httpreq_t *request, int *isindex)
 
 			debug((httpd, DEBUG_FAT,
 				"checking referrer \"%s\" vs virthostname %s",
-				r, httpd->virthostname));
+				r, hostname));
 			if (strncmp(r, "http://", 7) != 0 ||
-			    (strncasecmp(r + 7, httpd->virthostname,
-			    		 strlen(httpd->virthostname)) != 0 &&
+			    (strncasecmp(r + 7, hostname,
+			    		 strlen(hostname)) != 0 &&
 			     !TOP_PAGE(file)))
 				to_indexhtml = 1;
 		} else {
@@ -1315,8 +1332,8 @@ transform_request(bozo_httpreq_t *request, int *isindex)
 			debug((httpd, DEBUG_FAT, "url has no referrer at all"));
 			/* if there's no referrer, let / or /index.html past */
 			if (!TOP_PAGE(file) ||
-			    (h && strncasecmp(h, httpd->virthostname,
-			    		strlen(httpd->virthostname)) != 0))
+			    (h && strncasecmp(h, hostname,
+			    		strlen(hostname)) != 0))
 				to_indexhtml = 1;
 		}
 
@@ -1383,7 +1400,7 @@ transform_request(bozo_httpreq_t *request, int *isindex)
 	 */
 
 	/*
-	 * stop traversing outside our domain 
+	 * stop traversing outside our domain
 	 *
 	 * XXX true security only comes from our parent using chroot(2)
 	 * before execve(2)'ing us.  or our own built in chroot(2) support.
@@ -1405,12 +1422,14 @@ transform_request(bozo_httpreq_t *request, int *isindex)
 	if (bozo_process_cgi(request))
 		return 0;
 
+	if (bozo_process_lua(request))
+		return 0;
+
 	debug((httpd, DEBUG_FAT, "transform_request set: %s", newfile));
 	return 1;
 bad_done:
 	debug((httpd, DEBUG_FAT, "transform_request returning: 0"));
-	if (newfile)
-		free(newfile);
+	free(newfile);
 	return 0;
 }
 
@@ -1507,7 +1526,7 @@ bozo_process_request(bozo_httpreq_t *request)
 			(void)bozo_http_error(httpd, 403, request,
 						"no permission to open file");
 		else if (errno == ENOENT) {
-			if (!bozo_dir_index(request, file, isindex)) 
+			if (!bozo_dir_index(request, file, isindex))
 				(void)bozo_http_error(httpd, 404, request,
 							"no file");
 		} else
@@ -1670,7 +1689,7 @@ debug__(bozohttpd_t *httpd, int level, const char *fmt, ...)
 {
 	va_list	ap;
 	int savederrno;
-	
+
 	/* only log if the level is low enough */
 	if (httpd->debug < level)
 		return;
@@ -1719,12 +1738,20 @@ bozo_err(bozohttpd_t *httpd, int code, const char *fmt, ...)
 	exit(code);
 }
 
-/* this escape HTML tags */
-static void
-escape_html(bozo_httpreq_t *request)
+/*
+ * this escapes HTML tags.  returns allocated escaped
+ * string if needed, or NULL on allocation failure or
+ * lack of escape need.
+ * call with NULL httpd in error paths, to avoid recursive
+ * malloc failure.  call with valid httpd in normal paths
+ * to get automatic allocation failure handling.
+ */
+char *
+bozo_escape_html(bozohttpd_t *httpd, const char *url)
 {
 	int	i, j;
-	char	*url = request->hr_file, *tmp;
+	char	*tmp;
+	size_t	len;
 
 	for (i = 0, j = 0; url[i]; i++) {
 		switch (url[i]) {
@@ -1739,16 +1766,17 @@ escape_html(bozo_httpreq_t *request)
 	}
 
 	if (j == 0)
-		return;
+		return NULL;
 
-	if ((tmp = (char *) malloc(strlen(url) + j)) == 0)
-		/*
-		 * ouch, but we are only called from an error context, and
-		 * most paths here come from malloc(3) failures anyway...
-		 * we could completely punt and just exit, but isn't returning
-		 * an not-quite-correct error better than nothing at all?
-		 */
-		return;
+	/*
+	 * we need to handle being called from different
+	 * pathnames.
+	 */
+	len = strlen(url) + j;
+	if (httpd)
+		tmp = bozomalloc(httpd, len);
+	else if ((tmp = malloc(len)) == 0)
+			return NULL;
 
 	for (i = 0, j = 0; url[i]; i++) {
 		switch (url[i]) {
@@ -1770,8 +1798,7 @@ escape_html(bozo_httpreq_t *request)
 	}
 	tmp[j] = 0;
 
-	free(request->hr_file);
-	request->hr_file = tmp;
+	return tmp;
 }
 
 /* short map between error code, and short/long messages */
@@ -1826,6 +1853,7 @@ bozo_http_error(bozohttpd_t *httpd, int code, bozo_httpreq_t *request,
 	const char *reason = http_errors_long(code);
 	const char *proto = (request && request->hr_proto) ?
 				request->hr_proto : httpd->consts.http_11;
+	const char *hostname = BOZOHOST(httpd, request);
 	int	size;
 
 	debug((httpd, DEBUG_FAT, "bozo_http_error %d: %s", code, msg));
@@ -1844,15 +1872,20 @@ bozo_http_error(bozohttpd_t *httpd, int code, bozo_httpreq_t *request,
 		portbuf[0] = '\0';
 
 	if (request && request->hr_file) {
-		escape_html(request);
+		char *file = NULL;
+
+		/* bozo_escape_html() failure here is just too bad. */
+		file = bozo_escape_html(NULL, request->hr_file);
+		if (file == NULL)
+			file = request->hr_file;
 		size = snprintf(httpd->errorbuf, BUFSIZ,
 		    "<html><head><title>%s</title></head>\n"
 		    "<body><h1>%s</h1>\n"
 		    "%s: <pre>%s</pre>\n"
  		    "<hr><address><a href=\"http://%s%s/\">%s%s</a></address>\n"
 		    "</body></html>\n",
-		    header, header, request->hr_file, reason,
-		    httpd->virthostname, portbuf, httpd->virthostname, portbuf);
+		    header, header, file, reason,
+		    hostname, portbuf, hostname, portbuf);
 		if (size >= (int)BUFSIZ) {
 			bozo_warn(httpd,
 				"bozo_http_error buffer too small, truncated");
@@ -2052,6 +2085,9 @@ bozo_init_httpd(bozohttpd_t *httpd)
 			"bozohttpd: memory_allocation failure\n");
 		return 0;
 	}
+#ifndef NO_LUA_SUPPORT
+	SIMPLEQ_INIT(&httpd->lua_states);
+#endif
 	return 1;
 }
 

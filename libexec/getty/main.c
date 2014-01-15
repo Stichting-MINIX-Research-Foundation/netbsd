@@ -1,4 +1,4 @@
-/*	$NetBSD: main.c,v 1.59 2012/06/28 08:55:10 roy Exp $	*/
+/*	$NetBSD: main.c,v 1.64 2013/08/12 13:54:33 joerg Exp $	*/
 
 /*-
  * Copyright (c) 1980, 1993
@@ -40,13 +40,11 @@ __COPYRIGHT("@(#) Copyright (c) 1980, 1993\
 #if 0
 static char sccsid[] = "from: @(#)main.c	8.1 (Berkeley) 6/20/93";
 #else
-__RCSID("$NetBSD: main.c,v 1.59 2012/06/28 08:55:10 roy Exp $");
+__RCSID("$NetBSD: main.c,v 1.64 2013/08/12 13:54:33 joerg Exp $");
 #endif
 #endif /* not lint */
 
 #include <sys/param.h>
-#include <sys/stat.h>
-#include <termios.h>
 #include <sys/ioctl.h>
 #include <sys/resource.h>
 #include <sys/utsname.h>
@@ -58,10 +56,12 @@ __RCSID("$NetBSD: main.c,v 1.59 2012/06/28 08:55:10 roy Exp $");
 #include <pwd.h>
 #include <setjmp.h>
 #include <signal.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
 #include <term.h>
+#include <termios.h>
 #include <time.h>
 #include <ttyent.h>
 #include <unistd.h>
@@ -135,33 +135,33 @@ const unsigned char partab[] = {
 
 static void	clearscreen(void);
 
-jmp_buf timeout;
+sigjmp_buf timeout;
 
-static void
+__dead static void
 /*ARGSUSED*/
 dingdong(int signo)
 {
 
 	(void)alarm(0);
 	(void)signal(SIGALRM, SIG_DFL);
-	longjmp(timeout, 1);
+	siglongjmp(timeout, 1);
 }
 
-jmp_buf	intrupt;
+sigjmp_buf intrupt;
 
-static void
+__dead static void
 /*ARGSUSED*/
 interrupt(int signo)
 {
 
 	(void)signal(SIGINT, interrupt);
-	longjmp(intrupt, 1);
+	siglongjmp(intrupt, 1);
 }
 
 /*
  * Action to take when getty is running too long.
  */
-static void
+__dead static void
 /*ARGSUSED*/
 timeoverrun(int signo)
 {
@@ -183,11 +183,14 @@ int
 main(int argc, char *argv[], char *envp[])
 {
 	const char *progname;
-	char *tname;
-	int repcnt = 0, failopenlogged = 0, uugetty = 0, first_time = 1;
+	int repcnt = 0, failopenlogged = 0, first_time = 1;
 	struct rlimit limit;
 	struct passwd *pw;
 	int rval;
+	/* this is used past the siglongjmp, so make sure it is not cached
+	   in registers that might become invalid. */
+	volatile int uugetty = 0;
+	const char * volatile tname = "default";
 
 	(void)signal(SIGINT, SIG_IGN);
 	openlog("getty", LOG_PID, LOG_AUTH);
@@ -292,7 +295,6 @@ main(int argc, char *argv[], char *envp[])
 
 	gettable("default", defent);
 	gendefaults();
-	tname = "default";
 	if (argc > 1)
 		tname = argv[1];
 	for (;;) {
@@ -355,7 +357,7 @@ main(int argc, char *argv[], char *envp[])
 		if (IM && *IM)
 			putf(IM);
 		oflush();
-		if (setjmp(timeout)) {
+		if (sigsetjmp(timeout, 1)) {
 			tmode.c_ispeed = tmode.c_ospeed = 0;
 			(void)tcsetattr(0, TCSANOW, &tmode);
 			exit(1);
@@ -453,7 +455,7 @@ getname(void)
 	/*
 	 * Interrupt may happen if we use CBREAK mode
 	 */
-	if (setjmp(intrupt)) {
+	if (sigsetjmp(intrupt, 1)) {
 		(void)signal(SIGINT, SIG_IGN);
 		return (0);
 	}

@@ -1,4 +1,4 @@
-/*	$NetBSD: kern_proc.c,v 1.186 2012/06/09 02:31:14 christos Exp $	*/
+/*	$NetBSD: kern_proc.c,v 1.190 2013/11/14 12:07:11 martin Exp $	*/
 
 /*-
  * Copyright (c) 1999, 2006, 2007, 2008 The NetBSD Foundation, Inc.
@@ -62,7 +62,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: kern_proc.c,v 1.186 2012/06/09 02:31:14 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: kern_proc.c,v 1.190 2013/11/14 12:07:11 martin Exp $");
 
 #ifdef _KERNEL_OPT
 #include "opt_kstack.h"
@@ -172,7 +172,7 @@ struct pgrp pgrp0 = {
 };
 filedesc_t filedesc0;
 struct cwdinfo cwdi0 = {
-	.cwdi_cmask = CMASK,		/* see cmask below */
+	.cwdi_cmask = CMASK,
 	.cwdi_refcnt = 1,
 };
 struct plimit limit0;
@@ -201,12 +201,14 @@ struct proc proc0 = {
 	.p_vmspace = &vmspace0,
 	.p_stats = &pstat0,
 	.p_sigacts = &sigacts0,
+#ifdef PROC0_MD_INITIALIZERS
+	PROC0_MD_INITIALIZERS
+#endif
 };
 kauth_cred_t cred0;
 
 static const int	nofile	= NOFILE;
 static const int	maxuprc	= MAXUPRC;
-static const int	cmask	= CMASK;
 
 static int sysctl_doeproc(SYSCTLFN_PROTO);
 static int sysctl_kern_proc_args(SYSCTLFN_PROTO);
@@ -481,7 +483,13 @@ proc0_init(void)
 	 * share proc0's vmspace, and thus, the kernel pmap.
 	 */
 	uvmspace_init(&vmspace0, pmap_kernel(), round_page(VM_MIN_ADDRESS),
-	    trunc_page(VM_MAX_ADDRESS));
+	    trunc_page(VM_MAX_ADDRESS),
+#ifdef __USING_TOPDOWN_VM
+	    true
+#else
+	    false
+#endif
+	    );
 
 	/* Initialize signal state for proc0. XXX IPL_SCHED */
 	mutex_init(&p->p_sigacts->sa_mutex, MUTEX_DEFAULT, IPL_SCHED);
@@ -1450,7 +1458,7 @@ proc_specific_key_delete(specificdata_key_t key)
 void
 proc_initspecific(struct proc *p)
 {
-	int error;
+	int error __diagused;
 
 	error = specificdata_init(proc_specificdata_domain, &p->p_specdataref);
 	KASSERT(error == 0);

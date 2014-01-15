@@ -1,7 +1,7 @@
-/*	$NetBSD: query.c,v 1.9 2012/10/09 22:55:40 christos Exp $	*/
+/*	$NetBSD: query.c,v 1.11 2013/07/27 19:23:10 christos Exp $	*/
 
 /*
- * Copyright (C) 2004-2012  Internet Systems Consortium, Inc. ("ISC")
+ * Copyright (C) 2004-2013  Internet Systems Consortium, Inc. ("ISC")
  * Copyright (C) 1999-2003  Internet Software Consortium.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
@@ -27,6 +27,7 @@
 
 #include <isc/hex.h>
 #include <isc/mem.h>
+#include <isc/serial.h>
 #include <isc/stats.h>
 #include <isc/util.h>
 
@@ -95,6 +96,10 @@
 /*% Want DNSSEC? */
 #define WANTDNSSEC(c)		(((c)->attributes & \
 				  NS_CLIENTATTR_WANTDNSSEC) != 0)
+/*% Want WANTAD? */
+#define WANTAD(c)		(((c)->attributes & \
+				  NS_CLIENTATTR_WANTAD) != 0)
+
 /*% No authority? */
 #define NOAUTHORITY(c)		(((c)->query.attributes & \
 				  NS_QUERYATTR_NOAUTHORITY) != 0)
@@ -169,39 +174,66 @@ rpz_st_clear(ns_client_t *client);
 static inline void
 inc_stats(ns_client_t *client, isc_statscounter_t counter) {
 	dns_zone_t *zone = client->query.authzone;
+	isc_stats_t *zonestats;
+#ifdef NEWSTATS
+	dns_rdatatype_t qtype;
+	dns_rdataset_t *rdataset;
+	dns_stats_t *querystats = NULL;
+#endif
 
 	isc_stats_increment(ns_g_server->nsstats, counter);
 
-	if (zone != NULL) {
-		isc_stats_t *zonestats = dns_zone_getrequeststats(zone);
-		if (zonestats != NULL)
-			isc_stats_increment(zonestats, counter);
+	if (zone == NULL)
+		return;
+
+	/* Do regular response type stats */
+	zonestats = dns_zone_getrequeststats(zone);
+
+	if (zonestats != NULL)
+		isc_stats_increment(zonestats, counter);
+
+#ifdef NEWSTATS
+	/* Do query type statistics
+	 *
+	 * We only increment per-type if we're using the authoriative
+	 * answer counter, preventing double-counting.
+	 */
+	if (counter == dns_nsstatscounter_authans) {
+		querystats = dns_zone_getrcvquerystats(zone);
+		if (querystats != NULL) {
+			rdataset = ISC_LIST_HEAD(client->query.qname->list);
+			if (rdataset != NULL) {
+				qtype = rdataset->type;
+				dns_rdatatypestats_increment(querystats, qtype);
+			}
+		}
 	}
+#endif
 }
 
 static void
 query_send(ns_client_t *client) {
 	isc_statscounter_t counter;
+
 	if ((client->message->flags & DNS_MESSAGEFLAG_AA) == 0)
 		inc_stats(client, dns_nsstatscounter_nonauthans);
 	else
 		inc_stats(client, dns_nsstatscounter_authans);
+
 	if (client->message->rcode == dns_rcode_noerror) {
-		if (ISC_LIST_EMPTY(client->message->sections[DNS_SECTION_ANSWER])) {
-			if (client->query.isreferral) {
+		dns_section_t answer = DNS_SECTION_ANSWER;
+		if (ISC_LIST_EMPTY(client->message->sections[answer])) {
+			if (client->query.isreferral)
 				counter = dns_nsstatscounter_referral;
-			} else {
+			else
 				counter = dns_nsstatscounter_nxrrset;
-			}
-		} else {
+		} else
 			counter = dns_nsstatscounter_success;
-		}
-	} else if (client->message->rcode == dns_rcode_nxdomain) {
+	} else if (client->message->rcode == dns_rcode_nxdomain)
 		counter = dns_nsstatscounter_nxdomain;
-	} else {
-		/* We end up here in case of YXDOMAIN, and maybe others */
+	else /* We end up here in case of YXDOMAIN, and maybe others */
 		counter = dns_nsstatscounter_failure;
-	}
+
 	inc_stats(client, counter);
 	ns_client_send(client);
 }
@@ -652,7 +684,7 @@ query_validatezonedb(ns_client_t *client, dns_name_t *name,
 		     dns_dbversion_t **versionp)
 {
 	isc_result_t result;
-	dns_acl_t *queryacl;
+	dns_acl_t *queryacl, *queryonacl;
 	ns_dbversion_t *dbversion;
 
 	REQUIRE(zone != NULL);
@@ -764,6 +796,21 @@ query_validatezonedb(ns_client_t *client, dns_name_t *name,
 		client->query.attributes |= NS_QUERYATTR_QUERYOKVALID;
 	}
 
+	/* If and only if we've gotten this far, check allow-query-on too */
+	if (result == ISC_R_SUCCESS) {
+		queryonacl = dns_zone_getqueryonacl(zone);
+		if (queryonacl == NULL)
+			queryonacl = client->view->queryonacl;
+
+		result = ns_client_checkaclsilent(client, NULL,
+						  queryonacl, ISC_TRUE);
+		if ((options & DNS_GETDB_NOLOG) == 0 &&
+		    result != ISC_R_SUCCESS)
+			ns_client_log(client, DNS_LOGCATEGORY_SECURITY,
+				      NS_LOGMODULE_QUERY, ISC_LOG_INFO,
+				      "query-on denied");
+	}
+
 	dbversion->acl_checked = ISC_TRUE;
 	if (result != ISC_R_SUCCESS) {
 		dbversion->queryok = ISC_FALSE;
@@ -832,11 +879,28 @@ query_getzonedb(ns_client_t *client, dns_name_t *name, dns_rdatatype_t qtype,
 }
 
 static void
-rpz_log_rewrite(ns_client_t *client, const char *disabled,
+rpz_log_rewrite(ns_client_t *client, isc_boolean_t disabled,
 		dns_rpz_policy_t policy, dns_rpz_type_t type,
-		dns_name_t *rpz_qname) {
+		dns_zone_t *zone, dns_name_t *rpz_qname)
+{
+	isc_stats_t *zonestats;
 	char qname_buf[DNS_NAME_FORMATSIZE];
 	char rpz_qname_buf[DNS_NAME_FORMATSIZE];
+
+	/*
+	 * Count enabled rewrites in the global counter.
+	 * Count both enabled and disabled rewrites for each zone.
+	 */
+	if (!disabled && policy != DNS_RPZ_POLICY_PASSTHRU) {
+		isc_stats_increment(ns_g_server->nsstats,
+				    dns_nsstatscounter_rpz_rewrites);
+	}
+	if (zone != NULL) {
+		zonestats = dns_zone_getrequeststats(zone);
+		if (zonestats != NULL)
+			isc_stats_increment(zonestats,
+					    dns_nsstatscounter_rpz_rewrites);
+	}
 
 	if (!isc_log_wouldlog(ns_g_lctx, DNS_RPZ_INFO_LEVEL))
 		return;
@@ -846,7 +910,7 @@ rpz_log_rewrite(ns_client_t *client, const char *disabled,
 
 	ns_client_log(client, DNS_LOGCATEGORY_RPZ, NS_LOGMODULE_QUERY,
 		      DNS_RPZ_INFO_LEVEL, "%srpz %s %s rewrite %s via %s",
-		      disabled,
+		      disabled ? "disabled " : "",
 		      dns_rpz_type2str(type), dns_rpz_policy2str(policy),
 		      qname_buf, rpz_qname_buf);
 }
@@ -862,6 +926,9 @@ rpz_log_fail(ns_client_t *client, int level,
 	if (!isc_log_wouldlog(ns_g_lctx, level))
 		return;
 
+	/*
+	 * bin/tests/system/rpz/tests.sh looks for "rpz.*failed".
+	 */
 	dns_name_format(client->query.qname, namebuf1, sizeof(namebuf1));
 	dns_name_format(name, namebuf2, sizeof(namebuf2));
 	ns_client_log(client, NS_LOGCATEGORY_QUERY_EERRORS,
@@ -2798,13 +2865,14 @@ query_add_cname(ns_client_t *client, dns_name_t *qname, dns_name_t *tname,
  */
 static void
 mark_secure(ns_client_t *client, dns_db_t *db, dns_name_t *name,
-	    isc_uint32_t ttl, dns_rdataset_t *rdataset,
+	    dns_rdata_rrsig_t *rrsig, dns_rdataset_t *rdataset,
 	    dns_rdataset_t *sigrdataset)
 {
 	isc_result_t result;
 	dns_dbnode_t *node = NULL;
 	dns_clientinfomethods_t cm;
 	dns_clientinfo_t ci;
+	isc_stdtime_t now;
 
 	rdataset->trust = dns_trust_secure;
 	sigrdataset->trust = dns_trust_secure;
@@ -2817,17 +2885,10 @@ mark_secure(ns_client_t *client, dns_db_t *db, dns_name_t *name,
 	result = dns_db_findnodeext(db, name, ISC_TRUE, &cm, &ci, &node);
 	if (result != ISC_R_SUCCESS)
 		return;
-	/*
-	 * Bound the validated ttls then minimise.
-	 */
-	if (sigrdataset->ttl > ttl)
-		sigrdataset->ttl = ttl;
-	if (rdataset->ttl > ttl)
-		rdataset->ttl = ttl;
-	if (rdataset->ttl > sigrdataset->ttl)
-		rdataset->ttl = sigrdataset->ttl;
-	else
-		sigrdataset->ttl = rdataset->ttl;
+
+	isc_stdtime_get(&now);
+	dns_rdataset_trimttl(rdataset, sigrdataset, rrsig, now,
+			     client->view->acceptexpired);
 
 	(void)dns_db_addrdataset(db, node, NULL, client->now, rdataset,
 				 0, NULL);
@@ -2900,7 +2961,7 @@ get_key(ns_client_t *client, dns_db_t *db, dns_rdata_rrsig_t *rrsig,
 
 static isc_boolean_t
 verify(dst_key_t *key, dns_name_t *name, dns_rdataset_t *rdataset,
-       dns_rdata_t *rdata, isc_mem_t *mctx, isc_boolean_t acceptexpired)
+       dns_rdata_t *rdata, ns_client_t *client)
 {
 	isc_result_t result;
 	dns_fixedname_t fixed;
@@ -2909,9 +2970,10 @@ verify(dst_key_t *key, dns_name_t *name, dns_rdataset_t *rdataset,
 	dns_fixedname_init(&fixed);
 
 again:
-	result = dns_dnssec_verify2(name, rdataset, key, ignore, mctx,
+	result = dns_dnssec_verify3(name, rdataset, key, ignore,
+				    client->view->maxbits, client->mctx,
 				    rdata, NULL);
-	if (result == DNS_R_SIGEXPIRED && acceptexpired) {
+	if (result == DNS_R_SIGEXPIRED && client->view->acceptexpired) {
 		ignore = ISC_TRUE;
 		goto again;
 	}
@@ -2954,12 +3016,10 @@ validate(ns_client_t *client, dns_db_t *db, dns_name_t *name,
 		do {
 			if (!get_key(client, db, &rrsig, &keyrdataset, &key))
 				break;
-			if (verify(key, name, rdataset, &rdata, client->mctx,
-				   client->view->acceptexpired)) {
+			if (verify(key, name, rdataset, &rdata, client)) {
 				dst_key_free(&key);
 				dns_rdataset_disassociate(&keyrdataset);
-				mark_secure(client, db, name,
-					    rrsig.originalttl,
+				mark_secure(client, db, name, &rrsig,
 					    rdataset, sigrdataset);
 				return (ISC_TRUE);
 			}
@@ -3117,6 +3177,14 @@ query_addbestns(ns_client_t *client) {
 	     (sigrdataset != NULL && DNS_TRUST_GLUE(sigrdataset->trust))) &&
 	    !validate(client, db, fname, rdataset, sigrdataset) &&
 	    SECURE(client) && WANTDNSSEC(client))
+		goto cleanup;
+
+	/*
+	 * If the answer is secure only add NS records if they are secure		 * when the client may be looking for AD in the response.
+	 */
+	if (SECURE(client) && (WANTDNSSEC(client) || WANTAD(client)) &&
+	    ((rdataset->trust != dns_trust_secure) ||
+	    (sigrdataset != NULL && sigrdataset->trust != dns_trust_secure)))
 		goto cleanup;
 
 	/*
@@ -3847,6 +3915,13 @@ rpz_clean(dns_zone_t **zonep, dns_db_t **dbp, dns_dbnode_t **nodep,
 		dns_rdataset_disassociate(*rdatasetp);
 }
 
+static void
+rpz_match_clear(dns_rpz_st_t *st)
+{
+	rpz_clean(&st->m.zone, &st->m.db, &st->m.node, &st->m.rdataset);
+	st->m.version = NULL;
+}
+
 static inline isc_result_t
 rpz_ready(ns_client_t *client, dns_zone_t **zonep, dns_db_t **dbp,
 	  dns_dbnode_t **nodep, dns_rdataset_t **rdatasetp)
@@ -3866,10 +3941,9 @@ static void
 rpz_st_clear(ns_client_t *client) {
 	dns_rpz_st_t *st = client->query.rpz_st;
 
-	rpz_clean(&st->m.zone, &st->m.db, &st->m.node, NULL);
-	st->m.version = NULL;
 	if (st->m.rdataset != NULL)
 		query_putrdataset(client, &st->m.rdataset);
+	rpz_match_clear(st);
 
 	rpz_clean(NULL, &st->r.db, NULL, NULL);
 	if (st->r.ns_rdataset != NULL)
@@ -4025,6 +4099,9 @@ rpz_rewrite_ip(ns_client_t *client, dns_rdataset_t *rdataset,
 	for (rpz = ISC_LIST_HEAD(client->view->rpz_zones);
 	     rpz != NULL;
 	     rpz = ISC_LIST_NEXT(rpz, link)) {
+		if (!RECURSIONOK(client) && rpz->recursive_only)
+			continue;
+
 		/*
 		 * Do not check policy zones that cannot replace a policy
 		 * already known to match.
@@ -4053,9 +4130,8 @@ rpz_rewrite_ip(ns_client_t *client, dns_rdataset_t *rdataset,
 		 * hit, if any.  Note the domain name and quality of the
 		 * best hit.
 		 */
-		(void)dns_db_rpz_findips(rpz, rpz_type, zone, db, version,
-					 rdataset, st,
-					 client->query.rpz_st->qname);
+		dns_db_rpz_findips(rpz, rpz_type, zone, db, version,
+				   rdataset, st, client->query.rpz_st->qname);
 		rpz_clean(&zone, &db, NULL, NULL);
 	}
 	return (ISC_R_SUCCESS);
@@ -4077,6 +4153,8 @@ rpz_rewrite_rrset(ns_client_t *client, dns_rpz_type_t rpz_type,
 				rdatasetp, resuming);
 	switch (result) {
 	case ISC_R_SUCCESS:
+	case DNS_R_GLUE:
+	case DNS_R_ZONECUT:
 		result = rpz_rewrite_ip(client, *rdatasetp, rpz_type);
 		break;
 	case DNS_R_EMPTYNAME:
@@ -4160,8 +4238,8 @@ rpz_rewrite_rrsets(ns_client_t *client, dns_rpz_type_t rpz_type,
  */
 static isc_result_t
 rpz_find(ns_client_t *client, dns_rdatatype_t qtype, dns_name_t *qnamef,
-	 dns_name_t *sname, dns_rpz_type_t rpz_type, dns_zone_t **zonep,
-	 dns_db_t **dbp, dns_dbversion_t **versionp,
+	 dns_name_t *sname, dns_rpz_zone_t *rpz, dns_rpz_type_t rpz_type,
+	 dns_zone_t **zonep, dns_db_t **dbp, dns_dbversion_t **versionp,
 	 dns_dbnode_t **nodep, dns_rdataset_t **rdatasetp,
 	 dns_rpz_policy_t *policyp)
 {
@@ -4171,6 +4249,8 @@ rpz_find(ns_client_t *client, dns_rdatatype_t qtype, dns_name_t *qnamef,
 	isc_result_t result;
 	dns_clientinfomethods_t cm;
 	dns_clientinfo_t ci;
+
+	REQUIRE(nodep != NULL);
 
 	dns_clientinfomethods_init(&cm, ns_client_sourceip);
 	dns_clientinfo_init(&ci, client);
@@ -4251,7 +4331,7 @@ rpz_find(ns_client_t *client, dns_rdatatype_t qtype, dns_name_t *qnamef,
 		if ((*rdatasetp)->type != dns_rdatatype_cname) {
 			policy = DNS_RPZ_POLICY_RECORD;
 		} else {
-			policy = dns_rpz_decode_cname(*rdatasetp, sname);
+			policy = dns_rpz_decode_cname(rpz, *rdatasetp, sname);
 			if ((policy == DNS_RPZ_POLICY_RECORD ||
 			     policy == DNS_RPZ_POLICY_WILDCNAME) &&
 			    qtype != dns_rdatatype_cname &&
@@ -4259,26 +4339,32 @@ rpz_find(ns_client_t *client, dns_rdatatype_t qtype, dns_name_t *qnamef,
 				result = DNS_R_CNAME;
 		}
 		break;
+	case DNS_R_NXRRSET:
+		policy = DNS_RPZ_POLICY_NODATA;
+		break;
 	case DNS_R_DNAME:
 		/*
 		 * DNAME policy RRs have very few if any uses that are not
 		 * better served with simple wildcards.  Making the work would
 		 * require complications to get the number of labels matched
 		 * in the name or the found name to the main DNS_R_DNAME case
-		 * in query_find(). So fall through to treat them as NODATA.
+		 * in query_find().
 		 */
-	case DNS_R_NXRRSET:
-		policy = DNS_RPZ_POLICY_NODATA;
-		break;
+		dns_rdataset_disassociate(*rdatasetp);
+		dns_db_detachnode(*dbp, nodep);
+		/*
+		 * Fall through to treat it as a miss.
+		 */
 	case DNS_R_NXDOMAIN:
 	case DNS_R_EMPTYNAME:
 		/*
 		 * If we don't get a qname hit,
 		 * see if it is worth looking for other types.
 		 */
-		dns_db_rpz_enabled(*dbp, client->query.rpz_st);
+		(void)dns_db_rpz_enabled(*dbp, client->query.rpz_st);
 		dns_db_detach(dbp);
 		dns_zone_detach(zonep);
+		result = DNS_R_NXDOMAIN;
 		policy = DNS_RPZ_POLICY_MISS;
 		break;
 	default:
@@ -4286,9 +4372,7 @@ rpz_find(ns_client_t *client, dns_rdatatype_t qtype, dns_name_t *qnamef,
 		dns_zone_detach(zonep);
 		rpz_log_fail(client, DNS_RPZ_ERROR_LEVEL, rpz_type, qnamef,
 			     "", result);
-		policy = DNS_RPZ_POLICY_ERROR;
-		result = DNS_R_SERVFAIL;
-		break;
+		return (DNS_R_SERVFAIL);
 	}
 
 	*policyp = policy;
@@ -4322,6 +4406,9 @@ rpz_rewrite_name(ns_client_t *client, dns_rdatatype_t qtype, dns_name_t *qname,
 	for (rpz = ISC_LIST_HEAD(client->view->rpz_zones);
 	     rpz != NULL;
 	     rpz = ISC_LIST_NEXT(rpz, link)) {
+		if (!RECURSIONOK(client) && rpz->recursive_only)
+			continue;
+
 		/*
 		 * Do not check policy zones that cannot replace a policy
 		 * already known to match.
@@ -4351,6 +4438,9 @@ rpz_rewrite_name(ns_client_t *client, dns_rdatatype_t qtype, dns_name_t *qname,
 			if (result == ISC_R_SUCCESS)
 				break;
 			INSIST(result == DNS_R_NAMETOOLONG);
+			/*
+			 * Trim the name until it is not too long.
+			 */
 			labels = dns_name_countlabels(prefix);
 			if (labels < 2) {
 				rpz_log_fail(client, DNS_RPZ_ERROR_LEVEL,
@@ -4367,14 +4457,13 @@ rpz_rewrite_name(ns_client_t *client, dns_rdatatype_t qtype, dns_name_t *qname,
 		}
 
 		/*
-		 * See if the policy record exists.
+		 * See if the policy record exists and get its policy.
 		 */
-		result = rpz_find(client, qtype, rpz_qname, qname, rpz_type,
-				  &zone, &db, &version, &node, rdatasetp,
-				  &policy);
+		result = rpz_find(client, qtype, rpz_qname, qname, rpz,
+				  rpz_type, &zone, &db, &version, &node,
+				  rdatasetp, &policy);
 		switch (result) {
 		case DNS_R_NXDOMAIN:
-		case DNS_R_EMPTYNAME:
 			break;
 		case DNS_R_SERVFAIL:
 			rpz_clean(&zone, &db, &node, rdatasetp);
@@ -4397,18 +4486,49 @@ rpz_rewrite_name(ns_client_t *client, dns_rdatatype_t qtype, dns_name_t *qname,
 			     (st->m.type == rpz_type &&
 			      0 >= dns_name_compare(rpz_qname, st->qname))))
 				continue;
+#if 0
+			/*
+			 * This code would block a customer reported information
+			 * leak of rpz rules by rewriting requests in the
+			 * rpz-ip, rpz-nsip, rpz-nsdname,and rpz-passthru TLDs.
+			 * Without this code, a bad guy could request
+			 * 24.0.3.2.10.rpz-ip. to find the policy rule for
+			 * 10.2.3.0/14.  It is an insignificant leak and this
+			 * code is not worth its cost, because the bad guy
+			 * could publish "evil.com A 10.2.3.4" and request
+			 * evil.com to get the same information.
+			 * Keep code with "#if 0" in case customer demand
+			 * is irresistible.
+			 *
+			 * We have the less frequent case of a triggered
+			 * policy.  Check that we have not trigger on one
+			 * of the pretend RPZ TLDs.
+			 * This test would make it impossible to rewrite
+			 * names in TLDs that start with "rpz-" should
+			 * ICANN ever allow such TLDs.
+			 */
+			labels = dns_name_countlabels(qname);
+			if (labels >= 2) {
+				dns_label_t label;
 
+				dns_name_getlabel(qname, labels-2, &label);
+				if (label.length >= sizeof(DNS_RPZ_PREFIX)-1 &&
+				    strncasecmp((const char *)label.base+1,
+						DNS_RPZ_PREFIX,
+						sizeof(DNS_RPZ_PREFIX)-1) == 0)
+					continue;
+			}
+#endif
 			/*
 			 * Merely log DNS_RPZ_POLICY_DISABLED hits.
 			 */
 			if (rpz->policy == DNS_RPZ_POLICY_DISABLED) {
-				rpz_log_rewrite(client, "disabled ",
-						policy, rpz_type, rpz_qname);
+				rpz_log_rewrite(client, ISC_TRUE, policy,
+						rpz_type, zone, rpz_qname);
 				continue;
 			}
 
-			rpz_clean(&st->m.zone, &st->m.db, &st->m.node,
-				  &st->m.rdataset);
+			rpz_match_clear(st);
 			st->m.rpz = rpz;
 			st->m.type = rpz_type;
 			st->m.prefix = 0;
@@ -4422,9 +4542,11 @@ rpz_rewrite_name(ns_client_t *client, dns_rdatatype_t qtype, dns_name_t *qname,
 				trdataset = st->m.rdataset;
 				st->m.rdataset = *rdatasetp;
 				*rdatasetp = trdataset;
-				st->m.ttl = st->m.rdataset->ttl;
+				st->m.ttl = ISC_MIN(st->m.rdataset->ttl,
+						    rpz->max_policy_ttl);
 			} else {
-				st->m.ttl = DNS_RPZ_TTL_DEFAULT;
+				st->m.ttl = ISC_MIN(DNS_RPZ_TTL_DEFAULT,
+						    rpz->max_policy_ttl);
 			}
 			st->m.node = node;
 			node = NULL;
@@ -4533,7 +4655,7 @@ rpz_rewrite(ns_client_t *client, dns_rdatatype_t qtype, isc_result_t qresult,
 	rdataset = NULL;
 	if ((st->state & DNS_RPZ_DONE_QNAME) == 0) {
 		/*
-		 * Check rules for the query name if this it the first time
+		 * Check rules for the query name if this is the first time
 		 * for the current qname, i.e. we've not been recursing.
 		 * There is a first time for each name in a CNAME chain.
 		 */
@@ -4575,7 +4697,7 @@ rpz_rewrite(ns_client_t *client, dns_rdatatype_t qtype, isc_result_t qresult,
 
 	dns_fixedname_init(&nsnamef);
 	dns_name_clone(client->query.qname, dns_fixedname_name(&nsnamef));
-	while (st->r.label > 1) {
+	while (st->r.label > client->view->rpz_min_ns_labels) {
 		/*
 		 * Get NS rrset for each domain in the current qname.
 		 */
@@ -4704,10 +4826,11 @@ cleanup:
 	if (st->m.policy == DNS_RPZ_POLICY_MISS ||
 	    st->m.policy == DNS_RPZ_POLICY_PASSTHRU ||
 	    st->m.policy == DNS_RPZ_POLICY_ERROR) {
-		if (st->m.policy == DNS_RPZ_POLICY_PASSTHRU)
-			rpz_log_rewrite(client, "", st->m.policy, st->m.type,
-					st->qname);
-		rpz_clean(&st->m.zone, &st->m.db, &st->m.node, &st->m.rdataset);
+		if (st->m.policy == DNS_RPZ_POLICY_PASSTHRU &&
+		    result != DNS_R_DELEGATION)
+			rpz_log_rewrite(client, ISC_FALSE, st->m.policy,
+					st->m.type, st->m.zone, st->qname);
+		rpz_match_clear(st);
 	}
 	if (st->m.policy == DNS_RPZ_POLICY_ERROR) {
 		st->m.type = DNS_RPZ_TYPE_BAD;
@@ -4718,6 +4841,64 @@ cleanup:
 		rpz_clean(NULL, &st->r.db, NULL, &st->r.ns_rdataset);
 
 	return (result);
+}
+
+/*
+ * See if response policy zone rewriting is allowed by a lack of interest
+ * by the client in DNSSEC or a lack of signatures.
+ */
+static isc_boolean_t
+rpz_ck_dnssec(ns_client_t *client, isc_result_t result,
+	      dns_rdataset_t *rdataset, dns_rdataset_t *sigrdataset)
+{
+	dns_fixedname_t fixed;
+	dns_name_t *found;
+	dns_rdataset_t trdataset;
+	dns_rdatatype_t type;
+
+	if (client->view->rpz_break_dnssec)
+		return (ISC_TRUE);
+	/*
+	 * sigrdataset == NULL if and only !WANTDNSSEC(client)
+	 */
+	if (sigrdataset == NULL)
+		return (ISC_TRUE);
+	if (dns_rdataset_isassociated(sigrdataset))
+		return (ISC_FALSE);
+
+	/*
+	 * We are happy to rewrite nothing.
+	 */
+	if (rdataset == NULL || !dns_rdataset_isassociated(rdataset))
+		return (ISC_TRUE);
+	/*
+	 * Do not rewrite if there is any sign of signatures.
+	 */
+	if (rdataset->type == dns_rdatatype_nsec ||
+	    rdataset->type == dns_rdatatype_nsec3 ||
+	    rdataset->type == dns_rdatatype_rrsig)
+		return (ISC_FALSE);
+
+	/*
+	 * Look for a signature in a negative cache rdataset.
+	 */
+	if ((rdataset->attributes & DNS_RDATASETATTR_NEGATIVE) == 0)
+		return (ISC_TRUE);
+	dns_fixedname_init(&fixed);
+	found = dns_fixedname_name(&fixed);
+	dns_rdataset_init(&trdataset);
+	for (result = dns_rdataset_first(rdataset);
+	     result == ISC_R_SUCCESS;
+	     result = dns_rdataset_next(rdataset)) {
+		dns_ncache_current(rdataset, found, &trdataset);
+		type = trdataset.type;
+		dns_rdataset_disassociate(&trdataset);
+		if (type == dns_rdatatype_nsec ||
+		    type == dns_rdatatype_nsec3 ||
+		    type == dns_rdatatype_rrsig)
+			return (ISC_FALSE);
+	}
+	return (ISC_TRUE);
 }
 
 /*
@@ -4758,13 +4939,15 @@ rpz_add_cname(ns_client_t *client, dns_rpz_st_t *st,
 				 fname, dns_trust_authanswer, st->m.ttl);
 	if (result != ISC_R_SUCCESS)
 		return (result);
-	rpz_log_rewrite(client, "", st->m.policy, st->m.type, st->qname);
+	rpz_log_rewrite(client, ISC_FALSE, st->m.policy,
+			st->m.type, st->m.zone, st->qname);
 	ns_client_qnamereplace(client, fname);
 	/*
 	 * Turn off DNSSEC because the results of a
 	 * response policy zone cannot verify.
 	 */
-	client->attributes &= ~NS_CLIENTATTR_WANTDNSSEC;
+	client->attributes &= ~(NS_CLIENTATTR_WANTDNSSEC |
+				DNS_MESSAGEFLAG_AD);
 	return (ISC_R_SUCCESS);
 }
 
@@ -5178,10 +5361,12 @@ dns64_ttl(dns_db_t *db, dns_dbversion_t *version) {
 	isc_result_t result;
 	isc_uint32_t ttl = ISC_UINT32_MAX;
 
+	dns_rdataset_init(&rdataset);
+
 	result = dns_db_getoriginnode(db, &node);
 	if (result != ISC_R_SUCCESS)
 		goto cleanup;
-	dns_rdataset_init(&rdataset);
+
 	result = dns_db_findrdataset(db, node, version, dns_rdatatype_soa,
 				     0, 0, &rdataset, NULL);
 	if (result != ISC_R_SUCCESS)
@@ -5683,9 +5868,9 @@ query_find(ns_client_t *client, dns_fetchevent_t *event, dns_rdatatype_t qtype)
 	CTRACE("query_find: resume");
 
 	if (!ISC_LIST_EMPTY(client->view->rpz_zones) &&
-	    RECURSIONOK(client) && !RECURSING(client) &&
-	    (!WANTDNSSEC(client) || sigrdataset == NULL ||
-	     !dns_rdataset_isassociated(sigrdataset)) &&
+	    (RECURSIONOK(client) || !client->view->rpz_recursive_only) &&
+	    rpz_ck_dnssec(client, result, rdataset, sigrdataset) &&
+	    !RECURSING(client) &&
 	    (client->query.rpz_st == NULL ||
 	     (client->query.rpz_st->state & DNS_RPZ_REWRITTEN) == 0) &&
 	    !dns_name_equal(client->query.qname, dns_rootname)) {
@@ -5759,10 +5944,22 @@ query_find(ns_client_t *client, dns_fetchevent_t *event, dns_rdatatype_t qtype)
 				break;
 			case DNS_RPZ_POLICY_RECORD:
 				result = rpz_st->m.result;
-				if (type == dns_rdatatype_any &&
-				    result != DNS_R_CNAME &&
-				    dns_rdataset_isassociated(rdataset))
+				if (qtype == dns_rdatatype_any &&
+				    result != DNS_R_CNAME) {
+					/*
+					 * We will add all of the rdatasets of
+					 * the node by iterating, setting the
+					 * TTL then.
+					 */
+					if (dns_rdataset_isassociated(rdataset))
 					dns_rdataset_disassociate(rdataset);
+				} else {
+					/*
+					 * We will add this rdataset.
+					 */
+					rdataset->ttl = ISC_MIN(rdataset->ttl,
+							    rpz_st->m.ttl);
+				}
 				break;
 			case DNS_RPZ_POLICY_WILDCNAME:
 				result = dns_rdataset_first(rdataset);
@@ -5801,11 +5998,13 @@ query_find(ns_client_t *client, dns_fetchevent_t *event, dns_rdatatype_t qtype)
 			 * Turn off DNSSEC because the results of a
 			 * response policy zone cannot verify.
 			 */
-			client->attributes &= ~NS_CLIENTATTR_WANTDNSSEC;
+			client->attributes &= ~(NS_CLIENTATTR_WANTDNSSEC |
+						DNS_MESSAGEFLAG_AD);
 			query_putrdataset(client, &sigrdataset);
+			rpz_st->q.is_zone = is_zone;
 			is_zone = ISC_TRUE;
-			rpz_log_rewrite(client, "", rpz_st->m.policy,
-					rpz_st->m.type, rpz_st->qname);
+			rpz_log_rewrite(client, ISC_FALSE, rpz_st->m.policy,
+					rpz_st->m.type, zone, rpz_st->qname);
 		}
 	}
 
@@ -6181,6 +6380,15 @@ query_find(ns_client_t *client, dns_fetchevent_t *event, dns_rdatatype_t qtype)
 			rdataset = NULL;
 			sigrdataset = NULL;
 			type = qtype = dns_rdatatype_a;
+			rpz_st = client->query.rpz_st;
+			if (rpz_st != NULL) {
+				/*
+				 * Arrange for RPZ rewriting of any A records.
+				 */
+				if ((rpz_st->state & DNS_RPZ_REWRITTEN) != 0)
+					is_zone = rpz_st->q.is_zone;
+				rpz_st_clear(client);
+			}
 			dns64 = ISC_TRUE;
 			goto db_find;
 		}
@@ -6209,7 +6417,10 @@ query_find(ns_client_t *client, dns_fetchevent_t *event, dns_rdatatype_t qtype)
 				 * closest provable encloser.
 				 */
 				if (dns_rdataset_isassociated(rdataset) &&
-				    !dns_name_equal(qname, found)) {
+				    !dns_name_equal(qname, found) &&
+				    !(ns_g_nonearest &&
+				      qtype != dns_rdatatype_ds))
+				{
 					unsigned int count;
 					unsigned int skip;
 
@@ -6446,6 +6657,15 @@ query_find(ns_client_t *client, dns_fetchevent_t *event, dns_rdatatype_t qtype)
 			sigrdataset = NULL;
 			fname = NULL;
 			type = qtype = dns_rdatatype_a;
+			rpz_st = client->query.rpz_st;
+			if (rpz_st != NULL) {
+				/*
+				 * Arrange for RPZ rewriting of any A records.
+				 */
+				if ((rpz_st->state & DNS_RPZ_REWRITTEN) != 0)
+					is_zone = rpz_st->q.is_zone;
+				rpz_st_clear(client);
+			}
 			dns64 = ISC_TRUE;
 			goto db_find;
 		}
@@ -6749,6 +6969,10 @@ query_find(ns_client_t *client, dns_fetchevent_t *event, dns_rdatatype_t qtype)
 					noqname = rdataset;
 				else
 					noqname = NULL;
+				rpz_st = client->query.rpz_st;
+				if (rpz_st != NULL)
+					rdataset->ttl = ISC_MIN(rdataset->ttl,
+							    rpz_st->m.ttl);
 				query_addrrset(client,
 					       fname != NULL ? &fname : &tname,
 					       &rdataset, NULL,
@@ -6942,6 +7166,15 @@ query_find(ns_client_t *client, dns_fetchevent_t *event, dns_rdatatype_t qtype)
 			rdataset = NULL;
 			sigrdataset = NULL;
 			type = qtype = dns_rdatatype_a;
+			rpz_st = client->query.rpz_st;
+			if (rpz_st != NULL) {
+				/*
+				 * Arrange for RPZ rewriting of any A records.
+				 */
+				if ((rpz_st->state & DNS_RPZ_REWRITTEN) != 0)
+					is_zone = rpz_st->q.is_zone;
+				rpz_st_clear(client);
+			}
 			dns64_exclude = dns64 = ISC_TRUE;
 			goto db_find;
 		}
@@ -7041,8 +7274,7 @@ query_find(ns_client_t *client, dns_fetchevent_t *event, dns_rdatatype_t qtype)
 	 */
 	rpz_st = client->query.rpz_st;
 	if (rpz_st != NULL && (rpz_st->state & DNS_RPZ_RECURSING) == 0) {
-		rpz_clean(&rpz_st->m.zone, &rpz_st->m.db, &rpz_st->m.node,
-			  &rpz_st->m.rdataset);
+		rpz_match_clear(rpz_st);
 		rpz_st->state &= ~DNS_RPZ_DONE_QNAME;
 	}
 	if (rdataset != NULL)
@@ -7229,7 +7461,6 @@ ns_query_start(ns_client_t *client) {
 	dns_rdatatype_t qtype;
 	unsigned int saved_extflags = client->extflags;
 	unsigned int saved_flags = client->message->flags;
-	isc_boolean_t want_ad;
 
 	CTRACE("ns_query_start");
 
@@ -7325,6 +7556,7 @@ ns_query_start(ns_client_t *client) {
 	INSIST(rdataset != NULL);
 	qtype = rdataset->type;
 	dns_rdatatypestats_increment(ns_g_server->rcvquerystats, qtype);
+
 	if (dns_rdatatype_ismeta(qtype)) {
 		switch (qtype) {
 		case dns_rdatatype_any:
@@ -7391,13 +7623,11 @@ ns_query_start(ns_client_t *client) {
 		client->query.attributes &= ~NS_QUERYATTR_SECURE;
 
 	/*
-	 * Set 'want_ad' if the client has set AD in the query.
+	 * Set NS_CLIENTATTR_WANTDNSSEC if the client has set AD in the query.
 	 * This allows AD to be returned on queries without DO set.
 	 */
 	if ((message->flags & DNS_MESSAGEFLAG_AD) != 0)
-		want_ad = ISC_TRUE;
-	else
-		want_ad = ISC_FALSE;
+		client->attributes |= NS_CLIENTATTR_WANTAD;
 
 	/*
 	 * This is an ordinary query.
@@ -7422,7 +7652,7 @@ ns_query_start(ns_client_t *client) {
 	 * Set AD.  We must clear it if we add non-validated data to a
 	 * response.
 	 */
-	if (WANTDNSSEC(client) || want_ad)
+	if (WANTDNSSEC(client) || WANTAD(client))
 		message->flags |= DNS_MESSAGEFLAG_AD;
 
 	qclient = NULL;

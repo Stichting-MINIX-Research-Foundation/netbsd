@@ -1,4 +1,4 @@
-/*	$NetBSD: pstat.c,v 1.119 2012/06/04 20:13:47 riastradh Exp $	*/
+/*	$NetBSD: pstat.c,v 1.122 2013/11/24 13:13:12 mlelstv Exp $	*/
 
 /*-
  * Copyright (c) 1980, 1991, 1993, 1994
@@ -39,7 +39,7 @@ __COPYRIGHT("@(#) Copyright (c) 1980, 1991, 1993, 1994\
 #if 0
 static char sccsid[] = "@(#)pstat.c	8.16 (Berkeley) 5/9/95";
 #else
-__RCSID("$NetBSD: pstat.c,v 1.119 2012/06/04 20:13:47 riastradh Exp $");
+__RCSID("$NetBSD: pstat.c,v 1.122 2013/11/24 13:13:12 mlelstv Exp $");
 #endif
 #endif /* not lint */
 
@@ -73,6 +73,7 @@ __RCSID("$NetBSD: pstat.c,v 1.119 2012/06/04 20:13:47 riastradh Exp $");
 #include <sys/sysctl.h>
 
 #include <err.h>
+#include <errno.h>
 #include <kvm.h>
 #include <limits.h>
 #include <nlist.h>
@@ -681,7 +682,11 @@ char *
 loadvnodes(int *avnodes)
 {
 	int mib[2];
+	int status;
 	size_t copysize;
+#if 0
+	size_t oldsize;
+#endif
 	char *vnodebase;
 
 	if (totalflag) {
@@ -696,12 +701,36 @@ loadvnodes(int *avnodes)
 	}
 	mib[0] = CTL_KERN;
 	mib[1] = KERN_VNODE;
+	/*
+	 * First sysctl call gets the necessary buffer size; second
+	 * sysctl call gets the data.  We allow for some growth in the
+	 * data size between the two sysctl calls (increases of a few
+	 * thousand vnodes in between the two calls have been observed).
+	 * We ignore ENOMEM from the second sysctl call, which can
+	 * happen if the kernel's data grew by even more than we allowed
+	 * for.
+	 */
 	if (sysctl(mib, 2, NULL, &copysize, NULL, 0) == -1)
 		err(1, "sysctl: KERN_VNODE");
+#if 0
+	oldsize = copysize;
+#endif
+	copysize += 100 * sizeof(struct vnode) + copysize / 20;
 	if ((vnodebase = malloc(copysize)) == NULL)
 		err(1, "malloc");
-	if (sysctl(mib, 2, vnodebase, &copysize, NULL, 0) == -1)
+	status = sysctl(mib, 2, vnodebase, &copysize, NULL, 0);
+	if (status == -1 && errno != ENOMEM)
 		err(1, "sysctl: KERN_VNODE");
+#if 0 /* for debugging the amount of growth allowed for */
+	if (copysize != oldsize) {
+		warnx("count changed from %ld to %ld (%+ld)%s",
+		    (long)(oldsize / sizeof(struct vnode)),
+		    (long)(copysize / sizeof(struct vnode)),
+		    (long)(copysize / sizeof(struct vnode)) -
+			(long)(oldsize / sizeof(struct vnode)),
+		    (status == 0 ? "" : ", and errno = ENOMEM"));
+	}
+#endif
 	if (copysize % (VPTRSZ + VNODESZ))
 		errx(1, "vnode size mismatch");
 	*avnodes = copysize / (VPTRSZ + VNODESZ);
@@ -727,8 +756,7 @@ kinfo_vnodes(int *avnodes)
 	beg = bp;
 	ep = bp + (numvnodes + 20) * (VPTRSZ + VNODESZ);
 	KGET(V_MOUNTLIST, mlist);
-	for (mp = mlist.cqh_first;;
-	    mp = mount.mnt_list.cqe_next) {
+	TAILQ_FOREACH(mp, &mlist, mnt_list) {
 		KGET2(mp, &mount, sizeof(mount), "mount entry");
 		TAILQ_FOREACH(vp, &mount.mnt_vnodelist, v_mntvnodes) {
 			KGET2(vp, &vnode, sizeof(vnode), "vnode");
@@ -740,8 +768,6 @@ kinfo_vnodes(int *avnodes)
 			memmove(bp, &vnode, VNODESZ);
 			bp += VNODESZ;
 		}
-		if (mp == mlist.cqh_last)
-			break;
 	}
 	*avnodes = (bp - beg) / (VPTRSZ + VNODESZ);
 	return (beg);

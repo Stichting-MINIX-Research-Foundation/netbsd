@@ -1,4 +1,4 @@
-/*	$NetBSD: ufsmount.h,v 1.38 2012/05/09 00:21:18 riastradh Exp $	*/
+/*	$NetBSD: ufsmount.h,v 1.41 2013/08/11 04:36:17 dholland Exp $	*/
 
 /*
  * Copyright (c) 1982, 1986, 1989, 1993
@@ -124,6 +124,8 @@ struct ufsmount {
 	void	*um_snapinfo;			/* snapshot private data */
 
 	const struct ufs_ops *um_ops;
+
+	void *um_discarddata;
 };
 
 struct ufs_ops {
@@ -136,7 +138,7 @@ struct ufs_ops {
 	int (*uo_vfree)(struct vnode *, ino_t, int);
 	int (*uo_balloc)(struct vnode *, off_t, int, kauth_cred_t, int,
 	    struct buf **);
-        void (*uo_unmark_vnode)(struct vnode *);
+        void (*uo_snapgone)(struct vnode *);
 };
 
 #define	UFS_OPS(vp)	(VFSTOUFS((vp)->v_mount)->um_ops)
@@ -153,8 +155,8 @@ struct ufs_ops {
 	(*UFS_OPS(vp)->uo_vfree)((vp), (ino), (mode))
 #define	UFS_BALLOC(vp, off, size, cr, flags, bpp) \
 	(*UFS_OPS(vp)->uo_balloc)((vp), (off), (size), (cr), (flags), (bpp))
-#define	UFS_UNMARK_VNODE(vp) \
-	(*UFS_OPS(vp)->uo_unmark_vnode)((vp))
+#define	UFS_SNAPGONE(vp) \
+	(*UFS_OPS(vp)->uo_snapgone)((vp))
 
 /* UFS-specific flags */
 #define UFS_NEEDSWAP	0x01	/* filesystem metadata need byte-swapping */

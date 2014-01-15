@@ -1,4 +1,4 @@
-/*	$NetBSD: isa_machdep.c,v 1.18 2011/07/01 19:32:28 dyoung Exp $	*/
+/*	$NetBSD: isa_machdep.c,v 1.20 2013/11/17 08:32:55 skrll Exp $	*/
 
 /*-
  * Copyright (c) 1996-1998 The NetBSD Foundation, Inc.
@@ -65,7 +65,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: isa_machdep.c,v 1.18 2011/07/01 19:32:28 dyoung Exp $");
+__KERNEL_RCSID(0, "$NetBSD: isa_machdep.c,v 1.20 2013/11/17 08:32:55 skrll Exp $");
 
 #include "opt_irqstats.h"
 
@@ -429,7 +429,6 @@ isa_intr_disestablish(isa_chipset_tag_t ic, void *arg)
 void
 isa_intr_init(void)
 {
-	static void *isa_ih;
  	struct intrq *iq;
  	int i;
  
@@ -452,7 +451,7 @@ isa_intr_init(void)
 #ifndef ISA_FOOTBRIDGE_IRQ 
 #warning Before using isa with footbridge you must define ISA_FOOTBRIDGE_IRQ
 #endif
-	isa_ih = footbridge_intr_claim(ISA_FOOTBRIDGE_IRQ, IPL_BIO, "isabus",
+	footbridge_intr_claim(ISA_FOOTBRIDGE_IRQ, IPL_BIO, "isabus",
 	    isa_irqdispatch, NULL);
 	
 }
@@ -481,7 +480,7 @@ isa_footbridge_init(u_int iobase, u_int membase)
 }
 
 void
-isa_attach_hook(struct device *parent, struct device *self, struct isabus_attach_args *iba)
+isa_attach_hook(device_t parent, device_t self, struct isabus_attach_args *iba)
 {
 	/*
 	 * Since we can only have one ISA bus, we just use a single

@@ -1,4 +1,4 @@
-/*	$NetBSD: kern_cpu.c,v 1.58 2012/09/01 00:24:43 matt Exp $	*/
+/*	$NetBSD: kern_cpu.c,v 1.61 2013/11/24 21:58:38 rmind Exp $	*/
 
 /*-
  * Copyright (c) 2007, 2008, 2009, 2010, 2012 The NetBSD Foundation, Inc.
@@ -56,7 +56,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: kern_cpu.c,v 1.58 2012/09/01 00:24:43 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: kern_cpu.c,v 1.61 2013/11/24 21:58:38 rmind Exp $");
 
 #include "opt_cpu_ucode.h"
 #include "opt_compat_netbsd.h"
@@ -79,6 +79,7 @@ __KERNEL_RCSID(0, "$NetBSD: kern_cpu.c,v 1.58 2012/09/01 00:24:43 matt Exp $");
 #include <sys/select.h>
 #include <sys/namei.h>
 #include <sys/callout.h>
+#include <sys/pcu.h>
 
 #include <uvm/uvm_extern.h>
 
@@ -111,14 +112,12 @@ int		ncpu			__read_mostly;
 int		ncpuonline		__read_mostly;
 bool		mp_online		__read_mostly;
 
+/* An array of CPUs.  There are ncpu entries. */
+struct cpu_info **cpu_infos		__read_mostly;
+
 /* Note: set on mi_cpu_attach() and idle_loop(). */
 kcpuset_t *	kcpuset_attached	__read_mostly	= NULL;
 kcpuset_t *	kcpuset_running		__read_mostly	= NULL;
-
-struct cpuqueue	cpu_queue		__cacheline_aligned
-    = CIRCLEQ_HEAD_INITIALIZER(cpu_queue);
-
-static struct cpu_info **cpu_infos	__read_mostly;
 
 /*
  * mi_cpu_init: early initialisation of MI CPU related structures.
@@ -152,7 +151,6 @@ mi_cpu_attach(struct cpu_info *ci)
 	kcpuset_create(&ci->ci_data.cpu_kcpuset, true);
 	kcpuset_set(ci->ci_data.cpu_kcpuset, cpu_index(ci));
 
-	CIRCLEQ_INSERT_TAIL(&cpu_queue, ci, ci_data.cpu_qchain);
 	TAILQ_INIT(&ci->ci_data.cpu_ld_locks);
 	__cpu_simple_lock_init(&ci->ci_data.cpu_ld_lock);
 
@@ -161,8 +159,8 @@ mi_cpu_attach(struct cpu_info *ci)
 	    cpu_index(ci));
 
 	if (__predict_false(cpu_infos == NULL)) {
-		cpu_infos =
-		    kmem_zalloc(sizeof(cpu_infos[0]) * maxcpus, KM_SLEEP);
+		size_t nslots = maxcpus * sizeof(struct cpu_info *) + 1;
+		cpu_infos = kmem_zalloc(nslots, KM_SLEEP);
 	}
 	cpu_infos[cpu_index(ci)] = ci;
 
@@ -275,10 +273,11 @@ cpuctl_ioctl(dev_t dev, u_long cmd, void *data, int flag, lwp_t *l)
 		error = cpu_ucode_get_version((struct cpu_ucode_version *)data);
 		break;
 
-	/* XXX ifdef COMPAT */
+#ifdef COMPAT_60
 	case OIOC_CPU_UCODE_GET_VERSION:
 		error = compat6_cpu_ucode_get_version((struct compat6_cpu_ucode *)data);
 		break;
+#endif
 
 	case IOC_CPU_UCODE_APPLY:
 		error = kauth_authorize_machdep(l->l_cred,
@@ -289,7 +288,7 @@ cpuctl_ioctl(dev_t dev, u_long cmd, void *data, int flag, lwp_t *l)
 		error = cpu_ucode_apply((const struct cpu_ucode *)data);
 		break;
 
-	/* XXX ifdef COMPAT */
+#ifdef COMPAT_60
 	case OIOC_CPU_UCODE_APPLY:
 		error = kauth_authorize_machdep(l->l_cred,
 		    KAUTH_MACHDEP_CPU_UCODE_APPLY,
@@ -298,6 +297,7 @@ cpuctl_ioctl(dev_t dev, u_long cmd, void *data, int flag, lwp_t *l)
 			break;
 		error = compat6_cpu_ucode_apply((const struct compat6_cpu_ucode *)data);
 		break;
+#endif
 #endif
 
 	default:
@@ -386,6 +386,10 @@ cpu_xc_offline(struct cpu_info *ci)
 		lwp_migrate(l, mci);
 	}
 	mutex_exit(proc_lock);
+
+#if PCU_UNIT_COUNT > 0
+	pcu_save_all_on_cpu();
+#endif
 
 #ifdef __HAVE_MD_CPU_OFFLINE
 	cpu_offline_md();

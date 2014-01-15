@@ -1,4 +1,4 @@
-/*	$NetBSD: if.h,v 1.154 2011/10/25 22:26:18 dyoung Exp $	*/
+/*	$NetBSD: if.h,v 1.159 2013/10/28 21:38:01 christos Exp $	*/
 
 /*-
  * Copyright (c) 1999, 2000, 2001 The NetBSD Foundation, Inc.
@@ -284,7 +284,7 @@ typedef struct ifnet {
 	const uint8_t *if_broadcastaddr;/* linklevel broadcast bytestring */
 	void	*if_bridge;		/* bridge glue */
 	int	if_dlt;			/* data link type (<net/dlt.h>) */
-	struct pfil_head if_pfil;	/* filtering point */
+	pfil_head_t *	if_pfil;	/* filtering point */
 	uint64_t if_capabilities;	/* interface capabilities */
 	uint64_t if_capenable;		/* capabilities enabled */
 	union {
@@ -598,6 +598,8 @@ struct	ifreq {
 						 */
 #define	ifr_buf		ifr_ifru.ifru_b.b_buf	/* new interface ioctls */
 #define	ifr_buflen	ifr_ifru.ifru_b.b_buflen
+#define	ifr_index	ifr_ifru.ifru_value	/* interface index, BSD */
+#define	ifr_ifindex	ifr_index		/* interface index, linux */
 };
 
 #ifdef _KERNEL
@@ -851,8 +853,6 @@ extern struct ifnet_head ifnet;
 extern struct ifnet **ifindex2ifnet;
 extern struct ifnet *lo0ifp;
 extern size_t if_indexlim;
-
-void    ether_input(struct ifnet *, struct mbuf *);
 
 int ifreq_setaddr(u_long, struct ifreq *, const struct sockaddr *);
 

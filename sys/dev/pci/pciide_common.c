@@ -1,4 +1,4 @@
-/*	$NetBSD: pciide_common.c,v 1.57 2012/07/31 15:50:36 bouyer Exp $	*/
+/*	$NetBSD: pciide_common.c,v 1.59 2013/06/22 05:37:06 matt Exp $	*/
 
 
 /*
@@ -70,7 +70,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: pciide_common.c,v 1.57 2012/07/31 15:50:36 bouyer Exp $");
+__KERNEL_RCSID(0, "$NetBSD: pciide_common.c,v 1.59 2013/06/22 05:37:06 matt Exp $");
 
 #include <sys/param.h>
 #include <sys/malloc.h>
@@ -249,12 +249,16 @@ pciide_detach(device_t self, int flags)
 	     channel++) {
 		cp = &sc->pciide_channels[channel];
 		if (cp->compat != 0)
-			if (cp->ih != NULL)
+			if (cp->ih != NULL) {
 			       pciide_unmap_compat_intr(sc->sc_pc, cp, channel);
+			       cp->ih = NULL;
+			}
 	}
 
-	if (sc->sc_pci_ih != NULL)
+	if (sc->sc_pci_ih != NULL) {
 		pci_intr_disestablish(sc->sc_pc, sc->sc_pci_ih);
+		sc->sc_pci_ih = NULL;
+	}
 
 	return pciide_common_detach(sc, flags);
 }
@@ -868,7 +872,7 @@ pciide_chansetup(struct pciide_softc *sc, int channel, pcireg_t interface)
 	cp->ata_channel.ch_channel = channel;
 	cp->ata_channel.ch_atac = &sc->sc_wdcdev.sc_atac;
 	cp->ata_channel.ch_queue =
-	    malloc(sizeof(struct ata_queue), M_DEVBUF, M_NOWAIT);
+	    malloc(sizeof(struct ata_queue), M_DEVBUF, M_NOWAIT|M_ZERO);
 	if (cp->ata_channel.ch_queue == NULL) {
 		aprint_error("%s %s channel: "
 		    "can't allocate memory for command queue",

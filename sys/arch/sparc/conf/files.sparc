@@ -1,4 +1,4 @@
-#	$NetBSD: files.sparc,v 1.151 2011/06/12 03:35:46 rmind Exp $
+#	$NetBSD: files.sparc,v 1.154 2013/04/16 06:57:05 jdc Exp $
 
 # @(#)files.sparc	8.1 (Berkeley) 7/19/93
 # sparc-specific configuration info
@@ -28,6 +28,7 @@ device mspcic {}: pcibus
 attach mspcic at msiiep
 file	arch/sparc/sparc/msiiep.c		msiiep | mspcic
 file	arch/sparc/sparc/pci_machdep.c		msiiep | mspcic
+file	arch/sparc/sparc/pci_fixup.c		msiiep | mspcic
 
 device ebus {[addr = -1]}
 attach ebus at pci
@@ -118,6 +119,10 @@ device eccmemctl
 attach eccmemctl at mainbus
 file	arch/sparc/sparc/memecc.c		eccmemctl
 
+device sx {}
+attach sx at mainbus
+file	arch/sparc/dev/sx.c			sx needs-flag
+
 device tctrl: sysmon_envsys, sysmon_power, sysmon_taskq
 attach tctrl at obio
 file	arch/sparc/dev/tctrl.c			tctrl needs-flag
@@ -205,6 +210,11 @@ file	dev/sun/sunms.c			ms_tty		# mouse lower layer
 attach ms at pckbport with ms_pckbport
 file	arch/sparc/dev/ms_pckbport.c	ms_pckbport	# lower/middle layers
 
+#
+# Stack-less Just-In-Time compiler
+#
+
+include	"external/bsd/sljit/conf/files.sljit"
 
 #
 # Machine-independent SCSI drivers
@@ -246,7 +256,7 @@ device cgeight: bt_dac, fb, rasops24, pfour
 attach cgeight at obio
 file	arch/sparc/dev/cgeight.c	cgeight needs-flag
 
-device cgfourteen: fb, rasops32, rasops8, wsemuldisplaydev
+device cgfourteen: fb, rasops8, wsemuldisplaydev
 attach cgfourteen at obio
 file	arch/sparc/dev/cgfourteen.c	cgfourteen needs-flag
 

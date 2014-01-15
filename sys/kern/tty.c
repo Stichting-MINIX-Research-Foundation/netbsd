@@ -1,4 +1,4 @@
-/*	$NetBSD: tty.c,v 1.255 2012/10/02 23:10:34 mlelstv Exp $	*/
+/*	$NetBSD: tty.c,v 1.257 2013/02/09 00:31:21 christos Exp $	*/
 
 /*-
  * Copyright (c) 2008 The NetBSD Foundation, Inc.
@@ -63,7 +63,9 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: tty.c,v 1.255 2012/10/02 23:10:34 mlelstv Exp $");
+__KERNEL_RCSID(0, "$NetBSD: tty.c,v 1.257 2013/02/09 00:31:21 christos Exp $");
+
+#include "opt_compat_netbsd.h"
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -93,12 +95,16 @@ __KERNEL_RCSID(0, "$NetBSD: tty.c,v 1.255 2012/10/02 23:10:34 mlelstv Exp $");
 #include <sys/module.h>
 #include <sys/bitops.h>
 
+#ifdef COMPAT_60
+#include <compat/sys/ttycom.h>
+#endif /* COMPAT_60 */
+
 static int	ttnread(struct tty *);
 static void	ttyblock(struct tty *);
 static void	ttyecho(int, struct tty *);
 static void	ttyrubo(struct tty *, int);
 static void	ttyprintf_nolock(struct tty *, const char *fmt, ...)
-    __attribute__((__format__(__printf__,2,3)));
+    __printflike(2, 3);
 static int	proc_compare_wrapper(struct proc *, struct proc *);
 static void	ttysigintr(void *);
 
@@ -1363,6 +1369,11 @@ ttioctl(struct tty *tp, u_long cmd, void *data, int flag, struct lwp *l)
 			error = tty_set_qsize(tp, s);
 		return error;
 	default:
+#ifdef COMPAT_60
+		error = compat_60_ttioctl(tp, cmd, data, flag, l);
+		if (error != EPASSTHROUGH)
+			return error;
+#endif /* COMPAT_60 */
 		/* We may have to load the compat module for this. */
 		for (;;) {
 			rw_enter(&ttcompat_lock, RW_READER);

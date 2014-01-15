@@ -1,4 +1,4 @@
-/*	$NetBSD: ufs_lookup.c,v 1.118 2012/10/14 23:57:32 dholland Exp $	*/
+/*	$NetBSD: ufs_lookup.c,v 1.128 2013/11/04 19:58:02 christos Exp $	*/
 
 /*
  * Copyright (c) 1989, 1993
@@ -37,7 +37,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ufs_lookup.c,v 1.118 2012/10/14 23:57:32 dholland Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ufs_lookup.c,v 1.128 2013/11/04 19:58:02 christos Exp $");
 
 #ifdef _KERNEL_OPT
 #include "opt_ffs.h"
@@ -153,6 +153,7 @@ ufs_lookup(void *v)
 	int dirblksiz = ump->um_dirblksiz;
 	ino_t foundino;
 	struct ufs_lookup_results *results;
+	int iswhiteout;			/* temp result from cache_lookup() */
 
 	flags = cnp->cn_flags;
 
@@ -186,8 +187,25 @@ ufs_lookup(void *v)
 	 * check the name cache to see if the directory/name pair
 	 * we are looking for is known already.
 	 */
-	if ((error = cache_lookup(vdp, vpp, cnp)) >= 0) {
-		return (error);
+	if (cache_lookup(vdp, cnp->cn_nameptr, cnp->cn_namelen,
+			 cnp->cn_nameiop, cnp->cn_flags, &iswhiteout, vpp)) {
+		if (iswhiteout) {
+			cnp->cn_flags |= ISWHITEOUT;
+		}
+		return *vpp == NULLVP ? ENOENT : 0;
+	}
+	if (iswhiteout) {
+		/*
+		 * The namecache set iswhiteout without finding a
+		 * cache entry. As of this writing (20121014), this
+		 * can happen if there was a whiteout entry that has
+		 * been invalidated by the lookup. It is not clear if
+		 * it is correct to set ISWHITEOUT in this case or
+		 * not; however, doing so retains the prior behavior,
+		 * so we'll go with that until some clearer answer
+		 * appears. XXX
+		 */
+		cnp->cn_flags |= ISWHITEOUT;
 	}
 
 	fstrans_start(vdp->v_mount, FSTRANS_SHARED);
@@ -202,7 +220,7 @@ ufs_lookup(void *v)
 	slotfreespace = slotsize = slotneeded = 0;
 	if ((nameiop == CREATE || nameiop == RENAME) && (flags & ISLASTCN)) {
 		slotstatus = NONE;
-		slotneeded = DIRECTSIZ(cnp->cn_namelen);
+		slotneeded = UFS_DIRECTSIZ(cnp->cn_namelen);
 	}
 
 	/*
@@ -330,7 +348,7 @@ searchloop:
 			int size = ufs_rw16(ep->d_reclen, needswap);
 
 			if (ep->d_ino != 0)
-				size -= DIRSIZ(FSFMT(vdp), ep, needswap);
+				size -= UFS_DIRSIZ(FSFMT(vdp), ep, needswap);
 			if (size > 0) {
 				if (size >= slotneeded) {
 					slotstatus = FOUND;
@@ -497,7 +515,8 @@ notfound:
 	 * Insert name into cache (as non-existent) if appropriate.
 	 */
 	if (nameiop != CREATE) {
-		cache_enter(vdp, *vpp, cnp);
+		cache_enter(vdp, *vpp, cnp->cn_nameptr, cnp->cn_namelen,
+			    cnp->cn_flags);
 	}
 	error = ENOENT;
 	goto out;
@@ -509,10 +528,10 @@ found:
 	 * Check that directory length properly reflects presence
 	 * of this entry.
 	 */
-	if (results->ulr_offset + DIRSIZ(FSFMT(vdp), ep, needswap) > dp->i_size) {
+	if (results->ulr_offset + UFS_DIRSIZ(FSFMT(vdp), ep, needswap) > dp->i_size) {
 		ufs_dirbad(dp, results->ulr_offset, "i_size too small");
 		dp->i_size =
-		    results->ulr_offset + DIRSIZ(FSFMT(vdp), ep, needswap);
+		    results->ulr_offset + UFS_DIRSIZ(FSFMT(vdp), ep, needswap);
 		DIP_ASSIGN(dp, size, dp->i_size);
 		dp->i_flag |= IN_CHANGE | IN_UPDATE;
 		UFS_WAPBL_UPDATE(vdp, NULL, NULL, UPDATE_DIROP);
@@ -661,7 +680,7 @@ found:
 	/*
 	 * Insert name into cache if appropriate.
 	 */
-	cache_enter(vdp, *vpp, cnp);
+	cache_enter(vdp, *vpp, cnp->cn_nameptr, cnp->cn_namelen, cnp->cn_flags);
 	error = 0;
 
 out:
@@ -714,13 +733,13 @@ ufs_dirbadentry(struct vnode *dp, struct direct *ep, int entryoffsetinblock)
 	    ufs_rw16(ep->d_reclen, needswap) >
 		dirblksiz - (entryoffsetinblock & (dirblksiz - 1)) ||
 	    ufs_rw16(ep->d_reclen, needswap) <
-		DIRSIZ(FSFMT(dp), ep, needswap) ||
+		UFS_DIRSIZ(FSFMT(dp), ep, needswap) ||
 	    namlen > FFS_MAXNAMLEN) {
 		/*return (1); */
 		printf("First bad, reclen=%#x, DIRSIZ=%lu, namlen=%d, "
 			"flags=%#x, entryoffsetinblock=%d, dirblksiz = %d\n",
 			ufs_rw16(ep->d_reclen, needswap),
-			(u_long)DIRSIZ(FSFMT(dp), ep, needswap),
+			(u_long)UFS_DIRSIZ(FSFMT(dp), ep, needswap),
 			namlen, dp->v_mount->mnt_flag, entryoffsetinblock,
 			dirblksiz);
 		goto bad;
@@ -794,7 +813,6 @@ ufs_direnter(struct vnode *dvp, const struct ufs_lookup_results *ulr,
     struct componentname *cnp, struct buf *newdirbp)
 {
 	kauth_cred_t cr;
-	struct lwp *l;
 	int newentrysize;
 	struct inode *dp;
 	struct buf *bp;
@@ -811,10 +829,9 @@ ufs_direnter(struct vnode *dvp, const struct ufs_lookup_results *ulr,
 
 	error = 0;
 	cr = cnp->cn_cred;
-	l = curlwp;
 
 	dp = VTOI(dvp);
-	newentrysize = DIRSIZ(0, dirp, 0);
+	newentrysize = UFS_DIRSIZ(0, dirp, 0);
 
 	if (ulr->ulr_count == 0) {
 		/*
@@ -904,7 +921,7 @@ ufs_direnter(struct vnode *dvp, const struct ufs_lookup_results *ulr,
 	 * ulr_offset + ulr_count would yield the space.
 	 */
 	ep = (struct direct *)dirbuf;
-	dsize = (ep->d_ino != 0) ? DIRSIZ(FSFMT(dvp), ep, needswap) : 0;
+	dsize = (ep->d_ino != 0) ? UFS_DIRSIZ(FSFMT(dvp), ep, needswap) : 0;
 	spacefree = ufs_rw16(ep->d_reclen, needswap) - dsize;
 	for (loc = ufs_rw16(ep->d_reclen, needswap); loc < ulr->ulr_count; ) {
 		uint16_t reclen;
@@ -931,7 +948,7 @@ ufs_direnter(struct vnode *dvp, const struct ufs_lookup_results *ulr,
 			dsize = 0;
 			continue;
 		}
-		dsize = DIRSIZ(FSFMT(dvp), nep, needswap);
+		dsize = UFS_DIRSIZ(FSFMT(dvp), nep, needswap);
 		spacefree += reclen - dsize;
 #ifdef UFS_DIRHASH
 		if (dp->i_dirhash != NULL)
@@ -951,7 +968,7 @@ ufs_direnter(struct vnode *dvp, const struct ufs_lookup_results *ulr,
 	 * copy in the new entry, and write out the block.
 	 */
 	if (ep->d_ino == 0 ||
-	    (ufs_rw32(ep->d_ino, needswap) == WINO &&
+	    (ufs_rw32(ep->d_ino, needswap) == UFS_WINO &&
 	     memcmp(ep->d_name, dirp->d_name, dirp->d_namlen) == 0)) {
 		if (spacefree + dsize < newentrysize)
 			panic("ufs_direnter: compact1");
@@ -1051,21 +1068,19 @@ ufs_dirremove(struct vnode *dvp, const struct ufs_lookup_results *ulr,
 	struct direct *ep;
 	struct buf *bp;
 	int error;
-#ifdef FFS_EI
 	const int needswap = UFS_MPNEEDSWAP(dp->i_ump);
-#endif
 
 	UFS_WAPBL_JLOCK_ASSERT(dvp->v_mount);
 
 	if (flags & DOWHITEOUT) {
 		/*
-		 * Whiteout entry: set d_ino to WINO.
+		 * Whiteout entry: set d_ino to UFS_WINO.
 		 */
 		error = ufs_blkatoff(dvp, (off_t)ulr->ulr_offset, (void *)&ep,
 				     &bp, true);
 		if (error)
 			return (error);
-		ep->d_ino = ufs_rw32(WINO, needswap);
+		ep->d_ino = ufs_rw32(UFS_WINO, needswap);
 		ep->d_type = DT_WHT;
 		goto out;
 	}
@@ -1131,7 +1146,7 @@ out:
 	 */
 	if (ip != 0 && (ip->i_flags & SF_SNAPSHOT) != 0 &&
 	    ip->i_nlink == 0)
-		ffs_snapgone(ip);
+		UFS_SNAPGONE(ITOV(ip));
 	UFS_WAPBL_UPDATE(dvp, NULL, NULL, 0);
 	return (error);
 }
@@ -1180,7 +1195,7 @@ ufs_dirrewrite(struct inode *dp, off_t offset,
 	 * when last open reference goes away.
 	 */
 	if ((oip->i_flags & SF_SNAPSHOT) != 0 && oip->i_nlink == 0)
-		ffs_snapgone(oip);
+		UFS_SNAPGONE(ITOV(oip));
 	UFS_WAPBL_UPDATE(vdp, NULL, NULL, UPDATE_DIROP);
 	return (error);
 }
@@ -1219,7 +1234,7 @@ ufs_dirempty(struct inode *ip, ino_t parentino, kauth_cred_t cred)
 		if (dp->d_reclen == 0)
 			return (0);
 		/* skip empty entries */
-		if (dp->d_ino == 0 || ufs_rw32(dp->d_ino, needswap) == WINO)
+		if (dp->d_ino == 0 || ufs_rw32(dp->d_ino, needswap) == UFS_WINO)
 			continue;
 		/* accept only "." and ".." */
 #if (BYTE_ORDER == LITTLE_ENDIAN)
@@ -1271,7 +1286,7 @@ ufs_checkpath(struct inode *source, struct inode *target, kauth_cred_t cred)
 		error = EEXIST;
 		goto out;
 	}
-	rootino = ROOTINO;
+	rootino = UFS_ROOTINO;
 	error = 0;
 	if (target->i_number == rootino)
 		goto out;
@@ -1388,7 +1403,7 @@ ufs_parentcheck(struct vnode *upper, struct vnode *lower, kauth_cred_t cred,
 		int *found_ret, struct vnode **upperchild_ret)
 {
 	const int needswap = UFS_MPNEEDSWAP(VTOI(lower)->i_ump);
-	ino_t upper_ino, found_ino;
+	ino_t upper_ino, found_ino = 0;	/* XXX: gcc */
 	struct vnode *current, *next;
 	int error;
 
@@ -1398,7 +1413,7 @@ ufs_parentcheck(struct vnode *upper, struct vnode *lower, kauth_cred_t cred,
 		*upperchild_ret = upper;
 		return 0;
 	}
-	if (VTOI(lower)->i_number == ROOTINO) {
+	if (VTOI(lower)->i_number == UFS_ROOTINO) {
 		*found_ret = 0;
 		*upperchild_ret = NULL;
 		return 0;
@@ -1422,7 +1437,7 @@ ufs_parentcheck(struct vnode *upper, struct vnode *lower, kauth_cred_t cred,
 			*upperchild_ret = current;
 			return 0;
 		}
-		if (found_ino == ROOTINO) {
+		if (found_ino == UFS_ROOTINO) {
 			vput(current);
 			*found_ret = 0;
 			*upperchild_ret = NULL;
@@ -1465,7 +1480,7 @@ int
 ufs_blkatoff(struct vnode *vp, off_t offset, char **res, struct buf **bpp,
     bool modify)
 {
-	struct inode *ip;
+	struct inode *ip __diagused;
 	struct buf *bp;
 	daddr_t lbn;
 	const int dirrablks = ufs_dirrablks;
@@ -1504,7 +1519,6 @@ ufs_blkatoff(struct vnode *vp, off_t offset, char **res, struct buf **bpp,
 	error = breadn(vp, blks[0], blksizes[0], &blks[1], &blksizes[1],
 	    run - 1, NOCRED, (modify ? B_MODIFY : 0), &bp);
 	if (error != 0) {
-		brelse(bp, 0);
 		*bpp = NULL;
 		goto out;
 	}

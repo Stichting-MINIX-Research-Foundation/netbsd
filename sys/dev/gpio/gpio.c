@@ -1,4 +1,4 @@
-/* $NetBSD: gpio.c,v 1.50 2011/11/25 13:49:43 mbalmer Exp $ */
+/* $NetBSD: gpio.c,v 1.52 2013/05/20 15:46:41 mbalmer Exp $ */
 /*	$OpenBSD: gpio.c,v 1.6 2006/01/14 12:33:49 grange Exp $	*/
 
 /*
@@ -19,7 +19,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: gpio.c,v 1.50 2011/11/25 13:49:43 mbalmer Exp $");
+__KERNEL_RCSID(0, "$NetBSD: gpio.c,v 1.52 2013/05/20 15:46:41 mbalmer Exp $");
 
 /*
  * General Purpose Input/Output framework.
@@ -198,7 +198,7 @@ gpio_attach(device_t parent, device_t self, void *aux)
 	sc->sc_pins = gba->gba_pins;
 	sc->sc_npins = gba->gba_npins;
 
-	printf(": %d pins\n", sc->sc_npins);
+	aprint_normal(": %d pins\n", sc->sc_npins);
 
 	if (!pmf_device_register(self, NULL, gpio_resume))
 		aprint_error_dev(self, "couldn't establish power handler\n");
@@ -562,9 +562,9 @@ gpio_ioctl(struct gpio_softc *sc, u_long cmd, void *data, int flag,
 		if (value != GPIO_PIN_LOW && value != GPIO_PIN_HIGH)
 			return EINVAL;
 
-		gpiobus_pin_write(gc, pin, value);
 		/* return old value */
-		req->gp_value = sc->sc_pins[pin].pin_state;
+		req->gp_value = gpiobus_pin_read(gc, pin);
+		gpiobus_pin_write(gc, pin, value);
 		/* update current value */
 		sc->sc_pins[pin].pin_state = value;
 		break;

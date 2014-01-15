@@ -1,4 +1,4 @@
-/*	$NetBSD: umass_scsipi.c,v 1.46 2012/08/20 10:32:31 drochner Exp $	*/
+/*	$NetBSD: umass_scsipi.c,v 1.48 2013/01/05 14:54:06 christos Exp $	*/
 
 /*
  * Copyright (c) 2001, 2003, 2012 The NetBSD Foundation, Inc.
@@ -31,7 +31,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: umass_scsipi.c,v 1.46 2012/08/20 10:32:31 drochner Exp $");
+__KERNEL_RCSID(0, "$NetBSD: umass_scsipi.c,v 1.48 2013/01/05 14:54:06 christos Exp $");
 
 #ifdef _KERNEL_OPT
 #include "opt_umass.h"
@@ -233,7 +233,7 @@ umass_scsipi_request(struct scsipi_channel *chan,
 		    periph->periph_target, periph->periph_lun,
 		    xs, xs->cmd->opcode, xs->datalen,
 		    periph->periph_quirks, xs->xs_control & XS_CTL_POLL));
-#if defined(USB_DEBUG) && defined(SCSIPI_DEBUG)
+#if defined(UMASS_DEBUG) && defined(SCSIPI_DEBUG)
 		if (umassdebug & UDMASS_SCSI)
 			show_scsipi_xs(xs);
 		else if (umassdebug & ~UDMASS_CMD)

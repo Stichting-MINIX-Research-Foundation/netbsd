@@ -39,6 +39,7 @@
    SLJIT_BIG_ENDIAN : big endian architecture
    SLJIT_UNALIGNED : allows unaligned memory accesses for non-fpu operations (only!)
    SLJIT_INDIRECT_CALL : see SLJIT_FUNC_OFFSET() for more information
+   SLJIT_RETURN_ADDRESS_OFFSET : a return instruction always adds this offset to the return address
 
    Types and useful macros:
    sljit_b, sljit_ub : signed and unsigned 8 bit byte
@@ -57,6 +58,7 @@
 	|| (defined SLJIT_CONFIG_PPC_32 && SLJIT_CONFIG_PPC_32) \
 	|| (defined SLJIT_CONFIG_PPC_64 && SLJIT_CONFIG_PPC_64) \
 	|| (defined SLJIT_CONFIG_MIPS_32 && SLJIT_CONFIG_MIPS_32) \
+	|| (defined SLJIT_CONFIG_SPARC_32 && SLJIT_CONFIG_SPARC_32) \
 	|| (defined SLJIT_CONFIG_AUTO && SLJIT_CONFIG_AUTO) \
 	|| (defined SLJIT_CONFIG_UNSUPPORTED && SLJIT_CONFIG_UNSUPPORTED))
 #error "An architecture must be selected"
@@ -71,6 +73,7 @@
 	+ (defined SLJIT_CONFIG_PPC_32 && SLJIT_CONFIG_PPC_32) \
 	+ (defined SLJIT_CONFIG_PPC_64 && SLJIT_CONFIG_PPC_64) \
 	+ (defined SLJIT_CONFIG_MIPS_32 && SLJIT_CONFIG_MIPS_32) \
+	+ (defined SLJIT_CONFIG_SPARC_32 && SLJIT_CONFIG_SPARC_32) \
 	+ (defined SLJIT_CONFIG_AUTO && SLJIT_CONFIG_AUTO) \
 	+ (defined SLJIT_CONFIG_UNSUPPORTED && SLJIT_CONFIG_UNSUPPORTED) >= 2
 #error "Multiple architectures are selected"
@@ -99,6 +102,8 @@
 #define SLJIT_CONFIG_PPC_32 1
 #elif defined(__mips__)
 #define SLJIT_CONFIG_MIPS_32 1
+#elif defined(__sparc__) || defined(__sparc)
+#define SLJIT_CONFIG_SPARC_32 1
 #else
 /* Unsupported architecture */
 #define SLJIT_CONFIG_UNSUPPORTED 1
@@ -216,6 +221,12 @@
 #define SLJIT_CACHE_FLUSH(from, to) \
 	ppc_cache_flush((from), (to))
 
+#elif (defined SLJIT_CONFIG_SPARC_32 && SLJIT_CONFIG_SPARC_32)
+
+/* The __clear_cache() implementation of GCC is a dummy function on Sparc. */
+#define SLJIT_CACHE_FLUSH(from, to) \
+	sparc_cache_flush((from), (to))
+
 #else
 
 /* Calls __ARM_NR_cacheflush on ARM-Linux. */
@@ -297,7 +308,8 @@ typedef long int sljit_w;
 #define SLJIT_X86_32_FASTCALL 1
 
 #else /* defined(_WIN32) */
-#define SLJIT_CALL __stdcall
+/* The cdecl attribute is the default. */
+#define SLJIT_CALL
 #endif
 
 #else /* Other architectures. */
@@ -311,7 +323,9 @@ typedef long int sljit_w;
 #if !defined(SLJIT_BIG_ENDIAN) && !defined(SLJIT_LITTLE_ENDIAN)
 
 /* These macros are useful for the application. */
-#if (defined SLJIT_CONFIG_PPC_32 && SLJIT_CONFIG_PPC_32) || (defined SLJIT_CONFIG_PPC_64 && SLJIT_CONFIG_PPC_64)
+#if (defined SLJIT_CONFIG_PPC_32 && SLJIT_CONFIG_PPC_32) \
+	|| (defined SLJIT_CONFIG_PPC_64 && SLJIT_CONFIG_PPC_64) \
+	|| (defined SLJIT_CONFIG_SPARC_32 && SLJIT_CONFIG_SPARC_32)
 #define SLJIT_BIG_ENDIAN 1
 
 #elif (defined SLJIT_CONFIG_MIPS_32 && SLJIT_CONFIG_MIPS_32)
@@ -337,11 +351,21 @@ typedef long int sljit_w;
 #error "Exactly one endianness must be selected"
 #endif
 
+#ifndef SLJIT_INDIRECT_CALL
 #if (defined SLJIT_CONFIG_PPC_64 && SLJIT_CONFIG_PPC_64) || (defined SLJIT_CONFIG_PPC_32 && SLJIT_CONFIG_PPC_32 && defined _AIX)
 /* It seems certain ppc compilers use an indirect addressing for functions
    which makes things complicated. */
 #define SLJIT_INDIRECT_CALL 1
 #endif
+#endif /* SLJIT_INDIRECT_CALL */
+
+#ifndef SLJIT_RETURN_ADDRESS_OFFSET
+#if (defined SLJIT_CONFIG_SPARC_32 && SLJIT_CONFIG_SPARC_32)
+#define SLJIT_RETURN_ADDRESS_OFFSET 8
+#else
+#define SLJIT_RETURN_ADDRESS_OFFSET 0
+#endif
+#endif /* SLJIT_RETURN_ADDRESS_OFFSET */
 
 #ifndef SLJIT_SSE2
 
@@ -392,16 +416,12 @@ SLJIT_API_FUNC_ATTRIBUTE void sljit_free_exec(void* ptr);
 /* Feel free to redefine these two macros. */
 #ifndef SLJIT_ASSERT
 
-#define SLJIT_HALT_PROCESS() \
-	*((int*)0) = 0
+#include <assert.h>
+#include <stdlib.h>
 
-#define SLJIT_ASSERT(x) \
-	do { \
-		if (SLJIT_UNLIKELY(!(x))) { \
-			printf("Assertion failed at " __FILE__ ":%d\n", __LINE__); \
-			SLJIT_HALT_PROCESS(); \
-		} \
-	} while (0)
+#define SLJIT_HALT_PROCESS() abort()
+
+#define SLJIT_ASSERT(x) assert(x)
 
 #endif /* !SLJIT_ASSERT */
 

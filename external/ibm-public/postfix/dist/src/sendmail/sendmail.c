@@ -1,4 +1,4 @@
-/*	$NetBSD: sendmail.c,v 1.1.1.1 2009/06/23 10:08:53 tron Exp $	*/
+/*	$NetBSD: sendmail.c,v 1.1.1.3 2013/09/25 19:06:34 tron Exp $	*/
 
 /*++
 /* NAME
@@ -78,6 +78,11 @@
 /* .IP \fB-bi\fR
 /*	Initialize alias database. See the \fBnewaliases\fR
 /*	command above.
+/* .IP \fB-bl\fR
+/*	Go into daemon mode. To accept only local connections as
+/*	with Sendmail\'s \fB-bl\fR option, specify "\fBinet_interfaces
+/*	= loopback\fR" in the Postfix \fBmain.cf\fR configuration
+/*	file.
 /* .IP \fB-bm\fR
 /*	Read mail from standard input and arrange for delivery.
 /*	This is the default mode of operation.
@@ -152,7 +157,8 @@
 /*	\fItype\fR:\fIpathname\fR. See \fBpostalias\fR(1) for
 /*	details.
 /* .IP "\fB-O \fIoption=value\fR (ignored)"
-/*	Backwards compatibility.
+/*	Set the named \fIoption\fR to \fIvalue\fR. Use the equivalent
+/*	configuration parameter in \fBmain.cf\fR instead.
 /* .IP "\fB-o7\fR (ignored)"
 /* .IP "\fB-o8\fR (ignored)"
 /*	To send 8-bit or binary content, use an appropriate MIME encapsulation
@@ -169,9 +175,16 @@
 /*	Set the envelope sender address. This is the address where
 /*	delivery problems are sent to. With Postfix versions before 2.1, the
 /*	\fBErrors-To:\fR message header overrides the error return address.
-/* .IP "\fB-R \fIreturn_limit\fR (ignored)"
-/*	Limit the size of bounced mail. Use the \fBbounce_size_limit\fR
-/*	configuration parameter instead.
+/* .IP "\fB-R \fIreturn\fR"
+/*	Delivery status notification control.  Specify "hdrs" to
+/*	return only the header when a message bounces, "full" to
+/*	return a full copy (the default behavior).
+/*
+/*	The \fB-R\fR option specifies an upper bound; Postfix will
+/*	return only the header, when a full copy would exceed the
+/*	bounce_size_limit setting.
+/*
+/*	This option is ignored before Postfix version 2.10.
 /* .IP \fB-q\fR
 /*	Attempt to deliver all queued mail. This is implemented by
 /*	executing the \fBpostqueue\fR(1) command.
@@ -262,6 +275,13 @@
 /*	this program.
 /*	The text below provides only a parameter summary. See
 /*	\fBpostconf\fR(5) for more details including examples.
+/* COMPATIBILITY CONTROLS
+/* .ad
+/* .fi
+/*	Available with Postfix 2.9 and later:
+/* .IP "\fBsendmail_fix_line_endings (always)\fR"
+/*	Controls how the Postfix sendmail command converts email message
+/*	line endings from <CR><LF> into UNIX format (<LF>).
 /* TROUBLE SHOOTING CONTROLS
 /* .ad
 /* .fi
@@ -340,8 +360,8 @@
 /*	The default database type for use in \fBnewaliases\fR(1), \fBpostalias\fR(1)
 /*	and \fBpostmap\fR(1) commands.
 /* .IP "\fBdelay_warning_time (0h)\fR"
-/*	The time after which the sender receives the message headers of
-/*	mail that is still queued.
+/*	The time after which the sender receives a copy of the message
+/*	headers of mail that is still queued.
 /* .IP "\fBenable_errors_to (no)\fR"
 /*	Report mail delivery errors to the address specified with the
 /*	non-standard Errors-To: message header, instead of the envelope
@@ -431,6 +451,8 @@
 #include <set_ugid.h>
 #include <connect.h>
 #include <split_at.h>
+#include <name_code.h>
+#include <warn_stat.h>
 
 /* Global library. */
 
@@ -496,12 +518,14 @@ typedef struct SM_STATE {
 } SM_STATE;
 
  /*
-  * Mail submission ACL
+  * Mail submission ACL, line-end fixing.
   */
 char   *var_submit_acl;
+char   *var_sm_fix_eol;
 
 static const CONFIG_STR_TABLE str_table[] = {
     VAR_SUBMIT_ACL, DEF_SUBMIT_ACL, &var_submit_acl, 0, 0,
+    VAR_SM_FIX_EOL, DEF_SM_FIX_EOL, &var_sm_fix_eol, 1, 0,
     0,
 };
 
@@ -590,7 +614,7 @@ static void output_header(void *context, int header_class,
 /* enqueue - post one message */
 
 static void enqueue(const int flags, const char *encoding,
-		            const char *dsn_envid, int dsn_notify,
+		         const char *dsn_envid, int dsn_ret, int dsn_notify,
 		            const char *rewrite_context, const char *sender,
 		            const char *full_name, char **recipients)
 {
@@ -605,7 +629,7 @@ static void enqueue(const int flags, const char *encoding,
     TOK822 *tp;
     int     rcpt_count = 0;
     enum {
-	STRIP_CR_DUNNO, STRIP_CR_DO, STRIP_CR_DONT
+	STRIP_CR_DUNNO, STRIP_CR_DO, STRIP_CR_DONT, STRIP_CR_ERROR
     }       strip_cr;
     MAIL_STREAM *handle;
     VSTRING *postdrop_command;
@@ -619,6 +643,12 @@ static void enqueue(const int flags, const char *encoding,
     const char *errstr;
     int     addr_count;
     int     level;
+    static NAME_CODE sm_fix_eol_table[] = {
+	SM_FIX_EOL_ALWAYS, STRIP_CR_DO,
+	SM_FIX_EOL_STRICT, STRIP_CR_DUNNO,
+	SM_FIX_EOL_NEVER, STRIP_CR_DONT,
+	0, STRIP_CR_ERROR,
+    };
 
     /*
      * Access control is enforced in the postdrop command. The code here
@@ -698,6 +728,9 @@ static void enqueue(const int flags, const char *encoding,
     if (dsn_envid)
 	rec_fprintf(dst, REC_TYPE_ATTR, "%s=%s",
 		    MAIL_ATTR_DSN_ENVID, dsn_envid);
+    if (dsn_ret)
+	rec_fprintf(dst, REC_TYPE_ATTR, "%s=%d",
+		    MAIL_ATTR_DSN_RET, dsn_ret);
     rec_fprintf(dst, REC_TYPE_ATTR, "%s=%s",
 		MAIL_ATTR_RWR_CONTEXT, rewrite_context);
     if (full_name || (full_name = fullname()) != 0)
@@ -793,7 +826,11 @@ static void enqueue(const int flags, const char *encoding,
 	 * Process header/body lines.
 	 */
 	skip_from_ = 1;
-	strip_cr = STRIP_CR_DUNNO;
+	strip_cr = name_code(sm_fix_eol_table, NAME_CODE_FLAG_STRICT_CASE,
+			     var_sm_fix_eol);
+	if (strip_cr == STRIP_CR_ERROR)
+	    msg_fatal_status(EX_USAGE,
+		    "invalid %s value: %s", VAR_SM_FIX_EOL, var_sm_fix_eol);
 	for (prev_type = 0; (type = rec_streamlf_get(VSTREAM_IN, buf, var_line_limit))
 	     != REC_TYPE_EOF; prev_type = type) {
 	    if (strip_cr == STRIP_CR_DUNNO && type == REC_TYPE_NORM) {
@@ -811,7 +848,7 @@ static void enqueue(const int flags, const char *encoding,
 		skip_from_ = 0;
 	    }
 	    if (strip_cr == STRIP_CR_DO && type == REC_TYPE_NORM)
-		if (VSTRING_LEN(buf) > 0 && vstring_end(buf)[-1] == '\r')
+		while (VSTRING_LEN(buf) > 0 && vstring_end(buf)[-1] == '\r')
 		    vstring_truncate(buf, VSTRING_LEN(buf) - 1);
 	    if ((flags & SM_FLAG_AEOF) && prev_type != REC_TYPE_CONT
 		&& VSTRING_LEN(buf) == 1 && *STR(buf) == '.')
@@ -945,6 +982,7 @@ int     main(int argc, char **argv)
     uid_t   uid;
     const char *rewrite_context = MAIL_ATTR_RWR_LOCAL;
     int     dsn_notify = 0;
+    int     dsn_ret = 0;
     const char *dsn_envid = 0;
     int     saved_optind;
 
@@ -997,6 +1035,11 @@ int     main(int argc, char **argv)
     msg_cleanup(tempfail);
     msg_syslog_init(mail_task("sendmail"), LOG_PID, LOG_FACILITY);
     set_mail_conf_str(VAR_PROCNAME, var_procname = mystrdup(argv[0]));
+
+    /*
+     * Check the Postfix library version as soon as we enable logging.
+     */
+    MAIL_VERSION_CHECK;
 
     /*
      * Some sites mistakenly install Postfix sendmail as set-uid root. Drop
@@ -1085,7 +1128,8 @@ int     main(int argc, char **argv)
 	    optind++;
 	    continue;
 	}
-	if (strcmp(argv[OPTIND], "-V") == 0) {
+	if (strcmp(argv[OPTIND], "-V") == 0
+	    && argv[OPTIND + 1] != 0 && strlen(argv[OPTIND + 1]) == 2) {
 	    msg_warn("option -V is deprecated with Postfix 2.3; "
 		     "specify -XV instead");
 	    argv[OPTIND] = "-XV";
@@ -1131,6 +1175,10 @@ int     main(int argc, char **argv)
 	    if ((dsn_notify = dsn_notify_mask(optarg)) == 0)
 		msg_warn("bad -N option value -- ignored");
 	    break;
+	case 'R':
+	    if ((dsn_ret = dsn_ret_code(optarg)) == 0)
+		msg_warn("bad -R option value -- ignored");
+	    break;
 	case 'V':				/* DSN, was: VERP */
 	    if (strlen(optarg) > 100)
 		msg_warn("too long -V option value -- ignored");
@@ -1156,6 +1204,7 @@ int     main(int argc, char **argv)
 	    default:
 		msg_fatal_status(EX_USAGE, "unsupported: -%c%c", c, *optarg);
 	    case 'd':				/* daemon mode */
+	    case 'l':				/* daemon mode */
 		if (mode == SM_MODE_FLUSHQ)
 		    msg_warn("ignoring -q option in daemon mode");
 		mode = SM_MODE_DAEMON;
@@ -1257,6 +1306,8 @@ int     main(int argc, char **argv)
 	    msg_fatal_status(EX_USAGE, "-t option cannot be used with -bv");
 	if (dsn_notify)
 	    msg_fatal_status(EX_USAGE, "-N option cannot be used with -bv");
+	if (dsn_ret)
+	    msg_fatal_status(EX_USAGE, "-R option cannot be used with -bv");
 	if (msg_verbose == 1)
 	    msg_fatal_status(EX_USAGE, "-v option cannot be used with -bv");
     }
@@ -1301,7 +1352,7 @@ int     main(int argc, char **argv)
 	    mail_run_replace(var_command_dir, ext_argv->argv);
 	    /* NOTREACHED */
 	} else {
-	    enqueue(flags, encoding, dsn_envid, dsn_notify,
+	    enqueue(flags, encoding, dsn_envid, dsn_ret, dsn_notify,
 		    rewrite_context, sender, full_name, argv + OPTIND);
 	    exit(0);
 	    /* NOTREACHED */

@@ -1,4 +1,4 @@
-/*	$NetBSD: rump.h,v 1.54 2012/07/20 09:27:11 pooka Exp $	*/
+/*	$NetBSD: rump.h,v 1.57 2013/07/16 20:17:06 pooka Exp $	*/
 
 /*
  * Copyright (c) 2007-2011 Antti Kantee.  All Rights Reserved.
@@ -57,6 +57,11 @@ typedef struct prop_dictionary *prop_dictionary_t;
 #endif
 #endif /* __NetBSD__ */
 
+#if defined(__sun__) && !defined(RUMP_REGISTER_T)
+#define RUMP_REGISTER_T long
+typedef RUMP_REGISTER_T register_t;
+#endif
+
 #include <rump/rumpvnode_if.h>
 #include <rump/rumpdefs.h>
 
@@ -74,6 +79,10 @@ enum rump_sigmodel {
 /* flags to rump_lwproc_rfork */
 #define RUMP_RFFDG	0x01
 #define RUMP_RFCFDG	0x02
+/* slightly-easier-to-parse aliases for the above */
+#define RUMP_RFFD_SHARE 0x00 /* lossage */
+#define RUMP_RFFD_COPY	RUMP_RFFDG
+#define RUMP_RFFD_CLEAR	RUMP_RFCFDG
 
 /* rumpvfs */
 #define RUMPCN_FREECRED  0x02
@@ -85,13 +94,6 @@ enum rump_etfs_type {
 	RUMP_ETFS_DIR,		/* only the registered directory */
 	RUMP_ETFS_DIR_SUBDIRS	/* dir + subdirectories (recursive) */
 };
-
-/*
- * Something like rump capabilities would be nicer, but let's
- * do this for a start.
- */
-#define RUMP_VERSION			01
-#define rump_init()			rump__init(RUMP_VERSION)
 
 /* um, what's the point ?-) */
 #ifdef _BEGIN_DECLS
@@ -108,7 +110,7 @@ void	rump_unschedule(void);
 void	rump_printevcnts(void);
 
 int	rump_daemonize_begin(void);
-int	rump__init(int);
+int	rump_init(void);
 int	rump_init_server(const char *);
 int	rump_daemonize_done(int);
 #define RUMP_DAEMONIZE_SUCCESS 0

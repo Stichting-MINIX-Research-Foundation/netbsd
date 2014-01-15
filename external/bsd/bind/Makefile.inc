@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile.inc,v 1.13 2012/05/09 21:59:10 christos Exp $
+#	$NetBSD: Makefile.inc,v 1.18 2013/10/03 20:17:47 christos Exp $
 
 .if !defined(BIND9_MAKEFILE_INC)
 BIND9_MAKEFILE_INC=yes
@@ -89,10 +89,25 @@ LIBDPLIBS+=      pthread  ${NETBSDSRCDIR}/lib/libpthread
 .endif
 
 .if ${NAMED_USE_OPENSSL} == "yes"
-CPPFLAGS+=-DOPENSSL
+CPPFLAGS+=-DOPENSSL -DUSE_ISC_SPNEGO
+.if ${MKKERBEROS} != "no"
+CPPFLAGS+=-DGSSAPI
+.endif
+.if ${MKKERBEROS} != "no"
 .if !defined (LIB) || empty(LIB)
-LDADD+= -lcrypto
-DPADD+= ${LIBCRYPTO}
+LDADD+= -lgssapi -lkrb5 -lhx509 -lheimntlm -lheimbase \
+	-lcom_err  -lroken -lasn1 -lwind
+DPADD+= ${LIBGSSAPI} ${LIBKRB5} ${LIBHX509} ${LIBHEIMNTLM} ${LIBHEIMBASE} \
+	${LIBCOM_ERR} ${LIBROKEN} ${LIBASN1} ${LIBWIND}
+.else
+.for L in gssapi krb5 hx509 heimntlm heimbase com_err roken asn1 wind
+LIBDPLIBS+=	$L ${NETBSDSRCDIR}/crypto/external/bsd/heimdal/lib/lib$L
+.endfor
+.endif
+.endif
+.if !defined (LIB) || empty(LIB)
+LDADD+= -lcrypto -lcrypt
+DPADD+= ${LIBCRYPTO} ${LIBCRYPT}
 .else
 .if exists(${NETBSDSRCDIR}/crypto/external/bsd/openssl/lib/libcrypto)
 LIBDPLIBS+=	crypto ${NETBSDSRCDIR}/crypto/external/bsd/openssl/lib/libcrypto

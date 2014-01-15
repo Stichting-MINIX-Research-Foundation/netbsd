@@ -1,4 +1,4 @@
-/*	$NetBSD: udl.c,v 1.6 2011/11/20 12:29:33 nonaka Exp $	*/
+/*	$NetBSD: udl.c,v 1.10 2013/11/14 13:11:50 skrll Exp $	*/
 
 /*-
  * Copyright (c) 2009 FUKAUMI Naoki.
@@ -53,7 +53,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: udl.c,v 1.6 2011/11/20 12:29:33 nonaka Exp $");
+__KERNEL_RCSID(0, "$NetBSD: udl.c,v 1.10 2013/11/14 13:11:50 skrll Exp $");
 
 #include <sys/param.h>
 #include <sys/device.h>
@@ -151,8 +151,10 @@ static inline void	udl_copy_line(struct udl_softc *, int, int, int);
 static inline void	udl_fill_line(struct udl_softc *, uint16_t, int, int);
 static inline void	udl_draw_line(struct udl_softc *, uint16_t *, int,
 			    int);
+#ifdef notyet
 static inline void	udl_draw_line_comp(struct udl_softc *, uint16_t *, int,
 			    int);
+#endif
 
 static int		udl_cmd_send(struct udl_softc *);
 static void		udl_cmd_send_async(struct udl_softc *);
@@ -323,6 +325,7 @@ static const struct usb_devno udl_devs[] = {
 	{ USB_VENDOR_DISPLAYLINK, USB_PRODUCT_DISPLAYLINK_LCD8000UD_DVI },
 	{ USB_VENDOR_DISPLAYLINK, USB_PRODUCT_DISPLAYLINK_LDEWX015U },
 	{ USB_VENDOR_DISPLAYLINK, USB_PRODUCT_DISPLAYLINK_LT1421WIDE },
+	{ USB_VENDOR_DISPLAYLINK, USB_PRODUCT_DISPLAYLINK_SD_U2VDH },
 	{ USB_VENDOR_DISPLAYLINK, USB_PRODUCT_DISPLAYLINK_UM7X0 }
 };
 
@@ -361,8 +364,11 @@ udl_attach(device_t parent, device_t self, void *aux)
 	 * Set device configuration descriptor number.
 	 */
 	error = usbd_set_config_no(sc->sc_udev, 1, 0);
-	if (error != USBD_NORMAL_COMPLETION)
+	if (error != USBD_NORMAL_COMPLETION) {
+		aprint_error_dev(self, "failed to set configuration"
+		    ", err=%s\n", usbd_errstr(error));
 		return;
+	}
 
 	/*
 	 * Create device handle to interface descriptor.
@@ -613,7 +619,7 @@ udl_mmap(void *v, void *vs, off_t off, int prot)
 	struct udl_softc *sc = v;
 	vaddr_t vaddr;
 	paddr_t paddr;
-	bool rv;
+	bool rv __diagused;
 
 	if (off < 0 || off > roundup2(UDL_FBMEM_SIZE(sc), PAGE_SIZE))
 		return -1;
@@ -1296,6 +1302,7 @@ udl_draw_line(struct udl_softc *sc, uint16_t *buf, int off, int width)
 	udl_cmd_add_buf(sc, buf, width);
 }
 
+#ifdef notyet
 static inline int
 udl_cmd_add_buf_comp(struct udl_softc *sc, uint16_t *buf, int width)
 {
@@ -1405,6 +1412,7 @@ udl_draw_line_comp(struct udl_softc *sc, uint16_t *buf, int off, int width)
 		width -= width_cur;
 	}
 }
+#endif
 
 static int
 udl_cmd_send(struct udl_softc *sc)

@@ -1,4 +1,4 @@
-/*	$NetBSD: if.c,v 1.74 2012/03/20 20:34:58 matt Exp $	*/
+/*	$NetBSD: if.c,v 1.79 2013/10/19 15:56:06 christos Exp $	*/
 
 /*
  * Copyright (c) 1983, 1988, 1993
@@ -34,7 +34,7 @@
 #if 0
 static char sccsid[] = "from: @(#)if.c	8.2 (Berkeley) 2/21/94";
 #else
-__RCSID("$NetBSD: if.c,v 1.74 2012/03/20 20:34:58 matt Exp $");
+__RCSID("$NetBSD: if.c,v 1.79 2013/10/19 15:56:06 christos Exp $");
 #endif
 #endif /* not lint */
 
@@ -51,8 +51,6 @@ __RCSID("$NetBSD: if.c,v 1.74 2012/03/20 20:34:58 matt Exp $");
 #include <net/route.h>
 #include <netinet/in.h>
 #include <netinet/in_var.h>
-#include <netiso/iso.h>
-#include <netiso/iso_var.h>
 #include <arpa/inet.h>
 
 #include <kvm.h>
@@ -248,7 +246,6 @@ union ifaddr_u {
 #ifdef INET6
 	struct in6_ifaddr in6;
 #endif /* INET6 */
-	struct iso_ifaddr iso;
 };
 
 static void
@@ -402,17 +399,10 @@ print_addr(struct sockaddr *sa, struct sockaddr **rtinfo, struct if_data *ifd,
 #ifdef INET6
 	case AF_INET6:
 		sin6 = (struct sockaddr_in6 *)sa;
+		inet6_getscopeid(sin6, INET6_IS_ADDR_LINKLOCAL);
 #ifdef __KAME__
-		if (IN6_IS_ADDR_LINKLOCAL(&sin6->sin6_addr)) {
-			sin6->sin6_scope_id =
-				ntohs(*(u_int16_t *)
-				  &sin6->sin6_addr.s6_addr[2]);
-			/* too little width */
-			if (!vflag)
-				sin6->sin6_scope_id = 0;
-			sin6->sin6_addr.s6_addr[2] = 0;
-			sin6->sin6_addr.s6_addr[3] = 0;
-		}
+		if (!vflag)
+			sin6->sin6_scope_id = 0;
 #endif
 
 		if (use_sysctl) {
@@ -456,15 +446,8 @@ print_addr(struct sockaddr *sa, struct sockaddr **rtinfo, struct if_data *ifd,
 				as6.sin6_len = sizeof(struct sockaddr_in6);
 				as6.sin6_family = AF_INET6;
 				as6.sin6_addr = inm.in6m_addr;
-#ifdef __KAME__
-				if (IN6_IS_ADDR_MC_LINKLOCAL(&as6.sin6_addr)) {
-					as6.sin6_scope_id =
-					    ntohs(*(u_int16_t *)
-						&as6.sin6_addr.s6_addr[2]);
-					as6.sin6_addr.s6_addr[2] = 0;
-					as6.sin6_addr.s6_addr[3] = 0;
-				}
-#endif
+				inet6_getscopeid(&as6,
+				    INET6_IS_ADDR_MC_LINKLOCAL);
 				if (getnameinfo((struct sockaddr *)&as6,
 				    as6.sin6_len, hbuf,
 				    sizeof(hbuf), NULL, 0,
@@ -601,11 +584,11 @@ static void
 iftot_print(struct iftot *cur, struct iftot *old)
 {
 	if (bflag)
-		printf("%10" PRIu64 "%8.8s %10" PRIu64 "%5.5s",
+		printf("%10" PRIu64 " %8.8s %10" PRIu64 " %5.5s",
 		    cur->ift_ib - old->ift_ib, " ",
 		    cur->ift_ob - old->ift_ob, " ");
 	else
-		printf("%8" PRIu64 "%5" PRIu64 "%8" PRIu64 "%5" PRIu64 "%5" PRIu64,
+		printf("%8" PRIu64 " %5" PRIu64 " %8" PRIu64 " %5" PRIu64 " %5" PRIu64,
 		    cur->ift_ip - old->ift_ip,
 		    cur->ift_ie - old->ift_ie,
 		    cur->ift_op - old->ift_op,
@@ -621,11 +604,11 @@ static void
 iftot_print_sum(struct iftot *cur, struct iftot *old)
 {
 	if (bflag)
-		printf("  %10" PRIu64 "%8.8s %10" PRIu64 "%5.5s",
+		printf("  %10" PRIu64 " %8.8s %10" PRIu64 " %5.5s",
 		    cur->ift_ib - old->ift_ib, " ",
 		    cur->ift_ob - old->ift_ob, " ");
 	else
-		printf("  %8" PRIu64 "%5" PRIu64 "%8" PRIu64 "%5" PRIu64 "%5" PRIu64,
+		printf("  %8" PRIu64 " %5" PRIu64 " %8" PRIu64 " %5" PRIu64 " %5" PRIu64,
 		    cur->ift_ip - old->ift_ip,
 		    cur->ift_ie - old->ift_ie,
 		    cur->ift_op - old->ift_op,
