@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.8 2012/01/22 03:53:33 tsutsui Exp $
+#	$NetBSD: Makefile,v 1.10 2015/05/19 06:58:52 martin Exp $
 
 SUBDIR=		instfs ramdisk .WAIT bootfs .WAIT cdroms liveimage
 TARGETS+=	release

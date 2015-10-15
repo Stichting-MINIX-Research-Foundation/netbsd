@@ -1,4 +1,4 @@
-/* $NetBSD: auixp.c,v 1.39 2012/10/27 17:18:28 chs Exp $ */
+/* $NetBSD: auixp.c,v 1.41 2014/10/18 08:33:28 snj Exp $ */
 
 /*
  * Copyright (c) 2004, 2005 Reinoud Zandijk <reinoud@netbsd.org>
@@ -50,7 +50,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: auixp.c,v 1.39 2012/10/27 17:18:28 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: auixp.c,v 1.41 2014/10/18 08:33:28 snj Exp $");
 
 #include <sys/types.h>
 #include <sys/errno.h>
@@ -665,7 +665,7 @@ auixp_allocate_dma_chain(struct auixp_softc *sc, struct auixp_dma **dmap)
 }
 
 
-/* program dma chain in it's link address descriptor */
+/* program dma chain in its link address descriptor */
 static void
 auixp_program_dma_chain(struct auixp_softc *sc, struct auixp_dma *dma)
 {
@@ -795,7 +795,7 @@ auixp_trigger_output(void *hdl, void *start, void *end, int blksize,
 }
 
 
-/* halt output of audio, just disable it's dma and update bus state */
+/* halt output of audio, just disable its dma and update bus state */
 static int
 auixp_halt_output(void *hdl)
 {
@@ -870,7 +870,7 @@ auixp_trigger_input(void *hdl, void *start, void *end, int blksize,
 }
 
 
-/* halt sampling audio, just disable it's dma and update bus state */
+/* halt sampling audio, just disable its dma and update bus state */
 static int
 auixp_halt_input(void *hdl)
 {
@@ -1101,6 +1101,7 @@ auixp_attach(device_t parent, device_t self, void *aux)
 	const char *intrstr;
 	uint32_t data;
 	int error;
+	char intrbuf[PCI_INTRSTR_LEN];
 
 	sc = device_private(self);
 	sc->sc_dev = self;
@@ -1162,7 +1163,7 @@ auixp_attach(device_t parent, device_t self, void *aux)
 	}
 
 	/* where are we connected at ? */
-	intrstr = pci_intr_string(pc, ih);
+	intrstr = pci_intr_string(pc, ih, intrbuf, sizeof(intrbuf));
 
 	mutex_init(&sc->sc_lock, MUTEX_DEFAULT, IPL_NONE);
 	mutex_init(&sc->sc_intr_lock, MUTEX_DEFAULT, IPL_AUDIO);

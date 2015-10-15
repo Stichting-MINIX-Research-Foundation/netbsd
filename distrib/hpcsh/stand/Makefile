@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.2 2008/06/23 02:16:53 matt Exp $
+#	$NetBSD: Makefile,v 1.4 2014/01/22 01:03:10 christos Exp $
 
 .include <bsd.own.mk>
 .include "${NETBSDSRCDIR}/distrib/common/Makefile.distrib"
@@ -29,4 +29,3 @@ release:: ${UUDECODE_FILES}
 		${HPCBOOT_SH4} ${RELEASEDIR}/${RELEASEMACHINEDIR}/installation
 
 .include <bsd.files.mk>
-.include <bsd.obj.mk>

@@ -1,4 +1,4 @@
-/*	$NetBSD: uvm_swap.c,v 1.165 2013/11/23 14:50:40 christos Exp $	*/
+/*	$NetBSD: uvm_swap.c,v 1.173 2015/07/30 09:55:57 maxv Exp $	*/
 
 /*
  * Copyright (c) 1995, 1996, 1997, 2009 Matthew R. Green
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: uvm_swap.c,v 1.165 2013/11/23 14:50:40 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: uvm_swap.c,v 1.173 2015/07/30 09:55:57 maxv Exp $");
 
 #include "opt_uvmhist.h"
 #include "opt_compat_netbsd.h"
@@ -237,8 +237,6 @@ static void		 swaplist_trim(void);
 static int swap_on(struct lwp *, struct swapdev *);
 static int swap_off(struct lwp *, struct swapdev *);
 
-static void uvm_swap_stats(int, struct swapent *, int, register_t *);
-
 static void sw_reg_strategy(struct swapdev *, struct buf *, int);
 static void sw_reg_biodone(struct buf *);
 static void sw_reg_iodone(struct work *wk, void *dummy);
@@ -399,7 +397,7 @@ swaplist_trim(void)
 	struct swappri *spp, *nextspp;
 
 	LIST_FOREACH_SAFE(spp, &swap_priority, spi_swappri, nextspp) {
-		if (TAILQ_EMPTY(&spp->spi_swapdev))
+		if (!TAILQ_EMPTY(&spp->spi_swapdev))
 			continue;
 		LIST_REMOVE(spp, spi_swappri);
 		kmem_free(spp, sizeof(*spp));
@@ -432,6 +430,15 @@ swapdrum_getsdp(int pgno)
 	return NULL;
 }
 
+void swapsys_lock(krw_t op)
+{
+	rw_enter(&swap_syscall_lock, op);
+}
+
+void swapsys_unlock(void)
+{
+	rw_exit(&swap_syscall_lock);
+}
 
 /*
  * sys_swapctl: main entry point for swapctl(2) system call
@@ -494,13 +501,17 @@ sys_swapctl(struct lwp *l, const struct sys_swapctl_args *uap, register_t *retva
 	    || SCARG(uap, cmd) == SWAP_STATS13
 #endif
 	    ) {
-		if ((size_t)misc > (size_t)uvmexp.nswapdev)
-			misc = uvmexp.nswapdev;
-
-		if (misc == 0) {
+		if (misc < 0) {
 			error = EINVAL;
 			goto out;
 		}
+		if (misc == 0 || uvmexp.nswapdev == 0) {
+			error = 0;
+			goto out;
+		}
+		/* Make sure userland cannot exhaust kernel memory */
+		if ((size_t)misc > (size_t)uvmexp.nswapdev)
+			misc = uvmexp.nswapdev;
 		KASSERT(misc > 0);
 #if defined(COMPAT_13)
 		if (SCARG(uap, cmd) == SWAP_STATS13)
@@ -563,7 +574,6 @@ sys_swapctl(struct lwp *l, const struct sys_swapctl_args *uap, register_t *retva
 		if (SCARG(uap, cmd) == SWAP_ON &&
 		    copystr("miniroot", userpath, SWAP_PATH_MAX, &len))
 			panic("swapctl: miniroot copy failed");
-		KASSERT(len > 0);
 	} else {
 		struct pathbuf *pb;
 
@@ -733,12 +743,14 @@ out:
  * is not known at build time. Hence it would not be possible to
  * ensure it would fit in the stackgap in any case.
  */
-static void
+void
 uvm_swap_stats(int cmd, struct swapent *sep, int sec, register_t *retval)
 {
 	struct swappri *spp;
 	struct swapdev *sdp;
 	int count = 0;
+
+	KASSERT(rw_lock_held(&swap_syscall_lock));
 
 	LIST_FOREACH(spp, &swap_priority, spi_swappri) {
 		TAILQ_FOREACH(sdp, &spp->spi_swapdev, swd_next) {
@@ -1279,12 +1291,29 @@ swwrite(dev_t dev, struct uio *uio, int ioflag)
 }
 
 const struct bdevsw swap_bdevsw = {
-	nullopen, nullclose, swstrategy, noioctl, nodump, nosize, D_OTHER,
+	.d_open = nullopen,
+	.d_close = nullclose,
+	.d_strategy = swstrategy,
+	.d_ioctl = noioctl,
+	.d_dump = nodump,
+	.d_psize = nosize,
+	.d_discard = nodiscard,
+	.d_flag = D_OTHER
 };
 
 const struct cdevsw swap_cdevsw = {
-	nullopen, nullclose, swread, swwrite, noioctl,
-	nostop, notty, nopoll, nommap, nokqfilter, D_OTHER,
+	.d_open = nullopen,
+	.d_close = nullclose,
+	.d_read = swread,
+	.d_write = swwrite,
+	.d_ioctl = noioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_OTHER,
 };
 
 /*

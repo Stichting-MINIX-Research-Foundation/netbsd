@@ -1,4 +1,4 @@
-/*	$NetBSD: eisa_machdep.h,v 1.12 2009/11/17 23:46:27 dyoung Exp $	*/
+/*	$NetBSD: eisa_machdep.h,v 1.14 2015/04/27 08:30:11 knakahara Exp $	*/
 
 /*
  * Copyright (c) 1996 Christopher G. Demetriou.  All rights reserved.
@@ -48,11 +48,12 @@ extern struct x86_bus_dma_tag eisa_bus_dma_tag;
 #define ELCR0   0x4d0                   /* eisa irq 0-7 */
 #define ELCR1   0x4d1                   /* eisa irq 8-15 */
 
+#include <machine/intr.h> /* for intr_handle_t */
 /*
  * Types provided to machine-independent EISA code.
  */
 typedef void *eisa_chipset_tag_t;
-typedef int eisa_intr_handle_t;
+typedef intr_handle_t eisa_intr_handle_t;
 
 /*
  * Functions provided to machine-independent EISA code.
@@ -62,7 +63,8 @@ void		eisa_attach_hook(device_t, device_t,
 int		eisa_maxslots(eisa_chipset_tag_t);
 int		eisa_intr_map(eisa_chipset_tag_t, u_int,
 		    eisa_intr_handle_t *);
-const char	*eisa_intr_string(eisa_chipset_tag_t, eisa_intr_handle_t);
+const char	*eisa_intr_string(eisa_chipset_tag_t, eisa_intr_handle_t,
+		    char *, size_t);
 const struct evcnt *eisa_intr_evcnt(eisa_chipset_tag_t, eisa_intr_handle_t);
 void		*eisa_intr_establish(eisa_chipset_tag_t,
 		    eisa_intr_handle_t, int, int, int (*)(void *), void *);

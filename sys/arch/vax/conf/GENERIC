@@ -1,4 +1,4 @@
-# $NetBSD: GENERIC,v 1.189 2013/06/30 21:38:59 rmind Exp $
+# $NetBSD: GENERIC,v 1.196 2015/08/08 06:36:26 maxv Exp $
 #
 # GENERIC machine description file
 # 
@@ -22,7 +22,7 @@ include		"arch/vax/conf/std.vax"
 
 options 	INCLUDE_CONFIG_FILE	# embed config file in kernel binary
 
-#ident 		"GENERIC-$Revision: 1.189 $"
+#ident 		"GENERIC-$Revision: 1.196 $"
 
 # Here are all different supported CPU types listed.
 #options 	VAX8800		# VAX 8500, 8530, 8550, 8700, 8800
@@ -53,7 +53,6 @@ options 	DDB_HISTORY_SIZE=512	# enable history editing in DDB
 options 	KTRACE
 #options 	DIAGNOSTIC
 #options 	DEBUG
-#options 	KMEMSTATS
 #options 	PMAPDEBUG
 #options 	TRAPDEBUG
 #options 	LOCKDEBUG
@@ -116,6 +115,7 @@ options 	NFSSERVER
 options 	NFS_BOOT_BOOTP,NFS_BOOT_DHCP	# Use bootp <> dhcp
 options 	NFS_BOOT_BOOTPARAM	# Use the Sun way for netbooting.
 #options 	FFS_NO_SNAPSHOT	# No FFS snapshot support
+options 	UFS_EXTATTR	# Extended attribute support for UFS1
 
 # WS console uses VT100 terminal emulation
 options 	WSEMUL_VT100
@@ -134,19 +134,20 @@ options 	SYSVSHM
 # (They cannot coexist).
 options 	COMPAT_VAX1K	# Must be present to run pre-1.4 binaries.
 options 	COMPAT_43
-options 	COMPAT_09
-options 	COMPAT_10
-options 	COMPAT_11
-options 	COMPAT_12
-options 	COMPAT_13
-options 	COMPAT_14
-options 	COMPAT_15
-options 	COMPAT_16
-options 	COMPAT_20
-options 	COMPAT_30	# NetBSD 3.0 compatibility.
-options 	COMPAT_40	# NetBSD 4.0 compatibility.
-options 	COMPAT_50	# NetBSD 5.0 compatibility.
-options 	COMPAT_60	# NetBSD 6.0 compatibility.
+options 	COMPAT_09	# NetBSD 0.9,
+options 	COMPAT_10	# NetBSD 1.0,
+options 	COMPAT_11	# NetBSD 1.1,
+options 	COMPAT_12	# NetBSD 1.2,
+options 	COMPAT_13	# NetBSD 1.3,
+options 	COMPAT_14	# NetBSD 1.4,
+options 	COMPAT_15	# NetBSD 1.5,
+options 	COMPAT_16	# NetBSD 1.6,
+options 	COMPAT_20	# NetBSD 2.0,
+options 	COMPAT_30	# NetBSD 3.0,
+options 	COMPAT_40	# NetBSD 4.0,
+options 	COMPAT_50	# NetBSD 5.0,
+options 	COMPAT_60	# NetBSD 6.0, and
+options 	COMPAT_70	# NetBSD 7.0 binary compatibility.
 options 	COMPAT_ULTRIX
 options 	COMPAT_IBCS2	# DEC SVR.3 compatilibity
 #options 	NO_INSN_EMULATE	# CPU does not lack some hardware instructions.
@@ -203,7 +204,10 @@ asc0		at vsbus0 csr 0x26000080 # VS4000/90 and 4000/10x SCSI-ctlr
 smg0		at vsbus0 csr 0x200f0000 # Small monochrome display ctlr.
 #clr0		at vsbus0 csr 0x30000000 # 4- or 8-bitplans color graphics
 spx0		at vsbus0 csr 0x38000000 # Low Cost SPX on VS4000/90.
-#lcg0		at vsbus0 csr 0x21801000 # VS4000/60 (or VLC) graphics
+lcg0		at vsbus0 csr 0x21801000 # VS4000/60 (or VLC) graphics
+vsaudio0	at vsbus0 csr 0x200d0000 # VS4000/60 (or VLC) audio
+vsaudio0	at vsbus0 csr 0x26800000 # VS4000/90 audio
+audio*		at audiobus?
 tc0		at vsbus0 csr 0x36000000 # VS4000/60 or 90 TC adapter
 tcds*		at tc0 slot ? offset ?	 # TC dual SCSI controller
 asc*		at tcds? chip ?		 # PMAZB/C
@@ -281,7 +285,7 @@ uk*		at scsibus? target? lun?
 # VAXstation graphics support
 wsdisplay*	at smg0
 wsdisplay*	at spx0
-#wsdisplay*	at lcg0
+wsdisplay*	at lcg0
 #wsdisplay*	at clr0
 #wsdisplay*	at qd0
 #wsdisplay*	at qv0

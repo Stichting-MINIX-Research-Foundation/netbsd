@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.127 2013/11/18 16:23:47 bad Exp $
+#	$NetBSD: Makefile,v 1.156 2015/07/09 14:41:30 matt Exp $
 
 .include <bsd.own.mk>
 
@@ -8,15 +8,24 @@ SUBDIR=		accf_dataready
 SUBDIR+=	accf_httpready
 SUBDIR+=	adosfs
 SUBDIR+=	aio
+SUBDIR+=	blowfish
 SUBDIR+=	bpf
+SUBDIR+=	camellia
+SUBDIR+=	cast128
+SUBDIR+=	ccd
 SUBDIR+=	cd9660
+SUBDIR+=	cgd
+SUBDIR+=	chfs
+SUBDIR+=	crypto
 SUBDIR+=	coda
 SUBDIR+=	coda5
 SUBDIR+=	compat
+SUBDIR+=	compat_sysv
 SUBDIR+=	compat_ossaudio
 SUBDIR+=	coredump
-SUBDIR+=	chfs
 SUBDIR+=	dbcool
+SUBDIR+=	des
+SUBDIR+=	dk_subr
 SUBDIR+=	efs
 SUBDIR+=	ext2fs
 SUBDIR+=	exec_script
@@ -31,6 +40,8 @@ SUBDIR+=	gpioiic
 SUBDIR+=	gpioow
 SUBDIR+=	gpiosim
 SUBDIR+=	hfs
+SUBDIR+=	hythygtemp
+SUBDIR+=	i2cexec
 SUBDIR+=	if_axe
 SUBDIR+=	if_axen
 SUBDIR+=	if_npflog
@@ -40,7 +51,7 @@ SUBDIR+=	kernfs
 SUBDIR+=	layerfs
 SUBDIR+=	lfs
 SUBDIR+=	lua
-SUBDIR+=	luacore
+SUBDIR+=	luasystm
 SUBDIR+=	luapmf
 SUBDIR+=	mfs
 SUBDIR+=	miiverbose
@@ -60,6 +71,7 @@ SUBDIR+=	npf_ext_rndblock
 SUBDIR+=	ntfs
 SUBDIR+=	null
 SUBDIR+=	onewire
+SUBDIR+=	opencrypto
 SUBDIR+=	overlay
 SUBDIR+=	pciverbose
 SUBDIR+=	pf
@@ -75,11 +87,20 @@ SUBDIR+=	secmodel_bsd44
 SUBDIR+=	secmodel_extensions
 SUBDIR+=	secmodel_overlay
 SUBDIR+=	securelevel
+SUBDIR+=	skipjack
 SUBDIR+=	smbfs
 SUBDIR+=	spdmem
+SUBDIR+=	sysmon
+SUBDIR+=	sysmon_envsys
+SUBDIR+=	sysmon_power
+SUBDIR+=	sysmon_taskq
+SUBDIR+=	sysmon_wdog
 SUBDIR+=	sysvbfs
+SUBDIR+=	sysv_ipc
 SUBDIR+=	suser
+SUBDIR+=	swcrypto
 SUBDIR+=	swsensor
+SUBDIR+=	swwdog
 SUBDIR+=	tmpfs
 SUBDIR+=	uatp
 SUBDIR+=	udf
@@ -89,8 +110,10 @@ SUBDIR+=	usbverbose
 SUBDIR+=	vcoda
 SUBDIR+=	v7fs
 SUBDIR+=	vnd
+SUBDIR+=	zlib
 SUBDIR+=	tprof
 .if (defined(NOTYET))
+SUBDIR+=	hifn		# Builds on architectures with PCI bus
 SUBDIR+=	unionfs
 .endif
 .if ${MKBINUTILS} != "no"
@@ -103,11 +126,12 @@ SUBDIR+=	xldscripts
 SUBDIR+=	exec_aout
 .endif
 
-.if ${MACHINE_ARCH} != "alpha"
+.if ${MACHINE_ARCH} != "alpha" && ${MACHINE_CPU} != "aarch64"
 SUBDIR+=	exec_elf32
 .endif
 
-.if ${MACHINE_ARCH} == "alpha" || \
+.if ${MACHINE_CPU} == "aarch64" || \
+    ${MACHINE_ARCH} == "alpha" || \
     ${MACHINE_ARCH} == "sparc64" || \
     ${MACHINE_ARCH} == "x86_64"
 SUBDIR+=	exec_elf64
@@ -120,12 +144,20 @@ SUBDIR+=	coretemp
 SUBDIR+=	est
 SUBDIR+=	hdafg
 SUBDIR+=	hdaudio
+SUBDIR+=	hdaudio_pci
+SUBDIR+=	hdaudioverbose
 SUBDIR+=	hpet
 SUBDIR+=	odcm
 SUBDIR+=	powernow
+SUBDIR+=	tco
 SUBDIR+=	tprof_pmi
 SUBDIR+=	tprof_amdpmi
 SUBDIR+=	vmt
+.endif
+
+.if ${MACHINE_ARCH} == "i386" || \
+    ${MACHINE_ARCH} == "x86_64"
+SUBDIR+=	ubsec		# Builds on architectures with PCI bus
 .endif
 
 .if ${MKSLJIT} != "no"
@@ -174,29 +206,24 @@ SUBDIR+=	wmihp
 SUBDIR+=	wmimsi
 .endif
 
+.if ${MACHINE_CPU} == "arm" \
+    || (!empty(MACHINE_ARCH:Mmips64*) && !defined(BSD_MK_COMPAT_FILE))
+SUBDIR+=	compat_netbsd32
+.endif
+
 .if ${MACHINE_ARCH} == "x86_64"
-SUBDIR+=	azalia
-SUBDIR+=	compat_linux
 SUBDIR+=	compat_linux32
 SUBDIR+=	compat_netbsd32
-SUBDIR+=	drm
-SUBDIR+=	i915drm
-SUBDIR+=	pad
 .endif
 
 .if ${MACHINE_ARCH} == "i386"
 SUBDIR+=	ati_pcigart
-SUBDIR+=	azalia
 SUBDIR+=	compat_freebsd
 SUBDIR+=	compat_ibcs2
-SUBDIR+=	compat_linux
 SUBDIR+=	compat_svr4
-SUBDIR+=	drm
-SUBDIR+=	i915drm
 SUBDIR+=	mach64drm
 SUBDIR+=	mgadrm
 SUBDIR+=	nsclpcsio
-SUBDIR+=	pad
 SUBDIR+=	padlock
 SUBDIR+=	r128drm
 SUBDIR+=	radeondrm
@@ -205,13 +232,23 @@ SUBDIR+=	sisdrm
 SUBDIR+=	tdfxdrm
 SUBDIR+=	viac7temp
 SUBDIR+=	viadrm
+SUBDIR+=	viadrmums
 .endif
 
+.if ${MACHINE_ARCH} == "i386" || \
+    ${MACHINE_ARCH} == "x86_64"
+SUBDIR+=	azalia
+SUBDIR+=	compat_linux
+SUBDIR+=	drm
+SUBDIR+=	drmkms
+SUBDIR+=	drmkms_linux
+SUBDIR+=	drmkms_pci
+SUBDIR+=	i915drm
+SUBDIR+=	i915drmkms
+SUBDIR+=	pad
 #
 # ISA modules
 #
-.if ${MACHINE_ARCH} == "i386" || \
-    ${MACHINE_ARCH} == "x86_64"
 SUBDIR+=	aps
 SUBDIR+=	finsio
 SUBDIR+=	itesio
@@ -289,10 +326,13 @@ SUBDIR+=	auvitek
 SUBDIR+=	coram
 SUBDIR+=	cxdtv
 SUBDIR+=	emdtv
+SUBDIR+=	spkr
 .endif
 
 .if (${MKISCSI} != "no")
 SUBDIR+=	iscsi
 .endif
+
+SUBDIR+=	examples	# build these regularly to avoid bit-rot
 
 .include <bsd.subdir.mk>

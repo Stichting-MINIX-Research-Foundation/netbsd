@@ -1,4 +1,4 @@
-/*	$NetBSD: gic_reg.h,v 1.1 2012/09/01 00:03:14 matt Exp $	*/
+/*	$NetBSD: gic_reg.h,v 1.5 2015/06/09 10:22:15 skrll Exp $	*/
 /*-
  * Copyright (c) 2012 The NetBSD Foundation, Inc.
  * All rights reserved.
@@ -48,7 +48,7 @@
 
 #define	GICC_CTRL	0x0000	// CPU Interface Control Register
 #define	GICC_PMR	0x0004	// Interrupt Priority Mask Register
-#define	GICC_BPR	0x0008	// Aliased Binary Point Register
+#define	GICC_BPR	0x0008	// Binary Point Register
 #define	GICC_IAR	0x000C	// Interrupt Acknowledge Register
 #define	GICC_EOIR	0x0010	// End Of Interrupt Register (WO)
 #define	GICC_RPR	0x0014	// Running Priority Register
@@ -90,6 +90,8 @@
 
 #define	GICC_PMR_PRIORITY		__BITS(7,0)
 #define	GICC_PMR_PRIORITIES		256
+#define	GICC_PMR_NS_PRIORITIES		128
+#define	GICC_PMR_NONSECURE		0x80
 #define	GICC_PMR_8_LEVELS		0x1f
 #define	GICC_PMR_16_LEVELS		0x0f
 #define	GICC_PMR_32_LEVELS		0x07
@@ -99,6 +101,7 @@
 #define	GICC_IAR_CPUID			__BITS(12,10)
 #define	GICC_IAR_IRQ			__BITS(9,0)
 #define	GICC_IAR_IRQ_SPURIOUS		1023
+#define	GICC_IAR_IRQ_SSPURIOUS		1022	// Secure
 
 #define	GICC_EOIR_CPUID			__BITS(12,10)
 #define	GICC_EOIR_InterruptID		__BITS(9,0)
@@ -198,5 +201,15 @@
 #define	GICv1_ICCABPR		GICC_ABPR
 #define	GICv1_ICCHPIR		GICC_HPPIR
 #define	GICv1_ICCIIDR		GICC_IIDR
+
+/* GICv2m (MSI) */
+
+#define GIC_MSI_TYPER		0x0008
+#define GIC_MSI_SETSPI		0x0040
+#define GIC_MSI_PIDR2		0x0fe8
+#define GIC_MSI_IIDR		0x0ffc
+
+#define GIC_MSI_TYPER_BASE	__BITS(25,16)	// Starting SPI of MSIs
+#define GIC_MSI_TYPER_NUMBER	__BITS(9,0)	// Count of MSIs
 
 #endif /* !_ARM_CORTEX_GICREG_H_ */

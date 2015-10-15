@@ -1,4 +1,4 @@
-/*	$NetBSD: wsmux.c,v 1.56 2013/11/23 20:56:41 christos Exp $	*/
+/*	$NetBSD: wsmux.c,v 1.60 2015/08/24 22:50:33 pooka Exp $	*/
 
 /*
  * Copyright (c) 1998, 2005 The NetBSD Foundation, Inc.
@@ -37,10 +37,12 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: wsmux.c,v 1.56 2013/11/23 20:56:41 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: wsmux.c,v 1.60 2015/08/24 22:50:33 pooka Exp $");
 
+#ifdef _KERNEL_OPT
 #include "opt_compat_netbsd.h"
 #include "opt_modular.h"
+#endif
 
 #include "wsdisplay.h"
 #include "wsmux.h"
@@ -69,6 +71,8 @@ __KERNEL_RCSID(0, "$NetBSD: wsmux.c,v 1.56 2013/11/23 20:56:41 christos Exp $");
 #include <dev/wscons/wseventvar.h>
 #include <dev/wscons/wscons_callbacks.h>
 #include <dev/wscons/wsmuxvar.h>
+
+#include "ioconf.h"
 
 #ifdef WSMUX_DEBUG
 #define DPRINTF(x)	if (wsmuxdebug) printf x
@@ -111,8 +115,6 @@ static int wsmux_do_ioctl(device_t, u_long, void *,int,struct lwp *);
 
 static int wsmux_add_mux(int, struct wsmux_softc *);
 
-void wsmuxattach(int);
-
 #define WSMUXDEV(n) ((n) & 0x7f)
 #define WSMUXCTL(n) ((n) & 0x80)
 
@@ -124,8 +126,18 @@ dev_type_poll(wsmuxpoll);
 dev_type_kqfilter(wsmuxkqfilter);
 
 const struct cdevsw wsmux_cdevsw = {
-	wsmuxopen, wsmuxclose, wsmuxread, nowrite, wsmuxioctl,
-	nostop, notty, wsmuxpoll, nommap, wsmuxkqfilter, D_OTHER
+	.d_open = wsmuxopen,
+	.d_close = wsmuxclose,
+	.d_read = wsmuxread,
+	.d_write = nowrite,
+	.d_ioctl = wsmuxioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = wsmuxpoll,
+	.d_mmap = nommap,
+	.d_kqfilter = wsmuxkqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_OTHER
 };
 
 struct wssrcops wsmux_srcops = {

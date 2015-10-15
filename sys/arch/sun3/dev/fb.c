@@ -1,4 +1,4 @@
-/*	$NetBSD: fb.c,v 1.14 2007/03/04 06:00:53 christos Exp $ */
+/*	$NetBSD: fb.c,v 1.16 2014/07/25 08:10:35 dholland Exp $ */
 
 /*
  * Copyright (c) 1992, 1993
@@ -45,7 +45,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: fb.c,v 1.14 2007/03/04 06:00:53 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: fb.c,v 1.16 2014/07/25 08:10:35 dholland Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -66,8 +66,18 @@ dev_type_ioctl(fbioctl);
 dev_type_mmap(fbmmap);
 
 const struct cdevsw fb_cdevsw = {
-	fbopen, fbclose, noread, nowrite, fbioctl,
-	nostop, notty, nopoll, fbmmap, nokqfilter,
+	.d_open = fbopen,
+	.d_close = fbclose,
+	.d_read = noread,
+	.d_write = nowrite,
+	.d_ioctl = fbioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = fbmmap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = 0
 };
 
 static struct fbdevice *devfb;

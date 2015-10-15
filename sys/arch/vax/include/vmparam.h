@@ -1,4 +1,4 @@
-/*	$NetBSD: vmparam.h,v 1.48 2013/09/18 13:31:39 martin Exp $	*/
+/*	$NetBSD: vmparam.h,v 1.50 2014/01/26 03:18:39 christos Exp $	*/
 
 /*-
  * Copyright (c) 1990 The Regents of the University of California.
@@ -98,12 +98,7 @@
 #define VM_MIN_KERNEL_ADDRESS	((vaddr_t)KERNBASE)
 #define VM_MAX_KERNEL_ADDRESS	((vaddr_t)(0xC0000000))
 
-/*
- * The address to which unspecified mapping requests default
- */
 #define __USE_TOPDOWN_VM
-#define VM_DEFAULT_ADDRESS(da, sz) \
-	trunc_page(VM_MAXUSER_ADDRESS - MAXSSIZ - (sz))
 
 #define	USRIOSIZE		(8 * VAX_NPTEPG)	/* 512MB */
 #define	VM_PHYS_SIZE		(USRIOSIZE*VAX_NBPG)

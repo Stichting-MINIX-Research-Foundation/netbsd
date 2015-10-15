@@ -1,4 +1,4 @@
-/*	$NetBSD: hpc_machdep.c,v 1.102 2013/08/18 22:26:51 matt Exp $	*/
+/*	$NetBSD: hpc_machdep.c,v 1.104 2014/09/13 18:09:50 matt Exp $	*/
 
 /*
  * Copyright (c) 1994-1998 Mark Brinicombe.
@@ -40,7 +40,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: hpc_machdep.c,v 1.102 2013/08/18 22:26:51 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: hpc_machdep.c,v 1.104 2014/09/13 18:09:50 matt Exp $");
 
 #include "opt_cputypes.h"
 #include "opt_kloader.h"
@@ -92,7 +92,7 @@ int max_processes = 64;			/* Default number */
 char *boot_args = NULL;
 char boot_file[16];
 
-vaddr_t msgbufphys;
+paddr_t msgbufphys;
 
 /* Prototypes */
 void dumpsys(void);
@@ -101,7 +101,7 @@ void dumpsys(void);
 void (*__sleep_func)(void *);
 void *__sleep_ctx;
 
-void (*__cpu_reset)(void) = cpu_reset;
+void (*__cpu_reset)(void) __dead = cpu_reset;
 
 u_int initarm(int, char **, struct bootinfo *);
 #if defined(CPU_SA1100) || defined(CPU_SA1110)

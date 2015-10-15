@@ -1,6 +1,6 @@
 /* Python interface to inferior threads.
 
-   Copyright (C) 2009-2013 Free Software Foundation, Inc.
+   Copyright (C) 2009-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -18,12 +18,12 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
 #include "defs.h"
-#include "exceptions.h"
 #include "gdbthread.h"
 #include "inferior.h"
 #include "python-internal.h"
 
-static PyTypeObject thread_object_type;
+static PyTypeObject thread_object_type
+    CPYCHECKER_TYPE_OBJECT_FOR_TYPEDEF ("thread_object");
 
 /* Require that INFERIOR be a valid inferior ID.  */
 #define THPY_REQUIRE_VALID(Thread)				\
@@ -36,8 +36,6 @@ static PyTypeObject thread_object_type;
       }								\
   } while (0)
 
-
-
 thread_object *
 create_thread_object (struct thread_info *tp)
 {
@@ -48,12 +46,10 @@ create_thread_object (struct thread_info *tp)
     return NULL;
 
   thread_obj->thread = tp;
-  thread_obj->inf_obj = find_inferior_object (PIDGET (tp->ptid));
+  thread_obj->inf_obj = find_inferior_object (ptid_get_pid (tp->ptid));
 
   return thread_obj;
 }
-
-
 
 static void
 thpy_dealloc (PyObject *self)
@@ -94,7 +90,7 @@ thpy_set_name (PyObject *self, PyObject *newvalue, void *ignore)
 
   if (newvalue == NULL)
     {
-      PyErr_SetString (PyExc_TypeError, 
+      PyErr_SetString (PyExc_TypeError,
 		       _("Cannot delete `name' attribute."));
       return -1;
     }
@@ -131,33 +127,22 @@ thpy_get_num (PyObject *self, void *closure)
 
 /* Getter for InferiorThread.ptid  -> (pid, lwp, tid).
    Returns a tuple with the thread's ptid components.  */
+
 static PyObject *
 thpy_get_ptid (PyObject *self, void *closure)
 {
   int pid;
   long tid, lwp;
   thread_object *thread_obj = (thread_object *) self;
-  PyObject *ret;
 
   THPY_REQUIRE_VALID (thread_obj);
 
-  ret = PyTuple_New (3);
-  if (!ret)
-    return NULL;
-
-  pid = ptid_get_pid (thread_obj->thread->ptid);
-  lwp = ptid_get_lwp (thread_obj->thread->ptid);
-  tid = ptid_get_tid (thread_obj->thread->ptid);
-
-  PyTuple_SET_ITEM (ret, 0, PyInt_FromLong (pid));
-  PyTuple_SET_ITEM (ret, 1, PyInt_FromLong (lwp));
-  PyTuple_SET_ITEM (ret, 2, PyInt_FromLong (tid));
-
-  return ret;
+  return gdbpy_create_ptid_object (thread_obj->thread->ptid);
 }
 
 /* Implementation of InferiorThread.switch ().
    Makes this the GDB selected thread.  */
+
 static PyObject *
 thpy_switch (PyObject *self, PyObject *args)
 {
@@ -177,6 +162,7 @@ thpy_switch (PyObject *self, PyObject *args)
 
 /* Implementation of InferiorThread.is_stopped () -> Boolean.
    Return whether the thread is stopped.  */
+
 static PyObject *
 thpy_is_stopped (PyObject *self, PyObject *args)
 {
@@ -192,6 +178,7 @@ thpy_is_stopped (PyObject *self, PyObject *args)
 
 /* Implementation of InferiorThread.is_running () -> Boolean.
    Return whether the thread is running.  */
+
 static PyObject *
 thpy_is_running (PyObject *self, PyObject *args)
 {
@@ -207,6 +194,7 @@ thpy_is_running (PyObject *self, PyObject *args)
 
 /* Implementation of InferiorThread.is_exited () -> Boolean.
    Return whether the thread is exited.  */
+
 static PyObject *
 thpy_is_exited (PyObject *self, PyObject *args)
 {
@@ -235,8 +223,33 @@ thpy_is_valid (PyObject *self, PyObject *args)
   Py_RETURN_TRUE;
 }
 
+/* Return a reference to a new Python object representing a ptid_t.
+   The object is a tuple containing (pid, lwp, tid). */
+PyObject *
+gdbpy_create_ptid_object (ptid_t ptid)
+{
+  int pid;
+  long tid, lwp;
+  PyObject *ret;
+
+  ret = PyTuple_New (3);
+  if (!ret)
+    return NULL;
+
+  pid = ptid_get_pid (ptid);
+  lwp = ptid_get_lwp (ptid);
+  tid = ptid_get_tid (ptid);
+
+  PyTuple_SET_ITEM (ret, 0, PyInt_FromLong (pid));
+  PyTuple_SET_ITEM (ret, 1, PyInt_FromLong (lwp));
+  PyTuple_SET_ITEM (ret, 2, PyInt_FromLong (tid));
+ 
+  return ret;
+}
+
 /* Implementation of gdb.selected_thread () -> gdb.InferiorThread.
    Returns the selected thread object.  */
+
 PyObject *
 gdbpy_selected_thread (PyObject *self, PyObject *args)
 {
@@ -252,20 +265,15 @@ gdbpy_selected_thread (PyObject *self, PyObject *args)
   Py_RETURN_NONE;
 }
 
-
-
-void
+int
 gdbpy_initialize_thread (void)
 {
   if (PyType_Ready (&thread_object_type) < 0)
-    return;
+    return -1;
 
-  Py_INCREF (&thread_object_type);
-  PyModule_AddObject (gdb_module, "InferiorThread",
-		      (PyObject *) &thread_object_type);
+  return gdb_pymodule_addobject (gdb_module, "InferiorThread",
+				 (PyObject *) &thread_object_type);
 }
-
-
 
 static PyGetSetDef thread_object_getset[] =
 {

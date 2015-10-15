@@ -1,4 +1,4 @@
-/*      $NetBSD: multibyte.c,v 1.5 2013/04/19 18:45:03 joerg Exp $      */
+/*      $NetBSD: multibyte.c,v 1.7 2014/11/15 19:15:51 htodd Exp $      */
 
 /*
  * Ignore all multibyte sequences, removes all the citrus code.
@@ -12,7 +12,13 @@
 size_t
 mbrtowc(wchar_t *wc, const char *str, size_t max_sz, mbstate_t *ps)
 {
-	return str == NULL || (*wc = (unsigned char)*str) == 0 ? 0 : 1;
+	if (str == NULL)
+		return 0;
+
+	if (wc != NULL)
+		*wc = (unsigned char)*str;
+
+	return *str == '\0' ? 0 : 1;
 }
 
 size_t

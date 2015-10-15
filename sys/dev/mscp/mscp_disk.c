@@ -1,4 +1,4 @@
-/*	$NetBSD: mscp_disk.c,v 1.77 2013/10/25 16:00:35 martin Exp $	*/
+/*	$NetBSD: mscp_disk.c,v 1.88 2015/04/26 15:15:20 mlelstv Exp $	*/
 /*
  * Copyright (c) 1988 Regents of the University of California.
  * All rights reserved.
@@ -82,7 +82,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: mscp_disk.c,v 1.77 2013/10/25 16:00:35 martin Exp $");
+__KERNEL_RCSID(0, "$NetBSD: mscp_disk.c,v 1.88 2015/04/26 15:15:20 mlelstv Exp $");
 
 #include <sys/param.h>
 #include <sys/buf.h>
@@ -157,16 +157,34 @@ dev_type_size(rasize);
 #if NRA
 
 const struct bdevsw ra_bdevsw = {
-	raopen, raclose, rastrategy, raioctl, radump, rasize, D_DISK
+	.d_open = raopen,
+	.d_close = raclose,
+	.d_strategy = rastrategy,
+	.d_ioctl = raioctl,
+	.d_dump = radump,
+	.d_psize = rasize,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
 const struct cdevsw ra_cdevsw = {
-	raopen, raclose, raread, rawrite, raioctl,
-	nostop, notty, nopoll, nommap, nokqfilter, D_DISK
+	.d_open = raopen,
+	.d_close = raclose,
+	.d_read = raread,
+	.d_write = rawrite,
+	.d_ioctl = raioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
 static struct dkdriver radkdriver = {
-	rastrategy, minphys
+	.d_strategy = rastrategy,
+	.d_minphys = minphys
 };
 
 /*
@@ -388,33 +406,20 @@ raioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 {
 	struct disklabel *lp, *tp;
 	struct ra_softc *ra = mscp_device_lookup(dev);
-	int error = 0;
+	int error;
 #ifdef __HAVE_OLD_DISKLABEL
 	struct disklabel newlabel;
 #endif
 
 	lp = ra->ra_disk.dk_label;
 
+	error = disk_ioctl(&ra->ra_disk, dev, cmd, data, flag, l);
+	if (error != EPASSTHROUGH)
+		return error;
+	else
+		error = 0;
+
 	switch (cmd) {
-
-	case DIOCGDINFO:
-		memcpy(data, lp, sizeof (struct disklabel));
-		break;
-#ifdef __HAVE_OLD_DISKLABEL
-	case ODIOCGDINFO:
-		memcpy(&newlabel, lp, sizeof newlabel);
-		if (newlabel.d_npartitions > OLDMAXPARTITIONS)
-			return ENOTTY;
-		memcpy(data, &newlabel, sizeof (struct olddisklabel));
-		break;
-#endif
-
-	case DIOCGPART:
-		((struct partinfo *)data)->disklab = lp;
-		((struct partinfo *)data)->part =
-		    &lp->d_partitions[DISKPART(dev)];
-		break;
-
 	case DIOCWDINFO:
 	case DIOCSDINFO:
 #ifdef __HAVE_OLD_DISKLABEL
@@ -468,7 +473,7 @@ raioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 		tp->d_ncylinders = lp->d_ncylinders;
 		tp->d_secpercyl = lp->d_secpercyl;
 		tp->d_secperunit = lp->d_secperunit;
-		tp->d_type = DTYPE_MSCP;
+		tp->d_type = DKTYPE_MSCP;
 		tp->d_rpm = 3600;
 		rrmakelabel(tp, ra->ra_mediaid);
 #ifdef __HAVE_OLD_DISKLABEL
@@ -479,39 +484,6 @@ raioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 		}
 #endif
 		break;
-
-	case DIOCAWEDGE:
-	    {
-	    	struct dkwedge_info *dkw = (void *) data;
-
-		if ((flag & FWRITE) == 0)
-			return (EBADF);
-
-		/* If the ioctl happens here, the parent is us. */
-		strlcpy(dkw->dkw_parent, device_xname(ra->ra_dev),
-			sizeof(dkw->dkw_parent));
-		return (dkwedge_add(dkw));
-	    }
-
-	case DIOCDWEDGE:
-	    {
-	    	struct dkwedge_info *dkw = (void *) data;
-
-		if ((flag & FWRITE) == 0)
-			return (EBADF);
-
-		/* If the ioctl happens here, the parent is us. */
-		strlcpy(dkw->dkw_parent, device_xname(ra->ra_dev),
-			sizeof(dkw->dkw_parent));
-		return (dkwedge_del(dkw));
-	    }
-
-	case DIOCLWEDGES:
-	    {
-	    	struct dkwedge_list *dkwl = (void *) data;
-
-		return (dkwedge_list(&ra->ra_disk, dkwl, l));
-	    }
 
 	default:
 		error = ENOTTY;
@@ -563,12 +535,29 @@ dev_type_dump(radump);
 dev_type_size(rxsize);
 
 const struct bdevsw rx_bdevsw = {
-	rxopen, nullclose, rxstrategy, rxioctl, radump, rxsize, D_DISK
+	.d_open = rxopen,
+	.d_close = nullclose,
+	.d_strategy = rxstrategy,
+	.d_ioctl = rxioctl,
+	.d_dump = radump,
+	.d_psize = rxsize,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
 const struct cdevsw rx_cdevsw = {
-	rxopen, nullclose, rxread, rxwrite, rxioctl,
-	nostop, notty, nopoll, nommap, nokqfilter, D_DISK
+	.d_open = rxopen,
+	.d_close = nullclose,
+	.d_read = rxread,
+	.d_write = rxwrite,
+	.d_ioctl = rxioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
 static struct dkdriver rxdkdriver = {
@@ -619,12 +608,29 @@ dev_type_dump(radump);
 dev_type_size(rasize);
 
 const struct bdevsw racd_bdevsw = {
-	raopen, nullclose, rastrategy, raioctl, radump, rasize, D_DISK
+	.d_open = raopen,
+	.d_close = nullclose,
+	.d_strategy = rastrategy,
+	.d_ioctl = raioctl,
+	.d_dump = radump,
+	.d_psize = rasize,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
 const struct cdevsw racd_cdevsw = {
-	raopen, nullclose, raread, rawrite, raioctl,
-	nostop, notty, nopoll, nommap, nokqfilter, D_DISK
+	.d_open = raopen,
+	.d_close = nullclose,
+	.d_read = raread,
+	.d_write = rawrite,
+	.d_ioctl = raioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
 static struct dkdriver racddkdriver = {
@@ -847,25 +853,16 @@ int
 rxioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 {
 	int unit = DISKUNIT(dev);
-	struct disklabel *lp;
 	struct rx_softc *rx = device_lookup_private(&rx_cd, unit);
-	int error = 0;
+	int error;
 
-	lp = rx->ra_disk.dk_label;
+        error = disk_ioctl(&rx->ra_disk, dev, cmd, data, flag, l);
+	if (error != EPASSTHROUGH)
+		return error;
+	else
+		error = 0;
 
 	switch (cmd) {
-
-	case DIOCGDINFO:
-		memcpy(data, lp, sizeof (struct disklabel));
-		break;
-
-	case DIOCGPART:
-		((struct partinfo *)data)->disklab = lp;
-		((struct partinfo *)data)->part =
-		    &lp->d_partitions[DISKPART(dev)];
-		break;
-
-
 	case DIOCWDINFO:
 	case DIOCSDINFO:
 	case DIOCWLABEL:
@@ -964,10 +961,10 @@ rronline(device_t usc, struct mscp *mp)
 
 	if (dl->d_secpercyl) {
 		dl->d_ncylinders = dl->d_secperunit/dl->d_secpercyl;
-		dl->d_type = DTYPE_MSCP;
+		dl->d_type = DKTYPE_MSCP;
 		dl->d_rpm = 3600;
 	} else {
-		dl->d_type = DTYPE_FLOPPY;
+		dl->d_type = DKTYPE_FLOPPY;
 		dl->d_rpm = 300;
 	}
 	rrmakelabel(dl, ra->ra_mediaid);

@@ -1,4 +1,4 @@
-/*	$NetBSD: trap.c,v 1.75 2013/01/14 00:06:11 christos Exp $	*/
+/*	$NetBSD: trap.c,v 1.80 2015/02/27 15:35:10 christos Exp $	*/
 
 /*-
  * Copyright (c) 1998, 2000 The NetBSD Foundation, Inc.
@@ -68,7 +68,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: trap.c,v 1.75 2013/01/14 00:06:11 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: trap.c,v 1.80 2015/02/27 15:35:10 christos Exp $");
 
 #include "opt_ddb.h"
 #include "opt_kgdb.h"
@@ -91,7 +91,7 @@ __KERNEL_RCSID(0, "$NetBSD: trap.c,v 1.75 2013/01/14 00:06:11 christos Exp $");
 #include <uvm/uvm_extern.h>
 
 #include <machine/cpufunc.h>
-#include <machine/fpu.h>
+#include <x86/fpu.h>
 #include <machine/psl.h>
 #include <machine/reg.h>
 #include <machine/trap.h>
@@ -210,6 +210,10 @@ trap_print(const struct trapframe *frame, const lwp_t *l)
  * that prepare a suitable stack frame, and restore this frame after the
  * exception has been processed. Note that the effect is as if the arguments
  * were passed call by reference.
+ *
+ * Note that the fpu traps (07 T_DNA, 10 T_ARITHTRAP and 13 T_XMM)
+ * jump directly into the code in x86/fpu.c so they get processed
+ * without interrupts being enabled.
  */
 void
 trap(struct trapframe *frame)
@@ -257,7 +261,7 @@ trap(struct trapframe *frame)
 	/*
 	 * A trap can occur while DTrace executes a probe. Before
 	 * executing the probe, DTrace blocks re-scheduling and sets
-	 * a flag in it's per-cpu flags to indicate that it doesn't
+	 * a flag in its per-cpu flags to indicate that it doesn't
 	 * want to fault. On returning from the the probe, the no-fault
 	 * flag is cleared and finally re-scheduling is enabled.
 	 *
@@ -445,9 +449,6 @@ kernelfault:
 		}
 		goto trapsignal;
 
-	case T_ARITHTRAP|T_USER:
-	case T_XMM|T_USER:
-		/* Already handled by fputrap(), fall through. */
 	case T_ASTFLT|T_USER:
 		/* Allow process switch. */
 		//curcpu()->ci_data.cpu_nast++;
@@ -460,18 +461,6 @@ kernelfault:
 			preempt();
 		}
 		goto out;
-
-#if 0 /* handled by fpudna() */
-	case T_DNA|T_USER: {
-		printf("pid %d.%d killed due to lack of floating point\n",
-		    p->p_pid, l->l_lid);
-		KSI_INIT_TRAP(&ksi);
-		ksi.ksi_signo = SIGKILL;
-		ksi.ksi_trap = type & ~T_USER;
-		ksi.ksi_addr = (void *)frame->tf_rip;
-		goto trapsignal;
-	}
-#endif
 
 	case T_BOUND|T_USER:
 	case T_OFLOW|T_USER:
@@ -619,15 +608,6 @@ faultcommon:
 			}
 			goto out;
 		}
-		KSI_INIT_TRAP(&ksi);
-		ksi.ksi_trap = type & ~T_USER;
-		ksi.ksi_addr = (void *)cr2;
-		if (error == EACCES) {
-			ksi.ksi_code = SEGV_ACCERR;
-			error = EFAULT;
-		} else {
-			ksi.ksi_code = SEGV_MAPERR;
-		}
 
 		if (type == T_PAGEFLT) {
 			onfault = onfault_handler(pcb, frame);
@@ -637,20 +617,38 @@ faultcommon:
 			    map, va, ftype, error);
 			goto kernelfault;
 		}
-		if (error == ENOMEM) {
-			ksi.ksi_signo = SIGKILL;
-			printf("UVM: pid %d.%d (%s), uid %d killed: out of swap\n",
-			       p->p_pid, l->l_lid, p->p_comm,
-			       l->l_cred ?
-			       kauth_cred_geteuid(l->l_cred) : -1);
-		} else {
-#ifdef TRAP_SIGDEBUG
-			printf("pid %d.%d (%s): SEGV at rip %lx addr %lx\n",
-			    p->p_pid, l->l_lid, p->p_comm, frame->tf_rip, va);
-			frame_dump(frame);
-#endif
+
+		KSI_INIT_TRAP(&ksi);
+		ksi.ksi_trap = type & ~T_USER;
+		ksi.ksi_addr = (void *)cr2;
+		switch (error) {
+		case EINVAL:
+			ksi.ksi_signo = SIGBUS;
+			ksi.ksi_code = BUS_ADRERR;
+			break;
+		case EACCES:
 			ksi.ksi_signo = SIGSEGV;
+			ksi.ksi_code = SEGV_ACCERR;
+			error = EFAULT;
+			break;
+		case ENOMEM:
+			ksi.ksi_signo = SIGKILL;
+			printf("UVM: pid %d.%d (%s), uid %d killed: "
+			    "out of swap\n", p->p_pid, l->l_lid, p->p_comm,
+			    l->l_cred ?  kauth_cred_geteuid(l->l_cred) : -1);
+			break;
+		default:
+			ksi.ksi_signo = SIGSEGV;
+			ksi.ksi_code = SEGV_MAPERR;
+			break;
 		}
+
+#ifdef TRAP_SIGDEBUG
+		printf("pid %d.%d (%s): signal %d at rip %lx addr %lx "
+		    "error %d\n", p->p_pid, l->l_lid, p->p_comm, ksi.ksi_signo,
+		    frame->tf_rip, va, error);
+		frame_dump(frame);
+#endif
 		(*p->p_emul->e_trapsignal)(l, &ksi);
 		break;
 	}
@@ -716,7 +714,7 @@ startlwp(void *arg)
 {
 	ucontext_t *uc = arg;
 	lwp_t *l = curlwp;
-	int error;
+	int error __diagused;
 
 	error = cpu_setmcontext(l, &uc->uc_mcontext, uc->uc_flags);
 	KASSERT(error == 0);

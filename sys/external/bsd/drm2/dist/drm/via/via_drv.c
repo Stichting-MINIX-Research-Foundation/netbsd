@@ -46,13 +46,14 @@ static int via_driver_open(struct drm_device *dev, struct drm_file *file)
 	return 0;
 }
 
-void via_driver_postclose(struct drm_device *dev, struct drm_file *file)
+static void via_driver_postclose(struct drm_device *dev, struct drm_file *file)
 {
 	struct via_file_private *file_priv = file->driver_priv;
 
 	kfree(file_priv);
 }
 
+#ifndef __NetBSD__
 static struct pci_device_id pciidlist[] = {
 	viadrv_PCI_IDS
 };
@@ -64,16 +65,16 @@ static const struct file_operations via_driver_fops = {
 	.unlocked_ioctl = drm_ioctl,
 	.mmap = drm_mmap,
 	.poll = drm_poll,
-	.fasync = drm_fasync,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl = drm_compat_ioctl,
 #endif
 	.llseek = noop_llseek,
 };
+#endif
 
 static struct drm_driver driver = {
 	.driver_features =
-	    DRIVER_USE_AGP | DRIVER_USE_MTRR | DRIVER_HAVE_IRQ |
+	    DRIVER_USE_AGP | DRIVER_HAVE_IRQ |
 	    DRIVER_IRQ_SHARED,
 	.load = via_driver_load,
 	.unload = via_driver_unload,
@@ -91,7 +92,9 @@ static struct drm_driver driver = {
 	.dma_quiescent = via_driver_dma_quiescent,
 	.lastclose = via_lastclose,
 	.ioctls = via_ioctls,
+#ifndef __NetBSD__
 	.fops = &via_driver_fops,
+#endif
 	.name = DRIVER_NAME,
 	.desc = DRIVER_DESC,
 	.date = DRIVER_DATE,
@@ -100,9 +103,14 @@ static struct drm_driver driver = {
 	.patchlevel = DRIVER_PATCHLEVEL,
 };
 
+#ifdef __NetBSD__
+struct drm_driver *const via_drm_driver = &driver;
+#endif
+
+#ifndef __NetBSD__
 static struct pci_driver via_pci_driver = {
 	.name = DRIVER_NAME,
-	.id_table = pciidlist,
+	.id_table = viadrm_pciidlist,
 };
 
 static int __init via_init(void)
@@ -116,6 +124,7 @@ static void __exit via_exit(void)
 {
 	drm_pci_exit(&driver, &via_pci_driver);
 }
+#endif	/* __NetBSD__ */
 
 module_init(via_init);
 module_exit(via_exit);

@@ -1,4 +1,4 @@
-# $NetBSD: Makefile.inc,v 1.8 2013/09/21 22:28:12 joerg Exp $
+# $NetBSD: Makefile.inc,v 1.15 2015/09/27 21:01:27 mlelstv Exp $
 
 WARNS?=	1	# XXX -Wshadow -Wcast-qual -Wsign-compare
 
@@ -23,7 +23,7 @@ CPPFLAGS+=	-DDHCPv6
 CPPFLAGS+= -DISC_PLATFORM_USETHREADS -DHAVE_CONFIG_H
 CPPFLAGS+= -I${DIST} -I${DIST}/includes -I${DIST}/../include
 CPPFLAGS+= -I${BIND} -I${BIND}/includes -I${BIND}/../include
-.for dir in isc dns
+.for dir in isc dns irs
 CPPFLAGS+= -I${BIND}/lib/${dir}/include
 CPPFLAGS+= -I${BIND}/lib/${dir}/unix/include
 CPPFLAGS+= -I${BIND}/lib/${dir}/pthreads/include
@@ -34,11 +34,8 @@ LDADD+= ${OMOBJDIR}/libomapi.a ${DSTOBJDIR}/libdst.a
 .if defined(PROG) && ${PROG} == "dhclient"
 LDADD+=-Wl,-Bstatic
 .endif
-LDADD+= -ldns -lisc
+LDADD+= -lirs -lisccfg -ldns -lisc
 LDADD+=-lpthread
-.if defined(PROG) && ${PROG} == "dhclient"
-LDADD+=-Wl,-Bdynamic
-.endif
 .if (${MKCRYPTO} != "no")
 .if (${MKKERBEROS} != "no")
 LDADD+= -lgssapi -lkrb5 -lhx509 -lheimntlm -lheimbase \
@@ -46,8 +43,14 @@ LDADD+= -lgssapi -lkrb5 -lhx509 -lheimntlm -lheimbase \
 DPADD+= ${LIBGSSAPI} ${LIBKRB5} ${LIBHX509} ${LIBHEIMNTLM} ${LIBHEIMBASE} \
 	${LIBCOM_ERR} ${LIBROKEN} ${LIBASN1} ${LIBWIND}
 .endif
+.if defined(PROG) && ${PROG} == "dhclient"
+LDADD+=-Wl,-Bdynamic
+.endif
 LDADD+= -lcrypto -lipsec -lcrypt
 DPADD+= ${LIBCRYPTO} ${LIBIPSEC} ${LIBCRYPT}
+.endif
+.if defined(PROG) && ${PROG} == "dhclient"
+LDADD+=-Wl,-Bdynamic
 .endif
 DPADD+= ${COBJDIR}/libdhcp.a
 DPADD+= ${OMOBJDIR}/libomapi.a ${DSTOBJDIR}/libdst.a

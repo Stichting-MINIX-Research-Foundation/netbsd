@@ -1,4 +1,4 @@
-/*	$NetBSD: ata_wdc.c,v 1.103 2013/02/03 20:13:27 jakllsch Exp $	*/
+/*	$NetBSD: ata_wdc.c,v 1.105 2015/01/02 19:42:06 christos Exp $	*/
 
 /*
  * Copyright (c) 1998, 2001, 2003 Manuel Bouyer.
@@ -54,7 +54,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ata_wdc.c,v 1.103 2013/02/03 20:13:27 jakllsch Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ata_wdc.c,v 1.105 2015/01/02 19:42:06 christos Exp $");
 
 #include "opt_ata.h"
 #include "opt_wdc.h"
@@ -268,7 +268,7 @@ geometry:
 		wdccommand(chp, xfer->c_drive, WDCC_IDP,
 		    ata_bio->lp->d_ncylinders,
 		    ata_bio->lp->d_ntracks - 1, 0, ata_bio->lp->d_nsectors,
-		    (ata_bio->lp->d_type == DTYPE_ST506) ?
+		    (ata_bio->lp->d_type == DKTYPE_ST506) ?
 			ata_bio->lp->d_precompcyl / 4 : 0);
 		errstring = "geometry";
 		if (wdcwait(chp, WDCS_DRDY, WDCS_DRDY, ATA_DELAY, wait_flags))
@@ -335,8 +335,8 @@ _wdc_ata_bio_start(struct ata_channel *chp, struct ata_xfer *xfer)
 	struct ata_bio *ata_bio = xfer->c_cmd;
 	struct ata_drive_datas *drvp = &chp->ch_drive[xfer->c_drive];
 	int wait_flags = (xfer->c_flags & C_POLL) ? AT_POLL : 0;
-	u_int16_t cyl;
-	u_int8_t head, sect, cmd = 0;
+	uint16_t cyl;
+	uint8_t head, sect, cmd = 0;
 	int nblks;
 #if NATA_DMA || NATA_PIOBM
 	int error, dma_flags = 0;
@@ -531,7 +531,7 @@ again:
 		} else {
 		    wdccommand(chp, xfer->c_drive, cmd, cyl,
 			head, sect, nblks,
-			(ata_bio->lp->d_type == DTYPE_ST506) ?
+			(ata_bio->lp->d_type == DKTYPE_ST506) ?
 			ata_bio->lp->d_precompcyl / 4 : 0);
 		}
 		/* start timeout machinery */

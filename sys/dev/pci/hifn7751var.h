@@ -1,4 +1,4 @@
-/*	$NetBSD: hifn7751var.h,v 1.10 2013/06/13 00:55:01 tls Exp $	*/
+/*	$NetBSD: hifn7751var.h,v 1.12 2015/04/14 20:32:36 riastradh Exp $	*/
 /*	$OpenBSD: hifn7751var.h,v 1.18 2000/06/02 22:36:45 deraadt Exp $	*/
 
 /*
@@ -44,6 +44,8 @@
 #define __DEV_PCI_HIFN7751VAR_H__
 
 #ifdef _KERNEL
+
+#include <sys/rndsource.h>
 
 /*
  *  Some configurable values for the driver
@@ -144,6 +146,9 @@ struct hifn_softc {
 
 	bus_space_handle_t	sc_sh0, sc_sh1;
 	bus_space_tag_t		sc_st0, sc_st1;
+#ifdef __NetBSD__
+	bus_size_t		sc_iosz0, sc_iosz1;
+#endif
 	bus_dma_tag_t		sc_dmat;
 
 	struct hifn_dma *sc_dma;

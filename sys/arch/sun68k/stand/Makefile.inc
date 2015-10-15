@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile.inc,v 1.21 2013/11/07 19:52:56 christos Exp $
+#	$NetBSD: Makefile.inc,v 1.25 2014/07/26 17:24:04 tsutsui Exp $
 
 # Must have S=/usr/src/sys (or equivalent)
 # But note: this is w.r.t. a subdirectory
@@ -14,7 +14,11 @@ LIBSA!=cd ${.CURDIR}/../libsa && ${PRINTOBJDIR}
 
 MDEC_DIR?=/usr/mdec
 
+.if ${MACHINE} == "sun3"
+RELOC?= 280000
+.else
 RELOC?= 240000
+.endif
 DEFS?= -Dsun3 -D_STANDALONE -D__daddr_t=int32_t
 INCL?= -I. -I${.CURDIR} -I${.CURDIR}/../libsa -I${S}/lib/libsa -I${S}
 
@@ -40,7 +44,7 @@ ${SA_PROG}.bin : ${SA_PROG}
 
 ${SA_PROG} : ${OBJS} ${DPADD} ${SRTLIB}
 	${LD} -N -Ttext ${RELOC} -e start ${SA_LDFLAGS} -o $@ \
-	  ${SRTOBJ} ${OBJS} ${LDADD} ${SRTLIB}
+	    ${SRTOBJ} ${OBJS} ${LDADD} ${SRTLIB}
 	@${SIZE} $@
 
 .if !target(proginstall)
@@ -56,6 +60,7 @@ proginstall: ${SA_PROG}.bin
 
 # XXX SHOULD NOT NEED TO DEFINE THESE!
 LIBCRT0=
+LIBCRTI=
 LIBC=
 LIBCRTBEGIN=
 LIBCRTEND=

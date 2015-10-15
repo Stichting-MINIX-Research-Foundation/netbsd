@@ -1,6 +1,6 @@
 /* Java language support routines for GDB, the GNU debugger.
 
-   Copyright (C) 1997-2013 Free Software Foundation, Inc.
+   Copyright (C) 1997-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -23,22 +23,20 @@
 #include "expression.h"
 #include "parser-defs.h"
 #include "language.h"
-#include "gdbtypes.h"
-#include "symtab.h"
 #include "symfile.h"
 #include "objfiles.h"
-#include "gdb_string.h"
 #include "value.h"
 #include "c-lang.h"
 #include "jv-lang.h"
+#include "varobj.h"
 #include "gdbcore.h"
 #include "block.h"
 #include "demangle.h"
 #include "dictionary.h"
 #include <ctype.h>
-#include "gdb_assert.h"
 #include "charset.h"
 #include "valprint.h"
+#include "cp-support.h"
 
 /* Local functions */
 
@@ -47,7 +45,7 @@ extern void _initialize_java_language (void);
 static int java_demangled_signature_length (const char *);
 static void java_demangled_signature_copy (char *, const char *);
 
-static struct symtab *get_java_class_symtab (struct gdbarch *gdbarch);
+static struct compunit_symtab *get_java_class_symtab (struct gdbarch *gdbarch);
 static char *get_java_utf8_name (struct obstack *obstack, struct value *name);
 static int java_class_is_primitive (struct value *clas);
 static struct value *java_value_string (char *ptr, int len);
@@ -117,8 +115,9 @@ get_dynamics_objfile (struct gdbarch *gdbarch)
 
       /* Mark it as shared so that it is cleared when the inferior is
 	 re-run.  */
-      dynamics_objfile = allocate_objfile (NULL, OBJF_SHARED);
-      dynamics_objfile->gdbarch = gdbarch;
+      dynamics_objfile = allocate_objfile (NULL, NULL,
+					   OBJF_SHARED | OBJF_NOT_FILENAME);
+      dynamics_objfile->per_bfd->gdbarch = gdbarch;
 
       data = XCNEW (struct jv_per_objfile_data);
       set_objfile_data (dynamics_objfile, jv_dynamics_objfile_data_key, data);
@@ -130,11 +129,11 @@ get_dynamics_objfile (struct gdbarch *gdbarch)
   return dynamics_objfile;
 }
 
-static struct symtab *
+static struct compunit_symtab *
 get_java_class_symtab (struct gdbarch *gdbarch)
 {
   struct objfile *objfile = get_dynamics_objfile (gdbarch);
-  struct symtab *class_symtab = objfile->symtabs;
+  struct compunit_symtab *class_symtab = objfile->compunit_symtabs;
 
   if (class_symtab == NULL)
     {
@@ -142,13 +141,16 @@ get_java_class_symtab (struct gdbarch *gdbarch)
       struct block *bl;
       struct jv_per_objfile_data *jv_data;
 
-      class_symtab = allocate_symtab ("<java-classes>", objfile);
-      class_symtab->language = language_java;
+      class_symtab = allocate_compunit_symtab (objfile, "<java-classes>");
+      add_compunit_symtab_to_objfile (class_symtab);
+      allocate_symtab (class_symtab, "<java-classes>");
+
+      COMPUNIT_FILETABS (class_symtab)->language = language_java;
       bv = (struct blockvector *)
 	obstack_alloc (&objfile->objfile_obstack,
 		       sizeof (struct blockvector) + sizeof (struct block *));
       BLOCKVECTOR_NBLOCKS (bv) = 1;
-      BLOCKVECTOR (class_symtab) = bv;
+      COMPUNIT_BLOCKVECTOR (class_symtab) = bv;
 
       /* Allocate dummy STATIC_BLOCK.  */
       bl = allocate_block (&objfile->objfile_obstack);
@@ -159,7 +161,7 @@ get_java_class_symtab (struct gdbarch *gdbarch)
       /* Allocate GLOBAL_BLOCK.  */
       bl = allocate_global_block (&objfile->objfile_obstack);
       BLOCK_DICT (bl) = dict_create_hashed_expandable ();
-      set_block_symtab (bl, class_symtab);
+      set_block_compunit_symtab (bl, class_symtab);
       BLOCKVECTOR_BLOCK (bv, GLOBAL_BLOCK) = bl;
 
       /* Arrange to free the dict.  */
@@ -172,9 +174,8 @@ get_java_class_symtab (struct gdbarch *gdbarch)
 static void
 add_class_symtab_symbol (struct symbol *sym)
 {
-  struct symtab *symtab
-    = get_java_class_symtab (get_objfile_arch (SYMBOL_SYMTAB (sym)->objfile));
-  struct blockvector *bv = BLOCKVECTOR (symtab);
+  struct compunit_symtab *cust = get_java_class_symtab (symbol_arch (sym));
+  const struct blockvector *bv = COMPUNIT_BLOCKVECTOR (cust);
 
   dict_add_symbol (BLOCK_DICT (BLOCKVECTOR_BLOCK (bv, GLOBAL_BLOCK)), sym);
 }
@@ -185,12 +186,10 @@ add_class_symbol (struct type *type, CORE_ADDR addr)
   struct symbol *sym;
   struct objfile *objfile = get_dynamics_objfile (get_type_arch (type));
 
-  sym = (struct symbol *)
-    obstack_alloc (&objfile->objfile_obstack, sizeof (struct symbol));
-  memset (sym, 0, sizeof (struct symbol));
-  SYMBOL_SET_LANGUAGE (sym, language_java);
+  sym = allocate_symbol (objfile);
+  SYMBOL_SET_LANGUAGE (sym, language_java, &objfile->objfile_obstack);
   SYMBOL_SET_LINKAGE_NAME (sym, TYPE_TAG_NAME (type));
-  SYMBOL_CLASS (sym) = LOC_TYPEDEF;
+  SYMBOL_ACLASS_INDEX (sym) = LOC_TYPEDEF;
   /*  SYMBOL_VALUE (sym) = valu; */
   SYMBOL_TYPE (sym) = type;
   SYMBOL_DOMAIN (sym) = STRUCT_DOMAIN;
@@ -1012,7 +1011,7 @@ nosideret:
 
 static char *java_demangle (const char *mangled, int options)
 {
-  return cplus_demangle (mangled, options | DMGL_JAVA);
+  return gdb_demangle (mangled, options | DMGL_JAVA);
 }
 
 /* Find the member function name of the demangled name NAME.  NAME
@@ -1162,6 +1161,7 @@ const struct exp_descriptor exp_descriptor_java =
 const struct language_defn java_language_defn =
 {
   "java",			/* Language name */
+  "Java",
   language_java,
   range_check_off,
   case_sensitive_on,
@@ -1196,6 +1196,9 @@ const struct language_defn java_language_defn =
   default_get_string,
   NULL,				/* la_get_symbol_name_cmp */
   iterate_over_symbols,
+  &java_varobj_ops,
+  NULL,
+  NULL,
   LANG_MAGIC
 };
 

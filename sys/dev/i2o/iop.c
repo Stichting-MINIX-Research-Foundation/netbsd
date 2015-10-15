@@ -1,4 +1,4 @@
-/*	$NetBSD: iop.c,v 1.84 2013/10/17 21:16:12 christos Exp $	*/
+/*	$NetBSD: iop.c,v 1.87 2015/08/16 19:21:33 msaitoh Exp $	*/
 
 /*-
  * Copyright (c) 2000, 2001, 2002, 2007 The NetBSD Foundation, Inc.
@@ -34,7 +34,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: iop.c,v 1.84 2013/10/17 21:16:12 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: iop.c,v 1.87 2015/08/16 19:21:33 msaitoh Exp $");
 
 #include "iop.h"
 
@@ -96,8 +96,18 @@ dev_type_close(iopclose);
 dev_type_ioctl(iopioctl);
 
 const struct cdevsw iop_cdevsw = {
-	iopopen, iopclose, noread, nowrite, iopioctl,
-	nostop, notty, nopoll, nommap, nokqfilter, D_OTHER,
+	.d_open = iopopen,
+	.d_close = iopclose,
+	.d_read = noread,
+	.d_write = nowrite,
+	.d_ioctl = iopioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_OTHER,
 };
 
 #define	IC_CONFIGURE	0x01
@@ -2078,9 +2088,9 @@ iop_msg_unmap(struct iop_softc *sc, struct iop_msg *im)
 		/* Only the first DMA map is static. */
 		if (i != 0)
 			bus_dmamap_destroy(sc->sc_dmat, ix->ix_map);
-		if ((++ix)->ix_size == 0)
-			break;
 		if (++i >= IOP_MAX_MSG_XFERS)
+			break;
+		if ((++ix)->ix_size == 0)
 			break;
 	}
 }

@@ -1,4 +1,4 @@
-/*	$NetBSD: scsipi_base.c,v 1.159 2012/04/20 20:23:21 bouyer Exp $	*/
+/*	$NetBSD: scsipi_base.c,v 1.165 2015/08/24 23:13:15 pooka Exp $	*/
 
 /*-
  * Copyright (c) 1998, 1999, 2000, 2002, 2003, 2004 The NetBSD Foundation, Inc.
@@ -31,9 +31,11 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: scsipi_base.c,v 1.159 2012/04/20 20:23:21 bouyer Exp $");
+__KERNEL_RCSID(0, "$NetBSD: scsipi_base.c,v 1.165 2015/08/24 23:13:15 pooka Exp $");
 
+#ifdef _KERNEL_OPT
 #include "opt_scsi.h"
+#endif
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -376,7 +378,7 @@ scsipi_put_tag(struct scsipi_xfer *xs)
  * scsipi_get_xs:
  *
  *	Allocate an xfer descriptor and associate it with the
- *	specified peripherial.  If the peripherial has no more
+ *	specified peripheral.  If the peripheral has no more
  *	available command openings, we either block waiting for
  *	one to become available, or fail.
  */
@@ -484,9 +486,9 @@ scsipi_get_xs(struct scsipi_periph *periph, int flags)
  * scsipi_put_xs:
  *
  *	Release an xfer descriptor, decreasing the outstanding command
- *	count for the peripherial.  If there is a thread waiting for
+ *	count for the peripheral.  If there is a thread waiting for
  *	an opening, wake it up.  If not, kick any queued I/O the
- *	peripherial may have.
+ *	peripheral may have.
  *
  *	NOTE: Must be called at splbio().
  */
@@ -808,7 +810,7 @@ scsipi_interpret_sense(struct scsipi_xfer *xs)
 #endif
 
 	/*
-	 * If the periph has it's own error handler, call it first.
+	 * If the periph has its own error handler, call it first.
 	 * If it returns a legit error value, return that, otherwise
 	 * it wants us to continue with normal error processing.
 	 */
@@ -1044,6 +1046,28 @@ scsipi_test_unit_ready(struct scsipi_periph *periph, int flags)
 	    retries, 10000, NULL, flags));
 }
 
+static const struct scsipi_inquiry3_pattern {
+	const char vendor[8];
+	const char product[16];
+	const char revision[4];
+} scsipi_inquiry3_quirk[] = {
+	{ "ES-6600 ", "", "" },
+};
+
+static int
+scsipi_inquiry3_ok(const struct scsipi_inquiry_data *ib)
+{
+	for (size_t i = 0; i < __arraycount(scsipi_inquiry3_quirk); i++) {
+		const struct scsipi_inquiry3_pattern *q =
+		    &scsipi_inquiry3_quirk[i];
+#define MATCH(field) \
+    (q->field[0] ? memcmp(ib->field, q->field, sizeof(ib->field)) == 0 : 1)
+		if (MATCH(vendor) && MATCH(product) && MATCH(revision))
+			return 0;
+	}
+	return 1;
+}
+
 /*
  * scsipi_inquire:
  *
@@ -1064,7 +1088,7 @@ scsipi_inquire(struct scsipi_periph *periph, struct scsipi_inquiry_data *inqbuf,
 
 	/*
 	 * If we request more data than the device can provide, it SHOULD just
-	 * return a short reponse.  However, some devices error with an
+	 * return a short response.  However, some devices error with an
 	 * ILLEGAL REQUEST sense code, and yet others have even more special
 	 * failture modes (such as the GL641USB flash adapter, which goes loony
 	 * and sends corrupted CRCs).  To work around this, and to bring our
@@ -1081,6 +1105,7 @@ scsipi_inquire(struct scsipi_periph *periph, struct scsipi_inquiry_data *inqbuf,
 	    10000, NULL, flags | XS_CTL_DATA_IN);
 	if (!error &&
 	    inqbuf->additional_length > SCSIPI_INQUIRY_LENGTH_SCSI2 - 4) {
+	    if (scsipi_inquiry3_ok(inqbuf)) {
 #if 0
 printf("inquire: addlen=%d, retrying\n", inqbuf->additional_length);
 #endif
@@ -1091,6 +1116,7 @@ printf("inquire: addlen=%d, retrying\n", inqbuf->additional_length);
 #if 0
 printf("inquire: error=%d\n", error);
 #endif
+	    }
 	}
 
 #ifdef SCSI_OLD_NOINQUIRY
@@ -2445,7 +2471,7 @@ scsipi_sync_factor_to_freq(int factor)
 
 #ifdef SCSIPI_DEBUG
 /*
- * Given a scsipi_xfer, dump the request, in all it's glory
+ * Given a scsipi_xfer, dump the request, in all its glory
  */
 void
 show_scsipi_xs(struct scsipi_xfer *xs)

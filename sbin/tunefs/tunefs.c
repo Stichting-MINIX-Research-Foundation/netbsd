@@ -1,4 +1,4 @@
-/*	$NetBSD: tunefs.c,v 1.46 2013/06/23 02:06:05 dholland Exp $	*/
+/*	$NetBSD: tunefs.c,v 1.49 2015/08/26 05:41:20 mlelstv Exp $	*/
 
 /*
  * Copyright (c) 1983, 1993
@@ -39,7 +39,7 @@ __COPYRIGHT("@(#) Copyright (c) 1983, 1993\
 #if 0
 static char sccsid[] = "@(#)tunefs.c	8.3 (Berkeley) 5/3/95";
 #else
-__RCSID("$NetBSD: tunefs.c,v 1.46 2013/06/23 02:06:05 dholland Exp $");
+__RCSID("$NetBSD: tunefs.c,v 1.49 2015/08/26 05:41:20 mlelstv Exp $");
 #endif
 #endif /* not lint */
 
@@ -71,10 +71,9 @@ __RCSID("$NetBSD: tunefs.c,v 1.46 2013/06/23 02:06:05 dholland Exp $");
 
 union {
 	struct	fs sb;
-	char pad[MAXBSIZE];
-} sbun;
+	char data[MAXBSIZE];
+} sbun, buf;
 #define	sblock sbun.sb
-char buf[MAXBSIZE];
 
 int	fi;
 long	dev_bsize = 512;
@@ -103,18 +102,20 @@ main(int argc, char *argv[])
 	int		i, ch, Aflag, Fflag, Nflag, openflags;
 	const char	*special, *chg[2];
 	char		device[MAXPATHLEN];
-	int		maxbpg, minfree, optim;
+	int		maxbpg, minfree, optim, secsize;
 	int		avgfilesize, avgfpdir;
 	long long	logfilesize;
+	int		secshift, fsbtodb;
 
 	Aflag = Fflag = Nflag = 0;
-	maxbpg = minfree = optim = -1;
+	maxbpg = minfree = optim = secsize = -1;
 	avgfilesize = avgfpdir = -1;
 	logfilesize = -1;
+	secshift = 0;
 	chg[FS_OPTSPACE] = "space";
 	chg[FS_OPTTIME] = "time";
 
-	while ((ch = getopt(argc, argv, "AFNe:g:h:l:m:o:q:")) != -1) {
+	while ((ch = getopt(argc, argv, "AFNe:g:h:l:m:o:q:S:")) != -1) {
 		switch (ch) {
 
 		case 'A':
@@ -178,6 +179,13 @@ main(int argc, char *argv[])
 			else
 			    errx(11, "invalid quota type %s", optarg);
 			break;
+		case 'S':
+			secsize = strsuftoll("physical sector size",
+			    optarg, 0, INT_MAX);
+			secshift = ffs(secsize) - 1;
+			if (secsize != 0 && 1 << secshift != secsize)
+				errx(12, "sector size %d is not a power of two", secsize);
+			break;
 		default:
 			usage();
 		}
@@ -240,6 +248,30 @@ main(int argc, char *argv[])
 			if (sblock.fs_minfree < MINFREE &&
 			    optim == FS_OPTTIME)
 				warnx(OPTWARN, "space", "<", MINFREE);
+		}
+	}
+	if (secsize != -1) {
+		if (secsize == 0) {
+			secsize = sblock.fs_fsize / FFS_FSBTODB(&sblock, 1);
+			secshift = ffs(secsize) - 1;
+		}
+
+		if (secshift < DEV_BSHIFT)
+			warnx("sector size must be at least %d", DEV_BSIZE);
+		else if (secshift > sblock.fs_fshift)
+			warnx("sector size %d cannot be larger than fragment size %d",
+				secsize, sblock.fs_fsize);
+		else {
+			fsbtodb = sblock.fs_fshift - secshift;
+			if (fsbtodb == sblock.fs_fsbtodb) {
+				warnx("sector size remains unchanged as %d",
+					sblock.fs_fsize / FFS_FSBTODB(&sblock, 1));
+			} else {
+				warnx("sector size changed from %d to %d",
+					sblock.fs_fsize / FFS_FSBTODB(&sblock, 1),
+					secsize);
+				sblock.fs_fsbtodb = fsbtodb;
+			}
 		}
 	}
 	CHANGEVAL(sblock.fs_avgfilesize, avgfilesize,
@@ -326,14 +358,20 @@ main(int argc, char *argv[])
 		exit(0);
 	}
 
-	memcpy(buf, (char *)&sblock, SBLOCKSIZE);
+	memcpy(&buf, (char *)&sblock, SBLOCKSIZE);
 	if (needswap)
-		ffs_sb_swap((struct fs*)buf, (struct fs*)buf);
-	bwrite(sblockloc, buf, SBLOCKSIZE, special);
+		ffs_sb_swap((struct fs*)&buf, (struct fs*)&buf);
+
+	/* write superblock to original coordinates (use old dev_bsize!) */
+	bwrite(sblockloc, buf.data, SBLOCKSIZE, special);
+
+	/* correct dev_bsize from possibly changed superblock data */
+	dev_bsize = sblock.fs_fsize / FFS_FSBTODB(&sblock, 1);
+
 	if (Aflag)
 		for (i = 0; i < sblock.fs_ncg; i++)
 			bwrite(FFS_FSBTODB(&sblock, cgsblock(&sblock, i)),
-			    buf, SBLOCKSIZE, special);
+			    buf.data, SBLOCKSIZE, special);
 	close(fi);
 	exit(0);
 }
@@ -480,6 +518,7 @@ usage(void)
 	fprintf(stderr, "\t-m minimum percentage of free space\n");
 	fprintf(stderr, "\t-o optimization preference (`space' or `time')\n");
 	fprintf(stderr, "\t-q quota type (`[no]user' or `[no]group')\n");
+	fprintf(stderr, "\t-S sector size\n");
 	exit(2);
 }
 
@@ -549,27 +588,26 @@ bread(daddr_t blk, char *buffer, int cnt, const char *file)
 static int
 openpartition(const char *name, int flags, char *device, size_t devicelen)
 {
-	char		rawspec[MAXPATHLEN], xbuf[MAXPATHLEN], *p;
+	char		specname[MAXPATHLEN];
+	char		rawname[MAXPATHLEN];
+	const char	*special, *raw;
 	struct fstab	*fs;
 	int		fd, oerrno;
 
 	fs = getfsfile(name);
-	if (fs) {
-		const char *fsspec;
-		fsspec = getfsspecname(xbuf, sizeof(xbuf), fs->fs_spec);
-		if (fsspec == NULL)
-			err(4, "%s", xbuf);
-		if ((p = strrchr(fsspec, '/')) != NULL) {
-			snprintf(rawspec, sizeof(rawspec), "%.*s/r%s",
-			    (int)(p - fsspec), fsspec, p + 1);
-			name = rawspec;
-		} else
-			name = fsspec;
-	}
-	fd = opendisk(name, flags, device, devicelen, 0);
+	special = fs ? fs->fs_spec : name;
+
+	raw = getfsspecname(specname, sizeof(specname), special);
+	if (raw == NULL)
+		err(1, "%s: %s", name, specname);
+	special = getdiskrawname(rawname, sizeof(rawname), raw); 
+	if (special == NULL)
+		special = raw;
+
+	fd = opendisk(special, flags, device, devicelen, 0);
 	if (fd == -1 && errno == ENOENT) {
 		oerrno = errno;
-		strlcpy(device, name, devicelen);
+		strlcpy(device, special, devicelen);
 		errno = oerrno;
 	}
 	return (fd);

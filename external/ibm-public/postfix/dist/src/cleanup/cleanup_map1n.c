@@ -1,4 +1,4 @@
-/*	$NetBSD: cleanup_map1n.c,v 1.1.1.3 2013/01/02 18:58:54 tron Exp $	*/
+/*	$NetBSD: cleanup_map1n.c,v 1.1.1.5 2015/02/21 11:56:48 tron Exp $	*/
 
 /*++
 /* NAME
@@ -114,7 +114,7 @@ ARGV   *cleanup_map1n_internal(CLEANUP_STATE *state, const char *addr,
     for (arg = 0; arg < argv->argc; arg++) {
 	if (argv->argc > var_virt_expan_limit) {
 	    msg_warn("%s: unreasonable %s map expansion size for %s -- "
-		     "deferring delivery",
+		     "message not accepted, try again later",
 		     state->queue_id, maps->title, addr);
 	    state->errs |= CLEANUP_STAT_DEFER;
 	    UPDATE(state->reason, "4.6.0 Alias expansion error");
@@ -130,7 +130,7 @@ ARGV   *cleanup_map1n_internal(CLEANUP_STATE *state, const char *addr,
 		break;
 	    if (count >= var_virt_recur_limit) {
 		msg_warn("%s: unreasonable %s map nesting for %s -- "
-			 "deferring delivery",
+			 "message not accepted, try again later",
 			 state->queue_id, maps->title, addr);
 		state->errs |= CLEANUP_STAT_DEFER;
 		UPDATE(state->reason, "4.6.0 Alias expansion error");
@@ -141,6 +141,15 @@ ARGV   *cleanup_map1n_internal(CLEANUP_STATE *state, const char *addr,
 	    if ((lookup = mail_addr_map(maps, STR(state->temp1), propagate)) != 0) {
 		saved_lhs = mystrdup(argv->argv[arg]);
 		for (i = 0; i < lookup->argc; i++) {
+		    if (strlen(lookup->argv[i]) > var_line_limit) {
+			msg_warn("%s: unreasonable %s result %.300s... -- "
+				 "message not accepted, try again later",
+			     state->queue_id, maps->title, lookup->argv[i]);
+			state->errs |= CLEANUP_STAT_DEFER;
+			UPDATE(state->reason, "4.6.0 Alias expansion error");
+			UNEXPAND(argv, addr);
+			RETURN(argv);
+		    }
 		    unquote_822_local(state->temp1, lookup->argv[i]);
 		    if (i == 0) {
 			UPDATE(argv->argv[arg], STR(state->temp1));
@@ -159,7 +168,7 @@ ARGV   *cleanup_map1n_internal(CLEANUP_STATE *state, const char *addr,
 		argv_free(lookup);
 	    } else if (maps->error != 0) {
 		msg_warn("%s: %s map lookup problem for %s -- "
-			 "deferring delivery",
+			 "message not accepted, try again later",
 			 state->queue_id, maps->title, addr);
 		state->errs |= CLEANUP_STAT_WRITE;
 		UPDATE(state->reason, "4.6.0 Alias expansion error");

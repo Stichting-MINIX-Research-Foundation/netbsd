@@ -1,4 +1,4 @@
-/*	$NetBSD: dtrace_ioctl.c,v 1.4 2013/03/03 18:16:35 christos Exp $	*/
+/*	$NetBSD: dtrace_ioctl.c,v 1.6 2015/09/30 20:59:13 christos Exp $	*/
 
 /*
  * CDDL HEADER START
@@ -659,10 +659,20 @@ again:
 		mutex_exit(&dtrace_provider_lock);
 
 		if (pvp == NULL && error == 0) {
-			error = module_autoload(pvd->dtvd_name,
-			    MODULE_CLASS_MISC);
-			if (error == 0)
-				goto again;
+			char name[NAME_MAX];
+			const char *provider;
+			if (strcmp(pvd->dtvd_name, "proc") == 0)
+				provider = "sdt";
+			else
+				provider = pvd->dtvd_name;
+
+			if (snprintf(name, sizeof name, "dtrace_%s",
+			    provider) < sizeof name) {
+				error = module_autoload(name,
+				    MODULE_CLASS_MISC);
+				if (error == 0)
+					goto again;
+			}
 		}
 
 		if (pvp == NULL)

@@ -1,4 +1,4 @@
-/*	$NetBSD: smbfs_vfsops.c,v 1.96 2013/10/17 21:04:44 christos Exp $	*/
+/*	$NetBSD: smbfs_vfsops.c,v 1.104 2014/12/21 10:48:53 hannken Exp $	*/
 
 /*
  * Copyright (c) 2000-2001, Boris Popov
@@ -35,7 +35,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: smbfs_vfsops.c,v 1.96 2013/10/17 21:04:44 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: smbfs_vfsops.c,v 1.104 2014/12/21 10:48:53 hannken Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -62,7 +62,7 @@ __KERNEL_RCSID(0, "$NetBSD: smbfs_vfsops.c,v 1.96 2013/10/17 21:04:44 christos E
 #include <fs/smbfs/smbfs_node.h>
 #include <fs/smbfs/smbfs_subr.h>
 
-MODULE(MODULE_CLASS_VFS, smbfs, NULL);
+MODULE(MODULE_CLASS_VFS, smbfs, "nsmb");
 
 VFS_PROTOS(smbfs);
 
@@ -78,31 +78,30 @@ static const struct vnodeopv_desc *smbfs_vnodeopv_descs[] = {
 };
 
 struct vfsops smbfs_vfsops = {
-	MOUNT_SMBFS,
-	sizeof (struct smbfs_args),
-	smbfs_mount,
-	smbfs_start,
-	smbfs_unmount,
-	smbfs_root,
-	(void *)eopnotsupp,	/* vfs_quotactl */
-	smbfs_statvfs,
-	smbfs_sync,
-	smbfs_vget,
-	(void *)eopnotsupp,	/* vfs_fhtovp */
-	(void *)eopnotsupp,	/* vfs_vptofh */
-	smbfs_init,
-	smbfs_reinit,
-	smbfs_done,
-	(int (*) (void)) eopnotsupp, /* mountroot */
-	(int (*)(struct mount *, struct vnode *, struct timespec *)) eopnotsupp,
-	vfs_stdextattrctl,
-	(void *)eopnotsupp,	/* vfs_suspendctl */
-	genfs_renamelock_enter,
-	genfs_renamelock_exit,
-	(void *)eopnotsupp,
-	smbfs_vnodeopv_descs,
-	0,			/* vfs_refcount */
-	{ NULL, NULL },
+	.vfs_name = MOUNT_SMBFS,
+	.vfs_min_mount_data = sizeof (struct smbfs_args),
+	.vfs_mount = smbfs_mount,
+	.vfs_start = smbfs_start,
+	.vfs_unmount = smbfs_unmount,
+	.vfs_root = smbfs_root,
+	.vfs_quotactl = (void *)eopnotsupp,
+	.vfs_statvfs = smbfs_statvfs,
+	.vfs_sync = smbfs_sync,
+	.vfs_vget = smbfs_vget,
+	.vfs_loadvnode = smbfs_loadvnode,
+	.vfs_fhtovp = (void *)eopnotsupp,
+	.vfs_vptofh = (void *)eopnotsupp,
+	.vfs_init = smbfs_init,
+	.vfs_reinit = smbfs_reinit,
+	.vfs_done = smbfs_done,
+	.vfs_mountroot = (void *)eopnotsupp,
+	.vfs_snapshot = (void *)eopnotsupp,
+	.vfs_extattrctl = vfs_stdextattrctl,
+	.vfs_suspendctl = (void *)eopnotsupp,
+	.vfs_renamelock_enter = genfs_renamelock_enter,
+	.vfs_renamelock_exit = genfs_renamelock_exit,
+	.vfs_fsync = (void *)eopnotsupp,
+	.vfs_opv_descs = smbfs_vnodeopv_descs
 };
 
 static int
@@ -116,11 +115,6 @@ smbfs_modcmd(modcmd_t cmd, void *arg)
 		error = vfs_attach(&smbfs_vfsops);
 		if (error != 0)
 			break;
-		sysctl_createv(&smbfs_sysctl_log, 0, NULL, NULL,
-			       CTLFLAG_PERMANENT,
-			       CTLTYPE_NODE, "vfs", NULL,
-			       NULL, 0, NULL, 0,
-			       CTL_VFS, CTL_EOL);
 		sysctl_createv(&smbfs_sysctl_log, 0, NULL, &smb,
 			       CTLFLAG_PERMANENT,
 			       CTLTYPE_NODE, "samba",
@@ -163,6 +157,8 @@ smbfs_mount(struct mount *mp, const char *path, void *data, size_t *data_len)
 	char *fromname;
 	int error;
 
+	if (args == NULL)
+		return EINVAL;
 	if (*data_len < sizeof *args)
 		return EINVAL;
 
@@ -210,10 +206,6 @@ smbfs_mount(struct mount *mp, const char *path, void *data, size_t *data_len)
 	smp = malloc(sizeof(*smp), M_SMBFSDATA, M_WAITOK|M_ZERO);
 	mp->mnt_data = smp;
 
-	smp->sm_hash = hashinit(desiredvnodes, HASH_LIST, true,
-	    &smp->sm_hashlen);
-
-	mutex_init(&smp->sm_hashlock, MUTEX_DEFAULT, IPL_NONE);
 	smp->sm_share = ssp;
 	smp->sm_root = NULL;
 	smp->sm_args = *args;
@@ -266,8 +258,6 @@ smbfs_unmount(struct mount *mp, int mntflags)
 	smb_share_put(smp->sm_share, &scred);
 	mp->mnt_data = NULL;
 
-	hashdone(smp->sm_hash, HASH_LIST, smp->sm_hashlen);
-	mutex_destroy(&smp->sm_hashlock);
 	free(smp, M_SMBFSDATA);
 	return 0;
 }
@@ -300,14 +290,12 @@ smbfs_setroot(struct mount *mp)
 	 * Someone might have already set sm_root while we slept
 	 * in smb_lookup or vnode allocation.
 	 */
-	if (smp->sm_root)
-		vput(vp);
-	else {
+	if (smp->sm_root) {
+		KASSERT(smp->sm_root == VTOSMB(vp));
+		vrele(vp);
+	} else {
 		vp->v_vflag |= VV_ROOT;
 		smp->sm_root = VTOSMB(vp);
-
-		/* Keep reference, but unlock */
-		VOP_UNLOCK(vp);
 	}
 
 	return (0);
@@ -405,51 +393,40 @@ smbfs_statvfs(struct mount *mp, struct statvfs *sbp)
 	return 0;
 }
 
+static bool
+smbfs_sync_selector(void *cl, struct vnode *vp)
+{
+	struct smbnode *np;
+
+	np = VTOSMB(vp);
+	if (np == NULL)
+		return false;
+
+	if ((vp->v_type == VNON || (np->n_flag & NMODIFIED) == 0) &&
+	     LIST_EMPTY(&vp->v_dirtyblkhd) &&
+	     UVM_OBJ_IS_CLEAN(&vp->v_uobj))
+		return false;
+
+	return true;
+}
+
 /*
  * Flush out the buffer cache
  */
 int
 smbfs_sync(struct mount *mp, int waitfor, kauth_cred_t cred)
 {
-	struct vnode *vp, *mvp;
-	struct smbnode *np;
+	struct vnode *vp;
+	struct vnode_iterator *marker;
 	int error, allerror = 0;
 
-	/* Allocate a marker vnode. */
-	mvp = vnalloc(mp);
-	/*
-	 * Force stale buffer cache information to be flushed.
-	 */
-	mutex_enter(&mntvnode_lock);
-loop:
-	for (vp = TAILQ_FIRST(&mp->mnt_vnodelist); vp; vp = vunmark(mvp)) {
-		vmark(mvp, vp);
-		/*
-		 * If the vnode that we are about to sync is no longer
-		 * associated with this mount point, start over.
-		 */
-		if (vp->v_mount != mp || vismarker(vp))
-			continue;
-		mutex_enter(vp->v_interlock);
-		np = VTOSMB(vp);
-		if (np == NULL) {
-			mutex_exit(vp->v_interlock);
-			continue;
-		}
-		if ((vp->v_type == VNON || (np->n_flag & NMODIFIED) == 0) &&
-		    LIST_EMPTY(&vp->v_dirtyblkhd) &&
-		     vp->v_uobj.uo_npages == 0) {
-			mutex_exit(vp->v_interlock);
-			continue;
-		}
-		mutex_exit(&mntvnode_lock);
-		error = vget(vp, LK_EXCLUSIVE | LK_NOWAIT);
+	vfs_vnode_iterator_init(mp, &marker);
+	while ((vp = vfs_vnode_iterator_next(marker, smbfs_sync_selector,
+	    NULL)))
+	{
+		error = vn_lock(vp, LK_EXCLUSIVE);
 		if (error) {
-			mutex_enter(&mntvnode_lock);
-			if (error == ENOENT) {
-				(void)vunmark(mvp);
-				goto loop;
-			}
+			vrele(vp);
 			continue;
 		}
 		error = VOP_FSYNC(vp, cred,
@@ -457,10 +434,8 @@ loop:
 		if (error)
 			allerror = error;
 		vput(vp);
-		mutex_enter(&mntvnode_lock);
 	}
-	mutex_exit(&mntvnode_lock);
-	vnfree(mvp);
+	vfs_vnode_iterator_destroy(marker);
 	return (allerror);
 }
 

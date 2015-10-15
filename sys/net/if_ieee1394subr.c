@@ -1,4 +1,4 @@
-/*	$NetBSD: if_ieee1394subr.c,v 1.45 2010/04/05 07:22:23 joerg Exp $	*/
+/*	$NetBSD: if_ieee1394subr.c,v 1.50 2015/08/24 22:21:26 pooka Exp $	*/
 
 /*
  * Copyright (c) 2000 The NetBSD Foundation, Inc.
@@ -30,9 +30,11 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_ieee1394subr.c,v 1.45 2010/04/05 07:22:23 joerg Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_ieee1394subr.c,v 1.50 2015/08/24 22:21:26 pooka Exp $");
 
+#ifdef _KERNEL_OPT
 #include "opt_inet.h"
+#endif
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -82,12 +84,11 @@ static struct mbuf *ieee1394_reass(struct ifnet *, struct mbuf *, uint16_t);
 
 static int
 ieee1394_output(struct ifnet *ifp, struct mbuf *m0, const struct sockaddr *dst,
-    struct rtentry *rt0)
+    struct rtentry *rt)
 {
 	uint16_t etype = 0;
 	struct mbuf *m;
 	int s, hdrlen, error = 0;
-	struct rtentry *rt;
 	struct mbuf *mcopy = NULL;
 	struct ieee1394_hwaddr *hwdst, baddr;
 	const struct ieee1394_hwaddr *myaddr;
@@ -100,40 +101,6 @@ ieee1394_output(struct ifnet *ifp, struct mbuf *m0, const struct sockaddr *dst,
 
 	if ((ifp->if_flags & (IFF_UP|IFF_RUNNING)) != (IFF_UP|IFF_RUNNING))
 		senderr(ENETDOWN);
-	if ((rt = rt0) != NULL) {
-		if ((rt->rt_flags & RTF_UP) == 0) {
-			if ((rt0 = rt = rtalloc1(dst, 1)) != NULL) {
-				rt->rt_refcnt--;
-				if (rt->rt_ifp != ifp)
-					return (*rt->rt_ifp->if_output)
-							(ifp, m0, dst, rt);
-			} else
-				senderr(EHOSTUNREACH);
-		}
-		if (rt->rt_flags & RTF_GATEWAY) {
-			if (rt->rt_gwroute == NULL)
-				goto lookup;
-			if (((rt = rt->rt_gwroute)->rt_flags & RTF_UP) == 0) {
-				rtfree(rt);
-				rt = rt0;
-  lookup:
-				rt->rt_gwroute = rtalloc1(rt->rt_gateway, 1);
-				if ((rt = rt->rt_gwroute) == NULL)
-					senderr(EHOSTUNREACH);
-				/* the "G" test below also prevents rt == rt0 */
-				if ((rt->rt_flags & RTF_GATEWAY) ||
-				    (rt->rt_ifp != ifp)) {
-					rt->rt_refcnt--;
-					rt0->rt_gwroute = NULL;
-					senderr(EHOSTUNREACH);
-				}
-			}
-		}
-		if (rt->rt_flags & RTF_REJECT)
-			if (rt->rt_rmx.rmx_expire == 0 ||
-			    time_second < rt->rt_rmx.rmx_expire)
-				senderr(rt == rt0 ? EHOSTDOWN : EHOSTUNREACH);
-	}
 
 	/*
 	 * If the queueing discipline needs packet classification,
@@ -356,10 +323,12 @@ ieee1394_fragment(struct ifnet *ifp, struct mbuf *m0, int maxsize,
 void
 ieee1394_input(struct ifnet *ifp, struct mbuf *m, uint16_t src)
 {
+	pktqueue_t *pktq = NULL;
 	struct ifqueue *inq;
 	uint16_t etype;
 	int s;
 	struct ieee1394_unfraghdr *iuh;
+	int isr = 0;
 
 	if ((ifp->if_flags & IFF_UP) == 0) {
 		m_freem(m);
@@ -407,20 +376,18 @@ ieee1394_input(struct ifnet *ifp, struct mbuf *m, uint16_t src)
 	switch (etype) {
 #ifdef INET
 	case ETHERTYPE_IP:
-		schednetisr(NETISR_IP);
-		inq = &ipintrq;
+		pktq = ip_pktq;
 		break;
 
 	case ETHERTYPE_ARP:
-		schednetisr(NETISR_ARP);
+		isr = NETISR_ARP;
 		inq = &arpintrq;
 		break;
 #endif /* INET */
 
 #ifdef INET6
 	case ETHERTYPE_IPV6:
-		schednetisr(NETISR_IPV6);
-		inq = &ip6intrq;
+		pktq = ip6_pktq;
 		break;
 #endif /* INET6 */
 
@@ -429,12 +396,21 @@ ieee1394_input(struct ifnet *ifp, struct mbuf *m, uint16_t src)
 		return;
 	}
 
+	if (__predict_true(pktq)) {
+		if (__predict_false(!pktq_enqueue(pktq, m, 0))) {
+			m_freem(m);
+		}
+		return;
+	}
+
 	s = splnet();
 	if (IF_QFULL(inq)) {
 		IF_DROP(inq);
 		m_freem(m);
-	} else
+	} else {
 		IF_ENQUEUE(inq, m);
+		schednetisr(isr);
+	}
 	splx(s);
 }
 
@@ -698,9 +674,6 @@ ieee1394_ifdetach(struct ifnet *ifp)
 	bpf_detach(ifp);
 	free(__UNCONST(ifp->if_broadcastaddr), M_DEVBUF);
 	ifp->if_broadcastaddr = NULL;
-#if 0	/* done in if_detach() */
-	if_free_sadl(ifp);
-#endif
 }
 
 int

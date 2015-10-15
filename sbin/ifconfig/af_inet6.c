@@ -1,4 +1,4 @@
-/*	$NetBSD: af_inet6.c,v 1.29 2013/10/19 15:50:26 christos Exp $	*/
+/*	$NetBSD: af_inet6.c,v 1.33 2015/05/12 14:05:29 roy Exp $	*/
 
 /*
  * Copyright (c) 1983, 1993
@@ -31,7 +31,7 @@
 
 #include <sys/cdefs.h>
 #ifndef lint
-__RCSID("$NetBSD: af_inet6.c,v 1.29 2013/10/19 15:50:26 christos Exp $");
+__RCSID("$NetBSD: af_inet6.c,v 1.33 2015/05/12 14:05:29 roy Exp $");
 #endif /* not lint */
 
 #include <sys/param.h> 
@@ -72,13 +72,13 @@ static int setia6vltime_impl(prop_dictionary_t, struct in6_aliasreq *);
 static int setia6lifetime(prop_dictionary_t, int64_t, time_t *, uint32_t *);
 
 static void in6_status(prop_dictionary_t, prop_dictionary_t, bool);
+static bool in6_addr_tentative(struct ifaddrs *ifa);
 
 static struct usage_func usage;
 static cmdloop_branch_t branch[2];
 
 static const struct kwinst ia6flagskw[] = {
 	  IFKW("anycast",	IN6_IFF_ANYCAST)
-	, IFKW("tentative",	IN6_IFF_TENTATIVE)
 	, IFKW("deprecated",	IN6_IFF_DEPRECATED)
 };
 
@@ -102,7 +102,8 @@ struct pkw inet6 = PKW_INITIALIZER(&inet6, "IPv6 keywords", NULL,
 
 static struct afswtch in6af = {
 	.af_name = "inet6", .af_af = AF_INET6, .af_status = in6_status,
-	.af_addr_commit = in6_commit_address
+	.af_addr_commit = in6_commit_address,
+	.af_addr_tentative = in6_addr_tentative
 };
 
 static int
@@ -331,6 +332,10 @@ in6_alias(const char *ifname, prop_dictionary_t env, prop_dictionary_t oenv,
 			printf(" detached");
 		if (ifr6.ifr_ifru.ifru_flags6 & IN6_IFF_DEPRECATED)
 			printf(" deprecated");
+		if (ifr6.ifr_ifru.ifru_flags6 & IN6_IFF_AUTOCONF)
+			printf(" autoconf");
+		if (ifr6.ifr_ifru.ifru_flags6 & IN6_IFF_TEMPORARY)
+			printf(" temporary");
 	}
 
 	if (scopeid)
@@ -471,12 +476,28 @@ in6_commit_address(prop_dictionary_t env, prop_dictionary_t oenv)
 	commit_address(env, oenv, &in6param);
 }
 
+static bool
+in6_addr_tentative(struct ifaddrs *ifa)
+{
+	int s;
+	struct in6_ifreq ifr;
+
+	if ((s = getsock(AF_INET6)) == -1)
+		err(EXIT_FAILURE, "%s: getsock", __func__);
+	memset(&ifr, 0, sizeof(ifr));
+	strncpy(ifr.ifr_name, ifa->ifa_name, sizeof(ifr.ifr_name));
+	ifr.ifr_addr = *(struct sockaddr_in6 *)ifa->ifa_addr;
+	if (prog_ioctl(s, SIOCGIFAFLAG_IN6, &ifr) == -1)
+		err(EXIT_FAILURE, "SIOCGIFAFLAG_IN6");
+	return ifr.ifr_ifru.ifru_flags6 & IN6_IFF_TENTATIVE ? true : false;
+}
+
 static void
 in6_usage(prop_dictionary_t env)
 {
 	fprintf(stderr,
 	    "\t[ anycast | -anycast ] [ deprecated | -deprecated ]\n"
-	    "\t[ tentative | -tentative ] [ pltime n ] [ vltime n ] "
+	    "\t[ pltime n ] [ vltime n ] "
 	    "[ eui64 ]\n");
 }
 

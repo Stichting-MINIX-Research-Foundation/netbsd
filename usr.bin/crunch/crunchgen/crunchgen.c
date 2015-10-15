@@ -1,4 +1,4 @@
-/*	$NetBSD: crunchgen.c,v 1.81 2013/06/10 18:27:30 joerg Exp $	*/
+/*	$NetBSD: crunchgen.c,v 1.83 2015/05/16 02:33:12 matt Exp $	*/
 /*
  * Copyright (c) 1994 University of Maryland
  * All Rights Reserved.
@@ -38,7 +38,7 @@
 
 #include <sys/cdefs.h>
 #if !defined(lint)
-__RCSID("$NetBSD: crunchgen.c,v 1.81 2013/06/10 18:27:30 joerg Exp $");
+__RCSID("$NetBSD: crunchgen.c,v 1.83 2015/05/16 02:33:12 matt Exp $");
 #endif
 
 #include <stdlib.h>
@@ -957,7 +957,7 @@ top_makefile_rules(FILE *outmk)
     fprintf(outmk, "\t@[ -f ${PROG}.unstripped -a ! ${PROG} -nt ${PROG}.unstripped ] || { \\\n");
     fprintf(outmk, "\t\t${_MKSHMSG:Uecho} \"  strip \" ${PROG}; \\\n");
     fprintf(outmk, "\t\tcp ${PROG} ${PROG}.unstripped && \\\n");
-    fprintf(outmk, "\t\t${OBJCOPY} -S -R .eh_frame -R .eh_frame_hdr -R .note -R .ident -R .comment -R .copyright ${PROG} && \\\n");
+    fprintf(outmk, "\t\t${OBJCOPY} -S -R .eh_frame -R .eh_frame_hdr -R .note -R .note.netbsd.mcmodel -R .note.netbsd.pax -R .ident -R .comment -R .copyright ${PROG} && \\\n");
     fprintf(outmk, "\t\ttouch ${PROG}.unstripped; \\\n");
     fprintf(outmk, "\t}\n");
     fprintf(outmk, "objs: $(SUBMAKE_TARGETS)\n");
@@ -1003,7 +1003,7 @@ prog_makefile_rules(FILE *outmk, prog_t *p)
 	    fprintf(outmk, "%s\\n", lst->str);
 	fprintf(outmk, "'\\\n");
 #define MAKECMD \
-    "\t| ${MAKE} -f- CRUNCHEDPROG=1 DBG=\"${DBG}\" LDSTATIC=\"${LDSTATIC}\" "
+    "\t| ${MAKE} -f- CRUNCHEDPROG=1 DBG=${DBG:Q} LDSTATIC=${LDSTATIC:Q} "
 	fprintf(outmk, MAKECMD "depend");
 	fprintf(outmk, " )\n");
 	fprintf(outmk, "\t( cd %s; printf '.PATH: ${%s_SRCDIR}\\n"

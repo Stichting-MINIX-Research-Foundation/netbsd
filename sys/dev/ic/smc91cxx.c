@@ -1,4 +1,4 @@
-/*	$NetBSD: smc91cxx.c,v 1.86 2013/09/08 14:27:39 chs Exp $	*/
+/*	$NetBSD: smc91cxx.c,v 1.90 2015/08/30 04:11:40 dholland Exp $	*/
 
 /*-
  * Copyright (c) 1997 The NetBSD Foundation, Inc.
@@ -71,7 +71,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: smc91cxx.c,v 1.86 2013/09/08 14:27:39 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: smc91cxx.c,v 1.90 2015/08/30 04:11:40 dholland Exp $");
 
 #include "opt_inet.h"
 
@@ -85,7 +85,7 @@ __KERNEL_RCSID(0, "$NetBSD: smc91cxx.c,v 1.86 2013/09/08 14:27:39 chs Exp $");
 #include <sys/malloc.h>
 #include <sys/ioctl.h>
 #include <sys/errno.h>
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 
 #include <sys/bus.h>
 #include <sys/intr.h>
@@ -331,6 +331,7 @@ smc91cxx_attach(struct smc91cxx_softc *sc, u_int8_t *myea)
 		 * even if the PHY does.
 		 */
 		miicapabilities &= ~(BMSR_100TXFDX | BMSR_10TFDX);
+		/*FALLTHROUGH*/
 	case CHIP_91100FD:
 	case CHIP_91C111:
 		if (tmp & CR_MII_SELECT) {
@@ -376,7 +377,7 @@ smc91cxx_attach(struct smc91cxx_softc *sc, u_int8_t *myea)
 	}
 
 	rnd_attach_source(&sc->rnd_source, device_xname(sc->sc_dev),
-			  RND_TYPE_NET, 0);
+			  RND_TYPE_NET, RND_FLAG_DEFAULT);
 
 	callout_init(&sc->sc_mii_callout, 0);
 
@@ -523,8 +524,11 @@ smc91cxx_init(struct smc91cxx_softc *sc)
 	sc->sc_txpacketno = ARR_FAILED;
 	for (;;) {
 		tmp = bus_space_read_2(bst, bsh, MMU_CMD_REG_W);
-		if (tmp == 0xffff)	/* card went away! */
+		if (tmp == 0xffff) {
+			/* card went away! */
+			splx(s);
 			return;
+		}
 		if ((tmp & MMUCR_BUSY) == 0)
 			break;
 	}

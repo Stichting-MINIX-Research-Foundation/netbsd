@@ -1,14 +1,14 @@
-#	$NetBSD: Makefile,v 1.16 2012/08/14 07:24:40 martin Exp $
+#	$NetBSD: Makefile,v 1.19 2015/01/16 22:37:58 joerg Exp $
 
 .include <bsd.own.mk>
 .include "${NETBSDSRCDIR}/distrib/common/Makefile.distrib"
 
 IMAGE=		ramdisk.fs
-IMAGESIZE=	2880k
+IMAGESIZE=	3200k
 MAKEFS_FLAGS=	-f 15
 
 WARNS=		1
-DBG=		-Os -mmultiple -mno-string -fno-pie -fno-pic
+DBG=		-Os
 
 CRUNCHBIN=	ramdiskbin
 CRUNCHGEN_FLAGS=-d "${DBG}"
@@ -22,7 +22,7 @@ IMAGEDEPENDS=	${CRUNCHBIN} \
 		${NETBSDSRCDIR}/etc/netconfig ${DISTRIBDIR}/common/protocols \
 		${DISTRIBDIR}/common/services
 MAKEDEVTARGETS=	std md0 wd0 wd1 wd2 wd3 cd0 cd1 sd0 sd1 sd2 sd3 st0 ipty
-MAKEDEVTARGETS+= ld0 ld1
+MAKEDEVTARGETS+= ld0 ld1 bpf
 MAKEDEVTARGETS+= drvctl dk0 dk1 dk2 dk3
 MAKEDEVTARGETS+= flash0 flash1 flash2 flash3 flash4 flash5 flash6 flash7
 
@@ -32,6 +32,7 @@ HACKSRC=	${DISTRIBDIR}/utils/libhack
 ${CRUNCHBIN}:	libhack.o
 
 .include "${DISTRIBDIR}/common/Makefile.crunch"
+.include "${DISTRIBDIR}/common/Makefile.dhcpcd"
 .include "${DISTRIBDIR}/common/Makefile.makedev"
 .include "${DISTRIBDIR}/common/Makefile.image"
 

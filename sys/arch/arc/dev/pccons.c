@@ -1,4 +1,4 @@
-/*	$NetBSD: pccons.c,v 1.59 2011/07/01 19:25:41 dyoung Exp $	*/
+/*	$NetBSD: pccons.c,v 1.62 2014/10/18 08:33:24 snj Exp $	*/
 /*	$OpenBSD: pccons.c,v 1.22 1999/01/30 22:39:37 imp Exp $	*/
 /*	NetBSD: pccons.c,v 1.89 1995/05/04 19:35:20 cgd Exp	*/
 
@@ -80,7 +80,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: pccons.c,v 1.59 2011/07/01 19:25:41 dyoung Exp $");
+__KERNEL_RCSID(0, "$NetBSD: pccons.c,v 1.62 2014/10/18 08:33:24 snj Exp $");
 
 #include "opt_ddb.h"
 
@@ -186,8 +186,18 @@ dev_type_poll(pcpoll);
 dev_type_mmap(pcmmap);
 
 const struct cdevsw pc_cdevsw = {
-	pcopen, pcclose, pcread, pcwrite, pcioctl,
-	nostop, pctty, pcpoll, pcmmap, ttykqfilter, D_TTY
+	.d_open = pcopen,
+	.d_close = pcclose,
+	.d_read = pcread,
+	.d_write = pcwrite,
+	.d_ioctl = pcioctl,
+	.d_stop = nostop,
+	.d_tty = pctty,
+	.d_poll = pcpoll,
+	.d_mmap = pcmmap,
+	.d_kqfilter = ttykqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_TTY
 };
 
 #define	CHR		2
@@ -429,7 +439,7 @@ get_cursor_shape(void)
 	/*
 	 * real 6845's, as found on, MDA, Hercules or CGA cards, do
 	 * not support reading the cursor shape registers. the 6845
-	 * tri-states it's data bus. This is _normally_ read by the
+	 * tri-states its data bus. This is _normally_ read by the
 	 * CPU as either 0x00 or 0xff.. in which case we just use
 	 * a line cursor.
 	 */

@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -40,9 +40,6 @@
  * IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGES.
  */
-
-
-#define __EVRGNINI_C__
 
 #include "acpi.h"
 #include "accommon.h"
@@ -389,8 +386,8 @@ AcpiEvIsPciRootBridge (
     ACPI_NAMESPACE_NODE     *Node)
 {
     ACPI_STATUS             Status;
-    ACPI_DEVICE_ID          *Hid;
-    ACPI_DEVICE_ID_LIST     *Cid;
+    ACPI_PNP_DEVICE_ID      *Hid;
+    ACPI_PNP_DEVICE_ID_LIST *Cid;
     UINT32                  i;
     BOOLEAN                 Match;
 
@@ -664,7 +661,9 @@ AcpiEvInitializeRegion (
                 break;
 
             default:
+
                 /* Ignore other objects */
+
                 break;
             }
 
@@ -729,4 +728,3 @@ AcpiEvInitializeRegion (
 
     return_ACPI_STATUS (AE_NOT_EXIST);
 }
-

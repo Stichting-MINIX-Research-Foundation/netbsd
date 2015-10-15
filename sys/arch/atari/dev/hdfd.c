@@ -1,4 +1,4 @@
-/*	$NetBSD: hdfd.c,v 1.75 2011/07/01 20:34:05 dyoung Exp $	*/
+/*	$NetBSD: hdfd.c,v 1.81 2015/04/26 15:15:19 mlelstv Exp $	*/
 
 /*-
  * Copyright (c) 1996 Leo Weppelman
@@ -91,7 +91,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: hdfd.c,v 1.75 2011/07/01 20:34:05 dyoung Exp $");
+__KERNEL_RCSID(0, "$NetBSD: hdfd.c,v 1.81 2015/04/26 15:15:19 mlelstv Exp $");
 
 #include "opt_ddb.h"
 
@@ -286,17 +286,36 @@ CFATTACH_DECL_NEW(hdfd, sizeof(struct fd_softc),
     fdprobe, fdattach, NULL, NULL);
 
 const struct bdevsw fd_bdevsw = {
-	fdopen, fdclose, fdstrategy, fdioctl, nodump, nosize, D_DISK
+	.d_open = fdopen,
+	.d_close = fdclose,
+	.d_strategy = fdstrategy,
+	.d_ioctl = fdioctl,
+	.d_dump = nodump,
+	.d_psize = nosize,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
 const struct cdevsw fd_cdevsw = {
-	fdopen, fdclose, fdread, fdwrite, fdioctl,
-	nostop, notty, nopoll, nommap, nokqfilter, D_DISK
+	.d_open = fdopen,
+	.d_close = fdclose,
+	.d_read = fdread,
+	.d_write = fdwrite,
+	.d_ioctl = fdioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
 void	fdstart(struct fd_softc *);
 
-struct dkdriver fddkdriver = { fdstrategy };
+struct dkdriver fddkdriver = {
+	.d_strategy = fdstrategy
+};
 
 void	fd_set_motor(struct fdc_softc *, int);
 void	fd_motor_off(void *);
@@ -1287,17 +1306,16 @@ fdioctl(dev_t dev, u_long cmd, void *addr, int flag, struct lwp *l)
 
 	switch (cmd) {
 	case DIOCGDINFO:
-		fdgetdisklabel(fd, dev);
-		*(struct disklabel *)addr = *(fd->sc_dk.dk_label);
-		return 0;
-
 	case DIOCGPART:
 		fdgetdisklabel(fd, dev);
-		((struct partinfo *)addr)->disklab = fd->sc_dk.dk_label;
-		((struct partinfo *)addr)->part =
-			      &fd->sc_dk.dk_label->d_partitions[RAW_PART];
-		return 0;
+		break;
+	}
 
+	error = disk_ioctl(&fd->sc_dk, RAW_PART, cmd, addr, flag, l);
+	if (error != EPASSTHROUGH)
+		return error;
+
+	switch (cmd) {
 	case DIOCWLABEL:
 		if ((flag & FWRITE) == 0)
 			return EBADF;
@@ -1532,7 +1550,7 @@ fdgetdisklabel(struct fd_softc *fd, dev_t dev)
 	memset(&cpulab, 0, sizeof(cpulab));
 
 	lp->d_secpercyl  = fd->sc_type->seccyl;
-	lp->d_type       = DTYPE_FLOPPY;
+	lp->d_type       = DKTYPE_FLOPPY;
 	lp->d_secsize    = FDC_BSIZE;
 	lp->d_secperunit = fd->sc_type->size;
 
@@ -1551,7 +1569,7 @@ fdgetdisklabel(struct fd_softc *fd, dev_t dev)
 		 *	sounds!
 		 */
 		lp->d_secpercyl  = fd->sc_type->seccyl;
-		lp->d_type       = DTYPE_FLOPPY;
+		lp->d_type       = DKTYPE_FLOPPY;
 		lp->d_secsize    = FDC_BSIZE;
 		lp->d_secperunit = fd->sc_type->size;
 	}
@@ -1573,7 +1591,7 @@ fdgetdefaultlabel(struct fd_softc *fd, struct disklabel *lp, int part)
 	lp->d_ncylinders  = fd->sc_type->size / lp->d_secpercyl;
 	lp->d_secperunit  = fd->sc_type->size;
 
-	lp->d_type        = DTYPE_FLOPPY;
+	lp->d_type        = DKTYPE_FLOPPY;
 	lp->d_rpm         = 300; 	/* good guess I suppose.	*/
 	lp->d_interleave  = 1;		/* FIXME: is this OK?		*/
 	lp->d_bbsize      = 0;

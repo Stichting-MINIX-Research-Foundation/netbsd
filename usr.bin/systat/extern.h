@@ -1,4 +1,4 @@
-/*	$NetBSD: extern.h,v 1.42 2012/01/06 14:08:08 drochner Exp $	*/
+/*	$NetBSD: extern.h,v 1.44 2015/08/23 18:33:15 mrg Exp $	*/
 
 /*-
  * Copyright (c) 1991, 1993
@@ -60,7 +60,6 @@ extern char	*memf;
 extern int	allflag;
 extern int	turns;
 extern gid_t	egid;
-extern int	use_sysctl;
 
 struct inpcb;
 #ifdef INET6
@@ -94,6 +93,7 @@ void	 disks_remove(char *);
 void	 disks_drives(char *);
 void	 display(int);
 void	 error(const char *, ...) __printflike(1, 2);
+void	 clearerror(void);
 void	 fetchbufcache(void);
 void	 fetchdf(void);
 void	 fetchicmp(void);

@@ -1,4 +1,4 @@
-/*	$NetBSD: npfctl.h,v 1.34 2013/11/08 00:38:26 rmind Exp $	*/
+/*	$NetBSD: npfctl.h,v 1.39 2014/12/26 22:44:54 christos Exp $	*/
 
 /*-
  * Copyright (c) 2009-2013 The NetBSD Foundation, Inc.
@@ -48,7 +48,7 @@
 
 #define	NPF_DEV_PATH	"/dev/npf"
 #define	NPF_CONF_PATH	"/etc/npf.conf"
-#define	NPF_SESSDB_PATH	"/var/db/npf_sessions.db"
+#define	NPF_DB_PATH	"/var/db/npf.db"
 
 typedef struct fam_addr_mask {
 	sa_family_t	fam_family;
@@ -106,13 +106,14 @@ enum { NPFCTL_PARSE_FILE, NPFCTL_PARSE_STRING };
 
 bool		join(char *, size_t, int, char **, const char *);
 void		yyerror(const char *, ...) __printflike(1, 2) __dead;
+void		npfctl_bpfjit(bool);
 void		npfctl_parse_file(const char *);
 void		npfctl_parse_string(const char *);
 
 void		npfctl_print_error(const nl_error_t *);
 char *		npfctl_print_addrmask(int, const npf_addr_t *, npf_netmask_t);
 void		npfctl_note_interface(const char *);
-bool		npfctl_table_exists_p(const char *);
+unsigned	npfctl_table_getid(const char *);
 int		npfctl_protono(const char *);
 in_port_t	npfctl_portno(const char *);
 uint8_t		npfctl_icmpcode(int, uint8_t, const char *);
@@ -126,6 +127,8 @@ npfvar_t *	npfctl_parse_port_range_variable(const char *);
 npfvar_t *	npfctl_parse_fam_addr_mask(const char *, const char *,
 		    unsigned long *);
 bool		npfctl_parse_cidr(char *, fam_addr_mask_t *, int *);
+uint16_t	npfctl_npt66_calcadj(npf_netmask_t, const npf_addr_t *,
+		    const npf_addr_t *);
 
 /*
  * NPF extension loading.
@@ -164,7 +167,7 @@ void		npfctl_bpf_proto(npf_bpf_t *, sa_family_t, int);
 void		npfctl_bpf_cidr(npf_bpf_t *, u_int, sa_family_t,
 		    const npf_addr_t *, const npf_netmask_t);
 void		npfctl_bpf_ports(npf_bpf_t *, u_int, in_port_t, in_port_t);
-void		npfctl_bpf_tcpfl(npf_bpf_t *, uint8_t, uint8_t);
+void		npfctl_bpf_tcpfl(npf_bpf_t *, uint8_t, uint8_t, bool);
 void		npfctl_bpf_icmp(npf_bpf_t *, int, int);
 void		npfctl_bpf_table(npf_bpf_t *, u_int, u_int);
 
@@ -193,7 +196,7 @@ void		npfctl_build_rule(uint32_t, const char *, sa_family_t,
 		    const char *, const char *);
 void		npfctl_build_natseg(int, int, const char *,
 		    const addr_port_t *, const addr_port_t *,
-		    const filt_opts_t *);
+		    const filt_opts_t *, unsigned);
 void		npfctl_build_maprset(const char *, int, const char *);
 void		npfctl_build_table(const char *, u_int, const char *);
 

@@ -1,4 +1,3 @@
-
 /******************************************************************************
  *
  * Module Name: exmisc - ACPI AML (p-code) execution - specific opcodes
@@ -6,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -41,8 +40,6 @@
  * IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGES.
  */
-
-#define __EXMISC_C__
 
 #include "acpi.h"
 #include "accommon.h"
@@ -116,15 +113,12 @@ AcpiExGetObjectReference (
         }
         break;
 
-
     case ACPI_DESC_TYPE_NAMED:
-
         /*
          * A named reference that has already been resolved to a Node
          */
         ReferencedObj = ObjDesc;
         break;
-
 
     default:
 
@@ -231,8 +225,8 @@ AcpiExConcatTemplate (
      * EndTag descriptor is copied from Operand1.
      */
     NewBuf = ReturnDesc->Buffer.Pointer;
-    ACPI_MEMCPY (NewBuf, Operand0->Buffer.Pointer, Length0);
-    ACPI_MEMCPY (NewBuf + Length0, Operand1->Buffer.Pointer, Length1);
+    memcpy (NewBuf, Operand0->Buffer.Pointer, Length0);
+    memcpy (NewBuf + Length0, Operand1->Buffer.Pointer, Length1);
 
     /* Insert EndTag and set the checksum to zero, means "ignore checksum" */
 
@@ -278,7 +272,7 @@ AcpiExDoConcatenate (
 
 
     /*
-     * Convert the second operand if necessary.  The first operand
+     * Convert the second operand if necessary. The first operand
      * determines the type of the second operand, (See the Data Types
      * section of the ACPI specification.)  Both object types are
      * guaranteed to be either Integer/String/Buffer by the operand
@@ -287,19 +281,23 @@ AcpiExDoConcatenate (
     switch (Operand0->Common.Type)
     {
     case ACPI_TYPE_INTEGER:
+
         Status = AcpiExConvertToInteger (Operand1, &LocalOperand1, 16);
         break;
 
     case ACPI_TYPE_STRING:
+
         Status = AcpiExConvertToString (Operand1, &LocalOperand1,
                     ACPI_IMPLICIT_CONVERT_HEX);
         break;
 
     case ACPI_TYPE_BUFFER:
+
         Status = AcpiExConvertToBuffer (Operand1, &LocalOperand1);
         break;
 
     default:
+
         ACPI_ERROR ((AE_INFO, "Invalid object type: 0x%X",
             Operand0->Common.Type));
         Status = AE_AML_INTERNAL;
@@ -342,12 +340,12 @@ AcpiExDoConcatenate (
 
         /* Copy the first integer, LSB first */
 
-        ACPI_MEMCPY (NewBuf, &Operand0->Integer.Value,
+        memcpy (NewBuf, &Operand0->Integer.Value,
                         AcpiGbl_IntegerByteWidth);
 
         /* Copy the second integer (LSB first) after the first */
 
-        ACPI_MEMCPY (NewBuf + AcpiGbl_IntegerByteWidth,
+        memcpy (NewBuf + AcpiGbl_IntegerByteWidth,
                         &LocalOperand1->Integer.Value,
                         AcpiGbl_IntegerByteWidth);
         break;
@@ -369,8 +367,8 @@ AcpiExDoConcatenate (
 
         /* Concatenate the strings */
 
-        ACPI_STRCPY (NewBuf, Operand0->String.Pointer);
-        ACPI_STRCPY (NewBuf + Operand0->String.Length,
+        strcpy (NewBuf, Operand0->String.Pointer);
+        strcpy (NewBuf + Operand0->String.Length,
                         LocalOperand1->String.Pointer);
         break;
 
@@ -391,9 +389,9 @@ AcpiExDoConcatenate (
 
         /* Concatenate the buffers */
 
-        ACPI_MEMCPY (NewBuf, Operand0->Buffer.Pointer,
+        memcpy (NewBuf, Operand0->Buffer.Pointer,
                         Operand0->Buffer.Length);
-        ACPI_MEMCPY (NewBuf + Operand0->Buffer.Length,
+        memcpy (NewBuf + Operand0->Buffer.Length,
                         LocalOperand1->Buffer.Pointer,
                         LocalOperand1->Buffer.Length);
         break;
@@ -451,36 +449,29 @@ AcpiExDoMathOp (
 
         return (Integer0 + Integer1);
 
-
     case AML_BIT_AND_OP:            /* And (Integer0, Integer1, Result) */
 
         return (Integer0 & Integer1);
-
 
     case AML_BIT_NAND_OP:           /* NAnd (Integer0, Integer1, Result) */
 
         return (~(Integer0 & Integer1));
 
-
     case AML_BIT_OR_OP:             /* Or (Integer0, Integer1, Result) */
 
         return (Integer0 | Integer1);
-
 
     case AML_BIT_NOR_OP:            /* NOr (Integer0, Integer1, Result) */
 
         return (~(Integer0 | Integer1));
 
-
     case AML_BIT_XOR_OP:            /* XOr (Integer0, Integer1, Result) */
 
         return (Integer0 ^ Integer1);
 
-
     case AML_MULTIPLY_OP:           /* Multiply (Integer0, Integer1, Result) */
 
         return (Integer0 * Integer1);
-
 
     case AML_SHIFT_LEFT_OP:         /* ShiftLeft (Operand, ShiftCount, Result)*/
 
@@ -494,7 +485,6 @@ AcpiExDoMathOp (
         }
         return (Integer0 << Integer1);
 
-
     case AML_SHIFT_RIGHT_OP:        /* ShiftRight (Operand, ShiftCount, Result) */
 
         /*
@@ -506,7 +496,6 @@ AcpiExDoMathOp (
             return (0);
         }
         return (Integer0 >> Integer1);
-
 
     case AML_SUBTRACT_OP:           /* Subtract (Integer0, Integer1, Result) */
 
@@ -572,6 +561,7 @@ AcpiExDoLogicalNumericOp (
         break;
 
     default:
+
         Status = AE_AML_INTERNAL;
         break;
     }
@@ -630,7 +620,7 @@ AcpiExDoLogicalOp (
 
 
     /*
-     * Convert the second operand if necessary.  The first operand
+     * Convert the second operand if necessary. The first operand
      * determines the type of the second operand, (See the Data Types
      * section of the ACPI 3.0+ specification.)  Both object types are
      * guaranteed to be either Integer/String/Buffer by the operand
@@ -639,19 +629,23 @@ AcpiExDoLogicalOp (
     switch (Operand0->Common.Type)
     {
     case ACPI_TYPE_INTEGER:
+
         Status = AcpiExConvertToInteger (Operand1, &LocalOperand1, 16);
         break;
 
     case ACPI_TYPE_STRING:
+
         Status = AcpiExConvertToString (Operand1, &LocalOperand1,
                     ACPI_IMPLICIT_CONVERT_HEX);
         break;
 
     case ACPI_TYPE_BUFFER:
+
         Status = AcpiExConvertToBuffer (Operand1, &LocalOperand1);
         break;
 
     default:
+
         Status = AE_AML_INTERNAL;
         break;
     }
@@ -700,6 +694,7 @@ AcpiExDoLogicalOp (
             break;
 
         default:
+
             Status = AE_AML_INTERNAL;
             break;
         }
@@ -717,7 +712,7 @@ AcpiExDoLogicalOp (
 
         /* Lexicographic compare: compare the data bytes */
 
-        Compare = ACPI_MEMCMP (Operand0->Buffer.Pointer,
+        Compare = memcmp (Operand0->Buffer.Pointer,
                     LocalOperand1->Buffer.Pointer,
                     (Length0 > Length1) ? Length1 : Length0);
 
@@ -777,6 +772,7 @@ AcpiExDoLogicalOp (
             break;
 
         default:
+
             Status = AE_AML_INTERNAL;
             break;
         }
@@ -796,5 +792,3 @@ Cleanup:
     *LogicalResult = LocalResult;
     return_ACPI_STATUS (Status);
 }
-
-

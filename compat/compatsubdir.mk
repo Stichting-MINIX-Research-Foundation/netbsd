@@ -1,4 +1,4 @@
-#	$NetBSD: compatsubdir.mk,v 1.8 2012/08/17 16:22:27 joerg Exp $
+#	$NetBSD: compatsubdir.mk,v 1.13 2015/07/23 08:03:25 mrg Exp $
 
 # Build netbsd libraries.
 
@@ -25,7 +25,15 @@ SUBDIR=	${BOOTSTRAP_SUBDIRS}
 .else
 SUBDIR= ../../../lib .WAIT \
 	../../../libexec/ld.elf_so
+.if ${MKCOMPATTESTS} != "no"
+SUBDIR+= ../../../tests
+SUBDIR+= ../../../tests/share		# because MKSHARE=no above
+SUBDIR+= ../../../external/bsd/atf/tests
 .endif
+.if ${MKCOMPATX11} != no && ${MKX11} != no && make(obj)
+SUBDIR+= ../../../external/mit/xorg/lib
+.endif # } MKX11
+.endif # } BOOTSTRAP_SUBDIRS
 
 .include <bsd.subdir.mk>
 

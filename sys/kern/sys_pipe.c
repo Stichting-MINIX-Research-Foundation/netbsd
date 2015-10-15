@@ -1,4 +1,4 @@
-/*	$NetBSD: sys_pipe.c,v 1.137 2013/06/28 01:21:06 matt Exp $	*/
+/*	$NetBSD: sys_pipe.c,v 1.140 2014/09/05 09:20:59 matt Exp $	*/
 
 /*-
  * Copyright (c) 2003, 2007, 2008, 2009 The NetBSD Foundation, Inc.
@@ -68,7 +68,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: sys_pipe.c,v 1.137 2013/06/28 01:21:06 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: sys_pipe.c,v 1.140 2014/09/05 09:20:59 matt Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -161,7 +161,7 @@ static u_int	amountpipekva = 0;
 static void	pipeclose(struct pipe *);
 static void	pipe_free_kmem(struct pipe *);
 static int	pipe_create(struct pipe **, pool_cache_t);
-static int	pipelock(struct pipe *, int);
+static int	pipelock(struct pipe *, bool);
 static inline void pipeunlock(struct pipe *);
 static void	pipeselwakeup(struct pipe *, struct pipe *, int);
 #ifndef PIPE_NODIRECT
@@ -275,13 +275,13 @@ pipe1(struct lwp *l, register_t *retval, int flags)
 
 	rf->f_flag = FREAD | flags;
 	rf->f_type = DTYPE_PIPE;
-	rf->f_data = (void *)rpipe;
+	rf->f_pipe = rpipe;
 	rf->f_ops = &pipeops;
 	fd_set_exclose(l, (int)retval[0], (flags & O_CLOEXEC) != 0);
 
 	wf->f_flag = FWRITE | flags;
 	wf->f_type = DTYPE_PIPE;
-	wf->f_data = (void *)wpipe;
+	wf->f_pipe = wpipe;
 	wf->f_ops = &pipeops;
 	fd_set_exclose(l, (int)retval[1], (flags & O_CLOEXEC) != 0);
 
@@ -368,7 +368,7 @@ pipe_create(struct pipe **pipep, pool_cache_t cache)
  * Called with pipe spin lock held.
  */
 static int
-pipelock(struct pipe *pipe, int catch)
+pipelock(struct pipe *pipe, bool catch_p)
 {
 	int error;
 
@@ -376,7 +376,7 @@ pipelock(struct pipe *pipe, int catch)
 
 	while (pipe->pipe_state & PIPE_LOCKFL) {
 		pipe->pipe_state |= PIPE_LWANT;
-		if (catch) {
+		if (catch_p) {
 			error = cv_wait_sig(&pipe->pipe_lkcv, pipe->pipe_lock);
 			if (error != 0)
 				return error;
@@ -447,7 +447,7 @@ static int
 pipe_read(file_t *fp, off_t *offset, struct uio *uio, kauth_cred_t cred,
     int flags)
 {
-	struct pipe *rpipe = (struct pipe *) fp->f_data;
+	struct pipe *rpipe = fp->f_pipe;
 	struct pipebuf *bp = &rpipe->pipe_buffer;
 	kmutex_t *lock = rpipe->pipe_lock;
 	int error;
@@ -461,7 +461,7 @@ pipe_read(file_t *fp, off_t *offset, struct uio *uio, kauth_cred_t cred,
 	ocnt = bp->cnt;
 
 again:
-	error = pipelock(rpipe, 1);
+	error = pipelock(rpipe, true);
 	if (error)
 		goto unlocked_error;
 
@@ -785,7 +785,7 @@ pipe_direct_write(file_t *fp, struct pipe *wpipe, struct uio *uio)
 	wpipe->pipe_state &= ~(PIPE_DIRECTW | PIPE_DIRECTR);
 
 	/* Acquire the pipe lock and cleanup */
-	(void)pipelock(wpipe, 0);
+	(void)pipelock(wpipe, false);
 	mutex_exit(lock);
 
 	if (pgs != NULL) {
@@ -839,7 +839,7 @@ pipe_write(file_t *fp, off_t *offset, struct uio *uio, kauth_cred_t cred,
 	unsigned int wakeup_state = 0;
 
 	/* We want to write to our peer */
-	rpipe = (struct pipe *) fp->f_data;
+	rpipe = fp->f_pipe;
 	lock = rpipe->pipe_lock;
 	error = 0;
 
@@ -856,7 +856,7 @@ pipe_write(file_t *fp, off_t *offset, struct uio *uio, kauth_cred_t cred,
 	++wpipe->pipe_busy;
 
 	/* Aquire the long-term pipe lock */
-	if ((error = pipelock(wpipe, 1)) != 0) {
+	if ((error = pipelock(wpipe, true)) != 0) {
 		--wpipe->pipe_busy;
 		if (wpipe->pipe_busy == 0) {
 			wpipe->pipe_state &= ~PIPE_RESTART;
@@ -898,7 +898,7 @@ pipe_write(file_t *fp, off_t *offset, struct uio *uio, kauth_cred_t cred,
 			cv_broadcast(&wpipe->pipe_rcv);
 			pipeunlock(wpipe);
 			error = cv_wait_sig(&wpipe->pipe_wcv, lock);
-			(void)pipelock(wpipe, 0);
+			(void)pipelock(wpipe, false);
 			if (wpipe->pipe_state & PIPE_EOF)
 				error = EPIPE;
 		}
@@ -1019,7 +1019,7 @@ pipe_write(file_t *fp, off_t *offset, struct uio *uio, kauth_cred_t cred,
 
 			pipeunlock(wpipe);
 			error = cv_wait_sig(&wpipe->pipe_wcv, lock);
-			(void)pipelock(wpipe, 0);
+			(void)pipelock(wpipe, false);
 			if (error != 0)
 				break;
 			/*
@@ -1076,7 +1076,7 @@ pipe_write(file_t *fp, off_t *offset, struct uio *uio, kauth_cred_t cred,
 int
 pipe_ioctl(file_t *fp, u_long cmd, void *data)
 {
-	struct pipe *pipe = fp->f_data;
+	struct pipe *pipe = fp->f_pipe;
 	kmutex_t *lock = pipe->pipe_lock;
 
 	switch (cmd) {
@@ -1152,7 +1152,7 @@ pipe_ioctl(file_t *fp, u_long cmd, void *data)
 int
 pipe_poll(file_t *fp, int events)
 {
-	struct pipe *rpipe = fp->f_data;
+	struct pipe *rpipe = fp->f_pipe;
 	struct pipe *wpipe;
 	int eof = 0;
 	int revents = 0;
@@ -1202,7 +1202,7 @@ pipe_poll(file_t *fp, int events)
 static int
 pipe_stat(file_t *fp, struct stat *ub)
 {
-	struct pipe *pipe = fp->f_data;
+	struct pipe *pipe = fp->f_pipe;
 
 	mutex_enter(pipe->pipe_lock);
 	memset(ub, 0, sizeof(*ub));
@@ -1229,9 +1229,9 @@ pipe_stat(file_t *fp, struct stat *ub)
 static int
 pipe_close(file_t *fp)
 {
-	struct pipe *pipe = fp->f_data;
+	struct pipe *pipe = fp->f_pipe;
 
-	fp->f_data = NULL;
+	fp->f_pipe = NULL;
 	pipeclose(pipe);
 	return (0);
 }
@@ -1239,7 +1239,7 @@ pipe_close(file_t *fp)
 static void
 pipe_restart(file_t *fp)
 {
-	struct pipe *pipe = fp->f_data;
+	struct pipe *pipe = fp->f_pipe;
 
 	/*
 	 * Unblock blocked reads/writes in order to allow close() to complete.
@@ -1360,7 +1360,7 @@ filt_pipedetach(struct knote *kn)
 	struct pipe *pipe;
 	kmutex_t *lock;
 
-	pipe = ((file_t *)kn->kn_obj)->f_data;
+	pipe = ((file_t *)kn->kn_obj)->f_pipe;
 	lock = pipe->pipe_lock;
 
 	mutex_enter(lock);
@@ -1390,7 +1390,7 @@ filt_pipedetach(struct knote *kn)
 static int
 filt_piperead(struct knote *kn, long hint)
 {
-	struct pipe *rpipe = ((file_t *)kn->kn_obj)->f_data;
+	struct pipe *rpipe = ((file_t *)kn->kn_obj)->f_pipe;
 	struct pipe *wpipe;
 
 	if ((hint & NOTE_SUBMIT) == 0) {
@@ -1420,7 +1420,7 @@ filt_piperead(struct knote *kn, long hint)
 static int
 filt_pipewrite(struct knote *kn, long hint)
 {
-	struct pipe *rpipe = ((file_t *)kn->kn_obj)->f_data;
+	struct pipe *rpipe = ((file_t *)kn->kn_obj)->f_pipe;
 	struct pipe *wpipe;
 
 	if ((hint & NOTE_SUBMIT) == 0) {
@@ -1457,7 +1457,7 @@ pipe_kqfilter(file_t *fp, struct knote *kn)
 	struct pipe *pipe;
 	kmutex_t *lock;
 
-	pipe = ((file_t *)kn->kn_obj)->f_data;
+	pipe = ((file_t *)kn->kn_obj)->f_pipe;
 	lock = pipe->pipe_lock;
 
 	mutex_enter(lock);
@@ -1493,11 +1493,6 @@ pipe_kqfilter(file_t *fp, struct knote *kn)
 SYSCTL_SETUP(sysctl_kern_pipe_setup, "sysctl kern.pipe subtree setup")
 {
 
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
-		       CTLTYPE_NODE, "kern", NULL,
-		       NULL, 0, NULL, 0,
-		       CTL_KERN, CTL_EOL);
 	sysctl_createv(clog, 0, NULL, NULL,
 		       CTLFLAG_PERMANENT,
 		       CTLTYPE_NODE, "pipe",

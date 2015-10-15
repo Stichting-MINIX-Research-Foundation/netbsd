@@ -1,4 +1,4 @@
-/*	$NetBSD: utmp_update.c,v 1.11 2011/09/17 14:25:43 christos Exp $	 */
+/*	$NetBSD: utmp_update.c,v 1.13 2015/04/26 08:56:19 mlelstv Exp $	 */
 
 /*-
  * Copyright (c) 2002 The NetBSD Foundation, Inc.
@@ -30,7 +30,7 @@
  */
 #include <sys/cdefs.h>
 
-__RCSID("$NetBSD: utmp_update.c,v 1.11 2011/09/17 14:25:43 christos Exp $");
+__RCSID("$NetBSD: utmp_update.c,v 1.13 2015/04/26 08:56:19 mlelstv Exp $");
 
 #include <sys/types.h>
 #include <sys/param.h>
@@ -65,7 +65,7 @@ logerr(int e, const char *fmt, ...)
 	va_copy(eap, sap);
 	vsyslog(LOG_ERR, fmt, sap);
 	va_end(sap);
-	errx(1, fmt, eap);
+	verrx(1, fmt, eap);
 	va_end(eap);
 }
 
@@ -99,8 +99,8 @@ main(int argc, char *argv[])
 	if (len > sizeof(*utx) * 4 + 1 || len < sizeof(*utx))
 		logerr(0, "Bad argument size %zu", len);
 
-	if ((utx = malloc(len)) == NULL)
-		logerr(errno, "Can't allocate %zu", len);
+	if ((utx = malloc(len+1)) == NULL)
+		logerr(errno, "Can't allocate %zu", len+1);
 
 	res = strunvis((char *)utx, argv[1]);
 	if (res != (int)sizeof(*utx))

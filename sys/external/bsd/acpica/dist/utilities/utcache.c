@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -40,8 +40,6 @@
  * IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGES.
  */
-
-#define __UTCACHE_C__
 
 #include "acpi.h"
 #include "accommon.h"
@@ -93,9 +91,7 @@ AcpiOsCreateCache (
     }
 
     /* Populate the cache object and return it */
-
-    ACPI_MEMSET (Cache, 0, sizeof (ACPI_MEMORY_LIST));
-    Cache->LinkOffset = 8;
+    memset (Cache, 0, sizeof (ACPI_MEMORY_LIST));
     Cache->ListName   = __UNCONST(CacheName);
     Cache->ObjectSize = ObjectSize;
     Cache->MaxDepth   = MaxDepth;
@@ -121,7 +117,7 @@ ACPI_STATUS
 AcpiOsPurgeCache (
     ACPI_MEMORY_LIST        *Cache)
 {
-    char                    *Next;
+    void                    *Next;
     ACPI_STATUS             Status;
 
 
@@ -145,8 +141,7 @@ AcpiOsPurgeCache (
     {
         /* Delete and unlink one cached state object */
 
-        Next = *(ACPI_CAST_INDIRECT_PTR (char,
-                    &(((char *) Cache->ListHead)[Cache->LinkOffset])));
+        Next = ACPI_GET_DESCRIPTOR_PTR (Cache->ListHead);
         ACPI_FREE (Cache->ListHead);
 
         Cache->ListHead = Next;
@@ -205,7 +200,7 @@ AcpiOsDeleteCache (
  *
  * RETURN:      None
  *
- * DESCRIPTION: Release an object to the specified cache.  If cache is full,
+ * DESCRIPTION: Release an object to the specified cache. If cache is full,
  *              the object is deleted.
  *
  ******************************************************************************/
@@ -246,13 +241,12 @@ AcpiOsReleaseObject (
 
         /* Mark the object as cached */
 
-        ACPI_MEMSET (Object, 0xCA, Cache->ObjectSize);
+        memset (Object, 0xCA, Cache->ObjectSize);
         ACPI_SET_DESCRIPTOR_TYPE (Object, ACPI_DESC_TYPE_CACHED);
 
         /* Put the object at the head of the cache list */
 
-        * (ACPI_CAST_INDIRECT_PTR (char,
-            &(((char *) Object)[Cache->LinkOffset]))) = Cache->ListHead;
+        ACPI_SET_DESCRIPTOR_PTR (Object, Cache->ListHead);
         Cache->ListHead = Object;
         Cache->CurrentDepth++;
 
@@ -269,9 +263,9 @@ AcpiOsReleaseObject (
  *
  * PARAMETERS:  Cache           - Handle to cache object
  *
- * RETURN:      the acquired object.  NULL on error
+ * RETURN:      the acquired object. NULL on error
  *
- * DESCRIPTION: Get an object from the specified cache.  If cache is empty,
+ * DESCRIPTION: Get an object from the specified cache. If cache is empty,
  *              the object is allocated.
  *
  ******************************************************************************/
@@ -289,13 +283,13 @@ AcpiOsAcquireObject (
 
     if (!Cache)
     {
-        return (NULL);
+        return_PTR (NULL);
     }
 
     Status = AcpiUtAcquireMutex (ACPI_MTX_CACHES);
     if (ACPI_FAILURE (Status))
     {
-        return (NULL);
+        return_PTR (NULL);
     }
 
     ACPI_MEM_TRACKING (Cache->Requests++);
@@ -307,8 +301,7 @@ AcpiOsAcquireObject (
         /* There is an object available, use it */
 
         Object = Cache->ListHead;
-        Cache->ListHead = *(ACPI_CAST_INDIRECT_PTR (char,
-                                &(((char *) Object)[Cache->LinkOffset])));
+        Cache->ListHead = ACPI_GET_DESCRIPTOR_PTR (Object);
 
         Cache->CurrentDepth--;
 
@@ -319,12 +312,12 @@ AcpiOsAcquireObject (
         Status = AcpiUtReleaseMutex (ACPI_MTX_CACHES);
         if (ACPI_FAILURE (Status))
         {
-            return (NULL);
+            return_PTR (NULL);
         }
 
         /* Clear (zero) the previously used Object */
 
-        ACPI_MEMSET (Object, 0, Cache->ObjectSize);
+        memset (Object, 0, Cache->ObjectSize);
     }
     else
     {
@@ -344,18 +337,16 @@ AcpiOsAcquireObject (
         Status = AcpiUtReleaseMutex (ACPI_MTX_CACHES);
         if (ACPI_FAILURE (Status))
         {
-            return (NULL);
+            return_PTR (NULL);
         }
 
         Object = ACPI_ALLOCATE_ZEROED (Cache->ObjectSize);
         if (!Object)
         {
-            return (NULL);
+            return_PTR (NULL);
         }
     }
 
-    return (Object);
+    return_PTR (Object);
 }
 #endif /* ACPI_USE_LOCAL_CACHE */
-
-

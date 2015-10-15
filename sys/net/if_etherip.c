@@ -1,4 +1,4 @@
-/*      $NetBSD: if_etherip.c,v 1.33 2012/07/28 00:43:24 matt Exp $        */
+/*      $NetBSD: if_etherip.c,v 1.37 2015/08/24 22:21:26 pooka Exp $        */
 
 /*
  *  Copyright (c) 2006, Hans Rosenfeld <rosenfeld@grumpf.hope-2000.org>
@@ -86,9 +86,11 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_etherip.c,v 1.33 2012/07/28 00:43:24 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_etherip.c,v 1.37 2015/08/24 22:21:26 pooka Exp $");
 
+#ifdef _KERNEL_OPT
 #include "opt_inet.h"
+#endif
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -134,13 +136,13 @@ __KERNEL_RCSID(0, "$NetBSD: if_etherip.c,v 1.33 2012/07/28 00:43:24 matt Exp $")
 
 #include <compat/sys/sockio.h>
 
+#include "ioconf.h"
+
 struct etherip_softc_list etherip_softc_list;
 
 static int etherip_node;
 static int etherip_sysctl_handler(SYSCTLFN_PROTO);
 SYSCTL_SETUP_PROTO(sysctl_etherip_setup);
-
-void etheripattach(int);
 
 static int  etherip_match(device_t, cfdata_t, void *);
 static void etherip_attach(device_t, device_t, void *);
@@ -397,6 +399,7 @@ etheripintr(void *arg)
 		} else  m_freem(m);
 	}
 	mutex_exit(softnet_lock);
+	__USE(error);
 }
 
 static int
@@ -639,14 +642,6 @@ SYSCTL_SETUP(sysctl_etherip_setup, "sysctl net.link.etherip subtree setup")
 {
 	const struct sysctlnode *node;
 	int error = 0;
-
-	error = sysctl_createv(clog, 0, NULL, NULL,
-			       CTLFLAG_PERMANENT,
-			       CTLTYPE_NODE, "net", NULL,
-			       NULL, 0, NULL, 0,
-			       CTL_NET, CTL_EOL);
-	if (error)
-		return;
 
 	error = sysctl_createv(clog, 0, NULL, NULL,
 			       CTLFLAG_PERMANENT,

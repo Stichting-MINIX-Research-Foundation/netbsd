@@ -1,4 +1,4 @@
-/*	$NetBSD: i80312_pci.c,v 1.14 2013/08/18 15:58:20 matt Exp $	*/
+/*	$NetBSD: i80312_pci.c,v 1.16 2015/10/02 05:22:50 msaitoh Exp $	*/
 
 /*
  * Copyright (c) 2001 Wasabi Systems, Inc.
@@ -40,7 +40,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: i80312_pci.c,v 1.14 2013/08/18 15:58:20 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: i80312_pci.c,v 1.16 2015/10/02 05:22:50 msaitoh Exp $");
 
 #include "opt_pci.h"
 #include "pci.h"
@@ -83,7 +83,7 @@ i80312_pci_init(pci_chipset_tag_t pc, void *cookie)
 	struct i80312_softc *sc = cookie;
 	struct extent *ioext, *memext;
 	pcireg_t binfo;
-	int pbus, sbus;
+	int sbus;
 #endif
 
 	pc->pc_conf_v = cookie;
@@ -107,7 +107,7 @@ i80312_pci_init(pci_chipset_tag_t pc, void *cookie)
 	 */
 
 	binfo = bus_space_read_4(sc->sc_st, sc->sc_ppb_sh, PPB_REG_BUSINFO);
-	pbus = PPB_BUSINFO_PRIMARY(binfo);
+	/* pbus = PPB_BUSINFO_PRIMARY(binfo); */
 	sbus = PPB_BUSINFO_SECONDARY(binfo);
 
 	ioext  = extent_create("pciio", sc->sc_sioout_base,
@@ -179,6 +179,9 @@ i80312_pci_conf_setup(struct i80312_softc *sc, pcitag_t tag, int offset,
 {
 	pcireg_t binfo;
 	int pbus, sbus;
+
+	if ((unsigned int)offset >= PCI_CONF_SIZE)
+		return (1);
 
 	i80312_pci_decompose_tag(sc, tag, &ps->ps_b, &ps->ps_d, &ps->ps_f);
 

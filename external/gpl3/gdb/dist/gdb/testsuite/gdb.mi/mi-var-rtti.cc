@@ -1,4 +1,4 @@
-/* Copyright 2012-2013 Free Software Foundation, Inc.
+/* Copyright 2012-2015 Free Software Foundation, Inc.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -11,8 +11,7 @@
    GNU General Public License for more details.
 
    You should have received a copy of the GNU General Public License
-   along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+   along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
 struct Base {
     Base() : A(1) {}
@@ -242,6 +241,12 @@ void use_rtti_with_multiple_inheritence_test ()
 void type_update_when_use_rtti_test ()
 {
   /*: BEGIN: type_update_when_use_rtti :*/
+	Base *ptr = 0;
+	struct S {
+		Base* ptr;
+		S ( Base* v ) :
+			ptr ( v ) {}
+	} s ( ptr );
 	Derived d;
   /*: 
 	set testname type_update_when_use_rtti
@@ -261,12 +266,8 @@ void type_update_when_use_rtti_test ()
 	check_derived_children_without_rtti S.public.ptr s.ptr $testname
   :*/
 
-	Base* ptr = &d;
-	struct S {
-		Base* ptr;
-		S ( Base* v ) :
-			ptr ( v ) {}
-	} s ( &d );
+	ptr = &d;
+	s.ptr = &d;
   /*:
 	mi_varobj_update_with_type_change PTR {Derived \*} 2 \
 		"update ptr to derived in $testname"
@@ -296,6 +297,12 @@ void type_update_when_use_rtti_test ()
 void skip_type_update_when_not_use_rtti_test ()
 {
   /*: BEGIN: skip_type_update_when_not_use_rtti :*/
+	Base *ptr = 0;
+	struct S {
+		Base* ptr;
+		S ( Base* v ) :
+			ptr ( v ) {}
+	} s ( ptr );
 	Derived d;
   /*: 
 	set testname skip_type_update_when_not_use_rtti
@@ -315,12 +322,8 @@ void skip_type_update_when_not_use_rtti_test ()
 	check_derived_children_without_rtti S.public.ptr s.ptr $testname
   :*/
 
-	Base* ptr = &d;
-	struct S {
-		Base* ptr;
-		S ( Base* v ) :
-			ptr ( v ) {}
-	} s ( &d );
+	ptr = &d;
+	s.ptr = &d;
   /*: 
 	mi_varobj_update PTR {PTR PTR.public.A} \
 		"update ptr to derived type in $testname"

@@ -1,4 +1,4 @@
-/*	$NetBSD: e500_timer.c,v 1.4 2011/06/29 05:56:31 matt Exp $	*/
+/*	$NetBSD: e500_timer.c,v 1.6 2015/01/21 06:11:39 nonaka Exp $	*/
 /*-
  * Copyright (c) 2010, 2011 The NetBSD Foundation, Inc.
  * All rights reserved.
@@ -35,7 +35,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: e500_timer.c,v 1.4 2011/06/29 05:56:31 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: e500_timer.c,v 1.6 2015/01/21 06:11:39 nonaka Exp $");
 
 #include <sys/param.h>
 #include <sys/kernel.h>
@@ -53,6 +53,7 @@ __KERNEL_RCSID(0, "$NetBSD: e500_timer.c,v 1.4 2011/06/29 05:56:31 matt Exp $");
 #include <powerpc/booke/e500var.h>
 #include <powerpc/booke/openpicreg.h>
 
+uint32_t ticks_per_sec;
 static u_long ns_per_tick;
 
 static void init_ppcbooke_tc(void);
@@ -68,14 +69,6 @@ static struct timecounter ppcbooke_timecounter = {
 	NULL,			/* tc_priv */
 	NULL			/* tc_next */
 };
-
-static inline uint32_t 
-openpic_read(struct cpu_softc *cpu, bus_size_t offset)
-{
-
-	return bus_space_read_4(cpu->cpu_bst, cpu->cpu_bsh,
-	    OPENPIC_BASE + offset);
-}
 
 static inline void 
 openpic_write(struct cpu_softc *cpu, bus_size_t offset, uint32_t val)
@@ -181,6 +174,7 @@ calc_delayconst(void)
 	struct cpu_info * const ci = curcpu();
 
 	ci->ci_data.cpu_cc_freq = board_info_get_number("timebase-frequency");
+	ticks_per_sec = (uint32_t)ci->ci_data.cpu_cc_freq;
 	ns_per_tick = 1000000000 / (u_int)ci->ci_data.cpu_cc_freq;
 }
 

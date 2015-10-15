@@ -1,5 +1,5 @@
-/*	$Id: at91dbgu.c,v 1.9 2012/11/12 18:00:36 skrll Exp $	*/
-/*	$NetBSD: at91dbgu.c,v 1.9 2012/11/12 18:00:36 skrll Exp $ */
+/*	$Id: at91dbgu.c,v 1.15 2015/09/21 13:31:30 skrll Exp $	*/
+/*	$NetBSD: at91dbgu.c,v 1.15 2015/09/21 13:31:30 skrll Exp $ */
 
 /*
  *
@@ -83,14 +83,14 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: at91dbgu.c,v 1.9 2012/11/12 18:00:36 skrll Exp $");
+__KERNEL_RCSID(0, "$NetBSD: at91dbgu.c,v 1.15 2015/09/21 13:31:30 skrll Exp $");
 
 #include "opt_ddb.h"
 #include "opt_kgdb.h"
 
 #include "rnd.h"
 #ifdef RND_COM
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 #endif
 
 /*
@@ -182,8 +182,18 @@ dev_type_tty(at91dbgu_tty);
 dev_type_poll(at91dbgu_poll);
 
 const struct cdevsw at91dbgu_cdevsw = {
-	at91dbgu_open, at91dbgu_close, at91dbgu_read, at91dbgu_write, at91dbgu_ioctl,
-	at91dbgu_stop, at91dbgu_tty, at91dbgu_poll, nommap, ttykqfilter, D_TTY
+	.d_open = at91dbgu_open,
+	.d_close = at91dbgu_close,
+	.d_read = at91dbgu_read,
+	.d_write = at91dbgu_write,
+	.d_ioctl = at91dbgu_ioctl,
+	.d_stop = at91dbgu_stop,
+	.d_tty = at91dbgu_tty,
+	.d_poll = at91dbgu_poll,
+	.d_mmap = nommap,
+	.d_kqfilter = ttykqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_TTY
 };
 
 struct consdev at91dbgu_cons = {
@@ -195,11 +205,8 @@ struct consdev at91dbgu_cons = {
 #define DEFAULT_COMSPEED 115200
 #endif
 
-#define COMUNIT_MASK    0x7ffff
-#define COMDIALOUT_MASK 0x80000
-
-#define COMUNIT(x)	(minor(x) & COMUNIT_MASK)
-#define COMDIALOUT(x)	(minor(x) & COMDIALOUT_MASK)
+#define COMUNIT(x)	TTUNIT(x)
+#define COMDIALOUT(x)	TTDIALOUT(x)
 
 #define COM_ISALIVE(sc)	((sc)->enabled != 0 && device_is_active((sc)->sc_dev))
 
@@ -279,7 +286,7 @@ at91dbgu_attach(device_t parent, device_t self, void *aux)
 
 #ifdef RND_COM
 	rnd_attach_source(&sc->rnd_source, device_xname(sc->sc_dev),
-			  RND_TYPE_TTY, 0);
+			  RND_TYPE_TTY, RND_FLAG_DEFAULT);
 #endif
 
 	/* if there are no enable/disable functions, assume the device
@@ -903,7 +910,7 @@ at91dbgu_cn_getc(dev_t dev)
 	if (!db_active)
 #endif
 	{
-		int cn_trapped = 0; /* unused */
+		int cn_trapped __unused = 0;
 
 		cn_check_magic(dev, c, at91dbgu_cnm_state);
 	}

@@ -1,4 +1,4 @@
-/* $NetBSD: imx6_intr.h,v 1.1 2012/09/01 00:07:32 matt Exp $ */
+/*	$NetBSD: imx6_intr.h,v 1.3 2015/06/01 09:49:36 ryo Exp $	*/
 /*-
  * Copyright (c) 2012 The NetBSD Foundation, Inc.
  * All rights reserved.
@@ -33,6 +33,7 @@
 
 #define	PIC_MAXSOURCES			256
 #define	PIC_MAXMAXSOURCES		(256 + 6 * 32)
+#define	__HAVE_PIC_PENDING_INTRS	/* for imxgpio */
 
 /*
  * The BCM53xx uses a generic interrupt controller so pull that stuff.
@@ -40,26 +41,26 @@
 #include <arm/cortex/gic_intr.h>
 #include <arm/cortex/a9tmr_intr.h>	/* A9 Timer PPIs */
 
-#define	IRQ_IOMUXC			32
-#define	IRQ_DAP				33
-#define	IRQ_SDMA			34
-#define	IRQ_VPU_JPEG			35
-#define	IRQ_SNVS			36
-#define	IRQ_IPU1_ERROR			37
-#define	IRQ_IPU1_SYNC			38
-#define	IRQ_IPU2_ERROR			39
-#define	IRQ_IPU2_SYNC			40
-#define	IRQ_GPU3D			41
-#define	IRQ_GPU2D_IDLE			42
-#define	IRQ_GPU2D			43
-#define	IRQ_VPU				44
-#define	IRQ_APBH			45
+#define	IRQ_IOMUXC		32
+#define	IRQ_DAP			33
+#define	IRQ_SDMA		34
+#define	IRQ_VPU_JPEG		35
+#define	IRQ_SNVS_PMIC		36
+#define	IRQ_IPU1_ERROR		37
+#define	IRQ_IPU1_SYNC		38
+#define	IRQ_IPU2_ERROR		39
+#define	IRQ_IPU2_SYNC		40
+#define	IRQ_GPU3D		41
+#define	IRQ_GPU2D_IDLE		42
+#define	IRQ_GPU2D		43
+#define	IRQ_VPU			44
+#define	IRQ_APBH		45
 #define	IRQ_EIM			46
 #define	IRQ_BCH			47
-#define	IRQ_GPMI			48
+#define	IRQ_GPMI		48
 #define	IRQ_DTCP		49
 #define	IRQ_VDOA		50
-#define	IRQ_SNVS			51
+#define	IRQ_SNVS		51
 #define	IRQ_SNVS_SEC		52
 #define	IRQ_CSU			53
 #define	IRQ_USDHC1		54
@@ -94,7 +95,7 @@
 #define	IRQ_ESAI		83
 #define	IRQ_SPDIF		84
 #define	IRQ_MLB			85
-#define	IRQ__RSVD86		86
+#define	IRQ_PMU			86
 #define	IRQ_GPT			87
 #define	IRQ_EPIT1		88
 #define	IRQ_EPIT2		89
@@ -152,9 +153,9 @@
 #define	IRQ_ASC2		141
 #define	IRQ_FLEXCAN1		142
 #define	IRQ_FLEXCAN2		143
-#define	IRQ__RSVD139		144
-#define	IRQ__RSVD139		145
-#define	IRQ__RSVD139		146
+#define	IRQ__RSVD144		144
+#define	IRQ__RSVD145		145
+#define	IRQ__RSVD146		146
 #define	IRQ_HDMI_MASTER		147
 #define	IRQ_HDMI_CEC		148
 #define	IRQ_MLB150L		149
@@ -167,6 +168,6 @@
 #define	IRQ_DCIC1		156
 #define	IRQ_DCIC2		157
 #define	IRQ_MLB150H		158
-#define	IRQ_PMU			159
+#define	IRQ_PMU_D		159
 
 #endif /* _ARM_ARM_IMX6INTR_H_ */

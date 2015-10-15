@@ -1,4 +1,4 @@
-/*	$NetBSD: pci_machdep.c,v 1.31 2011/12/28 20:33:20 phx Exp $	*/
+/*	$NetBSD: pci_machdep.c,v 1.34 2015/10/02 05:22:52 msaitoh Exp $	*/
 
 /*
  * Copyright (c) 1996 Christopher G. Demetriou.  All rights reserved.
@@ -43,7 +43,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: pci_machdep.c,v 1.31 2011/12/28 20:33:20 phx Exp $");
+__KERNEL_RCSID(0, "$NetBSD: pci_machdep.c,v 1.34 2015/10/02 05:22:52 msaitoh Exp $");
 
 #include "opt_pci.h"
 
@@ -213,6 +213,9 @@ pci_conf_read(pci_chipset_tag_t pc, pcitag_t tag, int reg)
 {
 	pcireg_t data;
 
+	if ((unsigned int)reg >= PCI_CONF_SIZE)
+		return (pcireg_t) -1;
+
 	out32rb(SANDPOINT_PCI_CONFIG_ADDR, tag | reg);
 	data = in32rb(SANDPOINT_PCI_CONFIG_DATA);
 	out32rb(SANDPOINT_PCI_CONFIG_ADDR, 0);
@@ -222,6 +225,9 @@ pci_conf_read(pci_chipset_tag_t pc, pcitag_t tag, int reg)
 void
 pci_conf_write(pci_chipset_tag_t pc, pcitag_t tag, int reg, pcireg_t data)
 {
+
+	if ((unsigned int)reg >= PCI_CONF_SIZE)
+		return;
 
 	out32rb(SANDPOINT_PCI_CONFIG_ADDR, tag | reg);
 	out32rb(SANDPOINT_PCI_CONFIG_DATA, data);
@@ -386,15 +392,14 @@ pci_intr_map(const struct pci_attach_args *pa, pci_intr_handle_t *ihp)
 }
 
 const char *
-pci_intr_string(pci_chipset_tag_t pc, pci_intr_handle_t ih)
+pci_intr_string(pci_chipset_tag_t pc, pci_intr_handle_t ih, char *buf,
+    size_t len)
 {
-	static char irqstr[8];		/* 4 + 2 + NULL + sanity */
-
 	if (ih < 0 || ih >= OPENPIC_ICU)
 		panic("pci_intr_string: bogus handle 0x%x", ih);
 
-	sprintf(irqstr, "irq %d", ih + I8259_ICU);
-	return irqstr;
+	snprintf(buf, len, "irq %d", ih + I8259_ICU);
+	return buf;
 	
 }
 

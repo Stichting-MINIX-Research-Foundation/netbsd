@@ -1,4 +1,4 @@
-/*	$NetBSD: queue.h,v 1.5 2013/07/27 19:23:13 christos Exp $	*/
+/*	$NetBSD: queue.h,v 1.8 2014/12/10 04:38:00 christos Exp $	*/
 
 /*
  * Copyright (C) 2011-2013  Internet Systems Consortium, Inc. ("ISC")
@@ -44,7 +44,7 @@
 #define ISC_QLINK_INIT(elt, link) \
 	do { \
 		(elt)->link.next = (elt)->link.prev = (void *)(-1); \
-	} while (/*CONSTCOND*/0)
+	} while(/*CONSTCOND*/0)
 
 #define ISC_QLINK_LINKED(elt, link) ((void*)(elt)->link.next != (void*)(-1))
 
@@ -134,9 +134,9 @@
 					(queue).head = (queue).tail = NULL; \
 					UNLOCK(&(queue).taillock); \
 					break; \
+				}\
+				UNLOCK(&(queue).taillock); \
 			} \
-			UNLOCK(&(queue).taillock); \
-		} \
 			(queue).head = ret->link.next; \
 			(queue).head->link.prev = NULL; \
 			break; \
@@ -144,7 +144,7 @@
 		UNLOCK(&(queue).headlock); \
 		if (ret != NULL) \
 			(ret)->link.next = (ret)->link.prev = (void *)(-1); \
-	} while (/*CONSTCOND*/0)
+	} while(/*CONSTCOND*/0)
 
 #define ISC_QUEUE_UNLINK(queue, elt, link) \
 	do { \
@@ -162,6 +162,6 @@
 		UNLOCK(&(queue).taillock); \
 		UNLOCK(&(queue).headlock); \
 		(elt)->link.next = (elt)->link.prev = (void *)(-1); \
-	} while(0)
+	} while(/*CONSTCOND*/0)
 
 #endif /* ISC_QUEUE_H */

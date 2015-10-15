@@ -1,4 +1,4 @@
-/* $NetBSD: arcpp.c,v 1.12 2011/07/19 16:05:10 dyoung Exp $ */
+/* $NetBSD: arcpp.c,v 1.15 2015/08/30 04:16:18 dholland Exp $ */
 
 /*-
  * Copyright (c) 2001 Ben Harris
@@ -52,7 +52,7 @@
 
 #include <sys/param.h>
 
-__KERNEL_RCSID(0, "$NetBSD: arcpp.c,v 1.12 2011/07/19 16:05:10 dyoung Exp $");
+__KERNEL_RCSID(0, "$NetBSD: arcpp.c,v 1.15 2015/08/30 04:16:18 dholland Exp $");
 
 #include <sys/conf.h>
 #include <sys/device.h>
@@ -109,8 +109,18 @@ dev_type_close(arcppclose);
 dev_type_write(arcppwrite);
 
 const struct cdevsw arcpp_cdevsw = {
-	arcppopen, arcppclose, noread, arcppwrite, noioctl,
-	nostop, notty, nopoll, nommap, nokqfilter,
+	.d_open = arcppopen,
+	.d_close = arcppclose,
+	.d_read = noread,
+	.d_write = arcppwrite,
+	.d_ioctl = noioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = 0
 };
 
 #define	ARCPPUNIT(s)	(minor(s) & 0x1f)
@@ -207,10 +217,12 @@ arcppopen(dev_t dev, int flag, int mode, struct lwp *l)
 	error = tsleep((void *)sc, ARCPPPRI | PCATCH, "arcppopen", TIMEOUT);
 	if (error == EWOULDBLOCK) {
 		sc->sc_state = 0;
+		splx(s);
 		return EBUSY;
 	}
 	if (error) {
 		sc->sc_state = 0;
+		splx(s);
 		return error;
 	}
 

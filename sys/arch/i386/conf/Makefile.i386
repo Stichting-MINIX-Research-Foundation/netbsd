@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile.i386,v 1.178 2012/10/03 18:58:31 dsl Exp $
+#	$NetBSD: Makefile.i386,v 1.185 2015/08/24 14:04:24 uebayasi Exp $
 
 # Makefile for NetBSD
 #
@@ -33,12 +33,11 @@ GENASSYM_CONF=	${I386}/i386/genassym.cf
 ##
 ## (2) compile settings
 ##
+DEFCOPTS=	-O2 -fno-omit-frame-pointer
 CPPFLAGS+=	-Di386
-CFLAGS+=	-mno-sse -mno-sse2 -mno-sse3
-
-AFLAGS.mptramp.S= ${${ACTIVE_CC} == "clang":?-no-integrated-as:}
-AFLAGS.spl.S= ${${ACTIVE_CC} == "clang":?-no-integrated-as:}
-AFLAGS.lock_stubs.S= ${${ACTIVE_CC} == "clang":?-no-integrated-as:}
+CFLAGS+=	-msoft-float
+## no-sse implies no-sse2 but not no-avx
+CFLAGS+=	-mno-mmx -mno-sse -mno-avx
 
 ##
 ## (3) libkern and compat
@@ -78,8 +77,7 @@ lock_stubs.o: ${I386}/i386/lock_stubs.S assym.h
 ##
 TEXTADDR?=	c0100000
 LINKFLAGS_NORMAL=	-X
-KERN_LDSCRIPT?=	kern.ldscript
-LINKFORMAT=	-T ${I386}/conf/${KERN_LDSCRIPT}
+KERNLDSCRIPT?=	${I386}/conf/kern.ldscript
 
 ##
 ## (6) port specific target dependencies

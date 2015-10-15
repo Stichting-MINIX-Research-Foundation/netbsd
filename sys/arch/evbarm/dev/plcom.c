@@ -1,4 +1,4 @@
-/*	$NetBSD: plcom.c,v 1.46 2013/09/05 07:09:14 skrll Exp $	*/
+/*	$NetBSD: plcom.c,v 1.52 2015/04/13 21:18:41 riastradh Exp $	*/
 
 /*-
  * Copyright (c) 2001 ARM Ltd
@@ -94,15 +94,13 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: plcom.c,v 1.46 2013/09/05 07:09:14 skrll Exp $");
+__KERNEL_RCSID(0, "$NetBSD: plcom.c,v 1.52 2015/04/13 21:18:41 riastradh Exp $");
 
 #include "opt_plcom.h"
 #include "opt_ddb.h"
 #include "opt_kgdb.h"
 #include "opt_lockdebug.h"
 #include "opt_multiprocessor.h"
-
-#include "rnd.h"
 
 /*
  * Override cnmagic(9) macro before including <sys/systm.h>.
@@ -136,7 +134,7 @@ __KERNEL_RCSID(0, "$NetBSD: plcom.c,v 1.46 2013/09/05 07:09:14 skrll Exp $");
 #include <sys/intr.h>
 #include <sys/bus.h>
 #ifdef RND_COM
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 #endif
 
 #include <evbarm/dev/plcomreg.h>
@@ -194,8 +192,18 @@ bool	plcom_intstatus(struct plcom_instance *, u_int *);
 extern struct cfdriver plcom_cd;
 
 const struct cdevsw plcom_cdevsw = {
-	plcomopen, plcomclose, plcomread, plcomwrite, plcomioctl,
-	plcomstop, plcomtty, plcompoll, nommap, ttykqfilter, D_TTY
+	.d_open = plcomopen,
+	.d_close = plcomclose,
+	.d_read = plcomread,
+	.d_write = plcomwrite,
+	.d_ioctl = plcomioctl,
+	.d_stop = plcomstop,
+	.d_tty = plcomtty,
+	.d_poll = plcompoll,
+	.d_mmap = nommap,
+	.d_kqfilter = ttykqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_TTY
 };
 
 /*
@@ -235,11 +243,10 @@ int	plcom_kgdb_getc (void *);
 void	plcom_kgdb_putc (void *, int);
 #endif /* KGDB */
 
-#define	PLCOMUNIT_MASK		0x7ffff
-#define	PLCOMDIALOUT_MASK	0x80000
+#define	PLCOMDIALOUT_MASK	TTDIALOUT_MASK
 
-#define	PLCOMUNIT(x)	(minor(x) & PLCOMUNIT_MASK)
-#define	PLCOMDIALOUT(x)	(minor(x) & PLCOMDIALOUT_MASK)
+#define	PLCOMUNIT(x)	TTUNIT(x)
+#define	PLCOMDIALOUT(x)	TTDIALOUT(x)
 
 #define	PLCOM_ISALIVE(sc)	((sc)->enabled != 0 && \
 				 device_is_active((sc)->sc_dev))
@@ -552,7 +559,7 @@ plcom_attach_subr(struct plcom_softc *sc)
 
 #ifdef RND_COM
 	rnd_attach_source(&sc->rnd_source, device_xname(sc->sc_dev),
-	    RND_TYPE_TTY, 0);
+	    RND_TYPE_TTY, RND_FLAG_DEFAULT);
 #endif
 
 	/*
@@ -2288,7 +2295,7 @@ plcom_common_getc(dev_t dev, struct plcom_instance *pi)
 
 	c = PREAD1(pi, PL01XCOM_DR);
 	{
-		int cn_trapped = 0; /* unused */
+		int cn_trapped __unused = 0;
 #ifdef DDB
 		extern int db_active;
 		if (!db_active)
@@ -2308,7 +2315,7 @@ plcom_common_putc(dev_t dev, struct plcom_instance *pi, int c)
 	int cin, stat;
 	if (plcom_readaheadcount < MAX_READAHEAD
 	     && !ISSET(stat = PREAD1(pi, PL01XCOM_FR), PL01X_FR_RXFE)) {
-		int cn_trapped = 0;
+		int cn_trapped __unused = 0;
 		cin = PREAD1(pi, PL01XCOM_DR);
 		cn_check_magic(dev, cin, plcom_cnm_state);
 		plcom_readahead[plcom_readaheadcount++] = cin;

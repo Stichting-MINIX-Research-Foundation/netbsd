@@ -1,4 +1,4 @@
-/* $NetBSD: trap.c,v 1.129 2013/11/04 16:57:32 christos Exp $ */
+/* $NetBSD: trap.c,v 1.132 2015/03/02 11:07:16 martin Exp $ */
 
 /*-
  * Copyright (c) 2000, 2001 The NetBSD Foundation, Inc.
@@ -93,7 +93,7 @@
 
 #include <sys/cdefs.h>			/* RCS ID & Copyright macro defns */
 
-__KERNEL_RCSID(0, "$NetBSD: trap.c,v 1.129 2013/11/04 16:57:32 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: trap.c,v 1.132 2015/03/02 11:07:16 martin Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -174,7 +174,7 @@ printtrap(const u_long a0, const u_long a1, const u_long a2,
 		entryname = "system call";
 		break;
 	default:
-		sprintf(ubuf, "type %lx", entry);
+		snprintf(ubuf, sizeof(ubuf), "type %lx", entry);
 		entryname = (const char *) ubuf;
 		break;
 	}
@@ -323,7 +323,7 @@ trap(const u_long a0, const u_long a1, const u_long a2, const u_long entry,
 			if (framep->tf_regs[FRAME_A0] == -2) { /* weird! */
 				KSI_INIT_TRAP(&ksi);
 				ksi.ksi_signo = SIGFPE;
-				ksi.ksi_code =  alpha_ucode_to_ksiginfo(ucode);
+				ksi.ksi_code = FPE_INTDIV;
 				ksi.ksi_addr =
 					(void *)l->l_md.md_tf->tf_regs[FRAME_PC];
 				ksi.ksi_trap =  a0;	/* exception summary */
@@ -496,19 +496,28 @@ do_fault:
 			KSI_INIT_TRAP(&ksi);
 			ksi.ksi_addr = (void *)a0;
 			ksi.ksi_trap = a1; /* MMCSR VALUE */
-			if (rv == ENOMEM) {
+			switch (rv) {
+			case ENOMEM:
 				printf("UVM: pid %d (%s), uid %d killed: "
 				    "out of swap\n", l->l_proc->p_pid,
 				    l->l_proc->p_comm,
 				    l->l_cred ?
 				    kauth_cred_geteuid(l->l_cred) : -1);
 				ksi.ksi_signo = SIGKILL;
-			} else
+				break;
+			case EINVAL:
+				ksi.ksi_signo = SIGBUS;
+				ksi.ksi_code = BUS_ADRERR;
+				break;
+			case EACCES:
 				ksi.ksi_signo = SIGSEGV;
-			if (rv == EACCES)
 				ksi.ksi_code = SEGV_ACCERR;
-			else
+				break;
+			default:
+				ksi.ksi_signo = SIGSEGV;
 				ksi.ksi_code = SEGV_MAPERR;
+				break;
+			}
 			break;
 		    }
 

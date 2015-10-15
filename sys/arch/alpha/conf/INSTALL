@@ -1,4 +1,4 @@
-# $NetBSD: INSTALL,v 1.104 2013/04/27 18:19:22 christos Exp $
+# $NetBSD: INSTALL,v 1.109 2015/08/21 01:52:07 uebayasi Exp $
 #
 # Alpha INSTALL kernel.
 
@@ -39,6 +39,7 @@ options 	API_UP1000	# EV6:		Alpha Processor, Inc. UP1000
 
 # Diagnostic/debugging support options
 options 	DDB			# kernel debugger
+pseudo-device	ksyms
 #makeoptions	DEBUG="-g"
 
 # File systems
@@ -59,17 +60,17 @@ options 	INET		# IP + ICMP + TCP + UDP
 options 	COMPAT_43
 
 # Binary compatibility with previous versions of NetBSD.
-#options 	COMPAT_09
-options 	COMPAT_10
-options 	COMPAT_11
-options 	COMPAT_12
-options 	COMPAT_13
-options 	COMPAT_14
-options 	COMPAT_15
-options 	COMPAT_16
-options 	COMPAT_20
-options 	COMPAT_30	# NetBSD 3.0 compatibility.
-options 	COMPAT_40	# NetBSD 4.0 compatibility.
+#options 	COMPAT_09	# NetBSD 0.9,
+options 	COMPAT_10	# NetBSD 1.0,
+options 	COMPAT_11	# NetBSD 1.1,
+options 	COMPAT_12	# NetBSD 1.2,
+options 	COMPAT_13	# NetBSD 1.3,
+options 	COMPAT_14	# NetBSD 1.4,
+options 	COMPAT_15	# NetBSD 1.5,
+options 	COMPAT_16	# NetBSD 1.6,
+options 	COMPAT_20	# NetBSD 2.0,
+options 	COMPAT_30	# NetBSD 3.0, and
+options 	COMPAT_40	# NetBSD 4.0 binary compatibility.
 options 	COMPAT_BSDPTY	# /dev/[pt]ty?? ptys.
 
 # Misc. options
@@ -184,6 +185,9 @@ pci*	at	dwlpx?
 pci*	at	mcpcia?
 pci*	at	tsp?
 pci*	at	ttwopci?
+
+# AGP support
+agp*	at	irongate?
 
 # PCI devices
 adv*	at	pci? dev ? function ?		# AdvanSys SCSI
@@ -341,6 +345,10 @@ wsmouse*	at	vsms?
 wskbd*		at	pckbd?
 wsmouse*	at	pms?
 
+pseudo-device	raid			# RAIDframe disk driver
+options 	RAID_AUTOCONFIG		# auto-configuration of RAID components
+
+pseudo-device	bpfilter
 pseudo-device	loop
 pseudo-device	md		
 pseudo-device	ppp		

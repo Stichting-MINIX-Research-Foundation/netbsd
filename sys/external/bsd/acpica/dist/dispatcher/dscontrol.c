@@ -6,7 +6,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -41,8 +41,6 @@
  * IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGES.
  */
-
-#define __DSCONTROL_C__
 
 #include "acpi.h"
 #include "accommon.h"
@@ -86,7 +84,6 @@ AcpiDsExecBeginControlOp (
     switch (Op->Common.AmlOpcode)
     {
     case AML_WHILE_OP:
-
         /*
          * If this is an additional iteration of a while loop, continue.
          * There is no need to allocate a new control state.
@@ -107,7 +104,6 @@ AcpiDsExecBeginControlOp (
         /*lint -fallthrough */
 
     case AML_IF_OP:
-
         /*
          * IF/WHILE: Create a new control state to manage these
          * constructs. We need to manage these as a stack, in order
@@ -150,6 +146,7 @@ AcpiDsExecBeginControlOp (
         break;
 
     default:
+
         break;
     }
 
@@ -204,11 +201,9 @@ AcpiDsExecEndControlOp (
         AcpiUtDeleteGenericState (ControlState);
         break;
 
-
     case AML_ELSE_OP:
 
         break;
-
 
     case AML_WHILE_OP:
 
@@ -252,7 +247,6 @@ AcpiDsExecEndControlOp (
         AcpiUtDeleteGenericState (ControlState);
         break;
 
-
     case AML_RETURN_OP:
 
         ACPI_DEBUG_PRINT ((ACPI_DB_DISPATCH,
@@ -290,7 +284,7 @@ AcpiDsExecEndControlOp (
 
             /*
              * Get the return value and save as the last result
-             * value.  This is the only place where WalkState->ReturnDesc
+             * value. This is the only place where WalkState->ReturnDesc
              * is set to anything other than zero!
              */
             WalkState->ReturnDesc = WalkState->Operands[0];
@@ -348,12 +342,11 @@ AcpiDsExecEndControlOp (
         Status = AE_CTRL_TERMINATE;
         break;
 
-
     case AML_NOOP_OP:
 
         /* Just do nothing! */
-        break;
 
+        break;
 
     case AML_BREAK_POINT_OP:
 
@@ -373,10 +366,8 @@ AcpiDsExecEndControlOp (
 	    __UNCONST("Executed AML Breakpoint opcode"));
         break;
 
-
     case AML_BREAK_OP:
     case AML_CONTINUE_OP: /* ACPI 2.0 */
-
 
         /* Pop and delete control states until we find a while */
 
@@ -409,7 +400,6 @@ AcpiDsExecEndControlOp (
             Status = AE_CTRL_CONTINUE;
         }
         break;
-
 
     default:
 

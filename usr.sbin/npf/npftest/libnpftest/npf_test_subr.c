@@ -1,4 +1,4 @@
-/*	$NetBSD: npf_test_subr.c,v 1.6 2013/11/08 00:38:27 rmind Exp $	*/
+/*	$NetBSD: npf_test_subr.c,v 1.11 2014/08/10 16:44:37 tls Exp $	*/
 
 /*
  * NPF initialisation and handler routines.
@@ -7,6 +7,7 @@
  */
 
 #include <sys/types.h>
+#include <sys/cprng.h>
 #include <net/if.h>
 #include <net/if_types.h>
 
@@ -18,19 +19,28 @@ static npf_state_t	cstream_state;
 static void *		cstream_ptr;
 static bool		cstream_retval;
 
+static long		(*_random_func)(void);
+static int		(*_pton_func)(int, const char *, void *);
+static const char *	(*_ntop_func)(int, const void *, char *, socklen_t);
+
 static void		npf_state_sample(npf_state_t *, bool);
 
 void
-npf_test_init(void)
+npf_test_init(int (*pton_func)(int, const char *, void *),
+    const char *(*ntop_func)(int, const void *, char *, socklen_t),
+    long (*rndfunc)(void))
 {
 	npf_state_setsampler(npf_state_sample);
+	_pton_func = pton_func;
+	_ntop_func = ntop_func;
+	_random_func = rndfunc;
 }
 
 int
 npf_test_load(const void *xml)
 {
 	prop_dictionary_t npf_dict = prop_dictionary_internalize(xml);
-	return npfctl_reload(0, npf_dict);
+	return npfctl_load(0, npf_dict);
 }
 
 ifnet_t *
@@ -113,4 +123,25 @@ npf_test_statetrack(const void *data, size_t len, ifnet_t *ifp,
 	result[i++] = tstate->nst_wscale;
 
 	return 0;
+}
+
+int
+npf_inet_pton(int af, const char *src, void *dst)
+{
+	return _pton_func(af, src, dst);
+}
+
+const char *
+npf_inet_ntop(int af, const void *src, char *dst, socklen_t size)
+{
+	return _ntop_func(af, src, dst, size);
+}
+
+/*
+ * Need to override cprng_fast32() -- we need deterministic PRNG.
+ */
+uint32_t
+cprng_fast32(void)
+{
+	return (uint32_t)(_random_func ? _random_func() : random());
 }

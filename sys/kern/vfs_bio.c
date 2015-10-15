@@ -1,4 +1,4 @@
-/*	$NetBSD: vfs_bio.c,v 1.248 2013/10/25 20:36:08 martin Exp $	*/
+/*	$NetBSD: vfs_bio.c,v 1.256 2015/08/24 22:50:32 pooka Exp $	*/
 
 /*-
  * Copyright (c) 2007, 2008, 2009 The NetBSD Foundation, Inc.
@@ -123,9 +123,11 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: vfs_bio.c,v 1.248 2013/10/25 20:36:08 martin Exp $");
+__KERNEL_RCSID(0, "$NetBSD: vfs_bio.c,v 1.256 2015/08/24 22:50:32 pooka Exp $");
 
+#ifdef _KERNEL_OPT
 #include "opt_bufcache.h"
+#endif
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -143,6 +145,7 @@ __KERNEL_RCSID(0, "$NetBSD: vfs_bio.c,v 1.248 2013/10/25 20:36:08 martin Exp $")
 #include <sys/cpu.h>
 #include <sys/wapbl.h>
 #include <sys/bitops.h>
+#include <sys/cprng.h>
 
 #include <uvm/uvm.h>	/* extern struct uvm uvm */
 
@@ -171,8 +174,7 @@ static void buf_setwm(void);
 static int buf_trim(void);
 static void *bufpool_page_alloc(struct pool *, int);
 static void bufpool_page_free(struct pool *, void *);
-static buf_t *bio_doread(struct vnode *, daddr_t, int,
-    kauth_cred_t, int);
+static buf_t *bio_doread(struct vnode *, daddr_t, int, int);
 static buf_t *getnewbuf(int, int, int);
 static int buf_lotsfree(void);
 static int buf_canrelease(void);
@@ -441,6 +443,9 @@ bufinit(void)
 	struct bqueue *dp;
 	int use_std;
 	u_int i;
+	extern void (*biodone_vfs)(buf_t *);
+
+	biodone_vfs = biodone;
 
 	mutex_init(&bufcache_lock, MUTEX_DEFAULT, IPL_NONE);
 	mutex_init(&buffer_lock, MUTEX_DEFAULT, IPL_NONE);
@@ -529,7 +534,7 @@ bufinit2(void)
 static int
 buf_lotsfree(void)
 {
-	int try, thresh;
+	u_long guess;
 
 	/* Always allocate if less than the low water mark. */
 	if (bufmem < bufmem_lowater)
@@ -545,16 +550,14 @@ buf_lotsfree(void)
 
 	/*
 	 * The probabily of getting a new allocation is inversely
-	 * proportional to the current size of the cache, using
-	 * a granularity of 16 steps.
+	 * proportional  to the current size of the cache above
+	 * the low water mark.  Divide the total first to avoid overflows
+	 * in the product.
 	 */
-	try = random() & 0x0000000fL;
+	guess = cprng_fast32() % 16;
 
-	/* Don't use "16 * bufmem" here to avoid a 32-bit overflow. */
-	thresh = (bufmem - bufmem_lowater) /
-	    ((bufmem_hiwater - bufmem_lowater) / 16);
-
-	if (try >= thresh)
+	if ((bufmem_hiwater - bufmem_lowater) / 16 * guess >=
+	    (bufmem - bufmem_lowater))
 		return 1;
 
 	/* Otherwise don't allocate. */
@@ -657,8 +660,7 @@ buf_mrelease(void *addr, size_t size)
  * bread()/breadn() helper.
  */
 static buf_t *
-bio_doread(struct vnode *vp, daddr_t blkno, int size, kauth_cred_t cred,
-    int async)
+bio_doread(struct vnode *vp, daddr_t blkno, int size, int async)
 {
 	buf_t *bp;
 	struct mount *mp;
@@ -717,14 +719,13 @@ bio_doread(struct vnode *vp, daddr_t blkno, int size, kauth_cred_t cred,
  * This algorithm described in Bach (p.54).
  */
 int
-bread(struct vnode *vp, daddr_t blkno, int size, kauth_cred_t cred,
-    int flags, buf_t **bpp)
+bread(struct vnode *vp, daddr_t blkno, int size, int flags, buf_t **bpp)
 {
 	buf_t *bp;
 	int error;
 
 	/* Get buffer for block. */
-	bp = *bpp = bio_doread(vp, blkno, size, cred, 0);
+	bp = *bpp = bio_doread(vp, blkno, size, 0);
 	if (bp == NULL)
 		return ENOMEM;
 
@@ -746,12 +747,12 @@ bread(struct vnode *vp, daddr_t blkno, int size, kauth_cred_t cred,
  */
 int
 breadn(struct vnode *vp, daddr_t blkno, int size, daddr_t *rablks,
-    int *rasizes, int nrablks, kauth_cred_t cred, int flags, buf_t **bpp)
+    int *rasizes, int nrablks, int flags, buf_t **bpp)
 {
 	buf_t *bp;
 	int error, i;
 
-	bp = *bpp = bio_doread(vp, blkno, size, cred, 0);
+	bp = *bpp = bio_doread(vp, blkno, size, 0);
 	if (bp == NULL)
 		return ENOMEM;
 
@@ -766,7 +767,7 @@ breadn(struct vnode *vp, daddr_t blkno, int size, daddr_t *rablks,
 
 		/* Get a buffer for the read-ahead block */
 		mutex_exit(&bufcache_lock);
-		(void) bio_doread(vp, rablks[i], rasizes[i], cred, B_ASYNC);
+		(void) bio_doread(vp, rablks[i], rasizes[i], B_ASYNC);
 		mutex_enter(&bufcache_lock);
 	}
 	mutex_exit(&bufcache_lock);
@@ -1806,11 +1807,6 @@ sysctl_kern_buf_setup(void)
 
 	sysctl_createv(&vfsbio_sysctllog, 0, NULL, NULL,
 		       CTLFLAG_PERMANENT,
-		       CTLTYPE_NODE, "kern", NULL,
-		       NULL, 0, NULL, 0,
-		       CTL_KERN, CTL_EOL);
-	sysctl_createv(&vfsbio_sysctllog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
 		       CTLTYPE_NODE, "buf",
 		       SYSCTL_DESCR("Kernel buffer cache information"),
 		       sysctl_dobuf, 0, NULL, 0,
@@ -1821,11 +1817,6 @@ static void
 sysctl_vm_buf_setup(void)
 {
 
-	sysctl_createv(&vfsbio_sysctllog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
-		       CTLTYPE_NODE, "vm", NULL,
-		       NULL, 0, NULL, 0,
-		       CTL_VM, CTL_EOL);
 	sysctl_createv(&vfsbio_sysctllog, 0, NULL, NULL,
 		       CTLFLAG_PERMANENT|CTLFLAG_READWRITE,
 		       CTLTYPE_INT, "bufcache",

@@ -1,4 +1,4 @@
-/*	$NetBSD: pl310.c,v 1.12 2013/06/17 05:13:07 matt Exp $	*/
+/*	$NetBSD: pl310.c,v 1.17 2015/02/27 20:40:09 jmcneill Exp $	*/
 
 /*-
  * Copyright (c) 2012 The NetBSD Foundation, Inc.
@@ -30,13 +30,15 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: pl310.c,v 1.12 2013/06/17 05:13:07 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: pl310.c,v 1.17 2015/02/27 20:40:09 jmcneill Exp $");
 
 #include <sys/param.h>
 #include <sys/bus.h>
 #include <sys/cpu.h>
 #include <sys/device.h>
 #include <sys/atomic.h>
+
+#include <arm/locore.h>
 
 #include <arm/cortex/mpcore_var.h>
 #include <arm/cortex/pl310_reg.h>
@@ -97,7 +99,8 @@ arml2cc_match(device_t parent, cfdata_t cf, void *aux)
 	if (arml2cc_sc)
 		return 0;
 
-	if (!CPU_ID_CORTEX_A9_P(curcpu()->ci_arm_cpuid))
+	if (!CPU_ID_CORTEX_A9_P(curcpu()->ci_arm_cpuid) &&
+	    !CPU_ID_CORTEX_A5_P(curcpu()->ci_arm_cpuid))
 		return 0;
 
 	if (strcmp(mpcaa->mpcaa_name, cf->cf_name) != 0)
@@ -122,6 +125,7 @@ static const struct {
 	{ 4, " r2p0" },
 	{ 5, " r3p0" },
 	{ 6, " r3p1" },
+	{ 7, " r3p1a" },
 	{ 8, " r3p2" },
 	{ 9, " r3p3" },
 };
@@ -132,6 +136,22 @@ arml2cc_attach(device_t parent, device_t self, void *aux)
         struct arml2cc_softc * const sc = device_private(self);
 	struct mpcore_attach_args * const mpcaa = aux;
 	const char * const xname = device_xname(self);
+	prop_dictionary_t dict = device_properties(self);
+	uint32_t off;
+
+	aprint_naive("\n");
+
+	if (!prop_dictionary_get_uint32(dict, "offset", &off)) {
+		if (CPU_ID_CORTEX_A5_P(curcpu()->ci_arm_cpuid)) {
+			/*
+			 * PL310 on Cortex-A5 is external to PERIPHBASE, so
+			 * "offset" property is required.
+			 */
+			aprint_normal(": not configured\n");
+			return;
+		}
+		off = L2CC_BASE;
+	}
 
 	arml2cc_sc = sc;
 	sc->sc_dev = self;
@@ -148,7 +168,7 @@ arml2cc_attach(device_t parent, device_t self, void *aux)
 	mutex_init(&sc->sc_lock, MUTEX_DEFAULT, IPL_HIGH);
 
 	bus_space_subregion(sc->sc_memt, mpcaa->mpcaa_memh, 
-	    L2CC_BASE, L2CC_SIZE, &sc->sc_memh);
+	    off, L2CC_SIZE, &sc->sc_memh);
 
 	uint32_t id = arml2cc_read_4(sc, L2C_CACHE_ID);
 	u_int rev = __SHIFTOUT(id, CACHE_ID_REV);
@@ -163,7 +183,6 @@ arml2cc_attach(device_t parent, device_t self, void *aux)
 
 	const bool enabled_p = arml2cc_read_4(sc, L2C_CTL) != 0;
 
-	aprint_naive("\n");
 	aprint_normal(": ARM PL310%s L2 Cache Controller%s\n",
 	    revstr, enabled_p ? "" : " (disabled)");
 
@@ -240,10 +259,10 @@ arml2cc_enable(struct arml2cc_softc *sc)
 {
 	mutex_spin_enter(&sc->sc_lock);
 
-	arml2cc_write_4(sc, L2C_CTL, 1);	// turn it on
-
 	arml2cc_cache_way_op(sc, L2C_INV_WAY, sc->sc_waymask);
 	arml2cc_cache_sync(sc);
+
+	arml2cc_write_4(sc, L2C_CTL, 1);	// turn it on
 
 	mutex_spin_exit(&sc->sc_lock);
 }
@@ -263,6 +282,8 @@ arml2cc_init(bus_space_tag_t bst, bus_space_handle_t bsh, bus_size_t o)
 	info->dcache_ways = 8 << __SHIFTOUT(cfg_dsize, CACHE_TYPE_xASSOC);
 	info->dcache_line_size = 32 << __SHIFTOUT(cfg_dsize, CACHE_TYPE_xLINESIZE);
 	info->dcache_size = info->dcache_ways * d_waysize;
+	info->dcache_type = CACHE_TYPE_PIPT;
+	info->icache_type = CACHE_TYPE_PIPT;
 
 	if (info->cache_unified) {
 		info->icache_ways = info->dcache_ways;

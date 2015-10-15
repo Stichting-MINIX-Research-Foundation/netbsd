@@ -1,4 +1,4 @@
-/*	$NetBSD: luapmf.c,v 1.2 2013/10/29 09:18:45 mbalmer Exp $ */
+/*	$NetBSD: luapmf.c,v 1.6 2014/07/19 18:38:35 lneto Exp $ */
 
 /*
  * Copyright (c) 2011, 2013 Marc Balmer <mbalmer@NetBSD.org>.
@@ -39,6 +39,7 @@
 #include <sys/reboot.h>
 
 #include <lua.h>
+#include <lauxlib.h>
 
 #ifdef _MODULE
 MODULE(MODULE_CLASS_MISC, luapmf, "lua");
@@ -80,29 +81,17 @@ get_platform(lua_State *L)
 
 }
 
-struct pmf_reg {
-	const char *n;
-	int (*f)(lua_State *);
-};
-
 static int
-luaopen_pmf(void *ls)
+luaopen_pmf(lua_State *L)
 {
-	lua_State *L = (lua_State *)ls;
-	int n, nfunc;
-	struct pmf_reg pmf[] = {
+	const luaL_Reg pmf_lib[ ] = {
 		{ "system_shutdown",	system_shutdown },
 		{ "set_platform",	set_platform },
-		{ "get_platform",	get_platform }
+		{ "get_platform",	get_platform },
+		{ NULL, NULL }
 	};
 
-	nfunc = sizeof(pmf)/sizeof(pmf[1]);
-
-	lua_createtable(L, nfunc, 0);
-	for (n = 0; n < nfunc; n++) {
-		lua_pushcfunction(L, pmf[n].f);
-		lua_setfield(L, -2, pmf[n].n);
-	}
+	luaL_newlib(L, pmf_lib);
 
 	/* some integer values */
 	lua_pushinteger(L, PMFE_DISPLAY_ON);
@@ -152,7 +141,6 @@ luaopen_pmf(void *ls)
 	lua_pushinteger(L, RB_USERCONF);
 	lua_setfield(L, -2, "RB_USERCONF");
 
-	lua_setglobal(L, "pmf");
 	return 1;
 }
 
@@ -162,10 +150,10 @@ luapmf_modcmd(modcmd_t cmd, void *opaque)
 	int error;
 	switch (cmd) {
 	case MODULE_CMD_INIT:
-		error = lua_mod_register("pmf", luaopen_pmf);
+		error = klua_mod_register("pmf", luaopen_pmf);
 		break;
 	case MODULE_CMD_FINI:
-		error = lua_mod_unregister("pmf");
+		error = klua_mod_unregister("pmf");
 		break;
 	default:
 		error = ENOTTY;

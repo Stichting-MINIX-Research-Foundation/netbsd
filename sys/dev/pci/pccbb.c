@@ -1,4 +1,4 @@
-/*	$NetBSD: pccbb.c,v 1.205 2013/10/17 21:06:15 christos Exp $	*/
+/*	$NetBSD: pccbb.c,v 1.208 2015/03/26 20:13:28 nakayama Exp $	*/
 
 /*
  * Copyright (c) 1998, 1999 and 2000
@@ -26,7 +26,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: pccbb.c,v 1.205 2013/10/17 21:06:15 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: pccbb.c,v 1.208 2015/03/26 20:13:28 nakayama Exp $");
 
 /*
 #define CBB_DEBUG
@@ -556,11 +556,11 @@ pccbbdetach(device_t self, int flags)
 	sc->sc_flags &= ~(CBB_MEMHMAPPED|CBB_SPECMAPPED);
 
 	if (!TAILQ_EMPTY(&sc->sc_iowindow))
-		aprint_error_dev(self, "i/o windows not empty");
+		aprint_error_dev(self, "i/o windows not empty\n");
 	if (!TAILQ_EMPTY(&sc->sc_memwindow))
-		aprint_error_dev(self, "memory windows not empty");
+		aprint_error_dev(self, "memory windows not empty\n");
 
-	callout_stop(&sc->sc_insert_ch);
+	callout_halt(&sc->sc_insert_ch, NULL);
 	callout_destroy(&sc->sc_insert_ch);
 
 	mutex_destroy(&sc->sc_pwr_mtx);
@@ -916,13 +916,14 @@ pccbb_intrinit(struct pccbb_softc *sc)
 	pci_chipset_tag_t pc = sc->sc_pc;
 	bus_space_tag_t bmt = sc->sc_base_memt;
 	bus_space_handle_t bmh = sc->sc_base_memh;
+	char intrbuf[PCI_INTRSTR_LEN];
 
 	/* Map and establish the interrupt. */
 	if (pci_intr_map(&sc->sc_pa, &ih)) {
 		aprint_error_dev(sc->sc_dev, "couldn't map interrupt\n");
 		return;
 	}
-	intrstr = pci_intr_string(pc, ih);
+	intrstr = pci_intr_string(pc, ih, intrbuf, sizeof(intrbuf));
 
 	/*
 	 * XXX pccbbintr should be called under the priority lower

@@ -1,4 +1,4 @@
-/*	$NetBSD: locks.c,v 1.65 2013/07/03 17:10:28 njoly Exp $	*/
+/*	$NetBSD: locks.c,v 1.71 2015/09/30 02:45:33 ozaki-r Exp $	*/
 
 /*
  * Copyright (c) 2007-2011 Antti Kantee.  All Rights Reserved.
@@ -26,7 +26,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: locks.c,v 1.65 2013/07/03 17:10:28 njoly Exp $");
+__KERNEL_RCSID(0, "$NetBSD: locks.c,v 1.71 2015/09/30 02:45:33 ozaki-r Exp $");
 
 #include <sys/param.h>
 #include <sys/kmem.h>
@@ -36,6 +36,12 @@ __KERNEL_RCSID(0, "$NetBSD: locks.c,v 1.65 2013/07/03 17:10:28 njoly Exp $");
 #include <rump/rumpuser.h>
 
 #include "rump_private.h"
+
+#ifdef LOCKDEBUG
+const int rump_lockdebug = 1;
+#else
+const int rump_lockdebug = 0;
+#endif
 
 /*
  * Simple lockdebug.  If it's compiled in, it's always active.
@@ -65,12 +71,15 @@ static lockops_t rw_lockops = {
     lockdebug_locked(lock, NULL, (uintptr_t)__builtin_return_address(0), shar)
 #define UNLOCKED(lock, shar)		\
     lockdebug_unlocked(lock, (uintptr_t)__builtin_return_address(0), shar)
+#define BARRIER(lock, slp)		\
+    lockdebug_barrier(lock, slp)
 #else
 #define ALLOCK(a, b)
 #define FREELOCK(a)
 #define WANTLOCK(a, b)
 #define LOCKED(a, b)
 #define UNLOCKED(a, b)
+#define BARRIER(a, b)
 #endif
 
 /*
@@ -132,6 +141,7 @@ mutex_enter(kmutex_t *mtx)
 {
 
 	WANTLOCK(mtx, 0);
+	BARRIER(mtx, 1);
 	rumpuser_mutex_enter(RUMPMTX(mtx));
 	LOCKED(mtx, false);
 }
@@ -141,6 +151,7 @@ mutex_spin_enter(kmutex_t *mtx)
 {
 
 	WANTLOCK(mtx, 0);
+	BARRIER(mtx, 1);
 	rumpuser_mutex_enter_nowrap(RUMPMTX(mtx));
 	LOCKED(mtx, false);
 }
@@ -223,8 +234,8 @@ void
 rw_enter(krwlock_t *rw, const krw_t op)
 {
 
-
 	WANTLOCK(rw, op == RW_READER);
+	BARRIER(rw, 1);
 	rumpuser_rw_enter(krw2rumprw(op), RUMPRW(rw));
 	LOCKED(rw, op == RW_READER);
 }
@@ -362,7 +373,6 @@ docvwait(kcondvar_t *cv, kmutex_t *mtx, struct timespec *ts)
 	if (__predict_false(l->l_flag & LW_RUMP_QEXIT)) {
 		struct proc *p = l->l_proc;
 
-		UNLOCKED(mtx, false);
 		mutex_exit(mtx); /* drop and retake later */
 
 		mutex_enter(p->p_lock);
@@ -377,7 +387,6 @@ docvwait(kcondvar_t *cv, kmutex_t *mtx, struct timespec *ts)
 		/* ok, we can exit and remove "reference" to l->private */
 
 		mutex_enter(mtx);
-		LOCKED(mtx, false);
 		rv = EINTR;
 	}
 	l->l_private = NULL;

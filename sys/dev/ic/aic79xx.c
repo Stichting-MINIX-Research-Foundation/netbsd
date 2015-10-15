@@ -1,4 +1,4 @@
-/*	$NetBSD: aic79xx.c,v 1.46 2013/10/17 21:24:24 christos Exp $	*/
+/*	$NetBSD: aic79xx.c,v 1.50 2014/10/18 08:33:27 snj Exp $	*/
 
 /*
  * Core routines and tables shareable across OS platforms.
@@ -49,7 +49,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: aic79xx.c,v 1.46 2013/10/17 21:24:24 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: aic79xx.c,v 1.50 2014/10/18 08:33:27 snj Exp $");
 
 #include <dev/ic/aic79xx_osm.h>
 #include <dev/ic/aic79xx_inline.h>
@@ -1838,7 +1838,7 @@ ahd_handle_transmission_error(struct ahd_softc *ahd)
 		 * ignore a perfectly valid "unexected busfree"
 		 * after our "initiator detected error" message is
 		 * sent.  A busfree is the expected response after
-		 * we tell the target that it's L_Q was corrupted.
+		 * we tell the target that its L_Q was corrupted.
 		 * (SPI4R09 10.7.3.3.3)
 		 */
 		ahd_outb(ahd, LQCTL2, LQIRETRY);
@@ -5963,26 +5963,23 @@ ahd_controller_info(struct ahd_softc *ahd, char *tbuf, size_t l)
 {
 	const char *speed;
 	const char *type;
-	int len;
-	char *ep;
+	size_t len;
 
-	ep = tbuf + l;
-
-	len = snprintf(tbuf, ep - tbuf, "%s: ",
+	len = snprintf(tbuf, l, "%s: ",
 	    ahd_chip_names[ahd->chip & AHD_CHIPID_MASK]);
-	tbuf += len;
-
+	if (len > l)
+		return;
 	speed = "Ultra320 ";
 	if ((ahd->features & AHD_WIDE) != 0) {
 		type = "Wide ";
 	} else {
 		type = "Single ";
 	}
-	len = snprintf(tbuf, ep - tbuf, "%s%sChannel %c, SCSI Id=%d, ",
+	len += snprintf(tbuf + len, l  - len, "%s%sChannel %c, SCSI Id=%d, ",
 		      speed, type, ahd->channel, ahd->our_id);
-	tbuf += len;
-
-	snprintf(tbuf, ep - tbuf, "%s, %d SCBs", ahd->bus_description,
+	if (len > l)
+		return;
+	snprintf(tbuf + len, l - len, "%s, %d SCBs", ahd->bus_description,
 		ahd->scb_data.maxhscbs);
 }
 
@@ -8597,7 +8594,7 @@ ahd_print_register(ahd_reg_parse_entry_t *table, u_int num_entries,
 		   const char *name, u_int address, u_int value,
 		   u_int *cur_column, u_int wrap_point)
 {
-	int	printed;
+	size_t	printed;
 	u_int	printed_mask;
 	char    line[1024];
 
@@ -8608,9 +8605,11 @@ ahd_print_register(ahd_reg_parse_entry_t *table, u_int num_entries,
 		*cur_column = 0;
 	}
 	printed = snprintf(line, sizeof(line), "%s[0x%x]", name, value);
+		printed = sizeof(line);
 	if (table == NULL) {
-		printed += snprintf(&line[printed], (sizeof line) - printed,
-		    " ");
+		if (printed < sizeof(line))
+		    printed += snprintf(&line[printed],
+			(sizeof line) - printed, " ");
 		printf("%s", line);
 		if (cur_column != NULL)
 			*cur_column += printed;
@@ -8626,10 +8625,11 @@ ahd_print_register(ahd_reg_parse_entry_t *table, u_int num_entries,
 			 || ((printed_mask & table[entry].mask)
 			  == table[entry].mask))
 				continue;
-			printed += snprintf(&line[printed],
-			    (sizeof line) - printed, "%s%s",
-				printed_mask == 0 ? ":(" : "|",
-				table[entry].name);
+			if (printed < sizeof(line))
+			    printed += snprintf(&line[printed],
+				(sizeof line) - printed, "%s%s",
+				    printed_mask == 0 ? ":(" : "|",
+				    table[entry].name);
 			printed_mask |= table[entry].mask;
 
 			break;
@@ -8637,12 +8637,14 @@ ahd_print_register(ahd_reg_parse_entry_t *table, u_int num_entries,
 		if (entry >= num_entries)
 			break;
 	}
-	if (printed_mask != 0)
-		printed += snprintf(&line[printed],
-		    (sizeof line) - printed, ") ");
-	else
-		printed += snprintf(&line[printed],
-		    (sizeof line) - printed, " ");
+	if (printed < sizeof(line)) {
+		if (printed_mask != 0)
+			printed += snprintf(&line[printed],
+			    (sizeof line) - printed, ") ");
+		else
+			printed += snprintf(&line[printed],
+			    (sizeof line) - printed, " ");
+	}
 	if (cur_column != NULL)
 		*cur_column += printed;
 	printf("%s", line);

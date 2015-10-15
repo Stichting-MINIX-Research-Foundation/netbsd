@@ -1,4 +1,4 @@
-/*	$NetBSD: lom.c,v 1.11 2013/01/24 11:06:20 nakayama Exp $	*/
+/*	$NetBSD: lom.c,v 1.15 2015/04/27 11:55:29 martin Exp $	*/
 /*	$OpenBSD: lom.c,v 1.21 2010/02/28 20:44:39 kettenis Exp $	*/
 /*
  * Copyright (c) 2009 Mark Kettenis
@@ -17,7 +17,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: lom.c,v 1.11 2013/01/24 11:06:20 nakayama Exp $");
+__KERNEL_RCSID(0, "$NetBSD: lom.c,v 1.15 2015/04/27 11:55:29 martin Exp $");
 
 #include <sys/param.h>
 #include <sys/device.h>
@@ -238,7 +238,6 @@ static bool	lom_shutdown(device_t, int);
 SYSCTL_SETUP_PROTO(sysctl_lom_setup);
 static int	lom_sysctl_alarm(SYSCTLFN_PROTO);
 
-static int hw_node = CTL_EOL;
 static const char *nodename[LOM_MAX_ALARM] =
     { "fault_led", "alarm1", "alarm2", "alarm3" };
 #ifdef SYSCTL_INCLUDE_DESCR
@@ -266,7 +265,7 @@ lom_attach(device_t parent, device_t self, void *aux)
 	struct ebus_attach_args *ea = aux;
 	uint8_t reg, fw_rev, config, config2, config3;
 	uint8_t cal, low;
-	int i;
+	int i, err;
 	const struct sysctlnode *node = NULL, *newnode;
 
 	if (strcmp(ea->ea_name, "SUNW,lomh") == 0) {
@@ -342,18 +341,21 @@ lom_attach(device_t parent, device_t self, void *aux)
 	}
 
 	/* Setup our sysctl subtree, hw.lomN */
-	if (hw_node != CTL_EOL)
-		sysctl_createv(NULL, 0, NULL, &node,
-		    0, CTLTYPE_NODE, device_xname(self), NULL,
-		    NULL, 0, NULL, 0, CTL_HW, CTL_CREATE, CTL_EOL);
+	sysctl_createv(NULL, 0, NULL, &node,
+	    0, CTLTYPE_NODE, device_xname(self), NULL,
+	    NULL, 0, NULL, 0, CTL_HW, CTL_CREATE, CTL_EOL);
 
 	/* Initialize sensor data. */
 	sc->sc_sme = sysmon_envsys_create();
 	for (i = 0; i < sc->sc_num_alarm; i++) {
 		sc->sc_alarm[i].units = ENVSYS_INDICATOR;
 		sc->sc_alarm[i].state = ENVSYS_SINVALID;
-		snprintf(sc->sc_alarm[i].desc, sizeof(sc->sc_alarm[i].desc),
-		    i == 0 ? "Fault LED" : "Alarm%d", i);
+		if (i == 0)
+			strlcpy(sc->sc_alarm[i].desc, "Fault LED",
+			    sizeof(sc->sc_alarm[i].desc));
+		else
+			snprintf(sc->sc_alarm[i].desc,
+			    sizeof(sc->sc_alarm[i].desc), "Alarm%d", i);
 		if (sysmon_envsys_sensor_attach(sc->sc_sme, &sc->sc_alarm[i])) {
 			sysmon_envsys_destroy(sc->sc_sme);
 			aprint_error_dev(self, "can't attach alarm sensor\n");
@@ -413,9 +415,10 @@ lom_attach(device_t parent, device_t self, void *aux)
 	sc->sc_sme->sme_name = device_xname(self);
 	sc->sc_sme->sme_cookie = sc;
 	sc->sc_sme->sme_refresh = lom_refresh;
-	if (sysmon_envsys_register(sc->sc_sme)) {
+	err = sysmon_envsys_register(sc->sc_sme);
+	if (err) {
 		aprint_error_dev(self,
-		    "unable to register envsys with sysmon\n");
+		    "unable to register envsys with sysmon, error %d\n", err);
 		sysmon_envsys_destroy(sc->sc_sme);
 		return;
 	}
@@ -598,7 +601,15 @@ lom1_write_polled(struct lom_softc *sc, uint8_t reg, uint8_t val)
 static void
 lom1_queue_cmd(struct lom_softc *sc, struct lom_cmd *lc)
 {
+	struct lom_cmd *lcp;
+
 	mutex_enter(&sc->sc_queue_mtx);
+	TAILQ_FOREACH(lcp, &sc->sc_queue, lc_next) {
+		if (lcp == lc) {
+			mutex_exit(&sc->sc_queue_mtx);
+			return;
+		}
+	}
 	TAILQ_INSERT_TAIL(&sc->sc_queue, lc, lc_next);
 	if (sc->sc_state == LOM_STATE_IDLE) {
 		sc->sc_state = LOM_STATE_CMD;
@@ -816,13 +827,21 @@ lom2_write_polled(struct lom_softc *sc, uint8_t reg, uint8_t val)
 static void
 lom2_queue_cmd(struct lom_softc *sc, struct lom_cmd *lc)
 {
+	struct lom_cmd *lcp;
 	uint8_t str;
 
 	mutex_enter(&sc->sc_queue_mtx);
+	TAILQ_FOREACH(lcp, &sc->sc_queue, lc_next) {
+		if (lcp == lc) {
+			mutex_exit(&sc->sc_queue_mtx);
+			return;
+		}
+	}
 	TAILQ_INSERT_TAIL(&sc->sc_queue, lc, lc_next);
 	if (sc->sc_state == LOM_STATE_IDLE) {
 		str = bus_space_read_1(sc->sc_iot, sc->sc_ioh, LOM2_STATUS);
 		if ((str & LOM2_STATUS_IBF) == 0) {
+			lc = TAILQ_FIRST(&sc->sc_queue);
 			bus_space_write_1(sc->sc_iot, sc->sc_ioh,
 			    LOM2_CMD, lc->lc_cmd);
 			sc->sc_state = LOM_STATE_DATA;
@@ -850,9 +869,11 @@ lom2_intr(void *arg)
 	}
 
 	if (lc->lc_cmd & LOM_IDX_WRITE) {
-		bus_space_write_1(sc->sc_iot, sc->sc_ioh,
-		    LOM2_DATA, lc->lc_data);
-		lc->lc_cmd &= ~LOM_IDX_WRITE;
+		if ((str & LOM2_STATUS_IBF) == 0) {
+			bus_space_write_1(sc->sc_iot, sc->sc_ioh,
+			    LOM2_DATA, lc->lc_data);
+			lc->lc_cmd &= ~LOM_IDX_WRITE;
+		}
 		mutex_exit(&sc->sc_queue_mtx);
 		return (1);
 	}
@@ -869,6 +890,7 @@ lom2_intr(void *arg)
 	if (!TAILQ_EMPTY(&sc->sc_queue)) {
 		str = bus_space_read_1(sc->sc_iot, sc->sc_ioh, LOM2_STATUS);
 		if ((str & LOM2_STATUS_IBF) == 0) {
+			lc = TAILQ_FIRST(&sc->sc_queue);
 			bus_space_write_1(sc->sc_iot, sc->sc_ioh,
 			    LOM2_CMD, lc->lc_cmd);
 			sc->sc_state = LOM_STATE_DATA;
@@ -1197,18 +1219,6 @@ lom_shutdown(device_t dev, int how)
 	sc->sc_wdog_ctl &= ~LOM_WDOG_ENABLE;
 	lom_write(sc, LOM_IDX_WDOG_CTL, sc->sc_wdog_ctl);
 	return true;
-}
-
-SYSCTL_SETUP(sysctl_lom_setup, "sysctl hw.lom subtree setup")
-{
-	const struct sysctlnode *node;
-
-	if (sysctl_createv(clog, 0, NULL, &node,
-	    CTLFLAG_PERMANENT, CTLTYPE_NODE, "hw", NULL,
-	    NULL, 0, NULL, 0, CTL_HW, CTL_EOL) != 0)
-		return;
-
-	hw_node = node->sysctl_num;
 }
 
 static int

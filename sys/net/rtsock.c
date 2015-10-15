@@ -1,4 +1,4 @@
-/*	$NetBSD: rtsock.c,v 1.142 2013/07/24 15:31:04 kefren Exp $	*/
+/*	$NetBSD: rtsock.c,v 1.173 2015/08/07 08:11:33 ozaki-r Exp $	*/
 
 /*
  * Copyright (C) 1995, 1996, 1997, and 1998 WIDE Project.
@@ -61,7 +61,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: rtsock.c,v 1.142 2013/07/24 15:31:04 kefren Exp $");
+__KERNEL_RCSID(0, "$NetBSD: rtsock.c,v 1.173 2015/08/07 08:11:33 ozaki-r Exp $");
 
 #ifdef _KERNEL_OPT
 #include "opt_inet.h"
@@ -72,13 +72,13 @@ __KERNEL_RCSID(0, "$NetBSD: rtsock.c,v 1.142 2013/07/24 15:31:04 kefren Exp $");
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/proc.h>
-#include <sys/mbuf.h>
 #include <sys/socket.h>
 #include <sys/socketvar.h>
 #include <sys/domain.h>
 #include <sys/protosw.h>
 #include <sys/sysctl.h>
 #include <sys/kauth.h>
+#include <sys/kmem.h>
 #include <sys/intr.h>
 #ifdef RTSOCK_DEBUG
 #include <netinet/in.h>
@@ -107,7 +107,7 @@ __KERNEL_RCSID(0, "$NetBSD: rtsock.c,v 1.142 2013/07/24 15:31:04 kefren Exp $");
 #define	DOMAINNAME	"oroute"
 CTASSERT(sizeof(struct ifa_xmsghdr) == 20);
 DOMAIN_DEFINE(compat_50_routedomain); /* forward declare and add to link set */
-#else
+#else /* COMPAT_RTSOCK */
 #define	RTM_XVERSION	RTM_VERSION
 #define	RT_XADVANCE(a,b) RT_ADVANCE(a,b)
 #define	RT_XROUNDUP(n)	RT_ROUNDUP(n)
@@ -125,11 +125,16 @@ CTASSERT(sizeof(struct ifa_xmsghdr) == 24);
 DOMAIN_DEFINE(routedomain); /* forward declare and add to link set */
 #undef COMPAT_50
 #undef COMPAT_14
-#endif
+#endif /* COMPAT_RTSOCK */
 
 #ifndef COMPATCALL
 #define	COMPATCALL(name, args)	do { } while (/*CONSTCOND*/ 0)
 #endif
+
+#ifdef RTSOCK_DEBUG
+#define RT_IN_PRINT(b, a) (in_print((b), sizeof(b), \
+    &((const struct sockaddr_in *)info.rti_info[(a)])->sin_addr), (b))
+#endif /* RTSOCK_DEBUG */
 
 struct route_info COMPATNAME(route_info) = {
 	.ri_dst = { .sa_len = 2, .sa_family = PF_XROUTE, },
@@ -141,8 +146,6 @@ struct route_info COMPATNAME(route_info) = {
 
 static void COMPATNAME(route_init)(void);
 static int COMPATNAME(route_output)(struct mbuf *, ...);
-static int COMPATNAME(route_usrreq)(struct socket *,
-	    int, struct mbuf *, struct mbuf *, struct mbuf *, struct lwp *);
 
 static int rt_msg2(int, struct rt_addrinfo *, void *, struct rt_walkarg *, int *);
 static int rt_xaddrs(u_char, const char *, const char *, struct rt_addrinfo *);
@@ -178,52 +181,235 @@ rt_adjustcount(int af, int cnt)
 	}
 }
 
-/*ARGSUSED*/
-int
-COMPATNAME(route_usrreq)(struct socket *so, int req, struct mbuf *m, struct mbuf *nam,
-	struct mbuf *control, struct lwp *l)
+static int
+COMPATNAME(route_attach)(struct socket *so, int proto)
 {
-	int error = 0;
-	struct rawcb *rp = sotorawcb(so);
-	int s;
+	struct rawcb *rp;
+	int s, error;
 
-	if (req == PRU_ATTACH) {
-		sosetlock(so);
-		rp = malloc(sizeof(*rp), M_PCB, M_WAITOK|M_ZERO);
-		so->so_pcb = rp;
-	}
-	if (req == PRU_DETACH && rp)
-		rt_adjustcount(rp->rcb_proto.sp_protocol, -1);
+	KASSERT(sotorawcb(so) == NULL);
+	rp = kmem_zalloc(sizeof(*rp), KM_SLEEP);
+	rp->rcb_len = sizeof(*rp);
+	so->so_pcb = rp;
+
 	s = splsoftnet();
-
-	/*
-	 * Don't call raw_usrreq() in the attach case, because
-	 * we want to allow non-privileged processes to listen on
-	 * and send "safe" commands to the routing socket.
-	 */
-	if (req == PRU_ATTACH) {
-		if (l == NULL)
-			error = EACCES;
-		else
-			error = raw_attach(so, (int)(long)nam);
-	} else
-		error = raw_usrreq(so, req, m, nam, control, l);
-
-	rp = sotorawcb(so);
-	if (req == PRU_ATTACH && rp) {
-		if (error) {
-			free(rp, M_PCB);
-			splx(s);
-			return error;
-		}
+	if ((error = raw_attach(so, proto)) == 0) {
 		rt_adjustcount(rp->rcb_proto.sp_protocol, 1);
 		rp->rcb_laddr = &COMPATNAME(route_info).ri_src;
 		rp->rcb_faddr = &COMPATNAME(route_info).ri_dst;
-		soisconnected(so);
-		so->so_options |= SO_USELOOPBACK;
 	}
 	splx(s);
+
+	if (error) {
+		kmem_free(rp, sizeof(*rp));
+		so->so_pcb = NULL;
+		return error;
+	}
+
+	soisconnected(so);
+	so->so_options |= SO_USELOOPBACK;
+	KASSERT(solocked(so));
+
 	return error;
+}
+
+static void
+COMPATNAME(route_detach)(struct socket *so)
+{
+	struct rawcb *rp = sotorawcb(so);
+	int s;
+
+	KASSERT(rp != NULL);
+	KASSERT(solocked(so));
+
+	s = splsoftnet();
+	rt_adjustcount(rp->rcb_proto.sp_protocol, -1);
+	raw_detach(so);
+	splx(s);
+}
+
+static int
+COMPATNAME(route_accept)(struct socket *so, struct sockaddr *nam)
+{
+	KASSERT(solocked(so));
+
+	panic("route_accept");
+
+	return EOPNOTSUPP;
+}
+
+static int
+COMPATNAME(route_bind)(struct socket *so, struct sockaddr *nam, struct lwp *l)
+{
+	KASSERT(solocked(so));
+
+	return EOPNOTSUPP;
+}
+
+static int
+COMPATNAME(route_listen)(struct socket *so, struct lwp *l)
+{
+	KASSERT(solocked(so));
+
+	return EOPNOTSUPP;
+}
+
+static int
+COMPATNAME(route_connect)(struct socket *so, struct sockaddr *nam, struct lwp *l)
+{
+	KASSERT(solocked(so));
+
+	return EOPNOTSUPP;
+}
+
+static int
+COMPATNAME(route_connect2)(struct socket *so, struct socket *so2)
+{
+	KASSERT(solocked(so));
+
+	return EOPNOTSUPP;
+}
+
+static int
+COMPATNAME(route_disconnect)(struct socket *so)
+{
+	struct rawcb *rp = sotorawcb(so);
+	int s;
+
+	KASSERT(solocked(so));
+	KASSERT(rp != NULL);
+
+	s = splsoftnet();
+	soisdisconnected(so);
+	raw_disconnect(rp);
+	splx(s);
+
+	return 0;
+}
+
+static int
+COMPATNAME(route_shutdown)(struct socket *so)
+{
+	int s;
+
+	KASSERT(solocked(so));
+
+	/*
+	 * Mark the connection as being incapable of further input.
+	 */
+	s = splsoftnet();
+	socantsendmore(so);
+	splx(s);
+	return 0;
+}
+
+static int
+COMPATNAME(route_abort)(struct socket *so)
+{
+	KASSERT(solocked(so));
+
+	panic("route_abort");
+
+	return EOPNOTSUPP;
+}
+
+static int
+COMPATNAME(route_ioctl)(struct socket *so, u_long cmd, void *nam,
+    struct ifnet * ifp)
+{
+	return EOPNOTSUPP;
+}
+
+static int
+COMPATNAME(route_stat)(struct socket *so, struct stat *ub)
+{
+	KASSERT(solocked(so));
+
+	return 0;
+}
+
+static int
+COMPATNAME(route_peeraddr)(struct socket *so, struct sockaddr *nam)
+{
+	struct rawcb *rp = sotorawcb(so);
+
+	KASSERT(solocked(so));
+	KASSERT(rp != NULL);
+	KASSERT(nam != NULL);
+
+	if (rp->rcb_faddr == NULL)
+		return ENOTCONN;
+
+	raw_setpeeraddr(rp, nam);
+	return 0;
+}
+
+static int
+COMPATNAME(route_sockaddr)(struct socket *so, struct sockaddr *nam)
+{
+	struct rawcb *rp = sotorawcb(so);
+
+	KASSERT(solocked(so));
+	KASSERT(rp != NULL);
+	KASSERT(nam != NULL);
+
+	if (rp->rcb_faddr == NULL)
+		return ENOTCONN;
+
+	raw_setsockaddr(rp, nam);
+	return 0;
+}
+
+static int
+COMPATNAME(route_rcvd)(struct socket *so, int flags, struct lwp *l)
+{
+	KASSERT(solocked(so));
+
+	return EOPNOTSUPP;
+}
+
+static int
+COMPATNAME(route_recvoob)(struct socket *so, struct mbuf *m, int flags)
+{
+	KASSERT(solocked(so));
+
+	return EOPNOTSUPP;
+}
+
+static int
+COMPATNAME(route_send)(struct socket *so, struct mbuf *m,
+    struct sockaddr *nam, struct mbuf *control, struct lwp *l)
+{
+	int error = 0;
+	int s;
+
+	KASSERT(solocked(so));
+
+	s = splsoftnet();
+	error = raw_send(so, m, nam, control, l);
+	splx(s);
+
+	return error;
+}
+
+static int
+COMPATNAME(route_sendoob)(struct socket *so, struct mbuf *m,
+    struct mbuf *control)
+{
+	KASSERT(solocked(so));
+
+	m_freem(m);
+	m_freem(control);
+
+	return EOPNOTSUPP;
+}
+static int
+COMPATNAME(route_purgeif)(struct socket *so, struct ifnet *ifp)
+{
+
+	panic("route_purgeif");
+
+	return EOPNOTSUPP;
 }
 
 /*ARGSUSED*/
@@ -279,9 +465,9 @@ COMPATNAME(route_output)(struct mbuf *m, ...)
 	info.rti_flags = rtm->rtm_flags;
 #ifdef RTSOCK_DEBUG
 	if (info.rti_info[RTAX_DST]->sa_family == AF_INET) {
+		char abuf[INET_ADDRSTRLEN];
 		printf("%s: extracted info.rti_info[RTAX_DST] %s\n", __func__,
-		    inet_ntoa(((const struct sockaddr_in *)
-		    info.rti_info[RTAX_DST])->sin_addr));
+		    RT_IN_PRINT(abuf, RTAX_DST));
 	}
 #endif /* RTSOCK_DEBUG */
 	if (info.rti_info[RTAX_DST] == NULL ||
@@ -308,16 +494,16 @@ COMPATNAME(route_output)(struct mbuf *m, ...)
 			senderr(EINVAL);
 		}
 		error = rtrequest1(rtm->rtm_type, &info, &saved_nrt);
-		if (error == 0 && saved_nrt) {
+		if (error == 0) {
 			rt_setmetrics(rtm->rtm_inits, rtm, saved_nrt);
-			saved_nrt->rt_refcnt--;
+			rtfree(saved_nrt);
 		}
 		break;
 
 	case RTM_DELETE:
 		error = rtrequest1(rtm->rtm_type, &info, &saved_nrt);
 		if (error == 0) {
-			(rt = saved_nrt)->rt_refcnt++;
+			rt = saved_nrt;
 			goto report;
 		}
 		break;
@@ -329,6 +515,7 @@ COMPATNAME(route_output)(struct mbuf *m, ...)
 		 * info.rti_info[RTAX_NETMASK] before
                  * searching.  It did not used to do that.  --dyoung
 		 */
+		rt = NULL;
 		error = rtrequest1(RTM_GET, &info, &rt);
 		if (error != 0)
 			senderr(error);
@@ -363,16 +550,14 @@ COMPATNAME(route_output)(struct mbuf *m, ...)
 #ifdef RTSOCK_DEBUG
 				if (info.rti_info[RTAX_IFA]->sa_family ==
 				    AF_INET) {
-					printf("%s: copying out RTAX_IFA %s ",
-					    __func__, inet_ntoa(
-					    ((const struct sockaddr_in *)
-					    info.rti_info[RTAX_IFA])->sin_addr)
-					    );
-					printf("for info.rti_info[RTAX_DST] %s "
+					char ibuf[INET_ADDRSTRLEN];
+					char abuf[INET_ADDRSTRLEN];
+					printf("%s: copying out RTAX_IFA %s "
+					    "for info.rti_info[RTAX_DST] %s "
 					    "ifa_getifa %p ifa_seqno %p\n",
-					    inet_ntoa(
-					    ((const struct sockaddr_in *)
-					    info.rti_info[RTAX_DST])->sin_addr),
+					    __func__,
+					    RT_IN_PRINT(ibuf, RTAX_IFA),
+					    RT_IN_PRINT(abuf, RTAX_DST),
 					    (void *)rtifa->ifa_getifa,
 					    rtifa->ifa_seqno);
 				}
@@ -532,8 +717,11 @@ rt_setmetrics(int which, const struct rt_xmsghdr *in, struct rtentry *out)
 	metric(RTV_RTTVAR, rmx_rttvar);
 	metric(RTV_HOPCOUNT, rmx_hopcount);
 	metric(RTV_MTU, rmx_mtu);
-	metric(RTV_EXPIRE, rmx_expire);
 #undef metric
+	if (which & RTV_EXPIRE) {
+		out->rt_rmx.rmx_expire = in->rtm_rmx.rmx_expire ?
+		    time_wall_to_mono(in->rtm_rmx.rmx_expire) : 0;
+	}
 }
 
 static void
@@ -547,8 +735,9 @@ rtm_setmetrics(const struct rtentry *in, struct rt_xmsghdr *out)
 	metric(rmx_rttvar);
 	metric(rmx_hopcount);
 	metric(rmx_mtu);
-	metric(rmx_expire);
 #undef metric
+	out->rtm_rmx.rmx_expire = in->rt_rmx.rmx_expire ?
+	    time_mono_to_wall(in->rt_rmx.rmx_expire) : 0;
 }
 
 static int
@@ -1165,7 +1354,6 @@ sysctl_rtable(SYSCTLFN_ARGS)
 {
 	void 	*where = oldp;
 	size_t	*given = oldlenp;
-	const void *new = newp;
 	int	i, s, error = EINVAL;
 	u_char  af;
 	struct	rt_walkarg w;
@@ -1173,7 +1361,7 @@ sysctl_rtable(SYSCTLFN_ARGS)
 	if (namelen == 1 && name[0] == CTL_QUERY)
 		return sysctl_query(SYSCTLFN_CALL(rnode));
 
-	if (new)
+	if (newp)
 		return EPERM;
 	if (namelen != 3)
 		return EINVAL;
@@ -1306,10 +1494,32 @@ COMPATNAME(route_init)(void)
  * Definitions of protocols supported in the ROUTE domain.
  */
 #ifndef COMPAT_RTSOCK
-PR_WRAP_USRREQ(route_usrreq);
+PR_WRAP_USRREQS(route);
 #else
-PR_WRAP_USRREQ(compat_50_route_usrreq);
+PR_WRAP_USRREQS(compat_50_route);
 #endif
+
+static const struct pr_usrreqs route_usrreqs = {
+	.pr_attach	= COMPATNAME(route_attach_wrapper),
+	.pr_detach	= COMPATNAME(route_detach_wrapper),
+	.pr_accept	= COMPATNAME(route_accept_wrapper),
+	.pr_bind	= COMPATNAME(route_bind_wrapper),
+	.pr_listen	= COMPATNAME(route_listen_wrapper),
+	.pr_connect	= COMPATNAME(route_connect_wrapper),
+	.pr_connect2	= COMPATNAME(route_connect2_wrapper),
+	.pr_disconnect	= COMPATNAME(route_disconnect_wrapper),
+	.pr_shutdown	= COMPATNAME(route_shutdown_wrapper),
+	.pr_abort	= COMPATNAME(route_abort_wrapper),
+	.pr_ioctl	= COMPATNAME(route_ioctl_wrapper),
+	.pr_stat	= COMPATNAME(route_stat_wrapper),
+	.pr_peeraddr	= COMPATNAME(route_peeraddr_wrapper),
+	.pr_sockaddr	= COMPATNAME(route_sockaddr_wrapper),
+	.pr_rcvd	= COMPATNAME(route_rcvd_wrapper),
+	.pr_recvoob	= COMPATNAME(route_recvoob_wrapper),
+	.pr_send	= COMPATNAME(route_send_wrapper),
+	.pr_sendoob	= COMPATNAME(route_sendoob_wrapper),
+	.pr_purgeif	= COMPATNAME(route_purgeif_wrapper),
+};
 
 static const struct protosw COMPATNAME(route_protosw)[] = {
 	{
@@ -1319,7 +1529,7 @@ static const struct protosw COMPATNAME(route_protosw)[] = {
 		.pr_input = raw_input,
 		.pr_output = COMPATNAME(route_output),
 		.pr_ctlinput = raw_ctlinput,
-		.pr_usrreq = COMPATNAME(route_usrreq_wrapper),
+		.pr_usrreqs = &route_usrreqs,
 		.pr_init = raw_init,
 	},
 };
@@ -1337,12 +1547,6 @@ static void
 sysctl_net_route_setup(struct sysctllog **clog)
 {
 	const struct sysctlnode *rnode = NULL;
-
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
-		       CTLTYPE_NODE, "net", NULL,
-		       NULL, 0, NULL, 0,
-		       CTL_NET, CTL_EOL);
 
 	sysctl_createv(clog, 0, NULL, &rnode,
 		       CTLFLAG_PERMANENT,

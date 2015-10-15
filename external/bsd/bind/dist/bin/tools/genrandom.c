@@ -1,7 +1,7 @@
-/*	$NetBSD: genrandom.c,v 1.5 2013/07/27 19:23:11 christos Exp $	*/
+/*	$NetBSD: genrandom.c,v 1.7 2014/12/10 04:37:54 christos Exp $	*/
 
 /*
- * Copyright (C) 2004, 2005, 2007, 2009, 2010, 2012  Internet Systems Consortium, Inc. ("ISC")
+ * Copyright (C) 2004, 2005, 2007, 2009, 2010, 2012, 2014  Internet Systems Consortium, Inc. ("ISC")
  * Copyright (C) 2000-2003  Internet Software Consortium.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
@@ -81,10 +81,6 @@ main(int argc, char **argv) {
 	size_t len;
 	char *name;
 
-	isc__mem_register();
-	isc__task_register();
-	isc__timer_register();
-	isc__socket_register();
 	isc_commandline_errprint = ISC_FALSE;
 
 	while ((c = isc_commandline_parse(argc, argv, "hn:")) != EOF) {
@@ -126,7 +122,9 @@ main(int argc, char **argv) {
 		return (0);
 	}
 
-	len = strlen(argv[isc_commandline_index]) + 2;
+	len = strlen(argv[isc_commandline_index]);
+	INSIST((len + 2) > len);
+	len += 2;
 	name = (char *) malloc(len);
 	if (name == NULL) {
 		perror("malloc");

@@ -1,4 +1,4 @@
-/*	$NetBSD: if_smsc.c,v 1.12 2013/11/01 14:24:03 skrll Exp $	*/
+/*	$NetBSD: if_smsc.c,v 1.24 2015/08/02 11:55:28 mlelstv Exp $	*/
 
 /*	$OpenBSD: if_smsc.c,v 1.4 2012/09/27 12:38:11 jsg Exp $	*/
 /* $FreeBSD: src/sys/dev/usb/net/if_smsc.c,v 1.1 2012/08/15 04:03:55 gonzo Exp $ */
@@ -61,6 +61,7 @@
  */
 
 #ifdef _KERNEL_OPT
+#include "opt_usb.h"
 #include "opt_inet.h"
 #endif
 
@@ -76,7 +77,7 @@
 
 #include <sys/device.h>
 
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 
 #include <net/if.h>
 #include <net/if_dl.h>
@@ -108,6 +109,7 @@
 int smsc_debug = 0;
 #endif
 
+#define ETHER_ALIGN 2
 /*
  * Various supported device vendors/products.
  */
@@ -481,16 +483,18 @@ smsc_sethwcsum(struct smsc_softc *sc)
 	}
 
 	/* Enable/disable the Rx checksum */
-	if (ifp->if_capabilities & IFCAP_CSUM_IPv4_Rx)
-		val |= SMSC_COE_CTRL_RX_EN;
+	if (ifp->if_capenable & (IFCAP_CSUM_TCPv4_Rx|IFCAP_CSUM_UDPv4_Rx))
+		val |= (SMSC_COE_CTRL_RX_EN | SMSC_COE_CTRL_RX_MODE);
 	else
-		val &= ~SMSC_COE_CTRL_RX_EN;
+		val &= ~(SMSC_COE_CTRL_RX_EN | SMSC_COE_CTRL_RX_MODE);
 
 	/* Enable/disable the Tx checksum (currently not supported) */
-	if (ifp->if_capabilities & IFCAP_CSUM_IPv4_Tx)
+	if (ifp->if_capenable & (IFCAP_CSUM_TCPv4_Tx|IFCAP_CSUM_UDPv4_Tx))
 		val |= SMSC_COE_CTRL_TX_EN;
 	else
 		val &= ~SMSC_COE_CTRL_TX_EN;
+
+	sc->sc_coe_ctrl = val;
 
 	err = smsc_write_reg(sc, SMSC_COE_CTRL, val);
 	if (err != 0) {
@@ -573,6 +577,9 @@ smsc_init(struct ifnet *ifp)
 	/* Load the multicast filter. */
 	smsc_setmulti(sc);
 
+	/* TCP/UDP checksum offload engines. */
+	smsc_sethwcsum(sc);
+
 	/* Open RX and TX pipes. */
 	err = usbd_open_pipe(sc->sc_iface, sc->sc_ed[SMSC_ENDPT_RX],
 	    USBD_EXCLUSIVE_USE, &sc->sc_ep[SMSC_ENDPT_RX]);
@@ -601,9 +608,6 @@ smsc_init(struct ifnet *ifp)
 		    USBD_NO_TIMEOUT, smsc_rxeof);
 		usbd_transfer(c->sc_xfer);
 	}
-
-	/* TCP/UDP checksum offload engines. */
-	smsc_sethwcsum(sc);
 
 	/* Indicate we are up and running. */
 	ifp->if_flags |= IFF_RUNNING;
@@ -808,14 +812,11 @@ smsc_chip_init(struct smsc_softc *sc)
 	 * Burst capability is the number of URBs that can be in a burst of
 	 * data/ethernet frames.
 	 */
-#ifdef SMSC_TURBO
+
 	if (sc->sc_udev->speed == USB_SPEED_HIGH)
 		burst_cap = 37;
 	else
 		burst_cap = 128;
-#else
-	burst_cap = 0;
-#endif
 
 	smsc_write_reg(sc, SMSC_BURST_CAP, burst_cap);
 
@@ -835,9 +836,13 @@ smsc_chip_init(struct smsc_softc *sc)
 	 * The following settings are used for 'turbo mode', a.k.a multiple
 	 * frames per Rx transaction (again info taken form Linux driver).
 	 */
-#ifdef SMSC_TURBO
 	reg_val |= (SMSC_HW_CFG_MEF | SMSC_HW_CFG_BCE);
-#endif
+
+	/*
+	 * set Rx data offset to ETHER_ALIGN which will make the IP header
+	 * align on a word boundary.
+	 */
+	reg_val |= ETHER_ALIGN << SMSC_HW_CFG_RXDOFF_SHIFT;
 
 	smsc_write_reg(sc, SMSC_HW_CFG, reg_val);
 
@@ -867,6 +872,9 @@ smsc_chip_init(struct smsc_softc *sc)
 		smsc_warn_printf(sc, "failed to read MAC_CSR (err=%d)\n", err);
 		goto init_failed;
 	}
+
+	/* disable pad stripping, collides with checksum offload */
+	sc->sc_mac_csr &= ~SMSC_MAC_CSR_PADSTR;
 
 	/* Vlan */
 	smsc_write_reg(sc, SMSC_VLAN1, (uint32_t)ETHERTYPE_VLAN);
@@ -1043,7 +1051,16 @@ smsc_attach(device_t parent, device_t self, void *aux)
 	ifp->if_start = smsc_start;
 	ifp->if_stop = smsc_stop;
 
-        sc->sc_ec.ec_capabilities = ETHERCAP_VLAN_MTU;
+#ifdef notyet
+	/*
+	 * We can do TCPv4, and UDPv4 checksums in hardware.
+	 */
+	ifp->if_capabilities |=
+	    /*IFCAP_CSUM_TCPv4_Tx |*/ IFCAP_CSUM_TCPv4_Rx |
+	    /*IFCAP_CSUM_UDPv4_Tx |*/ IFCAP_CSUM_UDPv4_Rx;
+#endif
+
+	sc->sc_ec.ec_capabilities = ETHERCAP_VLAN_MTU;
 
 	/* Setup some of the basics */
 	sc->sc_phyno = 1;
@@ -1075,7 +1092,7 @@ smsc_attach(device_t parent, device_t self, void *aux)
 		sc->sc_enaddr[0] = (uint8_t)((mac_l) & 0xff);
 	}
 
-	aprint_normal_dev(self, " Ethernet address %s\n", ether_sprintf(sc->sc_enaddr));
+	aprint_normal_dev(self, "Ethernet address %s\n", ether_sprintf(sc->sc_enaddr));
 
 	IFQ_SET_READY(&ifp->if_snd);
 
@@ -1100,7 +1117,7 @@ smsc_attach(device_t parent, device_t self, void *aux)
 	ether_ifattach(ifp, sc->sc_enaddr);
 
 	rnd_attach_source(&sc->sc_rnd_source, device_xname(sc->sc_dev),
-	    RND_TYPE_NET, 0);
+	    RND_TYPE_NET, RND_FLAG_DEFAULT);
 
 	callout_init(&sc->sc_stat_ch, 0);
 
@@ -1204,7 +1221,7 @@ smsc_activate(device_t self, enum devact act)
 {
 	struct smsc_softc *sc = device_private(self);
 
-        switch (act) {
+	switch (act) {
 	case DVACT_DEACTIVATE:
 		if_deactivate(&sc->sc_ec.ec_if);
 		sc->sc_dying = 1;
@@ -1238,10 +1255,10 @@ smsc_rxeof(usbd_xfer_handle xfer, usbd_private_handle priv, usbd_status status)
 	struct ifnet		*ifp = &sc->sc_ec.ec_if;
 	u_char			*buf = c->sc_buf;
 	uint32_t		total_len;
-	uint16_t		pktlen = 0;
+	uint32_t		rxhdr;
+	uint16_t		pktlen;
 	struct mbuf		*m;
 	int			s;
-	uint32_t		rxhdr;
 
 	if (sc->sc_dying)
 		return;
@@ -1264,7 +1281,7 @@ smsc_rxeof(usbd_xfer_handle xfer, usbd_private_handle priv, usbd_status status)
 	usbd_get_xfer_status(xfer, NULL, NULL, &total_len, NULL);
 	smsc_dbg_printf(sc, "xfer status total_len %d\n", total_len);
 
-	do {
+	while (total_len != 0) {
 		if (total_len < sizeof(rxhdr)) {
 			smsc_dbg_printf(sc, "total_len %d < sizeof(rxhdr) %zu\n",
 			    total_len, sizeof(rxhdr));
@@ -1272,13 +1289,17 @@ smsc_rxeof(usbd_xfer_handle xfer, usbd_private_handle priv, usbd_status status)
 			goto done;
 		}
 
-		buf += pktlen;
-
 		memcpy(&rxhdr, buf, sizeof(rxhdr));
 		rxhdr = le32toh(rxhdr);
+		buf += sizeof(rxhdr);
 		total_len -= sizeof(rxhdr);
 
-		if (rxhdr & SMSC_RX_STAT_ERROR) {
+		if (rxhdr & SMSC_RX_STAT_COLLISION)
+			ifp->if_collisions++;
+
+		if (rxhdr & (SMSC_RX_STAT_ERROR
+		           | SMSC_RX_STAT_LENGTH_ERROR
+		           | SMSC_RX_STAT_MII_ERROR)) {
 			smsc_dbg_printf(sc, "rx error (hdr 0x%08x)\n", rxhdr);
 			ifp->if_ierrors++;
 			goto done;
@@ -1287,15 +1308,29 @@ smsc_rxeof(usbd_xfer_handle xfer, usbd_private_handle priv, usbd_status status)
 		pktlen = (uint16_t)SMSC_RX_STAT_FRM_LENGTH(rxhdr);
 		smsc_dbg_printf(sc, "rxeof total_len %d pktlen %d rxhdr "
 		    "0x%08x\n", total_len, pktlen, rxhdr);
+
+		if (pktlen < ETHER_HDR_LEN) {
+			smsc_dbg_printf(sc, "pktlen %d < ETHER_HDR_LEN %d\n",
+			    pktlen, ETHER_HDR_LEN);
+			ifp->if_ierrors++;
+			goto done;
+		}
+
+		pktlen += ETHER_ALIGN;
+
+		if (pktlen > MCLBYTES) {
+			smsc_dbg_printf(sc, "pktlen %d > MCLBYTES %d\n",
+			    pktlen, MCLBYTES);
+			ifp->if_ierrors++;
+			goto done;
+		}
+
 		if (pktlen > total_len) {
 			smsc_dbg_printf(sc, "pktlen %d > total_len %d\n",
 			    pktlen, total_len);
 			ifp->if_ierrors++;
 			goto done;
 		}
-
-		buf += sizeof(rxhdr);
-		total_len -= pktlen;
 
 		m = smsc_newbuf();
 		if (m == NULL) {
@@ -1306,25 +1341,80 @@ smsc_rxeof(usbd_xfer_handle xfer, usbd_private_handle priv, usbd_status status)
 
 		ifp->if_ipackets++;
 		m->m_pkthdr.rcvif = ifp;
-
-		pktlen -= 2;	// JDM
-
 		m->m_pkthdr.len = m->m_len = pktlen;
-#define ETHER_ALIGN 2
+		m->m_flags |= M_HASFCS;
 		m_adj(m, ETHER_ALIGN);
 
-		memcpy(mtod(m, char *), buf, pktlen);
+		KASSERT(m->m_len < MCLBYTES);
+		memcpy(mtod(m, char *), buf + ETHER_ALIGN, m->m_len);
+
+		/* Check if RX TCP/UDP checksumming is being offloaded */
+		if (sc->sc_coe_ctrl & SMSC_COE_CTRL_RX_EN) {
+			smsc_dbg_printf(sc,"RX checksum offload checking\n");
+			struct ether_header *eh;
+
+			eh = mtod(m, struct ether_header *);
+
+			/* Remove the extra 2 bytes of the csum */
+			m_adj(m, -2);
+
+			/*
+			 * The checksum appears to be simplistically calculated
+			 * over the udp/tcp header and data up to the end of the
+			 * eth frame.  Which means if the eth frame is padded
+			 * the csum calculation is incorrectly performed over
+			 * the padding bytes as well. Therefore to be safe we
+			 * ignore the H/W csum on frames less than or equal to
+			 * 64 bytes.
+			 *
+			 * Ignore H/W csum for non-IPv4 packets.
+			 */
+			smsc_dbg_printf(sc,"Ethertype %02x pktlen %02x\n",
+			    be16toh(eh->ether_type), pktlen);
+			if (be16toh(eh->ether_type) == ETHERTYPE_IP &&
+			    pktlen > ETHER_MIN_LEN) {
+
+				m->m_pkthdr.csum_flags |=
+				    (M_CSUM_TCPv4 | M_CSUM_UDPv4 | M_CSUM_DATA);
+
+				/*
+				 * Copy the TCP/UDP checksum from the last 2
+				 * bytes of the transfer and put in the
+				 * csum_data field.
+				 */
+				memcpy(&m->m_pkthdr.csum_data,
+				    buf + pktlen - 2, 2);
+				/*
+				 * The data is copied in network order, but the
+				 * csum algorithm in the kernel expects it to be
+				 * in host network order.
+				 */
+				m->m_pkthdr.csum_data =
+				    ntohs(m->m_pkthdr.csum_data);
+				smsc_dbg_printf(sc,
+				    "RX checksum offloaded (0x%04x)\n",
+				    m->m_pkthdr.csum_data);
+			}
+		}
+
+		/* round up to next longword */
+		pktlen = (pktlen + 3) & ~0x3;
+
+		/* total_len does not include the padding */
+		if (pktlen > total_len)
+			pktlen = total_len;
+
+		buf += pktlen;
+		total_len -= pktlen;
 
 		/* push the packet up */
 		s = splnet();
 		bpf_mtap(ifp, m);
 		ifp->if_input(ifp, m);
 		splx(s);
-	} while (total_len > 0);
+	}
 
 done:
-	memset(c->sc_buf, 0, sc->sc_bufsz);
-
 	/* Setup new transfer. */
 	usbd_setup_xfer(xfer, sc->sc_ep[SMSC_ENDPT_RX],
 	    c, c->sc_buf, sc->sc_bufsz,

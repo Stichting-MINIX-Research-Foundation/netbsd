@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -41,8 +41,7 @@
  * POSSIBILITY OF SUCH DAMAGES.
  */
 
-
-#define __EVXFEVNT_C__
+#define EXPORT_ACPI_INTERFACES
 
 #include "acpi.h"
 #include "accommon.h"
@@ -52,6 +51,7 @@
         ACPI_MODULE_NAME    ("evxfevnt")
 
 
+#if (!ACPI_REDUCED_HARDWARE) /* Entire module */
 /*******************************************************************************
  *
  * FUNCTION:    AcpiEnable
@@ -79,6 +79,13 @@ AcpiEnable (
     if (!AcpiTbTablesLoaded ())
     {
         return_ACPI_STATUS (AE_NO_ACPI_TABLES);
+    }
+
+    /* If the Hardware Reduced flag is set, machine is always in acpi mode */
+
+    if (AcpiGbl_ReducedHardware)
+    {
+        return_ACPI_STATUS (AE_OK);
     }
 
     /* Check current mode */
@@ -129,6 +136,13 @@ AcpiDisable (
 
     ACPI_FUNCTION_TRACE (AcpiDisable);
 
+
+    /* If the Hardware Reduced flag is set, machine is always in acpi mode */
+
+    if (AcpiGbl_ReducedHardware)
+    {
+        return_ACPI_STATUS (AE_OK);
+    }
 
     if (AcpiHwGetMode() == ACPI_SYS_MODE_LEGACY)
     {
@@ -349,7 +363,9 @@ AcpiGetEventStatus (
     UINT32                  Event,
     ACPI_EVENT_STATUS       *EventStatus)
 {
-    ACPI_STATUS             Status = AE_OK;
+    ACPI_STATUS             Status;
+    ACPI_EVENT_STATUS       LocalEventStatus = 0;
+    UINT32                  InByte;
 
 
     ACPI_FUNCTION_TRACE (AcpiGetEventStatus);
@@ -367,14 +383,46 @@ AcpiGetEventStatus (
         return_ACPI_STATUS (AE_BAD_PARAMETER);
     }
 
-    /* Get the status of the requested fixed event */
+    /* Fixed event currently can be dispatched? */
+
+    if (AcpiGbl_FixedEventHandlers[Event].Handler)
+    {
+        LocalEventStatus |= ACPI_EVENT_FLAG_HAS_HANDLER;
+    }
+
+    /* Fixed event currently enabled? */
 
     Status = AcpiReadBitRegister (
-                AcpiGbl_FixedEventInfo[Event].StatusRegisterId, EventStatus);
+                AcpiGbl_FixedEventInfo[Event].EnableRegisterId, &InByte);
+    if (ACPI_FAILURE (Status))
+    {
+        return_ACPI_STATUS (Status);
+    }
 
-    return_ACPI_STATUS (Status);
+    if (InByte)
+    {
+        LocalEventStatus |=
+            (ACPI_EVENT_FLAG_ENABLED | ACPI_EVENT_FLAG_ENABLE_SET);
+    }
+
+    /* Fixed event currently active? */
+
+    Status = AcpiReadBitRegister (
+                AcpiGbl_FixedEventInfo[Event].StatusRegisterId, &InByte);
+    if (ACPI_FAILURE (Status))
+    {
+        return_ACPI_STATUS (Status);
+    }
+
+    if (InByte)
+    {
+        LocalEventStatus |= ACPI_EVENT_FLAG_STATUS_SET;
+    }
+
+    (*EventStatus) = LocalEventStatus;
+    return_ACPI_STATUS (AE_OK);
 }
 
 ACPI_EXPORT_SYMBOL (AcpiGetEventStatus)
 
-
+#endif /* !ACPI_REDUCED_HARDWARE */

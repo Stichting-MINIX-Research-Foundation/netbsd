@@ -1,18 +1,20 @@
-/*	$NetBSD: restore.c,v 1.1.1.2 2012/01/31 21:27:49 kardel Exp $	*/
+/*	$NetBSD: restore.c,v 1.3 2015/07/10 14:20:35 christos Exp $	*/
 
 
 /*
  * \file restore.c
  *
- * Time-stamp:      "2010-08-22 11:04:00 bkorb"
- *
  *  This module's routines will save the current option state to memory
  *  and restore it.  If saved prior to the initial optionProcess call,
  *  then the initial state will be restored.
  *
+ * @addtogroup autoopts
+ * @{
+ */
+/*
  *  This file is part of AutoOpts, a companion to AutoGen.
  *  AutoOpts is free software.
- *  AutoOpts is Copyright (c) 1992-2011 by Bruce Korb - all rights reserved
+ *  AutoOpts is Copyright (C) 1992-2015 by Bruce Korb - all rights reserved
  *
  *  AutoOpts is available under any one of two licenses.  The license
  *  in use must be one of these two and the choice is under the control
@@ -24,11 +26,11 @@
  *   The Modified Berkeley Software Distribution License
  *      See the file "COPYING.mbsd"
  *
- *  These files have the following md5sums:
+ *  These files have the following sha256 sums:
  *
- *  43b91e8ca915626ed3818ffb1b71248b pkg/libopts/COPYING.gplv3
- *  06a1a2e4760c90ea5e1dad8dfaac4d39 pkg/libopts/COPYING.lgplv3
- *  66a5cedaf62c4b2637025f049f9b826f pkg/libopts/COPYING.mbsd
+ *  8584710e9b04216a394078dc156b781d0b47e1729104d666658aecef8ee32e95  COPYING.gplv3
+ *  4379e7444a0e2ce2b12dd6f5a52a27a4d02d39d247901d3285c88cf0d37f477b  COPYING.lgplv3
+ *  13aa749a5b0a454917a944ed8fffc530b784f5ead522b1aacaf4ec8aa55a6239  COPYING.mbsd
  */
 
 /*
@@ -38,11 +40,11 @@
  *  have been marked as allocated though.
  */
 static void
-fixupSavedOptionArgs(tOptions* pOpts)
+fixupSavedOptionArgs(tOptions * pOpts)
 {
-    tOptions* p   = pOpts->pSavedState;
-    tOptDesc* pOD = pOpts->pOptDesc;
-    int       ct  = pOpts->optCt;
+    tOptions * p   = pOpts->pSavedState;
+    tOptDesc * pOD = pOpts->pOptDesc;
+    int        ct  = pOpts->optCt;
 
     /*
      *  Make sure that allocated stuff is only referenced in the
@@ -52,18 +54,18 @@ fixupSavedOptionArgs(tOptions* pOpts)
         switch (OPTST_GET_ARGTYPE(pOD->fOptState)) {
         case OPARG_TYPE_STRING:
             if (pOD->fOptState & OPTST_STACKED) {
-                tOptDesc* q = p->pOptDesc + (pOD - pOpts->pOptDesc);
+                tOptDesc * q = p->pOptDesc + (pOD - pOpts->pOptDesc);
                 q->optCookie = NULL;
             }
             if (pOD->fOptState & OPTST_ALLOC_ARG) {
-                tOptDesc* q = p->pOptDesc + (pOD - pOpts->pOptDesc);
+                tOptDesc * q = p->pOptDesc + (pOD - pOpts->pOptDesc);
                 AGDUPSTR(q->optArg.argString, pOD->optArg.argString, "arg");
             }
             break;
 
         case OPARG_TYPE_HIERARCHY:
         {
-            tOptDesc* q = p->pOptDesc + (pOD - pOpts->pOptDesc);
+            tOptDesc * q = p->pOptDesc + (pOD - pOpts->pOptDesc);
             q->optCookie = NULL;
         }
         }
@@ -73,7 +75,7 @@ fixupSavedOptionArgs(tOptions* pOpts)
 /*=export_func optionSaveState
  *
  * what:  saves the option state to memory
- * arg:   tOptions*, pOpts, program options descriptor
+ * arg:   tOptions *, pOpts, program options descriptor
  *
  * doc:
  *
@@ -94,29 +96,20 @@ fixupSavedOptionArgs(tOptions* pOpts)
  *        Otherwise, it will always succeed.
 =*/
 void
-optionSaveState(tOptions* pOpts)
+optionSaveState(tOptions * pOpts)
 {
-    tOptions* p = (tOptions*)pOpts->pSavedState;
+    tOptions * p = (tOptions *)pOpts->pSavedState;
 
     if (p == NULL) {
-        size_t sz = sizeof(*pOpts) + (pOpts->optCt * sizeof(tOptDesc));
+        size_t sz = sizeof(*pOpts)
+            + ((size_t)pOpts->optCt * sizeof(tOptDesc));
         p = AGALOC(sz, "saved option state");
-        if (p == NULL) {
-            tCC* pzName = pOpts->pzProgName;
-            if (pzName == NULL) {
-                pzName = pOpts->pzPROGNAME;
-                if (pzName == NULL)
-                    pzName = zNil;
-            }
-            fprintf(stderr, zCantSave, pzName, sz);
-            exit(EXIT_FAILURE);
-        }
 
         pOpts->pSavedState = p;
     }
 
     memcpy(p, pOpts, sizeof(*p));
-    memcpy(p + 1, pOpts->pOptDesc, p->optCt * sizeof(tOptDesc));
+    memcpy(p + 1, pOpts->pOptDesc, (size_t)p->optCt * sizeof(tOptDesc));
 
     fixupSavedOptionArgs(pOpts);
 }
@@ -125,7 +118,7 @@ optionSaveState(tOptions* pOpts)
 /*=export_func optionRestore
  *
  * what:  restore option state from memory copy
- * arg:   tOptions*, pOpts, program options descriptor
+ * arg:   tOptions *, pOpts, program options descriptor
  *
  * doc:  Copy back the option state from saved memory.
  *       The allocated memory is left intact, so this routine can be
@@ -138,26 +131,26 @@ optionSaveState(tOptions* pOpts)
  *       printed to @code{stderr} and exit is called.
 =*/
 void
-optionRestore(tOptions* pOpts)
+optionRestore(tOptions * pOpts)
 {
-    tOptions* p = (tOptions*)pOpts->pSavedState;
+    tOptions * p = (tOptions *)pOpts->pSavedState;
 
     if (p == NULL) {
-        tCC* pzName = pOpts->pzProgName;
+        char const * pzName = pOpts->pzProgName;
         if (pzName == NULL) {
             pzName = pOpts->pzPROGNAME;
             if (pzName == NULL)
                 pzName = zNil;
         }
         fprintf(stderr, zNoState, pzName);
-        exit(EXIT_FAILURE);
+        option_exits(EXIT_FAILURE);
     }
 
     pOpts->pSavedState = NULL;
     optionFree(pOpts);
 
     memcpy(pOpts, p, sizeof(*p));
-    memcpy(pOpts->pOptDesc, p+1, p->optCt * sizeof(tOptDesc));
+    memcpy(pOpts->pOptDesc, p+1, (size_t)p->optCt * sizeof(tOptDesc));
     pOpts->pSavedState = p;
 
     fixupSavedOptionArgs(pOpts);
@@ -168,7 +161,7 @@ optionRestore(tOptions* pOpts)
 /*=export_func optionFree
  *
  * what:  free allocated option processing memory
- * arg:   tOptions*, pOpts, program options descriptor
+ * arg:   tOptions *, pOpts, program options descriptor
  *
  * doc:   AutoOpts sometimes allocates memory and puts pointers to it in the
  *        option state structures.  This routine deallocates all such memory.
@@ -177,11 +170,11 @@ optionRestore(tOptions* pOpts)
  *        this routine is always successful.
 =*/
 void
-optionFree(tOptions* pOpts)
+optionFree(tOptions * pOpts)
 {
  free_saved_state:
     {
-        tOptDesc* p = pOpts->pOptDesc;
+        tOptDesc * p = pOpts->pOptDesc;
         int ct = pOpts->optCt;
         do  {
             if (p->fOptState & OPTST_ALLOC_ARG) {
@@ -213,15 +206,17 @@ optionFree(tOptions* pOpts)
         } while (p++, --ct > 0);
     }
     if (pOpts->pSavedState != NULL) {
-        tOptions * p = (tOptions*)pOpts->pSavedState;
+        tOptions * p = (tOptions *)pOpts->pSavedState;
         memcpy(pOpts, p, sizeof(*p));
-        memcpy(pOpts->pOptDesc, p+1, p->optCt * sizeof(tOptDesc));
+        memcpy(pOpts->pOptDesc, p+1, (size_t)p->optCt * sizeof(tOptDesc));
         AGFREE(pOpts->pSavedState);
         pOpts->pSavedState = NULL;
         goto free_saved_state;
     }
 }
-/*
+
+/** @}
+ *
  * Local Variables:
  * mode: C
  * c-file-style: "stroustrup"

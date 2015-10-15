@@ -1,4 +1,4 @@
-/*	$NetBSD: fd.c,v 1.76 2010/04/13 11:31:11 tsutsui Exp $	*/
+/*	$NetBSD: fd.c,v 1.84 2015/04/26 15:15:19 mlelstv Exp $	*/
 
 /*
  * Copyright (c) 1995 Leo Weppelman.
@@ -44,7 +44,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: fd.c,v 1.76 2010/04/13 11:31:11 tsutsui Exp $");
+__KERNEL_RCSID(0, "$NetBSD: fd.c,v 1.84 2015/04/26 15:15:19 mlelstv Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -252,7 +252,7 @@ uint8_t read_dmastat(void)
 /*
  * Config switch stuff. Used only for the floppy type for now. That's
  * why it's here...
- * XXX: If needed in more places, it should be moved to it's own include file.
+ * XXX: If needed in more places, it should be moved to its own include file.
  * Note: This location _must_ be read as an u_short. Failure to do so
  *       will return garbage!
  */
@@ -280,12 +280,29 @@ CFATTACH_DECL_NEW(fdc, 0,
     fdcmatch, fdcattach, NULL, NULL);
 
 const struct bdevsw fd_bdevsw = {
-	fdopen, fdclose, fdstrategy, fdioctl, nodump, nosize, D_DISK
+	.d_open = fdopen,
+	.d_close = fdclose,
+	.d_strategy = fdstrategy,
+	.d_ioctl = fdioctl,
+	.d_dump = nodump,
+	.d_psize = nosize,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
 const struct cdevsw fd_cdevsw = {
-	fdopen, fdclose, fdread, fdwrite, fdioctl,
-	nostop, notty, nopoll, nommap, nokqfilter, D_DISK
+	.d_open = fdopen,
+	.d_close = fdclose,
+	.d_read = fdread,
+	.d_write = fdwrite,
+	.d_ioctl = fdioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
 static int
@@ -362,7 +379,9 @@ fdcprint(void *aux, const char *pnp)
 static int	fdmatch(device_t, cfdata_t, void *);
 static void	fdattach(device_t, device_t, void *);
 
-struct dkdriver fddkdriver = { fdstrategy };
+struct dkdriver fddkdriver = {
+	.d_strategy = fdstrategy
+};
 
 CFATTACH_DECL_NEW(fd, sizeof(struct fd_softc),
     fdmatch, fdattach, NULL, NULL);
@@ -409,23 +428,20 @@ int
 fdioctl(dev_t dev, u_long cmd, void * addr, int flag, struct lwp *l)
 {
 	struct fd_softc *sc;
+	int error;
 
 	sc = device_lookup_private(&fd_cd, DISKUNIT(dev));
 
 	if ((sc->flags & FLPF_HAVELAB) == 0)
 		return EBADF;
 
+	error = disk_ioctl(&sc->dkdev, RAW_PART, cmd, addr, flag, l);
+	if (error != EPASSTHROUGH)
+		return error;
+
 	switch (cmd) {
 	case DIOCSBAD:
 		return EINVAL;
-	case DIOCGDINFO:
-		*(struct disklabel *)addr = *(sc->dkdev.dk_label);
-		return 0;
-	case DIOCGPART:
-		((struct partinfo *)addr)->disklab = sc->dkdev.dk_label;
-		((struct partinfo *)addr)->part =
-		    &sc->dkdev.dk_label->d_partitions[RAW_PART];
-		return 0;
 #ifdef notyet /* XXX LWP */
 	case DIOCSRETRIES:
 	case DIOCSSTEP:
@@ -1284,7 +1300,7 @@ fdgetdefaultlabel(struct fd_softc *sc, struct disklabel *lp, int part)
 	lp->d_ncylinders  = sc->nblocks / lp->d_secpercyl;
 	lp->d_secperunit  = sc->nblocks;
 
-	lp->d_type        = DTYPE_FLOPPY;
+	lp->d_type        = DKTYPE_FLOPPY;
 	lp->d_rpm         = 300; 	/* good guess I suppose.	*/
 	lp->d_interleave  = 1;		/* FIXME: is this OK?		*/
 	lp->d_bbsize      = 0;

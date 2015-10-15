@@ -1,4 +1,4 @@
-/*	$NetBSD: audio.c,v 1.261 2012/04/30 02:16:46 mrg Exp $	*/
+/*	$NetBSD: audio.c,v 1.266 2014/11/18 01:50:12 jmcneill Exp $	*/
 
 /*-
  * Copyright (c) 2008 The NetBSD Foundation, Inc.
@@ -155,7 +155,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: audio.c,v 1.261 2012/04/30 02:16:46 mrg Exp $");
+__KERNEL_RCSID(0, "$NetBSD: audio.c,v 1.266 2014/11/18 01:50:12 jmcneill Exp $");
 
 #include "audio.h"
 #if NAUDIO > 0
@@ -349,8 +349,18 @@ dev_type_mmap(audiommap);
 dev_type_kqfilter(audiokqfilter);
 
 const struct cdevsw audio_cdevsw = {
-	audioopen, audioclose, audioread, audiowrite, audioioctl,
-	nostop, notty, audiopoll, audiommap, audiokqfilter, D_OTHER | D_MPSAFE
+	.d_open = audioopen,
+	.d_close = audioclose,
+	.d_read = audioread,
+	.d_write = audiowrite,
+	.d_ioctl = audioioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = audiopoll,
+	.d_mmap = audiommap,
+	.d_kqfilter = audiokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_OTHER | D_MPSAFE
 };
 
 /* The default audio mode: 8 kHz mono mu-law */
@@ -4234,6 +4244,14 @@ audioprint(void *aux, const char *pnp)
 }
 
 #endif /* NAUDIO > 0 || (NMIDI > 0 || NMIDIBUS > 0) */
+
+#if NAUDIO > 0
+device_t
+audio_get_device(struct audio_softc *sc)
+{
+	return sc->sc_dev;
+}
+#endif
 
 #if NAUDIO > 0
 static void

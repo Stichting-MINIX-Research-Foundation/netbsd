@@ -1,4 +1,4 @@
-/*	$NetBSD: vfs_mount.c,v 1.25 2013/11/27 17:25:46 christos Exp $	*/
+/*	$NetBSD: vfs_mount.c,v 1.37 2015/08/19 08:40:02 hannken Exp $	*/
 
 /*-
  * Copyright (c) 1997-2011 The NetBSD Foundation, Inc.
@@ -67,7 +67,9 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: vfs_mount.c,v 1.25 2013/11/27 17:25:46 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: vfs_mount.c,v 1.37 2015/08/19 08:40:02 hannken Exp $");
+
+#define _VFS_VNODE_PRIVATE
 
 #include <sys/param.h>
 #include <sys/kernel.h>
@@ -91,12 +93,10 @@ __KERNEL_RCSID(0, "$NetBSD: vfs_mount.c,v 1.25 2013/11/27 17:25:46 christos Exp 
 #include <sys/vnode.h>
 
 #include <miscfs/genfs/genfs.h>
-#include <miscfs/syncfs/syncfs.h>
 #include <miscfs/specfs/specdev.h>
 
-/* Root filesystem and device. */
+/* Root filesystem. */
 vnode_t *			rootvnode;
-device_t			root_device;
 
 /* Mounted filesystem list. */
 struct mntlist			mountlist;
@@ -337,40 +337,76 @@ vfs_unbusy(struct mount *mp, bool keepref, struct mount **nextp)
 	}
 }
 
-/*
- * Insert a marker vnode into a mount's vnode list, after the
- * specified vnode.  mntvnode_lock must be held.
- */
+struct vnode_iterator {
+	struct vnode vi_vnode;
+}; 
+
 void
-vmark(vnode_t *mvp, vnode_t *vp)
+vfs_vnode_iterator_init(struct mount *mp, struct vnode_iterator **vip)
 {
-	struct mount *mp = mvp->v_mount;
+	struct vnode *vp;
 
-	KASSERT(mutex_owned(&mntvnode_lock));
-	KASSERT((mvp->v_iflag & VI_MARKER) != 0);
-	KASSERT(vp->v_mount == mp);
+	vp = vnalloc(mp);
 
-	TAILQ_INSERT_AFTER(&mp->mnt_vnodelist, vp, mvp, v_mntvnodes);
+	mutex_enter(&mntvnode_lock);
+	TAILQ_INSERT_HEAD(&mp->mnt_vnodelist, vp, v_mntvnodes);
+	vp->v_usecount = 1;
+	mutex_exit(&mntvnode_lock);
+
+	*vip = (struct vnode_iterator *)vp;
 }
 
-/*
- * Remove a marker vnode from a mount's vnode list, and return
- * a pointer to the next vnode in the list.  mntvnode_lock must
- * be held.
- */
-vnode_t *
-vunmark(vnode_t *mvp)
+void
+vfs_vnode_iterator_destroy(struct vnode_iterator *vi)
 {
+	struct vnode *mvp = &vi->vi_vnode;
+
+	mutex_enter(&mntvnode_lock);
+	KASSERT(ISSET(mvp->v_iflag, VI_MARKER));
+	if (mvp->v_usecount != 0) {
+		TAILQ_REMOVE(&mvp->v_mount->mnt_vnodelist, mvp, v_mntvnodes);
+		mvp->v_usecount = 0;
+	}
+	mutex_exit(&mntvnode_lock);
+	vnfree(mvp);
+}
+
+struct vnode *
+vfs_vnode_iterator_next(struct vnode_iterator *vi,
+    bool (*f)(void *, struct vnode *), void *cl)
+{
+	struct vnode *mvp = &vi->vi_vnode;
 	struct mount *mp = mvp->v_mount;
-	vnode_t *vp;
+	struct vnode *vp;
+	int error;
 
-	KASSERT(mutex_owned(&mntvnode_lock));
-	KASSERT((mvp->v_iflag & VI_MARKER) != 0);
+	KASSERT(ISSET(mvp->v_iflag, VI_MARKER));
 
-	vp = TAILQ_NEXT(mvp, v_mntvnodes);
-	TAILQ_REMOVE(&mp->mnt_vnodelist, mvp, v_mntvnodes); 
+	do {
+		mutex_enter(&mntvnode_lock);
+		vp = TAILQ_NEXT(mvp, v_mntvnodes);
+		TAILQ_REMOVE(&mp->mnt_vnodelist, mvp, v_mntvnodes);
+		mvp->v_usecount = 0;
+again:
+		if (vp == NULL) {
+	       		mutex_exit(&mntvnode_lock);
+	       		return NULL;
+		}
+		mutex_enter(vp->v_interlock);
+		if (ISSET(vp->v_iflag, VI_MARKER) ||
+		    ISSET(vp->v_iflag, VI_XLOCK) ||
+		    (f && !(*f)(cl, vp))) {
+			mutex_exit(vp->v_interlock);
+			vp = TAILQ_NEXT(vp, v_mntvnodes);
+			goto again;
+		}
 
-	KASSERT(vp == NULL || vp->v_mount == mp);
+		TAILQ_INSERT_AFTER(&mp->mnt_vnodelist, vp, mvp, v_mntvnodes);
+		mvp->v_usecount = 1;
+		mutex_exit(&mntvnode_lock);
+		error = vget(vp, 0, true /* wait */);
+		KASSERT(error == 0 || error == ENOENT);
+	} while (error != 0);
 
 	return vp;
 }
@@ -425,128 +461,111 @@ int busyprt = 0;	/* print out busy vnodes */
 struct ctldebug debug1 = { "busyprt", &busyprt };
 #endif
 
-static vnode_t *
-vflushnext(vnode_t *mvp, int *when)
-{
+struct vflush_ctx {
+	const struct vnode *skipvp;
+	int flags;
+};
 
+static bool
+vflush_selector(void *cl, struct vnode *vp)
+{
+	struct vflush_ctx *c = cl;
+	/*
+	 * Skip over a selected vnode.
+	 */
+	if (vp == c->skipvp)
+		return false;
+	/*
+	 * Skip over a vnodes marked VSYSTEM.
+	 */
+	if ((c->flags & SKIPSYSTEM) && (vp->v_vflag & VV_SYSTEM))
+		return false;
+
+	/*
+	 * If WRITECLOSE is set, only flush out regular file
+	 * vnodes open for writing.
+	 */
+	if ((c->flags & WRITECLOSE) && vp->v_type == VREG) {
+		if (vp->v_writecount == 0)
+			return false;
+	}
+	return true;
+}
+
+static vnode_t *
+vflushnext(struct vnode_iterator *marker, void *ctx, int *when)
+{
 	if (hardclock_ticks > *when) {
-		mutex_exit(&mntvnode_lock);
 		yield();
-		mutex_enter(&mntvnode_lock);
 		*when = hardclock_ticks + hz / 10;
 	}
-	return vunmark(mvp);
+	return vfs_vnode_iterator_next(marker, vflush_selector, ctx);
 }
+
 
 int
 vflush(struct mount *mp, vnode_t *skipvp, int flags)
 {
-	vnode_t *vp, *mvp;
-	int busy = 0, when = 0;
+	vnode_t *vp;
+	struct vnode_iterator *marker;
+	int error, busy = 0, when = 0;
+	struct vflush_ctx ctx;
 
 	/* First, flush out any vnode references from vrele_list. */
 	vrele_flush();
 
-	/* Allocate a marker vnode. */
-	mvp = vnalloc(mp);
+	vfs_vnode_iterator_init(mp, &marker);
 
-	/*
-	 * NOTE: not using the TAILQ_FOREACH here since in this loop vgone()
-	 * and vclean() are called.
-	 */
-	mutex_enter(&mntvnode_lock);
-	for (vp = TAILQ_FIRST(&mp->mnt_vnodelist);
-	    vp != NULL;
-	    vp = vflushnext(mvp, &when)) {
-		vmark(mvp, vp);
-		if (vp->v_mount != mp || vismarker(vp))
-			continue;
-		/*
-		 * Skip over a selected vnode.
-		 */
-		if (vp == skipvp)
-			continue;
+	ctx.skipvp = skipvp;
+	ctx.flags = flags;
+	while ((vp = vflushnext(marker, &ctx, &when)) != NULL) {
 		/*
 		 * First try to recycle the vnode.
 		 */
-		if (vrecycle(vp, &mntvnode_lock)) {
-			mutex_enter(&mntvnode_lock);
+		if (vrecycle(vp))
 			continue;
-		}
-		mutex_enter(vp->v_interlock);
-		/*
-		 * Ignore clean but still referenced vnodes.
-		 */
-		if ((vp->v_iflag & VI_CLEAN) != 0) {
-			mutex_exit(vp->v_interlock);
-			continue;
-		}
-		/*
-		 * Skip over a vnodes marked VSYSTEM.
-		 */
-		if ((flags & SKIPSYSTEM) && (vp->v_vflag & VV_SYSTEM)) {
-			mutex_exit(vp->v_interlock);
-			continue;
-		}
-		/*
-		 * If WRITECLOSE is set, only flush out regular file
-		 * vnodes open for writing.
-		 */
-		if ((flags & WRITECLOSE) &&
-		    (vp->v_writecount == 0 || vp->v_type != VREG)) {
-			mutex_exit(vp->v_interlock);
-			continue;
-		}
 		/*
 		 * If FORCECLOSE is set, forcibly close the vnode.
-		 * For block or character devices, revert to an
-		 * anonymous device.  For all other files, just
-		 * kill them.
 		 */
 		if (flags & FORCECLOSE) {
-			mutex_exit(&mntvnode_lock);
-			if (vget(vp, 0) == 0)
-				vgone(vp);
-			mutex_enter(&mntvnode_lock);
+			vgone(vp);
 			continue;
 		}
 #ifdef DEBUG
 		if (busyprt)
 			vprint("vflush: busy vnode", vp);
 #endif
-		mutex_exit(vp->v_interlock);
+		vrele(vp);
 		busy++;
 	}
-	mutex_exit(&mntvnode_lock);
-	vnfree(mvp);
+	vfs_vnode_iterator_destroy(marker);
 	if (busy)
 		return (EBUSY);
-	return (0);
-}
 
-/*
- * Remove clean vnodes from a mountpoint's vnode list.
- */
-void
-vfs_scrubvnlist(struct mount *mp)
-{
-	vnode_t *vp, *nvp;
-
-retry:
-	mutex_enter(&mntvnode_lock);
-	TAILQ_FOREACH_SAFE(vp, &mp->mnt_vnodelist, v_mntvnodes, nvp) {
-		mutex_enter(vp->v_interlock);
-		if ((vp->v_iflag & VI_CLEAN) != 0) {
-			TAILQ_REMOVE(&mp->mnt_vnodelist, vp, v_mntvnodes);
-			vp->v_mount = NULL;
-			mutex_exit(&mntvnode_lock);
-			mutex_exit(vp->v_interlock);
-			vfs_destroy(mp);
-			goto retry;
+	/* Wait for all vnodes to be reclaimed. */
+	for (;;) {
+		mutex_enter(&mntvnode_lock);
+		TAILQ_FOREACH(vp, &mp->mnt_vnodelist, v_mntvnodes) {
+			if (vp == skipvp)
+				continue;
+			if ((flags & SKIPSYSTEM) && (vp->v_vflag & VV_SYSTEM))
+				continue;
+			break;
 		}
-		mutex_exit(vp->v_interlock);
+		if (vp != NULL) {
+			mutex_enter(vp->v_interlock);
+			mutex_exit(&mntvnode_lock);
+			error = vget(vp, 0, true /* wait */);
+			if (error == ENOENT)
+				continue;
+			else if (error == 0)
+				vrele(vp);
+			return EBUSY;
+		} else {
+			mutex_exit(&mntvnode_lock);
+			return 0;
+		}
 	}
-	mutex_exit(&mntvnode_lock);
 }
 
 /*
@@ -620,6 +639,22 @@ mount_checkdirs(vnode_t *olddp)
 		rootvnode = newdp;
 	}
 	vput(newdp);
+}
+
+/*
+ * Start extended attributes
+ */
+static int
+start_extattr(struct mount *mp)
+{
+	int error;
+
+	error = VFS_EXTATTRCTL(mp, EXTATTR_CMD_START, NULL, 0, NULL);
+	if (error) 
+		printf("%s: failed to start extattr: error = %d\n",
+		       mp->mnt_stat.f_mntonname, error);
+
+	return error;
 }
 
 int
@@ -711,12 +746,9 @@ mount_domount(struct lwp *l, vnode_t **vpp, struct vfsops *vfsops,
 	TAILQ_INSERT_TAIL(&mountlist, mp, mnt_list);
 	mutex_exit(&mountlist_lock);
 	if ((mp->mnt_flag & (MNT_RDONLY | MNT_ASYNC)) == 0)
-		error = vfs_allocate_syncvnode(mp);
-	if (error == 0)
-		vp->v_mountedhere = mp;
+		vfs_syncer_add_to_worklist(mp);
+	vp->v_mountedhere = mp;
 	vput(nd.ni_vp);
-	if (error != 0)
-		goto err_onmountlist;
 
 	mount_checkdirs(vp);
 	mutex_exit(&mp->mnt_updating);
@@ -727,23 +759,13 @@ mount_domount(struct lwp *l, vnode_t **vpp, struct vfsops *vfsops,
 	error = VFS_START(mp, 0);
        if (error) {
 		vrele(vp);
-       } else if (flags & MNT_EXTATTR) {
-	       error = VFS_EXTATTRCTL(vp->v_mountedhere, 
-		   EXTATTR_CMD_START, NULL, 0, NULL);
-	       if (error) 
-		       printf("%s: failed to start extattr: error = %d\n",
-			   vp->v_mountedhere->mnt_stat.f_mntonname, error);
-       }
+	} else if (flags & MNT_EXTATTR) {
+		(void)start_extattr(mp);
+	}
 	/* Drop reference held for VFS_START(). */
 	vfs_destroy(mp);
 	*vpp = NULL;
 	return error;
-
-err_onmountlist:
-	mutex_enter(&mountlist_lock);
-	TAILQ_REMOVE(&mountlist, mp, mnt_list);
-	mp->mnt_iflag |= IMNT_GONE;
-	mutex_exit(&mountlist_lock);
 
 err_mounted:
 	if (VFS_UNMOUNT(mp, MNT_FORCE) != 0)
@@ -768,7 +790,7 @@ int
 dounmount(struct mount *mp, int flags, struct lwp *l)
 {
 	vnode_t *coveredvp;
-	int error, async, used_syncer;
+	int error, async, used_syncer, used_extattr;
 
 #if NVERIEXEC > 0
 	error = veriexec_unmountchk(mp);
@@ -801,7 +823,8 @@ dounmount(struct mount *mp, int flags, struct lwp *l)
 		return ENOENT;
 	}
 
-	used_syncer = (mp->mnt_syncer != NULL);
+	used_syncer = (mp->mnt_iflag & IMNT_ONWORKLIST) != 0;
+	used_extattr = mp->mnt_flag & MNT_EXTATTR;
 
 	/*
 	 * XXX Syncer must be frozen when we get here.  This should really
@@ -823,13 +846,12 @@ dounmount(struct mount *mp, int flags, struct lwp *l)
 	async = mp->mnt_flag & MNT_ASYNC;
 	mp->mnt_flag &= ~MNT_ASYNC;
 	cache_purgevfs(mp);	/* remove cache entries for this file sys */
-	if (mp->mnt_syncer != NULL)
-		vfs_deallocate_syncvnode(mp);
+	if (used_syncer)
+		vfs_syncer_remove_from_worklist(mp);
 	error = 0;
-	if ((mp->mnt_flag & MNT_RDONLY) == 0) {
+	if (((mp->mnt_flag & MNT_RDONLY) == 0) && ((flags & MNT_FORCE) == 0)) {
 		error = VFS_SYNC(mp, MNT_WAIT, l->l_cred);
 	}
-	vfs_scrubvnlist(mp);
 	if (error == 0 || (flags & MNT_FORCE)) {
 		error = VFS_UNMOUNT(mp, flags);
 	}
@@ -837,15 +859,20 @@ dounmount(struct mount *mp, int flags, struct lwp *l)
 		mp->mnt_iflag &= ~IMNT_UNMOUNT;
 		mutex_exit(&mp->mnt_unmounting);
 		if ((mp->mnt_flag & (MNT_RDONLY | MNT_ASYNC)) == 0)
-			(void) vfs_allocate_syncvnode(mp);
+			vfs_syncer_add_to_worklist(mp);
 		mp->mnt_flag |= async;
 		mutex_exit(&mp->mnt_updating);
 		if (used_syncer)
 			mutex_exit(&syncer_mutex);
+		if (used_extattr) {
+			if (start_extattr(mp) != 0)
+				mp->mnt_flag &= ~MNT_EXTATTR;
+			else
+				mp->mnt_flag |= MNT_EXTATTR;
+		}
 		return (error);
 	}
 	mutex_exit(&mp->mnt_updating);
-	vfs_scrubvnlist(mp);
 
 	/*
 	 * release mnt_umounting lock here, because other code calls

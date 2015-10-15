@@ -1,4 +1,4 @@
-/*	$NetBSD: pq3pci.c,v 1.15 2012/08/14 13:02:19 he Exp $	*/
+/*	$NetBSD: pq3pci.c,v 1.21 2015/10/02 05:22:51 msaitoh Exp $	*/
 /*-
  * Copyright (c) 2010, 2011 The NetBSD Foundation, Inc.
  * All rights reserved.
@@ -44,7 +44,7 @@
 
 #include <sys/cdefs.h>
 
-__KERNEL_RCSID(0, "$NetBSD: pq3pci.c,v 1.15 2012/08/14 13:02:19 he Exp $");
+__KERNEL_RCSID(0, "$NetBSD: pq3pci.c,v 1.21 2015/10/02 05:22:51 msaitoh Exp $");
 
 #include <sys/param.h>
 #include <sys/device.h>
@@ -92,6 +92,11 @@ __KERNEL_RCSID(0, "$NetBSD: pq3pci.c,v 1.15 2012/08/14 13:02:19 he Exp $");
 	__SHIFTIN(field##_##P20x0##_##value, PORDEVSR_##field), result), \
     TRUTH_ENCODE(SVR_P1016v1, inst, PORDEVSR_##field, \
 	__SHIFTIN(field##_##P20x0##_##value, PORDEVSR_##field), result)
+#define	PORDEVSR_P1023_TRUTH_ENCODE(inst, field, value, result) \
+    TRUTH_ENCODE(SVR_P1023v1, inst, PORDEVSR_##field, \
+	__SHIFTIN(field##_##value, PORDEVSR_##field), result), \
+    TRUTH_ENCODE(SVR_P1017v1, inst, PORDEVSR_##field, \
+	__SHIFTIN(field##_##value, PORDEVSR_##field), result)
 
 #define	PORDEVSR_TRUTH_ENCODE(svr, inst, field, value, result) \
     TRUTH_ENCODE(svr, inst, PORDEVSR_##field, \
@@ -170,6 +175,21 @@ const struct e500_truthtab pq3pci_pcie_lanes[] = {
     PORDEVSR_P1025_TRUTH_ENCODE(1, IOSEL, PCIE1_X2_SGMII23, 2),
 
     PORDEVSR_P1025_TRUTH_ENCODE(2, IOSEL, PCIE12_X1_SGMII23, 1),
+#endif
+
+#ifdef P1023
+    PORDEVSR_P1023_TRUTH_ENCODE(1, IOSEL_P1023, PCIE12_X1, 1),
+    PORDEVSR_P1023_TRUTH_ENCODE(1, IOSEL_P1023, PCIE123_X1, 1),
+    PORDEVSR_P1023_TRUTH_ENCODE(1, IOSEL_P1023, PCIE123_X1_SGMII2, 1),
+    PORDEVSR_P1023_TRUTH_ENCODE(1, IOSEL_P1023, PCIE12_X1_SGMII12, 1),
+
+    PORDEVSR_P1023_TRUTH_ENCODE(2, IOSEL_P1023, PCIE12_X1, 1),
+    PORDEVSR_P1023_TRUTH_ENCODE(2, IOSEL_P1023, PCIE123_X1, 1),
+    PORDEVSR_P1023_TRUTH_ENCODE(2, IOSEL_P1023, PCIE123_X1_SGMII2, 1),
+    PORDEVSR_P1023_TRUTH_ENCODE(2, IOSEL_P1023, PCIE12_X1_SGMII12, 1),
+
+    PORDEVSR_P1023_TRUTH_ENCODE(3, IOSEL_P1023, PCIE123_X1, 1),
+    PORDEVSR_P1023_TRUTH_ENCODE(3, IOSEL_P1023, PCIE123_X1_SGMII2, 1),
 #endif
 };
 
@@ -663,13 +683,14 @@ static void
 pq3pci_intr_source_setup(struct pq3pci_softc *sc,
 	struct pq3pci_intrsource *pis, pci_intr_handle_t handle)
 {
+	char buf[PCI_INTRSTR_LEN];
 	SIMPLEQ_INIT(&pis->pis_ihands);
 	pis->pis_handle = handle;
 	pis->pis_ih = intr_establish(PIH_IRQ(handle), IPL_VM, PIH_IST(handle),
 	    pq3pci_pis_intr, pis);
 	pis->pis_lock = mutex_obj_alloc(MUTEX_DEFAULT, IPL_VM);
 	const char * const intrstr
-	    = intr_string(PIH_IRQ(handle), PIH_IST(handle));
+	    = intr_string(PIH_IRQ(handle), PIH_IST(handle), buf, sizeof(buf));
 	evcnt_attach_dynamic(&pis->pis_ev, EVCNT_TYPE_INTR,
 	    NULL, intrstr, "intr");
 	evcnt_attach_dynamic(&pis->pis_ev_spurious, EVCNT_TYPE_INTR,
@@ -997,6 +1018,7 @@ pq3pci_make_tag(void *v, int bus, int dev, int func)
 	return (bus << 16) | (dev << 11) | (func << 8);
 }
 
+#if 0
 static inline pcitag_t
 pq3pci_config_addr_read(pci_chipset_tag_t pc)
 {
@@ -1005,6 +1027,7 @@ pq3pci_config_addr_read(pci_chipset_tag_t pc)
         __asm volatile("mbar\n\tmsync");
 	return v;
 }
+#endif
 
 static inline void
 pq3pci_config_addr_write(pci_chipset_tag_t pc, pcitag_t v)
@@ -1035,8 +1058,10 @@ pq3pci_conf_read(void *v, pcitag_t tag, int reg)
 	struct pq3pci_softc * const sc = v;
 	struct genppc_pci_chipset * const pc = &sc->sc_pc;
 
-	if (reg >= 256) {
-		if (!sc->sc_pcie)
+	if (reg < 0)
+		return 0xffffffff;
+	if (reg >= PCI_CONF_SIZE) {
+		if (!sc->sc_pcie || reg >= PCI_EXTCONF_SIZE)
 			return 0xffffffff;
 		reg = (reg & 0xff) | ((reg & 0xf00) << 16);
 	}
@@ -1073,8 +1098,10 @@ pq3pci_conf_write(void *v, pcitag_t tag, int reg, pcireg_t data)
 	struct pq3pci_softc * const sc = v;
 	struct genppc_pci_chipset * const pc = &sc->sc_pc;
 
-	if (reg >= 256) {
-		if (!sc->sc_pcie)
+	if (reg < 0)
+		return;
+	if (reg >= PCI_CONF_SIZE) {
+		if (!sc->sc_pcie || reg >= PCI_EXTCONF_SIZE)
 			return;
 		reg = (reg & 0xff) | ((reg & 0xf00) << 16);
 	}
@@ -1291,14 +1318,15 @@ pq3pci_intr_map(const struct pci_attach_args *pa, pci_intr_handle_t *handlep)
 }
 
 static const char *
-pq3pci_intr_string(void *v, pci_intr_handle_t handle)
+pq3pci_intr_string(void *v, pci_intr_handle_t handle, char *buf, size_t len)
 {
 	if (PIH_IST(handle) == IST_MSI) {
 		const char (*intr_names)[8] = msi_intr_names[0];
-		return intr_names[PIH_IRQ(handle)];
+		strlcpy(buf, intr_names[PIH_IRQ(handle)], len);
+		return buf;
 	}
 
-	return intr_string(PIH_IRQ(handle), PIH_IST(handle));
+	return intr_string(PIH_IRQ(handle), PIH_IST(handle), buf, len);
 }
 
 static const struct evcnt *

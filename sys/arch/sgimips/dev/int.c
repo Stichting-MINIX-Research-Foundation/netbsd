@@ -1,4 +1,4 @@
-/*	$NetBSD: int.c,v 1.25 2012/10/27 17:18:09 chs Exp $	*/
+/*	$NetBSD: int.c,v 1.28 2015/02/18 16:47:58 macallan Exp $	*/
 
 /*
  * Copyright (c) 2009 Stephen M. Rumble 
@@ -33,7 +33,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: int.c,v 1.25 2012/10/27 17:18:09 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: int.c,v 1.28 2015/02/18 16:47:58 macallan Exp $");
 
 #define __INTR_PRIVATE
 #include "opt_cputype.h"
@@ -141,8 +141,12 @@ int_attach(device_t parent, device_t self, void *aux)
 
 	printf(" addr 0x%x\n", address);
 
-	bus_space_map(iot, address, 0, 0, &ioh);
-	iot = SGIMIPS_BUS_SPACE_NORMAL;
+	iot = normal_memt;
+	/*
+	 * XXX INT1 registers are spread *way* out, but for now this should
+	 * work
+	 */ 
+	bus_space_map(iot, address, 0x100, 0, &ioh);
 
 	switch (mach_type) {
 	case MACH_SGI_IP6 | MACH_SGI_IP10:
@@ -479,7 +483,7 @@ int2_cal_timer(void)
 	int s;
 	int roundtime;
 	int sampletime;
-	int startmsb, lsb, msb;
+	int msb;
 	unsigned long startctr, endctr;
 
 	/*
@@ -489,7 +493,6 @@ int2_cal_timer(void)
 	 */
 	roundtime = (1000000 / hz) / 2;
 	sampletime = (1000000 / hz) + 0xff;
-	startmsb = (sampletime >> 8);
 
 	s = splhigh();
 
@@ -503,7 +506,7 @@ int2_cal_timer(void)
 	/* Wait for the MSB to count down to zero */
 	do {
 		bus_space_write_1(iot, ioh, INT2_TIMER_CONTROL, TIMER_SEL2);
-		lsb = bus_space_read_1(iot, ioh, INT2_TIMER_2) & 0xff;
+		(void)bus_space_read_1(iot, ioh, INT2_TIMER_2);
 		msb = bus_space_read_1(iot, ioh, INT2_TIMER_2) & 0xff;
 
 		endctr = mips3_cp0_count_read();

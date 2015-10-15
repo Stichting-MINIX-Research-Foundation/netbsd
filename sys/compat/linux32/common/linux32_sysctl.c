@@ -1,4 +1,4 @@
-/*	$NetBSD: linux32_sysctl.c,v 1.14 2013/11/18 01:36:49 chs Exp $ */
+/*	$NetBSD: linux32_sysctl.c,v 1.16 2014/05/16 12:22:32 martin Exp $ */
 
 /*-
  * Copyright (c) 2006 Emmanuel Dreyfus, all rights reserved.
@@ -31,7 +31,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: linux32_sysctl.c,v 1.14 2013/11/18 01:36:49 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: linux32_sysctl.c,v 1.16 2014/05/16 12:22:32 martin Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -65,7 +65,7 @@ struct sysctlnode linux32_sysctl_root = {
 	    CTLFLAG_ROOT|CTLTYPE_NODE|CTLFLAG_READWRITE,
 	.sysctl_num = 0,
 	.sysctl_name = "(linux32_root)",
-	sysc_init_field(_sysctl_size, sizeof(struct sysctlnode)),
+	.sysctl_size = sizeof(struct sysctlnode),
 };
 
 static struct sysctllog *linux32_clog1;
@@ -85,11 +85,6 @@ linux32_sysctl_init(void)
 {
 	const struct sysctlnode *node = &linux32_sysctl_root;
 
-	sysctl_createv(&linux32_clog1, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
-		       CTLTYPE_NODE, "emul", NULL,
-		       NULL, 0, NULL, 0,
-		       CTL_EMUL, CTL_EOL);
 	sysctl_createv(&linux32_clog1, 0, NULL, NULL,
 		       CTLFLAG_PERMANENT,
 		       CTLTYPE_NODE, "linux32",

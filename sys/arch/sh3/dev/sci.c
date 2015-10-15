@@ -1,4 +1,4 @@
-/* $NetBSD: sci.c,v 1.57 2012/12/12 13:32:37 tsutsui Exp $ */
+/* $NetBSD: sci.c,v 1.61 2014/11/15 19:20:01 christos Exp $ */
 
 /*-
  * Copyright (C) 1999 T.Horiuchi and SAITOH Masanobu.  All rights reserved.
@@ -93,7 +93,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: sci.c,v 1.57 2012/12/12 13:32:37 tsutsui Exp $");
+__KERNEL_RCSID(0, "$NetBSD: sci.c,v 1.61 2014/11/15 19:20:01 christos Exp $");
 
 #include "opt_kgdb.h"
 #include "opt_sci.h"
@@ -196,11 +196,8 @@ integrate void sci_stsoft(struct sci_softc *, struct tty *);
 integrate void sci_schedrx(struct sci_softc *);
 void	scidiag(void *);
 
-#define	SCIUNIT_MASK		0x7ffff
-#define	SCIDIALOUT_MASK	0x80000
-
-#define	SCIUNIT(x)	(minor(x) & SCIUNIT_MASK)
-#define	SCIDIALOUT(x)	(minor(x) & SCIDIALOUT_MASK)
+#define	SCIUNIT(x)	TTUNIT(x)
+#define	SCIDIALOUT(x)	TTDIALOUT(x)
 
 /* Hardware flag masks */
 #define	SCI_HW_NOIEN	0x01
@@ -248,8 +245,18 @@ dev_type_tty(scitty);
 dev_type_poll(scipoll);
 
 const struct cdevsw sci_cdevsw = {
-	sciopen, sciclose, sciread, sciwrite, sciioctl,
-	scistop, scitty, scipoll, nommap, ttykqfilter, D_TTY
+	.d_open = sciopen,
+	.d_close = sciclose,
+	.d_read = sciread,
+	.d_write = sciwrite,
+	.d_ioctl = sciioctl,
+	.d_stop = scistop,
+	.d_tty = scitty,
+	.d_poll = scipoll,
+	.d_mmap = nommap,
+	.d_kqfilter = ttykqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_TTY
 };
 
 void InitializeSci (unsigned int);
@@ -590,7 +597,6 @@ void
 sci_iflush(struct sci_softc *sc)
 {
 	unsigned char err_c;
-	volatile unsigned char c;
 
 	if (((err_c = SHREG_SCSSR)
 	     & (SCSSR_RDRF | SCSSR_ORER | SCSSR_FER | SCSSR_PER)) != 0) {
@@ -600,7 +606,7 @@ sci_iflush(struct sci_softc *sc)
 			return;
 		}
 
-		c = SHREG_SCRDR;
+		(void)SHREG_SCRDR;
 
 		SHREG_SCSSR &= ~SCSSR_RDRF;
 	}

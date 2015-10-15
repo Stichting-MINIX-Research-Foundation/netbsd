@@ -1,4 +1,4 @@
-/* $NetBSD: seeq8005.c,v 1.51 2012/10/10 22:40:33 skrll Exp $ */
+/* $NetBSD: seeq8005.c,v 1.54 2015/09/12 19:18:24 christos Exp $ */
 
 /*
  * Copyright (c) 2000, 2001 Ben Harris
@@ -61,7 +61,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: seeq8005.c,v 1.51 2012/10/10 22:40:33 skrll Exp $");
+__KERNEL_RCSID(0, "$NetBSD: seeq8005.c,v 1.54 2015/09/12 19:18:24 christos Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -82,7 +82,7 @@ __KERNEL_RCSID(0, "$NetBSD: seeq8005.c,v 1.51 2012/10/10 22:40:33 skrll Exp $");
 #include <net/bpf.h>
 #include <net/bpfdesc.h>
 
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 
 #include <sys/bus.h>
 #include <sys/intr.h>
@@ -293,7 +293,7 @@ seeq8005_attach(struct seeq8005_softc *sc, const u_int8_t *myaddr, int *media,
 
 	/* After \n because it can print a line of its own. */
 	rnd_attach_source(&sc->rnd_source, device_xname(sc->sc_dev),
-	    RND_TYPE_NET, 0);
+	    RND_TYPE_NET, RND_FLAG_DEFAULT);
 }
 
 /*
@@ -875,8 +875,10 @@ ea_start(struct ifnet *ifp)
 	 * us (actually ea_txpacket()) back when the card's ready for more
 	 * frames.
 	 */
-	if (ifp->if_flags & IFF_OACTIVE)
+	if (ifp->if_flags & IFF_OACTIVE) {
+		splx(s);
 		return;
+	}
 
 	/* Mark interface as output active */
 

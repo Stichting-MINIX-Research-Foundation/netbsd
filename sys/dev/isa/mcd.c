@@ -1,4 +1,4 @@
-/*	$NetBSD: mcd.c,v 1.110 2012/10/27 17:18:25 chs Exp $	*/
+/*	$NetBSD: mcd.c,v 1.115 2015/04/26 15:15:20 mlelstv Exp $	*/
 
 /*
  * Copyright (c) 1993, 1994, 1995 Charles M. Hannum.  All rights reserved.
@@ -56,7 +56,7 @@
 /*static char COPYRIGHT[] = "mcd-driver (C)1993 by H.Veit & B.Moore";*/
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: mcd.c,v 1.110 2012/10/27 17:18:25 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: mcd.c,v 1.115 2015/04/26 15:15:20 mlelstv Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -208,12 +208,29 @@ dev_type_dump(mcddump);
 dev_type_size(mcdsize);
 
 const struct bdevsw mcd_bdevsw = {
-	mcdopen, mcdclose, mcdstrategy, mcdioctl, mcddump, mcdsize, D_DISK
+	.d_open = mcdopen,
+	.d_close = mcdclose,
+	.d_strategy = mcdstrategy,
+	.d_ioctl = mcdioctl,
+	.d_dump = mcddump,
+	.d_psize = mcdsize,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
 const struct cdevsw mcd_cdevsw = {
-	mcdopen, mcdclose, mcdread, mcdwrite, mcdioctl,
-	nostop, notty, nopoll, nommap, nokqfilter, D_DISK
+	.d_open = mcdopen,
+	.d_close = mcdclose,
+	.d_read = mcdread,
+	.d_write = mcdwrite,
+	.d_ioctl = mcdioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
 void	mcdgetdefaultlabel(struct mcd_softc *, struct disklabel *);
@@ -222,7 +239,9 @@ int	mcd_get_parms(struct mcd_softc *);
 void	mcdstart(struct mcd_softc *);
 void	mcd_pseudointr(void *);
 
-struct dkdriver mcddkdriver = { mcdstrategy, NULL, };
+struct dkdriver mcddkdriver = {
+	.d_strategy = mcdstrategy
+};
 
 #define MCD_RETRIES	3
 #define MCD_RDRETRIES	3
@@ -562,26 +581,12 @@ mcdioctl(dev_t dev, u_long cmd, void *addr, int flag, struct lwp *l)
 	if ((sc->flags & MCDF_LOADED) == 0)
 		return EIO;
 
+	error = disk_ioctl(&sc->sc_dk, dev, cmd, addr, flag, l);
+	if (error != EPASSTHROUGH)
+		return error;
+
 	part = MCDPART(dev);
 	switch (cmd) {
-	case DIOCGDINFO:
-		*(struct disklabel *)addr = *(sc->sc_dk.dk_label);
-		return 0;
-#ifdef __HAVE_OLD_DISKLABEL
-	case ODIOCGDINFO:
-		newlabel = *(sc->sc_dk.dk_label);
-		if (newlabel.d_npartitions > OLDMAXPARTITIONS)
-			return ENOTTY;
-		memcpy(addr, &newlabel, sizeof (struct olddisklabel));
-		return 0;
-#endif
-
-	case DIOCGPART:
-		((struct partinfo *)addr)->disklab = sc->sc_dk.dk_label;
-		((struct partinfo *)addr)->part =
-		    &sc->sc_dk.dk_label->d_partitions[part];
-		return 0;
-
 	case DIOCWDINFO:
 	case DIOCSDINFO:
 #ifdef __HAVE_OLD_DISKLABEL

@@ -1,4 +1,4 @@
-/*	$NetBSD: grf.c,v 1.40 2011/02/08 20:20:25 rmind Exp $	*/
+/*	$NetBSD: grf.c,v 1.45 2014/12/14 23:48:58 chs Exp $	*/
 
 /*
  * Copyright (c) 1988 University of Utah.
@@ -45,7 +45,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: grf.c,v 1.40 2011/02/08 20:20:25 rmind Exp $");
+__KERNEL_RCSID(0, "$NetBSD: grf.c,v 1.45 2014/12/14 23:48:58 chs Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -53,10 +53,7 @@ __KERNEL_RCSID(0, "$NetBSD: grf.c,v 1.40 2011/02/08 20:20:25 rmind Exp $");
 #include <sys/proc.h>
 #include <sys/resourcevar.h>
 #include <sys/ioctl.h>
-#include <sys/file.h>
 #include <sys/malloc.h>
-#include <sys/vnode.h>
-#include <sys/mman.h>
 #include <sys/conf.h>
 
 #include <machine/cpu.h>
@@ -66,7 +63,6 @@ __KERNEL_RCSID(0, "$NetBSD: grf.c,v 1.40 2011/02/08 20:20:25 rmind Exp $");
 #include <x68k/dev/itevar.h>
 
 #include <uvm/uvm_extern.h>
-#include <uvm/uvm_map.h>
 
 #include <miscfs/specfs/specdev.h>
 
@@ -99,8 +95,18 @@ dev_type_ioctl(grfioctl);
 dev_type_mmap(grfmmap);
 
 const struct cdevsw grf_cdevsw = {
-	grfopen, grfclose, nullread, nullwrite, grfioctl,
-	nostop, notty, nopoll, grfmmap, nokqfilter,
+	.d_open = grfopen,
+	.d_close = grfclose,
+	.d_read = nullread,
+	.d_write = nullwrite,
+	.d_ioctl = grfioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = grfmmap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = 0
 };
 
 /*ARGSUSED*/
@@ -256,9 +262,8 @@ int
 grfmap(dev_t dev, void **addrp, struct proc *p)
 {
 	struct grf_softc *gp = device_lookup_private(&grf_cd, GRFUNIT(dev));
-	int len, error;
-	struct vnode vn;
-	int flags;
+	size_t len;
+	int error;
 
 #ifdef DEBUG
 	if (grfdebug & GDB_MMAP)
@@ -266,18 +271,8 @@ grfmap(dev_t dev, void **addrp, struct proc *p)
 #endif
 
 	len = gp->g_display.gd_regsize + gp->g_display.gd_fbsize;
-	flags = MAP_SHARED;
-	if (*addrp)
-		flags |= MAP_FIXED;
-	else
-		*addrp =
-		    (void *)VM_DEFAULT_ADDRESS(p->p_vmspace->vm_daddr, len);
-	vn.v_type = VCHR;			/* XXX */
-	vn.v_rdev = dev;			/* XXX */
-	error = uvm_mmap(&p->p_vmspace->vm_map, (vaddr_t *)addrp,
-			 (vsize_t)len, VM_PROT_ALL, VM_PROT_ALL,
-			 flags, (void *)&vn, 0,
-			 p->p_rlimit[RLIMIT_MEMLOCK].rlim_cur);
+
+	error = uvm_mmap_dev(p, addrp, len, dev, 0);
 	if (error == 0)
 		(void) (*gp->g_sw->gd_mode)(gp, GM_MAP, *addrp);
 

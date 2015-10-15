@@ -1,7 +1,7 @@
-/*	$NetBSD: spnego_asn1.c,v 1.4 2013/07/27 19:23:12 christos Exp $	*/
+/*	$NetBSD: spnego_asn1.c,v 1.7 2015/07/08 17:28:59 christos Exp $	*/
 
 /*
- * Copyright (C) 2006, 2007, 2012, 2013  Internet Systems Consortium, Inc. ("ISC")
+ * Copyright (C) 2006, 2007, 2012, 2013, 2015  Internet Systems Consortium, Inc. ("ISC")
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -231,7 +231,7 @@ encode_MechTypeList(unsigned char *p, size_t len, const MechTypeList * data, siz
 	int i, e;
 
 	for (i = (data)->len - 1; i >= 0; --i) {
-		int oldret = ret;
+		size_t oldret = ret;
 		ret = 0;
 		e = encode_MechType(p, len, &(data)->val[i], &l);
 		BACK;
@@ -259,7 +259,7 @@ decode_MechTypeList(const unsigned char *p, size_t len, MechTypeList * data, siz
 	len = reallen;
 	{
 		size_t origlen = len;
-		int oldret = ret;
+		size_t oldret = ret;
 		ret = 0;
 		(data)->len = 0;
 		(data)->val = NULL;
@@ -420,7 +420,7 @@ encode_NegTokenInit(unsigned char *p, size_t len, const NegTokenInit * data, siz
 	int e;
 
 	if ((data)->mechListMIC) {
-		int oldret = ret;
+		size_t oldret = ret;
 		ret = 0;
 		e = encode_octet_string(p, len, (data)->mechListMIC, &l);
 		BACK;
@@ -429,7 +429,7 @@ encode_NegTokenInit(unsigned char *p, size_t len, const NegTokenInit * data, siz
 		ret += oldret;
 	}
 	if ((data)->mechToken) {
-		int oldret = ret;
+		size_t oldret = ret;
 		ret = 0;
 		e = encode_octet_string(p, len, (data)->mechToken, &l);
 		BACK;
@@ -438,7 +438,7 @@ encode_NegTokenInit(unsigned char *p, size_t len, const NegTokenInit * data, siz
 		ret += oldret;
 	}
 	if ((data)->reqFlags) {
-		int oldret = ret;
+		size_t oldret = ret;
 		ret = 0;
 		e = encode_ContextFlags(p, len, (data)->reqFlags, &l);
 		BACK;
@@ -446,7 +446,7 @@ encode_NegTokenInit(unsigned char *p, size_t len, const NegTokenInit * data, siz
 		BACK;
 		ret += oldret;
 	} {
-		int oldret = ret;
+		size_t oldret = ret;
 		ret = 0;
 		e = encode_MechTypeList(p, len, &(data)->mechTypes, &l);
 		BACK;
@@ -488,13 +488,13 @@ decode_NegTokenInit(const unsigned char *p, size_t len, NegTokenInit * data, siz
 				e = der_get_length(p, len, &newlen, &l);
 				FORW;
 				{
-					int dce_fix;
+					int mydce_fix;
 					oldlen = len;
-					if ((dce_fix = fix_dce(newlen, &len)) < 0)
+					if ((mydce_fix = fix_dce(newlen, &len)) < 0)
 						return ASN1_BAD_FORMAT;
 					e = decode_MechTypeList(p, len, &(data)->mechTypes, &l);
 					FORW;
-					if (dce_fix) {
+					if (mydce_fix) {
 						e = der_match_tag_and_length(p, len, (Der_class) 0, (Der_type) 0, 0, &reallen, &l);
 						FORW;
 					} else
@@ -515,16 +515,16 @@ decode_NegTokenInit(const unsigned char *p, size_t len, NegTokenInit * data, siz
 				e = der_get_length(p, len, &newlen, &l);
 				FORW;
 				{
-					int dce_fix;
+					int mydce_fix;
 					oldlen = len;
-					if ((dce_fix = fix_dce(newlen, &len)) < 0)
+					if ((mydce_fix = fix_dce(newlen, &len)) < 0)
 						return ASN1_BAD_FORMAT;
 					(data)->reqFlags = malloc(sizeof(*(data)->reqFlags));
 					if ((data)->reqFlags == NULL)
 						return ENOMEM;
 					e = decode_ContextFlags(p, len, (data)->reqFlags, &l);
 					FORW;
-					if (dce_fix) {
+					if (mydce_fix) {
 						e = der_match_tag_and_length(p, len, (Der_class) 0, (Der_type) 0, 0, &reallen, &l);
 						FORW;
 					} else
@@ -545,16 +545,16 @@ decode_NegTokenInit(const unsigned char *p, size_t len, NegTokenInit * data, siz
 				e = der_get_length(p, len, &newlen, &l);
 				FORW;
 				{
-					int dce_fix;
+					int mydce_fix;
 					oldlen = len;
-					if ((dce_fix = fix_dce(newlen, &len)) < 0)
+					if ((mydce_fix = fix_dce(newlen, &len)) < 0)
 						return ASN1_BAD_FORMAT;
 					(data)->mechToken = malloc(sizeof(*(data)->mechToken));
 					if ((data)->mechToken == NULL)
 						return ENOMEM;
 					e = decode_octet_string(p, len, (data)->mechToken, &l);
 					FORW;
-					if (dce_fix) {
+					if (mydce_fix) {
 						e = der_match_tag_and_length(p, len, (Der_class) 0, (Der_type) 0, 0, &reallen, &l);
 						FORW;
 					} else
@@ -575,16 +575,16 @@ decode_NegTokenInit(const unsigned char *p, size_t len, NegTokenInit * data, siz
 				e = der_get_length(p, len, &newlen, &l);
 				FORW;
 				{
-					int dce_fix;
+					int mydce_fix;
 					oldlen = len;
-					if ((dce_fix = fix_dce(newlen, &len)) < 0)
+					if ((mydce_fix = fix_dce(newlen, &len)) < 0)
 						return ASN1_BAD_FORMAT;
 					(data)->mechListMIC = malloc(sizeof(*(data)->mechListMIC));
 					if ((data)->mechListMIC == NULL)
 						return ENOMEM;
 					e = decode_octet_string(p, len, (data)->mechListMIC, &l);
 					FORW;
-					if (dce_fix) {
+					if (mydce_fix) {
 						e = der_match_tag_and_length(p, len, (Der_class) 0, (Der_type) 0, 0, &reallen, &l);
 						FORW;
 					} else
@@ -643,7 +643,7 @@ encode_NegTokenResp(unsigned char *p, size_t len, const NegTokenResp * data, siz
 	int e;
 
 	if ((data)->mechListMIC) {
-		int oldret = ret;
+		size_t oldret = ret;
 		ret = 0;
 		e = encode_octet_string(p, len, (data)->mechListMIC, &l);
 		BACK;
@@ -652,7 +652,7 @@ encode_NegTokenResp(unsigned char *p, size_t len, const NegTokenResp * data, siz
 		ret += oldret;
 	}
 	if ((data)->responseToken) {
-		int oldret = ret;
+		size_t oldret = ret;
 		ret = 0;
 		e = encode_octet_string(p, len, (data)->responseToken, &l);
 		BACK;
@@ -661,7 +661,7 @@ encode_NegTokenResp(unsigned char *p, size_t len, const NegTokenResp * data, siz
 		ret += oldret;
 	}
 	if ((data)->supportedMech) {
-		int oldret = ret;
+		size_t oldret = ret;
 		ret = 0;
 		e = encode_MechType(p, len, (data)->supportedMech, &l);
 		BACK;
@@ -670,7 +670,7 @@ encode_NegTokenResp(unsigned char *p, size_t len, const NegTokenResp * data, siz
 		ret += oldret;
 	}
 	if ((data)->negState) {
-		int oldret = ret;
+		size_t oldret = ret;
 		ret = 0;
 		e = encode_enumerated(p, len, (data)->negState, &l);
 		BACK;
@@ -712,16 +712,16 @@ decode_NegTokenResp(const unsigned char *p, size_t len, NegTokenResp * data, siz
 				e = der_get_length(p, len, &newlen, &l);
 				FORW;
 				{
-					int dce_fix;
+					int mydce_fix;
 					oldlen = len;
-					if ((dce_fix = fix_dce(newlen, &len)) < 0)
+					if ((mydce_fix = fix_dce(newlen, &len)) < 0)
 						return ASN1_BAD_FORMAT;
 					(data)->negState = malloc(sizeof(*(data)->negState));
 					if ((data)->negState == NULL)
 						return ENOMEM;
 					e = decode_enumerated(p, len, (data)->negState, &l);
 					FORW;
-					if (dce_fix) {
+					if (mydce_fix) {
 						e = der_match_tag_and_length(p, len, (Der_class) 0, (Der_type) 0, 0, &reallen, &l);
 						FORW;
 					} else
@@ -742,16 +742,16 @@ decode_NegTokenResp(const unsigned char *p, size_t len, NegTokenResp * data, siz
 				e = der_get_length(p, len, &newlen, &l);
 				FORW;
 				{
-					int dce_fix;
+					int mydce_fix;
 					oldlen = len;
-					if ((dce_fix = fix_dce(newlen, &len)) < 0)
+					if ((mydce_fix = fix_dce(newlen, &len)) < 0)
 						return ASN1_BAD_FORMAT;
 					(data)->supportedMech = malloc(sizeof(*(data)->supportedMech));
 					if ((data)->supportedMech == NULL)
 						return ENOMEM;
 					e = decode_MechType(p, len, (data)->supportedMech, &l);
 					FORW;
-					if (dce_fix) {
+					if (mydce_fix) {
 						e = der_match_tag_and_length(p, len, (Der_class) 0, (Der_type) 0, 0, &reallen, &l);
 						FORW;
 					} else
@@ -772,16 +772,16 @@ decode_NegTokenResp(const unsigned char *p, size_t len, NegTokenResp * data, siz
 				e = der_get_length(p, len, &newlen, &l);
 				FORW;
 				{
-					int dce_fix;
+					int mydce_fix;
 					oldlen = len;
-					if ((dce_fix = fix_dce(newlen, &len)) < 0)
+					if ((mydce_fix = fix_dce(newlen, &len)) < 0)
 						return ASN1_BAD_FORMAT;
 					(data)->responseToken = malloc(sizeof(*(data)->responseToken));
 					if ((data)->responseToken == NULL)
 						return ENOMEM;
 					e = decode_octet_string(p, len, (data)->responseToken, &l);
 					FORW;
-					if (dce_fix) {
+					if (mydce_fix) {
 						e = der_match_tag_and_length(p, len, (Der_class) 0, (Der_type) 0, 0, &reallen, &l);
 						FORW;
 					} else
@@ -802,16 +802,16 @@ decode_NegTokenResp(const unsigned char *p, size_t len, NegTokenResp * data, siz
 				e = der_get_length(p, len, &newlen, &l);
 				FORW;
 				{
-					int dce_fix;
+					int mydce_fix;
 					oldlen = len;
-					if ((dce_fix = fix_dce(newlen, &len)) < 0)
+					if ((mydce_fix = fix_dce(newlen, &len)) < 0)
 						return ASN1_BAD_FORMAT;
 					(data)->mechListMIC = malloc(sizeof(*(data)->mechListMIC));
 					if ((data)->mechListMIC == NULL)
 						return ENOMEM;
 					e = decode_octet_string(p, len, (data)->mechListMIC, &l);
 					FORW;
-					if (dce_fix) {
+					if (mydce_fix) {
 						e = der_match_tag_and_length(p, len, (Der_class) 0, (Der_type) 0, 0, &reallen, &l);
 						FORW;
 					} else

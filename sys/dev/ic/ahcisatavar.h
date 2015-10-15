@@ -1,4 +1,4 @@
-/*	$NetBSD: ahcisatavar.h,v 1.15 2013/09/08 11:47:16 matt Exp $	*/
+/*	$NetBSD: ahcisatavar.h,v 1.17 2015/05/24 22:30:05 jmcneill Exp $	*/
 
 /*
  * Copyright (c) 2006 Manuel Bouyer.
@@ -59,6 +59,7 @@ struct ahci_softc {
 #define AHCI_PCI_QUIRK_BAD64	__BIT(1)  /* broken 64-bit DMA */
 #define AHCI_QUIRK_BADPMP	__BIT(2)  /* broken PMP support, ignore */
 #define AHCI_QUIRK_BADPMPRESET	__BIT(3)  /* broken PMP support for reset */
+#define AHCI_QUIRK_SKIP_RESET	__BIT(4)  /* skip drive reset sequence */
 
 	uint32_t sc_ahci_cap;	/* copy of AHCI_CAP */
 	int sc_ncmds; /* number of command slots */
@@ -83,6 +84,16 @@ struct ahci_softc {
 		bus_dmamap_t ahcic_datad[AHCI_MAX_CMDS];
 		uint32_t  ahcic_cmds_active; /* active commands */
 	} sc_channels[AHCI_MAX_PORTS];
+
+	void	(*sc_channel_start)(struct ahci_softc *, struct ata_channel *);
+	void	(*sc_channel_stop)(struct ahci_softc *, struct ata_channel *);
+
+	bool sc_save_init_data;
+	struct {
+		uint32_t cap;
+		uint32_t cap2;
+		uint32_t ports;
+	} sc_init_data;
 };
 
 #define AHCINAME(sc) (device_xname((sc)->sc_atac.atac_dev))

@@ -1,4 +1,4 @@
-/*	$NetBSD: mpt_netbsd.c,v 1.19 2012/09/23 01:13:21 chs Exp $	*/
+/*	$NetBSD: mpt_netbsd.c,v 1.32 2015/07/22 08:33:51 hannken Exp $	*/
 
 /*
  * Copyright (c) 2003 Wasabi Systems, Inc.
@@ -77,29 +77,44 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: mpt_netbsd.c,v 1.19 2012/09/23 01:13:21 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: mpt_netbsd.c,v 1.32 2015/07/22 08:33:51 hannken Exp $");
+
+#include "bio.h"
 
 #include <dev/ic/mpt.h>			/* pulls in all headers */
+#include <sys/scsiio.h>
+
+#if NBIO > 0
+#include <dev/biovar.h>
+#endif
 
 static int	mpt_poll(mpt_softc_t *, struct scsipi_xfer *, int);
 static void	mpt_timeout(void *);
+static void	mpt_restart(mpt_softc_t *, request_t *);
 static void	mpt_done(mpt_softc_t *, uint32_t);
+static int	mpt_drain_queue(mpt_softc_t *);
 static void	mpt_run_xfer(mpt_softc_t *, struct scsipi_xfer *);
 static void	mpt_set_xfer_mode(mpt_softc_t *, struct scsipi_xfer_mode *);
 static void	mpt_get_xfer_mode(mpt_softc_t *, struct scsipi_periph *);
 static void	mpt_ctlop(mpt_softc_t *, void *vmsg, uint32_t);
 static void	mpt_event_notify_reply(mpt_softc_t *, MSG_EVENT_NOTIFY_REPLY *);
+static void  mpt_bus_reset(mpt_softc_t *);
 
 static void	mpt_scsipi_request(struct scsipi_channel *,
 		    scsipi_adapter_req_t, void *);
 static void	mpt_minphys(struct buf *);
+static int 	mpt_ioctl(struct scsipi_channel *, u_long, void *, int,
+	struct proc *);
 
-/*
- * XXX - this assumes the device_private() of the attachement starts with
- * a struct mpt_softc, so we can use the return value of device_private()
- * straight without any offset.
- */
-#define DEV_TO_MPT(DEV)	device_private(DEV)
+#if NBIO > 0
+static bool	mpt_is_raid(mpt_softc_t *);
+static int	mpt_bio_ioctl(device_t, u_long, void *);
+static int	mpt_bio_ioctl_inq(mpt_softc_t *, struct bioc_inq *);
+static int	mpt_bio_ioctl_vol(mpt_softc_t *, struct bioc_vol *);
+static int	mpt_bio_ioctl_disk(mpt_softc_t *, struct bioc_disk *);
+static int	mpt_bio_ioctl_disk_novol(mpt_softc_t *, struct bioc_disk *);
+static int	mpt_bio_ioctl_setstate(mpt_softc_t *, struct bioc_setstate *);
+#endif
 
 void
 mpt_scsipi_attach(mpt_softc_t *mpt)
@@ -121,6 +136,7 @@ mpt_scsipi_attach(mpt_softc_t *mpt)
 	adapt->adapt_max_periph = maxq - 2;
 	adapt->adapt_request = mpt_scsipi_request;
 	adapt->adapt_minphys = mpt_minphys;
+	adapt->adapt_ioctl = mpt_ioctl;
 
 	/* Fill in the scsipi_channel. */
 	memset(chan, 0, sizeof(*chan));
@@ -138,7 +154,20 @@ mpt_scsipi_attach(mpt_softc_t *mpt)
 	chan->chan_ntargets = mpt->mpt_max_devices;
 	chan->chan_id = mpt->mpt_ini_id;
 
-	(void) config_found(mpt->sc_dev, &mpt->sc_channel, scsiprint);
+	/*
+	* Save the output of the config so we can rescan the bus in case of 
+	* errors
+	*/
+	mpt->sc_scsibus_dv = config_found(mpt->sc_dev, &mpt->sc_channel, 
+	scsiprint);
+
+#if NBIO > 0
+	if (mpt_is_raid(mpt)) {
+		if (bio_register(mpt->sc_dev, mpt_bio_ioctl) != 0)
+			panic("%s: controller registration failed",
+			    device_xname(mpt->sc_dev));
+	}
+#endif
 }
 
 int
@@ -303,26 +332,11 @@ mpt_intr(void *arg)
 {
 	mpt_softc_t *mpt = arg;
 	int nrepl = 0;
-	uint32_t reply;
 
 	if ((mpt_read(mpt, MPT_OFFSET_INTR_STATUS) & MPT_INTR_REPLY_READY) == 0)
 		return (0);
 
-	reply = mpt_pop_reply_queue(mpt);
-	while (reply != MPT_REPLY_EMPTY) {
-		nrepl++;
-		if (mpt->verbose > 1) {
-			if ((reply & MPT_CONTEXT_REPLY) != 0) {
-				/* Address reply; IOC has something to say */
-				mpt_print_reply(MPT_REPLY_PTOV(mpt, reply));
-			} else {
-				/* Context reply; all went well */
-				mpt_prt(mpt, "context %u reply OK", reply);
-			}
-		}
-		mpt_done(mpt, reply);
-		reply = mpt_pop_reply_queue(mpt);
-	}
+	nrepl = mpt_drain_queue(mpt);
 	return (nrepl != 0);
 }
 
@@ -357,13 +371,20 @@ static void
 mpt_timeout(void *arg)
 {
 	request_t *req = arg;
-	struct scsipi_xfer *xs = req->xfer;
-	struct scsipi_periph *periph = xs->xs_periph;
-	mpt_softc_t *mpt = DEV_TO_MPT(
-	    periph->periph_channel->chan_adapter->adapt_dev);
-	uint32_t oseq;
-	int s;
-
+	struct scsipi_xfer *xs;
+	struct scsipi_periph *periph;
+	mpt_softc_t *mpt;
+ 	uint32_t oseq;
+	int s, nrepl = 0;
+ 
+	if (req->xfer  == NULL) {
+		printf("mpt_timeout: NULL xfer for request index 0x%x, sequenc 0x%x\n",
+		req->index, req->sequence);
+		return;
+	}
+	xs = req->xfer;
+	periph = xs->xs_periph;
+	mpt = device_private(periph->periph_channel->chan_adapter->adapt_dev);
 	scsipi_printaddr(periph);
 	printf("command timeout\n");
 
@@ -373,11 +394,28 @@ mpt_timeout(void *arg)
 	mpt->timeouts++;
 	if (mpt_intr(mpt)) {
 		if (req->sequence != oseq) {
+			mpt->success++;
 			mpt_prt(mpt, "recovered from command timeout");
 			splx(s);
 			return;
 		}
 	}
+
+	/*
+	 * Ensure the IOC is really done giving us data since it appears it can
+	 * sometimes fail to give us interrupts under heavy load.
+	 */
+	nrepl = mpt_drain_queue(mpt);
+	if (nrepl ) {
+		mpt_prt(mpt, "mpt_timeout: recovered %d commands",nrepl);
+	}
+
+	if (req->sequence != oseq) {
+		mpt->success++;
+		splx(s);
+		return;
+	}
+
 	mpt_prt(mpt,
 	    "timeout on request index = 0x%x, seq = 0x%08x",
 	    req->index, req->sequence);
@@ -390,14 +428,89 @@ mpt_timeout(void *arg)
 	if (mpt->verbose > 1)
 		mpt_print_scsi_io_request((MSG_SCSI_IO_REQUEST *)req->req_vbuf);
 
-	/* XXX WHAT IF THE IOC IS STILL USING IT?? */
-	req->xfer = NULL;
-	mpt_free_request(mpt, req);
-
 	xs->error = XS_TIMEOUT;
-	scsipi_done(xs);
-
 	splx(s);
+	mpt_restart(mpt, req);
+}
+
+static void
+mpt_restart(mpt_softc_t *mpt, request_t *req0)
+{
+	int i, s, nreq;
+	request_t *req;
+	struct scsipi_xfer *xs;
+
+	/* first, reset the IOC, leaving stopped so all requests are idle */
+	if (mpt_soft_reset(mpt) != MPT_OK) {
+		mpt_prt(mpt, "soft reset failed");
+		/* 
+		* Don't try a hard reset since this mangles the PCI 
+		* configuration registers.
+		*/
+		return;
+	}
+
+	/* Freeze the channel so scsipi doesn't queue more commands. */
+	scsipi_channel_freeze(&mpt->sc_channel, 1);
+
+	/* Return all pending requests to scsipi and de-allocate them. */
+	s = splbio();
+	nreq = 0;
+	for (i = 0; i < MPT_MAX_REQUESTS(mpt); i++) {
+		req = &mpt->request_pool[i];
+		xs = req->xfer;
+		if (xs != NULL) {
+			if (xs->datalen != 0)
+				bus_dmamap_unload(mpt->sc_dmat, req->dmap);
+			req->xfer = NULL;
+			callout_stop(&xs->xs_callout);
+			if (req != req0) {
+				nreq++;
+				xs->error = XS_REQUEUE;
+			}
+			scsipi_done(xs);
+			/*
+			* Don't need to mpt_free_request() since mpt_init() 
+			* below will free all requests anyway.
+			*/
+			mpt_free_request(mpt, req);
+		}
+	}
+	splx(s);
+	if (nreq > 0)
+		mpt_prt(mpt, "re-queued %d requests", nreq);
+
+	/* Re-initialize the IOC (which restarts it). */
+	if (mpt_init(mpt, MPT_DB_INIT_HOST) == 0)
+		mpt_prt(mpt, "restart succeeded");
+	/* else error message already printed */
+
+	/* Thaw the channel, causing scsipi to re-queue the commands. */
+	scsipi_channel_thaw(&mpt->sc_channel, 1);
+}
+
+static int 
+mpt_drain_queue(mpt_softc_t *mpt)
+{
+	int nrepl = 0;
+	uint32_t reply;
+
+	reply = mpt_pop_reply_queue(mpt);
+	while (reply != MPT_REPLY_EMPTY) {
+		nrepl++;
+		if (mpt->verbose > 1) {
+			if ((reply & MPT_CONTEXT_REPLY) != 0) {
+				/* Address reply; IOC has something to say */
+				mpt_print_reply(MPT_REPLY_PTOV(mpt, reply));
+			} else {
+				/* Context reply; all went well */
+				mpt_prt(mpt, "context %u reply OK", reply);
+			}
+		}
+		mpt_done(mpt, reply);
+		reply = mpt_pop_reply_queue(mpt);
+	}
+	return (nrepl);
 }
 
 static void
@@ -409,6 +522,7 @@ mpt_done(mpt_softc_t *mpt, uint32_t reply)
 	request_t *req;
 	MSG_REQUEST_HEADER *mpt_req;
 	MSG_SCSI_IO_REPLY *mpt_reply;
+	int restart = 0; /* nonzero if we need to restart the IOC*/
 
 	if (__predict_true((reply & MPT_CONTEXT_REPLY) == 0)) {
 		/* context reply (ok) */
@@ -419,19 +533,22 @@ mpt_done(mpt_softc_t *mpt, uint32_t reply)
 
 		/* XXX BUS_DMASYNC_POSTREAD XXX */
 		mpt_reply = MPT_REPLY_PTOV(mpt, reply);
-		if (mpt->verbose > 1) {
-			uint32_t *pReply = (uint32_t *) mpt_reply;
+		if (mpt_reply != NULL) {
+			if (mpt->verbose > 1) {
+				uint32_t *pReply = (uint32_t *) mpt_reply;
 
-			mpt_prt(mpt, "Address Reply (index %u):",
-			    le32toh(mpt_reply->MsgContext) & 0xffff);
-			mpt_prt(mpt, "%08x %08x %08x %08x",
-			    pReply[0], pReply[1], pReply[2], pReply[3]);
-			mpt_prt(mpt, "%08x %08x %08x %08x",
-			    pReply[4], pReply[5], pReply[6], pReply[7]);
-			mpt_prt(mpt, "%08x %08x %08x %08x",
-			    pReply[8], pReply[9], pReply[10], pReply[11]);
-		}
-		index = le32toh(mpt_reply->MsgContext);
+				mpt_prt(mpt, "Address Reply (index %u):",
+				    le32toh(mpt_reply->MsgContext) & 0xffff);
+				mpt_prt(mpt, "%08x %08x %08x %08x", pReply[0],
+				    pReply[1], pReply[2], pReply[3]);
+				mpt_prt(mpt, "%08x %08x %08x %08x", pReply[4],
+				    pReply[5], pReply[6], pReply[7]);
+				mpt_prt(mpt, "%08x %08x %08x %08x", pReply[8],
+				    pReply[9], pReply[10], pReply[11]);
+			}
+			index = le32toh(mpt_reply->MsgContext);
+		} else
+			index = reply & MPT_CONTEXT_MASK;
 	}
 
 	/*
@@ -443,13 +560,15 @@ mpt_done(mpt_softc_t *mpt, uint32_t reply)
 		if (mpt_reply != NULL)
 			mpt_ctlop(mpt, mpt_reply, reply);
 		else
-			mpt_prt(mpt, "mpt_done: index 0x%x, NULL reply", index);
+			mpt_prt(mpt, "%s: index 0x%x, NULL reply", __func__,
+			    index);
 		return;
 	}
 
 	/* Did we end up with a valid index into the table? */
 	if (__predict_false(index < 0 || index >= MPT_MAX_REQUESTS(mpt))) {
-		mpt_prt(mpt, "mpt_done: invalid index (0x%x) in reply", index);
+		mpt_prt(mpt, "%s: invalid index (0x%x) in reply", __func__,
+		    index);
 		return;
 	}
 
@@ -457,7 +576,8 @@ mpt_done(mpt_softc_t *mpt, uint32_t reply)
 
 	/* Make sure memory hasn't been trashed. */
 	if (__predict_false(req->index != index)) {
-		mpt_prt(mpt, "mpt_done: corrupted request_t (0x%x)", index);
+		mpt_prt(mpt, "%s: corrupted request_t (0x%x)", __func__,
+		    index);
 		return;
 	}
 
@@ -467,7 +587,9 @@ mpt_done(mpt_softc_t *mpt, uint32_t reply)
 	/* Short cut for task management replies; nothing more for us to do. */
 	if (__predict_false(mpt_req->Function == MPI_FUNCTION_SCSI_TASK_MGMT)) {
 		if (mpt->verbose > 1)
-			mpt_prt(mpt, "mpt_done: TASK MGMT");
+			mpt_prt(mpt, "%s: TASK MGMT", __func__);
+		KASSERT(req == mpt->mngt_req);
+		mpt->mngt_req = NULL;
 		goto done;
 	}
 
@@ -481,8 +603,8 @@ mpt_done(mpt_softc_t *mpt, uint32_t reply)
 	if (__predict_false(mpt_req->Function !=
 			    MPI_FUNCTION_SCSI_IO_REQUEST)) {
 		if (mpt->verbose > 1)
-			mpt_prt(mpt, "mpt_done: unknown Function 0x%x (0x%x)",
-			    mpt_req->Function, index);
+			mpt_prt(mpt, "%s: unknown Function 0x%x (0x%x)",
+			    __func__, mpt_req->Function, index);
 		goto done;
 	}
 
@@ -492,7 +614,7 @@ mpt_done(mpt_softc_t *mpt, uint32_t reply)
 	/* Can't have a SCSI command without a scsipi_xfer. */
 	if (__predict_false(xs == NULL)) {
 		mpt_prt(mpt,
-		    "mpt_done: no scsipi_xfer, index = 0x%x, seq = 0x%08x",
+		    "%s: no scsipi_xfer, index = 0x%x, seq = 0x%08x", __func__,
 		    req->index, req->sequence);
 		mpt_prt(mpt, "request state: %s", mpt_req_state(req->debug));
 		mpt_prt(mpt, "mpt_request:");
@@ -544,9 +666,10 @@ mpt_done(mpt_softc_t *mpt, uint32_t reply)
 	}
 
 	xs->status = mpt_reply->SCSIStatus;
-	switch (le16toh(mpt_reply->IOCStatus)) {
+	switch (le16toh(mpt_reply->IOCStatus) & MPI_IOCSTATUS_MASK) {
 	case MPI_IOCSTATUS_SCSI_DATA_OVERRUN:
 		xs->error = XS_DRIVER_STUFFUP;
+		mpt_prt(mpt, "%s: IOC overrun!", __func__);
 		break;
 
 	case MPI_IOCSTATUS_SCSI_DATA_UNDERRUN:
@@ -605,47 +728,84 @@ mpt_done(mpt_softc_t *mpt, uint32_t reply)
 
 	case MPI_IOCSTATUS_SCSI_RESIDUAL_MISMATCH:
 		xs->error = XS_DRIVER_STUFFUP;
+		mpt_prt(mpt, "%s: IOC SCSI residual mismatch!", __func__);
+		restart = 1;
 		break;
 
 	case MPI_IOCSTATUS_SCSI_TASK_TERMINATED:
 		/* XXX What should we do here? */
+		mpt_prt(mpt, "%s: IOC SCSI task terminated!", __func__);
+		restart = 1;
 		break;
 
 	case MPI_IOCSTATUS_SCSI_TASK_MGMT_FAILED:
 		/* XXX */
 		xs->error = XS_DRIVER_STUFFUP;
+		mpt_prt(mpt, "%s: IOC SCSI task failed!", __func__);
+		restart = 1;
 		break;
 
 	case MPI_IOCSTATUS_SCSI_IOC_TERMINATED:
 		/* XXX */
 		xs->error = XS_DRIVER_STUFFUP;
+		mpt_prt(mpt, "%s: IOC task terminated!", __func__);
+		restart = 1;
 		break;
 
 	case MPI_IOCSTATUS_SCSI_EXT_TERMINATED:
 		/* XXX This is a bus-reset */
 		xs->error = XS_DRIVER_STUFFUP;
+		mpt_prt(mpt, "%s: IOC SCSI bus reset!", __func__);
+		restart = 1;
+		break;
+
+	case MPI_IOCSTATUS_SCSI_PROTOCOL_ERROR:
+		/*
+		 * FreeBSD and Linux indicate this is a phase error between
+		 * the IOC and the drive itself. When this happens, the IOC
+		 * becomes unhappy and stops processing all transactions.  
+		 * Call mpt_timeout which knows how to get the IOC back
+		 * on its feet.
+		 */
+		 mpt_prt(mpt, "%s: IOC indicates protocol error -- "
+		     "recovering...", __func__);
+		xs->error = XS_TIMEOUT;
+		restart = 1;
+
 		break;
 
 	default:
 		/* XXX unrecognized HBA error */
 		xs->error = XS_DRIVER_STUFFUP;
+		mpt_prt(mpt, "%s: IOC returned unknown code: 0x%x", __func__,
+		    le16toh(mpt_reply->IOCStatus));
+		restart = 1;
 		break;
 	}
 
-	if (mpt_reply->SCSIState & MPI_SCSI_STATE_AUTOSENSE_VALID) {
-		memcpy(&xs->sense.scsi_sense, req->sense_vbuf,
-		    sizeof(xs->sense.scsi_sense));
-	} else if (mpt_reply->SCSIState & MPI_SCSI_STATE_AUTOSENSE_FAILED) {
-		/*
-		 * This will cause the scsipi layer to issue
-		 * a REQUEST SENSE.
-		 */
-		if (xs->status == SCSI_CHECK)
-			xs->error = XS_BUSY;
+	if (mpt_reply != NULL) {
+		if (mpt_reply->SCSIState & MPI_SCSI_STATE_AUTOSENSE_VALID) {
+			memcpy(&xs->sense.scsi_sense, req->sense_vbuf,
+			    sizeof(xs->sense.scsi_sense));
+		} else if (mpt_reply->SCSIState &
+		    MPI_SCSI_STATE_AUTOSENSE_FAILED) {
+			/*
+			 * This will cause the scsipi layer to issue
+			 * a REQUEST SENSE.
+			 */
+			if (xs->status == SCSI_CHECK)
+				xs->error = XS_BUSY;
+		}
 	}
 
  done:
-	/* If IOC done with this requeset, free it up. */
+	if (mpt_reply != NULL && le16toh(mpt_reply->IOCStatus) & 
+	MPI_IOCSTATUS_FLAG_LOG_INFO_AVAILABLE) {
+		mpt_prt(mpt, "%s: IOC has error - logging...\n", __func__);
+		mpt_ctlop(mpt, mpt_reply, reply);
+	}
+
+	/* If IOC done with this request, free it up. */
 	if (mpt_reply == NULL || (mpt_reply->MsgFlags & 0x80) == 0)
 		mpt_free_request(mpt, req);
 
@@ -655,6 +815,11 @@ mpt_done(mpt_softc_t *mpt, uint32_t reply)
 
 	if (xs != NULL)
 		scsipi_done(xs);
+
+	if (restart) {
+		mpt_prt(mpt, "%s: IOC fatal error: restarting...", __func__);
+		mpt_restart(mpt, NULL);
+	}
 }
 
 static void
@@ -928,6 +1093,12 @@ mpt_run_xfer(mpt_softc_t *mpt, struct scsipi_xfer *xs)
 	if (mpt->verbose > 1)
 		mpt_print_scsi_io_request(mpt_req);
 
+		if (xs->timeout == 0) {
+			mpt_prt(mpt, "mpt_run_xfer: no timeout specified for request: 0x%x\n",
+			req->index);
+			xs->timeout = 500;
+		}
+
 	s = splbio();
 	if (__predict_true((xs->xs_control & XS_CTL_POLL) == 0))
 		callout_reset(&xs->xs_callout,
@@ -1099,8 +1270,16 @@ mpt_ctlop(mpt_softc_t *mpt, void *vmsg, uint32_t reply)
 		break;
 
 	case MPI_FUNCTION_EVENT_ACK:
+	    {
+		MSG_EVENT_ACK_REPLY *msg = vmsg;
+		int index = le32toh(msg->MsgContext) & ~0x80000000;
 		mpt_free_reply(mpt, (reply << 1));
+		if (index >= 0 && index < MPT_MAX_REQUESTS(mpt)) {
+			request_t *req = &mpt->request_pool[index];
+			mpt_free_request(mpt, req);
+		}
 		break;
+	    }
 
 	case MPI_FUNCTION_PORT_ENABLE:
 	    {
@@ -1340,7 +1519,43 @@ mpt_event_notify_reply(mpt_softc_t *mpt, MSG_EVENT_NOTIFY_REPLY *msg)
 	}
 }
 
-/* XXXJRT mpt_bus_reset() */
+static void
+mpt_bus_reset(mpt_softc_t *mpt)
+{
+	request_t *req;
+	MSG_SCSI_TASK_MGMT *mngt_req;
+	int s;
+
+	s = splbio();
+	if (mpt->mngt_req) {
+		/* request already queued; can't do more */
+		splx(s);
+		return;
+	}
+	req = mpt_get_request(mpt);
+	if (__predict_false(req == NULL)) {
+		mpt_prt(mpt, "no mngt request\n");
+		splx(s);
+		return;
+	}
+	mpt->mngt_req = req;
+	splx(s);
+	mngt_req = req->req_vbuf;
+	memset(mngt_req, 0, sizeof(*mngt_req));
+	mngt_req->Function = MPI_FUNCTION_SCSI_TASK_MGMT;
+	mngt_req->Bus = mpt->bus;
+	mngt_req->TargetID = 0;
+	mngt_req->ChainOffset = 0;
+	mngt_req->TaskType = MPI_SCSITASKMGMT_TASKTYPE_RESET_BUS;
+	mngt_req->Reserved1 = 0;
+	mngt_req->MsgFlags =
+	    mpt->is_fc ? MPI_SCSITASKMGMT_MSGFLAGS_LIP_RESET_OPTION : 0;
+	mngt_req->MsgContext = req->index;
+	mngt_req->TaskMsgContext = 0;
+	s = splbio();
+	mpt_send_handshake_cmd(mpt, sizeof(*mngt_req), mngt_req);
+	splx(s);
+}
 
 /*****************************************************************************
  * SCSI interface routines
@@ -1351,7 +1566,7 @@ mpt_scsipi_request(struct scsipi_channel *chan, scsipi_adapter_req_t req,
     void *arg)
 {
 	struct scsipi_adapter *adapt = chan->chan_adapter;
-	mpt_softc_t *mpt = DEV_TO_MPT(adapt->adapt_dev);
+	mpt_softc_t *mpt = device_private(adapt->adapt_dev);
 
 	switch (req) {
 	case ADAPTER_REQ_RUN_XFER:
@@ -1382,3 +1597,477 @@ mpt_minphys(struct buf *bp)
 		bp->b_bcount = MPT_MAX_XFER;
 	minphys(bp);
 }
+
+static int
+mpt_ioctl(struct scsipi_channel *chan, u_long cmd, void *arg,
+    int flag, struct proc *p)
+{
+	mpt_softc_t *mpt;
+	int s;
+
+	mpt = device_private(chan->chan_adapter->adapt_dev);
+	switch (cmd) {
+	case SCBUSIORESET:
+		mpt_bus_reset(mpt);
+		s = splbio();
+		mpt_intr(mpt);
+		splx(s);
+		return(0);
+	default:
+		return (ENOTTY);
+	}
+}
+
+#if NBIO > 0
+static fCONFIG_PAGE_IOC_2 *
+mpt_get_cfg_page_ioc2(mpt_softc_t *mpt)
+{
+	fCONFIG_PAGE_HEADER hdr;
+	fCONFIG_PAGE_IOC_2 *ioc2;
+	int rv;
+
+	rv = mpt_read_cfg_header(mpt, MPI_CONFIG_PAGETYPE_IOC, 2, 0, &hdr);
+	if (rv)
+		return NULL;
+
+	ioc2 = malloc(hdr.PageLength * 4, M_DEVBUF, M_WAITOK | M_ZERO);
+	if (ioc2 == NULL)
+		return NULL;
+
+	memcpy(ioc2, &hdr, sizeof(hdr));
+
+	rv = mpt_read_cfg_page(mpt, 0, &ioc2->Header);
+	if (rv)
+		goto fail;
+	mpt2host_config_page_ioc_2(ioc2);
+
+	return ioc2;
+
+fail:
+	free(ioc2, M_DEVBUF);
+	return NULL;
+}
+
+static fCONFIG_PAGE_IOC_3 *
+mpt_get_cfg_page_ioc3(mpt_softc_t *mpt)
+{
+	fCONFIG_PAGE_HEADER hdr;
+	fCONFIG_PAGE_IOC_3 *ioc3;
+	int rv;
+
+	rv = mpt_read_cfg_header(mpt, MPI_CONFIG_PAGETYPE_IOC, 3, 0, &hdr);
+	if (rv)
+		return NULL;
+
+	ioc3 = malloc(hdr.PageLength * 4, M_DEVBUF, M_WAITOK | M_ZERO);
+	if (ioc3 == NULL)
+		return NULL;
+
+	memcpy(ioc3, &hdr, sizeof(hdr));
+
+	rv = mpt_read_cfg_page(mpt, 0, &ioc3->Header);
+	if (rv)
+		goto fail;
+
+	return ioc3;
+
+fail:
+	free(ioc3, M_DEVBUF);
+	return NULL;
+}
+
+
+static fCONFIG_PAGE_RAID_VOL_0 *
+mpt_get_cfg_page_raid_vol0(mpt_softc_t *mpt, int address)
+{
+	fCONFIG_PAGE_HEADER hdr;
+	fCONFIG_PAGE_RAID_VOL_0 *rvol0;
+	int rv;
+
+	rv = mpt_read_cfg_header(mpt, MPI_CONFIG_PAGETYPE_RAID_VOLUME, 0,
+	    address, &hdr);
+	if (rv)
+		return NULL;
+
+	rvol0 = malloc(hdr.PageLength * 4, M_DEVBUF, M_WAITOK | M_ZERO);
+	if (rvol0 == NULL)
+		return NULL;
+
+	memcpy(rvol0, &hdr, sizeof(hdr));
+
+	rv = mpt_read_cfg_page(mpt, address, &rvol0->Header);
+	if (rv)
+		goto fail;
+	mpt2host_config_page_raid_vol_0(rvol0);
+
+	return rvol0;
+
+fail:
+	free(rvol0, M_DEVBUF);
+	return NULL;
+}
+
+static fCONFIG_PAGE_RAID_PHYS_DISK_0 *
+mpt_get_cfg_page_raid_phys_disk0(mpt_softc_t *mpt, int address)
+{
+	fCONFIG_PAGE_HEADER hdr;
+	fCONFIG_PAGE_RAID_PHYS_DISK_0 *physdisk0;
+	int rv;
+
+	rv = mpt_read_cfg_header(mpt, MPI_CONFIG_PAGETYPE_RAID_PHYSDISK, 0,
+	    address, &hdr);
+	if (rv)
+		return NULL;
+
+	physdisk0 = malloc(hdr.PageLength * 4, M_DEVBUF, M_WAITOK | M_ZERO);
+	if (physdisk0 == NULL)
+		return NULL;
+
+	memcpy(physdisk0, &hdr, sizeof(hdr));
+
+	rv = mpt_read_cfg_page(mpt, address, &physdisk0->Header);
+	if (rv)
+		goto fail;
+	mpt2host_config_page_raid_phys_disk_0(physdisk0);
+
+	return physdisk0;
+
+fail:
+	free(physdisk0, M_DEVBUF);
+	return NULL;
+}
+
+static bool
+mpt_is_raid(mpt_softc_t *mpt)
+{
+	fCONFIG_PAGE_IOC_2 *ioc2;
+	bool is_raid = false;
+
+	ioc2 = mpt_get_cfg_page_ioc2(mpt);
+	if (ioc2 == NULL)
+		return false;
+
+	if (ioc2->CapabilitiesFlags != 0xdeadbeef) {
+		is_raid = !!(ioc2->CapabilitiesFlags &
+				(MPI_IOCPAGE2_CAP_FLAGS_IS_SUPPORT|
+				 MPI_IOCPAGE2_CAP_FLAGS_IME_SUPPORT|
+				 MPI_IOCPAGE2_CAP_FLAGS_IM_SUPPORT));
+	}
+
+	free(ioc2, M_DEVBUF);
+
+	return is_raid;
+}
+
+static int
+mpt_bio_ioctl(device_t dev, u_long cmd, void *addr)
+{
+	mpt_softc_t *mpt = device_private(dev);
+	int error, s;
+
+	KERNEL_LOCK(1, curlwp);
+	s = splbio();
+
+	switch (cmd) {
+	case BIOCINQ:
+		error = mpt_bio_ioctl_inq(mpt, addr);
+		break;
+	case BIOCVOL:
+		error = mpt_bio_ioctl_vol(mpt, addr);
+		break;
+	case BIOCDISK_NOVOL:
+		error = mpt_bio_ioctl_disk_novol(mpt, addr);
+		break;
+	case BIOCDISK:
+		error = mpt_bio_ioctl_disk(mpt, addr);
+		break;
+	case BIOCSETSTATE:
+		error = mpt_bio_ioctl_setstate(mpt, addr);
+		break;
+	default:
+		error = EINVAL;
+		break;
+	}
+
+	splx(s);
+	KERNEL_UNLOCK_ONE(curlwp);
+
+	return error;
+}
+
+static int
+mpt_bio_ioctl_inq(mpt_softc_t *mpt, struct bioc_inq *bi)
+{	
+	fCONFIG_PAGE_IOC_2 *ioc2;
+	fCONFIG_PAGE_IOC_3 *ioc3;
+
+	ioc2 = mpt_get_cfg_page_ioc2(mpt);
+	if (ioc2 == NULL)
+		return EIO;
+	ioc3 = mpt_get_cfg_page_ioc3(mpt);
+	if (ioc3 == NULL) {
+		free(ioc2, M_DEVBUF);
+		return EIO;
+	}
+
+	strlcpy(bi->bi_dev, device_xname(mpt->sc_dev), sizeof(bi->bi_dev));
+	bi->bi_novol = ioc2->NumActiveVolumes;
+	bi->bi_nodisk = ioc3->NumPhysDisks;
+
+	free(ioc2, M_DEVBUF);
+	free(ioc3, M_DEVBUF);
+
+	return 0;
+}
+
+static int
+mpt_bio_ioctl_vol(mpt_softc_t *mpt, struct bioc_vol *bv)
+{
+	fCONFIG_PAGE_IOC_2 *ioc2 = NULL;
+	fCONFIG_PAGE_IOC_2_RAID_VOL *ioc2rvol;
+	fCONFIG_PAGE_RAID_VOL_0 *rvol0 = NULL;
+	struct scsipi_periph *periph;
+	struct scsipi_inquiry_data inqbuf;
+	char vendor[9], product[17], revision[5];
+	int address;
+
+	ioc2 = mpt_get_cfg_page_ioc2(mpt);
+	if (ioc2 == NULL)
+		return EIO;
+
+	if (bv->bv_volid < 0 || bv->bv_volid >= ioc2->NumActiveVolumes)
+		goto fail;
+
+	ioc2rvol = &ioc2->RaidVolume[bv->bv_volid];
+	address = ioc2rvol->VolumeID | (ioc2rvol->VolumeBus << 8);
+
+	rvol0 = mpt_get_cfg_page_raid_vol0(mpt, address);
+	if (rvol0 == NULL)
+		goto fail;
+
+	bv->bv_dev[0] = '\0';
+	bv->bv_vendor[0] = '\0';
+
+	periph = scsipi_lookup_periph(&mpt->sc_channel, ioc2rvol->VolumeBus, 0);
+	if (periph != NULL) {
+		if (periph->periph_dev != NULL) {
+			snprintf(bv->bv_dev, sizeof(bv->bv_dev), "%s",
+			    device_xname(periph->periph_dev));
+		}
+		memset(&inqbuf, 0, sizeof(inqbuf));
+		if (scsipi_inquire(periph, &inqbuf,
+		    XS_CTL_DISCOVERY | XS_CTL_SILENT) == 0) {
+			scsipi_strvis(vendor, sizeof(vendor),
+			    inqbuf.vendor, sizeof(inqbuf.vendor));
+			scsipi_strvis(product, sizeof(product),
+			    inqbuf.product, sizeof(inqbuf.product));
+			scsipi_strvis(revision, sizeof(revision),
+			    inqbuf.revision, sizeof(inqbuf.revision));
+
+			snprintf(bv->bv_vendor, sizeof(bv->bv_vendor),
+			    "%s %s %s", vendor, product, revision);
+		}
+	
+		snprintf(bv->bv_dev, sizeof(bv->bv_dev), "%s",
+		    device_xname(periph->periph_dev));
+	}
+	bv->bv_nodisk = rvol0->NumPhysDisks;
+	bv->bv_size = (uint64_t)rvol0->MaxLBA * 512;
+	bv->bv_stripe_size = rvol0->StripeSize;
+	bv->bv_percent = -1;
+	bv->bv_seconds = 0;
+
+	switch (rvol0->VolumeStatus.State) {
+	case MPI_RAIDVOL0_STATUS_STATE_OPTIMAL:
+		bv->bv_status = BIOC_SVONLINE;
+		break;
+	case MPI_RAIDVOL0_STATUS_STATE_DEGRADED:
+		bv->bv_status = BIOC_SVDEGRADED;
+		break;
+	case MPI_RAIDVOL0_STATUS_STATE_FAILED:
+		bv->bv_status = BIOC_SVOFFLINE;
+		break;
+	default:
+		bv->bv_status = BIOC_SVINVALID;
+		break;
+	}
+
+	switch (ioc2rvol->VolumeType) {
+	case MPI_RAID_VOL_TYPE_IS:
+		bv->bv_level = 0;
+		break;
+	case MPI_RAID_VOL_TYPE_IME:
+	case MPI_RAID_VOL_TYPE_IM:
+		bv->bv_level = 1;
+		break;
+	default:
+		bv->bv_level = -1;
+		break;
+	}
+
+	free(ioc2, M_DEVBUF);
+	free(rvol0, M_DEVBUF);
+
+	return 0;
+
+fail:
+	if (ioc2) free(ioc2, M_DEVBUF);
+	if (rvol0) free(rvol0, M_DEVBUF);
+	return EINVAL;
+}
+
+static void
+mpt_bio_ioctl_disk_common(mpt_softc_t *mpt, struct bioc_disk *bd,
+    int address)
+{
+	fCONFIG_PAGE_RAID_PHYS_DISK_0 *phys = NULL;
+	char vendor_id[9], product_id[17], product_rev_level[5];
+
+	phys = mpt_get_cfg_page_raid_phys_disk0(mpt, address);
+	if (phys == NULL)
+		return;
+
+	scsipi_strvis(vendor_id, sizeof(vendor_id),
+	    phys->InquiryData.VendorID, sizeof(phys->InquiryData.VendorID));
+	scsipi_strvis(product_id, sizeof(product_id),
+	    phys->InquiryData.ProductID, sizeof(phys->InquiryData.ProductID));
+	scsipi_strvis(product_rev_level, sizeof(product_rev_level),
+	    phys->InquiryData.ProductRevLevel,
+	    sizeof(phys->InquiryData.ProductRevLevel));
+
+	snprintf(bd->bd_vendor, sizeof(bd->bd_vendor), "%s %s %s",
+	    vendor_id, product_id, product_rev_level);
+	strlcpy(bd->bd_serial, phys->InquiryData.Info, sizeof(bd->bd_serial));
+	bd->bd_procdev[0] = '\0';
+	bd->bd_channel = phys->PhysDiskBus;
+	bd->bd_target = phys->PhysDiskID;
+	bd->bd_lun = 0;
+	bd->bd_size = (uint64_t)phys->MaxLBA * 512;
+
+	switch (phys->PhysDiskStatus.State) {
+	case MPI_PHYSDISK0_STATUS_ONLINE:
+		bd->bd_status = BIOC_SDONLINE;
+		break;
+	case MPI_PHYSDISK0_STATUS_MISSING:
+	case MPI_PHYSDISK0_STATUS_FAILED:
+		bd->bd_status = BIOC_SDFAILED;
+		break;
+	case MPI_PHYSDISK0_STATUS_OFFLINE_REQUESTED:
+	case MPI_PHYSDISK0_STATUS_FAILED_REQUESTED:
+	case MPI_PHYSDISK0_STATUS_OTHER_OFFLINE:
+		bd->bd_status = BIOC_SDOFFLINE;
+		break;
+	case MPI_PHYSDISK0_STATUS_INITIALIZING:
+		bd->bd_status = BIOC_SDSCRUB;
+		break;
+	case MPI_PHYSDISK0_STATUS_NOT_COMPATIBLE:
+	default:
+		bd->bd_status = BIOC_SDINVALID;
+		break;
+	}
+
+	free(phys, M_DEVBUF);
+}
+
+static int
+mpt_bio_ioctl_disk_novol(mpt_softc_t *mpt, struct bioc_disk *bd)
+{
+	fCONFIG_PAGE_IOC_2 *ioc2 = NULL;
+	fCONFIG_PAGE_IOC_3 *ioc3 = NULL;
+	fCONFIG_PAGE_RAID_VOL_0 *rvol0 = NULL;
+	fCONFIG_PAGE_IOC_2_RAID_VOL *ioc2rvol;
+	int address, v, d;
+
+	ioc2 = mpt_get_cfg_page_ioc2(mpt);
+	if (ioc2 == NULL)
+		return EIO;
+	ioc3 = mpt_get_cfg_page_ioc3(mpt);
+	if (ioc3 == NULL) {
+		free(ioc2, M_DEVBUF);
+		return EIO;
+	}
+
+	if (bd->bd_diskid < 0 || bd->bd_diskid >= ioc3->NumPhysDisks)
+		goto fail;
+
+	address = ioc3->PhysDisk[bd->bd_diskid].PhysDiskNum;
+
+	mpt_bio_ioctl_disk_common(mpt, bd, address);
+
+	bd->bd_disknovol = true;
+	for (v = 0; bd->bd_disknovol && v < ioc2->NumActiveVolumes; v++) {
+		ioc2rvol = &ioc2->RaidVolume[v];
+		address = ioc2rvol->VolumeID | (ioc2rvol->VolumeBus << 8);
+
+		rvol0 = mpt_get_cfg_page_raid_vol0(mpt, address);
+		if (rvol0 == NULL)
+			continue;
+
+		for (d = 0; d < rvol0->NumPhysDisks; d++) {
+			if (rvol0->PhysDisk[d].PhysDiskNum ==
+			    ioc3->PhysDisk[bd->bd_diskid].PhysDiskNum) {
+				bd->bd_disknovol = false;
+				bd->bd_volid = v;
+				break;
+			}
+		}
+		free(rvol0, M_DEVBUF);
+	}
+
+	free(ioc3, M_DEVBUF);
+	free(ioc2, M_DEVBUF);
+
+	return 0;
+
+fail:
+	if (ioc3) free(ioc3, M_DEVBUF);
+	if (ioc2) free(ioc2, M_DEVBUF);
+	return EINVAL;
+}
+
+
+static int
+mpt_bio_ioctl_disk(mpt_softc_t *mpt, struct bioc_disk *bd)
+{
+	fCONFIG_PAGE_IOC_2 *ioc2 = NULL;
+	fCONFIG_PAGE_RAID_VOL_0 *rvol0 = NULL;
+	fCONFIG_PAGE_IOC_2_RAID_VOL *ioc2rvol;
+	int address;
+
+	ioc2 = mpt_get_cfg_page_ioc2(mpt);
+	if (ioc2 == NULL)
+		return EIO;
+
+	if (bd->bd_volid < 0 || bd->bd_volid >= ioc2->NumActiveVolumes)
+		goto fail;
+
+	ioc2rvol = &ioc2->RaidVolume[bd->bd_volid];
+	address = ioc2rvol->VolumeID | (ioc2rvol->VolumeBus << 8);
+
+	rvol0 = mpt_get_cfg_page_raid_vol0(mpt, address);
+	if (rvol0 == NULL)
+		goto fail;
+
+	if (bd->bd_diskid < 0 || bd->bd_diskid >= rvol0->NumPhysDisks)
+		goto fail;
+
+	address = rvol0->PhysDisk[bd->bd_diskid].PhysDiskNum;
+
+	mpt_bio_ioctl_disk_common(mpt, bd, address);
+
+	free(ioc2, M_DEVBUF);
+
+	return 0;
+
+fail:
+	if (ioc2) free(ioc2, M_DEVBUF);
+	return EINVAL;
+}
+
+static int
+mpt_bio_ioctl_setstate(mpt_softc_t *mpt, struct bioc_setstate *bs)
+{
+	return ENOTTY;
+}
+#endif
+

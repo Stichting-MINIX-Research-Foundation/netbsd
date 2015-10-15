@@ -1,4 +1,4 @@
-# $Id: IMX23_OLINUXINO,v 1.4 2013/10/07 17:36:40 matt Exp $
+# $Id: IMX23_OLINUXINO,v 1.12 2015/08/21 01:52:07 uebayasi Exp $
 #
 # IMX23_OLINUXINO -- Olimex i.MX23 OLinuXino kernel configuration file.
 #
@@ -66,6 +66,13 @@ usbphy0		at apbx? addr 0x8007C000 size 0x2000 irq -1
 # Clock control
 clkctrl0	at apbx? addr 0x80040000 size 0x2000 irq -1
 
+# RTC
+rtc0		at apbx? addr 0x8005C000 size 0x2000 irq -1
+
+# Digital filter: Audio I/O
+digfilt0	at apbx? addr 0x80048000 size 0x8000 irq -1
+audio0		at digfilt0
+
 # USB host
 ehci0		at imxusbc0 unit 0 irq 11
 # USB OTG
@@ -78,23 +85,29 @@ ugen*		at uhub? port ?
 
 include "dev/usb/usbdevices.config"
 
+midi*		at midibus?
+
 ukphy*		at mii? phy ?
 
 options		MEMSIZE=64
 options		DDB
 options		HZ=100
+pseudo-device	ksyms
 options		INET		# IP + ICMP + TCP + UDP
 options		INET6		# IPv6
-options		COMPAT_60	# NetBSD 6.0 compatibility
+options		COMPAT_NETBSD32	# allow running arm (e.g. non-earm) binaries
+options		COMPAT_60	# NetBSD 6.0, and
+options		COMPAT_70	# NetBSD 7.0 binary compatibility.
 
 makeoptions     DEBUG="-g"      # compile full symbol table
-options         SYMTAB_SPACE=800000
+makeoptions	COPY_SYMTAB=1
 
 options		SYSVMSG		# System V-like message queues
 options		SYSVSEM		# System V-like semaphores
 options		SYSVSHM		# System V-like memory sharing
 
 #options		MODULAR
+#options		MODULAR_DEFAULT_AUTOLOAD
 options		KTRACE
 #options		DEBUG
 #options		DIAGNOSTIC

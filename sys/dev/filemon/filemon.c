@@ -24,7 +24,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: filemon.c,v 1.5 2012/11/19 22:20:10 sjg Exp $");
+__KERNEL_RCSID(0, "$NetBSD: filemon.c,v 1.11 2015/08/20 14:40:17 christos Exp $");
 
 #include <sys/param.h>
 #include <sys/kernel.h>
@@ -44,6 +44,7 @@ __KERNEL_RCSID(0, "$NetBSD: filemon.c,v 1.5 2012/11/19 22:20:10 sjg Exp $");
 #include <sys/kauth.h>
 
 #include "filemon.h"
+#include "ioconf.h"
 
 MODULE(MODULE_CLASS_DRIVER, filemon, NULL);
 
@@ -51,7 +52,6 @@ static dev_type_open(filemon_open);
 
 struct cdevsw filemon_cdevsw = {
 	.d_open = filemon_open,
-	.d_flag = D_MPSAFE,
 	.d_close = noclose,
 	.d_read = noread,
 	.d_write = nowrite,
@@ -61,6 +61,8 @@ struct cdevsw filemon_cdevsw = {
 	.d_poll = nopoll,
 	.d_mmap = nommap,
 	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_MPSAFE
 };
 
 static int filemon_ioctl(struct file *, u_long, void *);
@@ -121,16 +123,26 @@ filemon_output(struct filemon * filemon, char *msg, size_t len)
 	    &auio, curlwp->l_cred, FOF_UPDATE_OFFSET);
 }
 
+void
+filemon_printf(struct filemon *filemon, const char *fmt, ...)
+{
+	size_t len;
+	va_list ap;
+
+	va_start(ap, fmt);
+	len = vsnprintf(filemon->fm_msgbufr, sizeof(filemon->fm_msgbufr),
+	    fmt, ap);
+	va_end(ap);
+	if (len > sizeof(filemon->fm_msgbufr))
+		len = sizeof(filemon->fm_msgbufr);
+	filemon_output(filemon, filemon->fm_msgbufr, len);
+}
+
 static void
 filemon_comment(struct filemon * filemon)
 {
-	int len;
-
-	len = snprintf(filemon->fm_msgbufr, sizeof(filemon->fm_msgbufr),
-	    "# filemon version %d\n# Target pid %d\nV %d\n",
-		       FILEMON_VERSION, curproc->p_pid, FILEMON_VERSION);
-
-	filemon_output(filemon, filemon->fm_msgbufr, len);
+	filemon_printf(filemon, "# filemon version %d\n# Target pid %d\nV %d\n",
+	   FILEMON_VERSION, curproc->p_pid, FILEMON_VERSION);
 }
 
 
@@ -202,7 +214,7 @@ filemon_open(dev_t dev, int oflags __unused, int mode __unused,
 	struct file *fp;
 	int error, fd;
 
-	/* falloc() will use the descriptor for us. */
+	/* falloc() will fill in the descriptor for us. */
 	if ((error = fd_allocfile(&fp, &fd)) != 0)
 		return error;
 
@@ -296,12 +308,15 @@ filemon_ioctl(struct file * fp, u_long cmd, void *data)
 		mutex_enter(proc_lock);
 		tp = proc_find(*((pid_t *) data));
 		mutex_exit(proc_lock);
+		if (tp == NULL) {
+			error = ESRCH;
+			break;
+		}
 		error = kauth_authorize_process(curproc->p_cred,
 		    KAUTH_PROCESS_CANSEE, tp,
 		    KAUTH_ARG(KAUTH_REQ_PROCESS_CANSEE_ENTRY), NULL, NULL);
 		if (!error) {
 			filemon->fm_pid = tp->p_pid;
-
 		}
 		break;
 
@@ -322,8 +337,6 @@ filemon_load(void *dummy __unused)
 	/* Install the syscall wrappers. */
 	filemon_wrapper_install();
 }
-
-void filemonattach(int);
 
 /*
  * If this gets called we are linked into the kernel

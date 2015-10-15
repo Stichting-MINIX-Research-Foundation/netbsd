@@ -1,4 +1,4 @@
-/*	$NetBSD: vfs_wapbl.c,v 1.58 2013/09/15 15:59:37 martin Exp $	*/
+/*	$NetBSD: vfs_wapbl.c,v 1.62 2015/08/09 07:40:59 mlelstv Exp $	*/
 
 /*-
  * Copyright (c) 2003, 2008, 2009 The NetBSD Foundation, Inc.
@@ -36,7 +36,7 @@
 #define WAPBL_INTERNAL
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: vfs_wapbl.c,v 1.58 2013/09/15 15:59:37 martin Exp $");
+__KERNEL_RCSID(0, "$NetBSD: vfs_wapbl.c,v 1.62 2015/08/09 07:40:59 mlelstv Exp $");
 
 #include <sys/param.h>
 #include <sys/bitops.h>
@@ -107,6 +107,7 @@ static inline size_t wapbl_space_free(size_t, off_t, off_t);
  *		u = unlocked access ok
  *		b = bufcache_lock held
  */
+LIST_HEAD(wapbl_ino_head, wapbl_ino);
 struct wapbl {
 	struct vnode *wl_logvp;	/* r:	log here */
 	struct vnode *wl_devvp;	/* r:	log on this device */
@@ -180,7 +181,7 @@ struct wapbl {
 
 	/* hashtable of inode numbers for allocated but unlinked inodes */
 	/* synch ??? */
-	LIST_HEAD(wapbl_ino_head, wapbl_ino) *wl_inohash;
+	struct wapbl_ino_head *wl_inohash;
 	u_long wl_inohashmask;
 	int wl_inohashcnt;
 
@@ -272,18 +273,10 @@ wapbl_sysctl_init(void)
 
 	rv = sysctl_createv(&wapbl_sysctl, 0, NULL, &rnode,
 		       CTLFLAG_PERMANENT,
-		       CTLTYPE_NODE, "vfs", NULL,
-		       NULL, 0, NULL, 0,
-		       CTL_VFS, CTL_EOL);
-	if (rv)
-		return rv;
-
-	rv = sysctl_createv(&wapbl_sysctl, 0, &rnode, &rnode,
-		       CTLFLAG_PERMANENT,
 		       CTLTYPE_NODE, "wapbl",
 		       SYSCTL_DESCR("WAPBL journaling options"),
 		       NULL, 0, NULL, 0,
-		       CTL_CREATE, CTL_EOL);
+		       CTL_VFS, CTL_CREATE, CTL_EOL);
 	if (rv)
 		return rv;
 
@@ -1135,31 +1128,31 @@ wapbl_space_used(size_t avail, off_t head, off_t tail)
 #ifdef _KERNEL
 /* This is used to advance the pointer at old to new value at old+delta */
 static inline off_t
-wapbl_advance(size_t size, size_t off, off_t old, size_t delta)
+wapbl_advance(size_t size, size_t off, off_t oldoff, size_t delta)
 {
-	off_t new;
+	off_t newoff;
 
 	/* Define acceptable ranges for inputs. */
 	KASSERT(delta <= (size_t)size);
-	KASSERT((old == 0) || ((size_t)old >= off));
-	KASSERT(old < (off_t)(size + off));
+	KASSERT((oldoff == 0) || ((size_t)oldoff >= off));
+	KASSERT(oldoff < (off_t)(size + off));
 
-	if ((old == 0) && (delta != 0))
-		new = off + delta;
-	else if ((old + delta) < (size + off))
-		new = old + delta;
+	if ((oldoff == 0) && (delta != 0))
+		newoff = off + delta;
+	else if ((oldoff + delta) < (size + off))
+		newoff = oldoff + delta;
 	else
-		new = (old + delta) - size;
+		newoff = (oldoff + delta) - size;
 
 	/* Note some interesting axioms */
-	KASSERT((delta != 0) || (new == old));
-	KASSERT((delta == 0) || (new != 0));
-	KASSERT((delta != (size)) || (new == old));
+	KASSERT((delta != 0) || (newoff == oldoff));
+	KASSERT((delta == 0) || (newoff != 0));
+	KASSERT((delta != (size)) || (newoff == oldoff));
 
 	/* Define acceptable ranges for output. */
-	KASSERT((new == 0) || ((size_t)new >= off));
-	KASSERT((size_t)new < (size + off));
-	return new;
+	KASSERT((newoff == 0) || ((size_t)newoff >= off));
+	KASSERT((size_t)newoff < (size + off));
+	return newoff;
 }
 
 static inline size_t
@@ -2610,6 +2603,32 @@ wapbl_replay_isopen1(struct wapbl_replay *wr)
 }
 #endif
 
+/*
+ * calculate the disk address for the i'th block in the wc_blockblist
+ * offset by j blocks of size blen.
+ *
+ * wc_daddr is always a kernel disk address in DEV_BSIZE units that
+ * was written to the journal.
+ *
+ * The kernel needs that address plus the offset in DEV_BSIZE units.
+ *
+ * Userland needs that address plus the offset in blen units.
+ *
+ */
+static daddr_t
+wapbl_block_daddr(struct wapbl_wc_blocklist *wc, int i, int j, int blen)
+{
+	daddr_t pbn;
+
+#ifdef _KERNEL
+	pbn = wc->wc_blocks[i].wc_daddr + btodb(j * blen);
+#else
+	pbn = dbtob(wc->wc_blocks[i].wc_daddr) / blen + j;
+#endif
+
+	return pbn;
+}
+
 static void
 wapbl_replay_process_blocks(struct wapbl_replay *wr, off_t *offp)
 {
@@ -2624,7 +2643,7 @@ wapbl_replay_process_blocks(struct wapbl_replay *wr, off_t *offp)
 		 */
 		n = wc->wc_blocks[i].wc_dlen >> wr->wr_fs_dev_bshift;
 		for (j = 0; j < n; j++) {
-			wapbl_blkhash_ins(wr, wc->wc_blocks[i].wc_daddr + btodb(j * fsblklen),
+			wapbl_blkhash_ins(wr, wapbl_block_daddr(wc, i, j, fsblklen),
 			    *offp);
 			wapbl_circ_advance(wr, fsblklen, offp);
 		}
@@ -2645,7 +2664,7 @@ wapbl_replay_process_revocations(struct wapbl_replay *wr)
 		 */
 		n = wc->wc_blocks[i].wc_dlen >> wr->wr_fs_dev_bshift;
 		for (j = 0; j < n; j++)
-			wapbl_blkhash_rem(wr, wc->wc_blocks[i].wc_daddr + btodb(j * fsblklen));
+			wapbl_blkhash_rem(wr, wapbl_block_daddr(wc, i, j, fsblklen));
 	}
 }
 
@@ -2781,7 +2800,7 @@ wapbl_replay_verify(struct wapbl_replay *wr, struct vnode *fsdevvp)
 					for (j = 0; j < n; j++) {
 						struct wapbl_blk *wb =
 						   wapbl_blkhash_get(wr,
-						   wc->wc_blocks[i].wc_daddr + btodb(j * fsblklen));
+						   wapbl_block_daddr(wc, i, j, fsblklen));
 						if (wb && (wb->wb_off == off)) {
 							foundcnt++;
 							error =
@@ -2825,7 +2844,7 @@ wapbl_replay_verify(struct wapbl_replay *wr, struct vnode *fsdevvp)
 						for (j = 0; j < n; j++) {
 							struct wapbl_blk *wb =
 							   wapbl_blkhash_get(wr,
-							   wc->wc_blocks[i].wc_daddr + btodb(j * fsblklen));
+							   wapbl_block_daddr(wc, i, j, fsblklen));
 							if (wb &&
 							  (wb->wb_off == off)) {
 								wapbl_blkhash_rem(wr, wb->wb_blk);
@@ -2933,7 +2952,7 @@ wapbl_replay_read(struct wapbl_replay *wr, void *data, daddr_t blk, long len)
 
 #ifdef _KERNEL
 /*
- * This is not really a module now, but maybe on it's way to
+ * This is not really a module now, but maybe on its way to
  * being one some day.
  */
 MODULE(MODULE_CLASS_VFS, wapbl, NULL);

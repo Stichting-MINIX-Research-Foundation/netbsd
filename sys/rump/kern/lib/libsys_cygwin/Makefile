@@ -1,12 +1,16 @@
-#	$NetBSD: Makefile,v 1.1 2013/04/10 16:44:54 pooka Exp $
+#	$NetBSD: Makefile,v 1.4 2015/05/09 12:03:10 pooka Exp $
 #
 
 LIB=	rumpkern_sys_cygwin
 
-SRCS=	rump_cygwin_compat.c rump_cygwin_sysent.c component.c
+SRCS=	rump_cygwin_compat.c
+SRCS+=	sys_cygwin_component.c
 
 # XXX
-CPPFLAGS+= -I${.CURDIR} -I${RUMPTOP}/librump/rumpkern
+CPPFLAGS+= -I${RUMPTOP}/librump/rumpkern
+
+SYS_P=rump_cygwin_sys
+.include "../Makefile.sys"
 
 .include <bsd.lib.mk>
 .include <bsd.klinks.mk>

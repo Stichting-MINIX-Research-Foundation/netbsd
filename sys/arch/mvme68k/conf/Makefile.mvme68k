@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile.mvme68k,v 1.62 2011/01/21 15:59:07 joerg Exp $
+#	$NetBSD: Makefile.mvme68k,v 1.66 2015/09/06 02:17:31 uebayasi Exp $
 
 # Makefile for NetBSD
 #
@@ -40,9 +40,9 @@ CMACHFLAGS=	-m68030
 .endif
 .else
 .if empty(IDENT:M-DMVME147) && empty(IDENT:M-DMVME162) && empty(IDENT:M-DMVME167)
-CMACHFLAGS=	-m68060 -Wa,-m68030 -Wa,-m68851
+CMACHFLAGS=	-m68060 -Wa,-march=68030 -Wa,-mcpu=68030 -Wa,-m68851
 .else
-CMACHFLAGS=	-m68020-60 -Wa,-m68030 -Wa,-m68851
+CMACHFLAGS=	-m68020-60 -Wa,-mcpu=68030 -Wa,-m68851
 .endif
 .endif
 CFLAGS+=	${CMACHFLAGS} -msoft-float
@@ -62,7 +62,8 @@ KERN_AS=	obj
 # for the Motorola 68060 Software Support Package
 .include "$S/arch/m68k/060sp/Makefile.inc"
 
-MD_OBJS=	locore.o ${FPSP}
+MD_OBJS=	locore.o
+MD_LIBS=	${FPSP}
 MD_CFILES=
 MD_SFILES=	${MVME68K}/mvme68k/locore.s
 

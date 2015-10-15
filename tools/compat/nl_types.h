@@ -1,5 +1,7 @@
-/*	$NetBSD: nl_types.h,v 1.1 2002/01/29 10:20:32 tv Exp $	*/
+/*	$NetBSD: nl_types.h,v 1.3 2014/11/12 15:08:52 joerg Exp $	*/
 
-#ifdef _NLS_PRIVATE
+#if defined(_NLS_PRIVATE)
 #include "../../include/nl_types.h"
+#elif defined(__GNUC__)
+#include_next <nl_types.h>
 #endif

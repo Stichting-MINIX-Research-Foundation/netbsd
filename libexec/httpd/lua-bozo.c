@@ -1,4 +1,4 @@
-/*	$NetBSD: lua-bozo.c,v 1.8 2013/11/19 07:51:56 mbalmer Exp $	*/
+/*	$NetBSD: lua-bozo.c,v 1.12 2015/07/04 22:39:23 christos Exp $	*/
 
 /*
  * Copyright (c) 2013 Marc Balmer <marc@msys.ch>
@@ -31,6 +31,8 @@
 /* this code implements dynamic content generation using Lua for bozohttpd */
 
 #ifndef NO_LUA_SUPPORT
+
+#include <sys/param.h>
 
 #include <lua.h>
 #include <lauxlib.h>
@@ -180,17 +182,17 @@ void
 bozo_add_lua_map(bozohttpd_t *httpd, const char *prefix, const char *script)
 {
 	lua_state_map_t *map;
-	char *cwd, *path;
 
 	map = bozomalloc(httpd, sizeof(lua_state_map_t));
 	map->prefix = bozostrdup(httpd, prefix);
 	if (*script == '/')
 		map->script = bozostrdup(httpd, script);
 	else {
-		cwd = getwd(NULL);
+		char cwd[MAXPATHLEN], *path;
+
+		getcwd(cwd, sizeof(cwd) - 1);
 		asprintf(&path, "%s/%s", cwd, script);
 		map->script = path;
-		free(cwd);
 	}
 	map->L = luaL_newstate();
 	if (map->L == NULL)
@@ -199,11 +201,11 @@ bozo_add_lua_map(bozohttpd_t *httpd, const char *prefix, const char *script)
 
 #if LUA_VERSION_NUM >= 502
 	luaL_openlibs(map->L);
-	lua_getglobal(L, "package");
-	lua_getfield(L, -1, "preload");
-	lua_pushcfunction(L, luaopen_httpd);
-	lua_setfield(L, -2, "httpd");
-	lua_pop(L, 2);
+	lua_getglobal(map->L, "package");
+	lua_getfield(map->L, -1, "preload");
+	lua_pushcfunction(map->L, luaopen_httpd);
+	lua_setfield(map->L, -2, "httpd");
+	lua_pop(map->L, 2);
 #else
 	lua_openlib(map->L, "", luaopen_base);
 	lua_openlib(map->L, LUA_LOADLIBNAME, luaopen_package);
@@ -274,6 +276,7 @@ lua_url_decode(lua_State *L, char *s)
 			*q++ = *p;
 		}
 	}
+	*q = '\0';
 	lua_pushstring(L, val);
 	lua_setfield(L, -2, s);
 	free(val);
@@ -308,41 +311,38 @@ bozo_process_lua(bozo_httpreq_t *request)
 	if (!httpd->process_lua)
 		return 0;
 
+	info = NULL;
+	query = NULL;
+	prefix = NULL;
 	uri = request->hr_oldfile ? request->hr_oldfile : request->hr_file;
 
 	if (*uri == '/') {
 		file = bozostrdup(httpd, uri);
+		if (file == NULL)
+			goto out;
 		prefix = bozostrdup(httpd, &uri[1]);
 	} else {
+		if (asprintf(&file, "/%s", uri) < 0)
+			goto out;
 		prefix = bozostrdup(httpd, uri);
-		asprintf(&file, "/%s", uri);
 	}
-	if (file == NULL) {
-		free(prefix);
-		return 0;
-	}
+	if (prefix == NULL)
+		goto out;
 
-	if (request->hr_query && strlen(request->hr_query))
+	if (request->hr_query && request->hr_query[0])
 		query = bozostrdup(httpd, request->hr_query);
-	else
-		query = NULL;
 
 	p = strchr(prefix, '/');
-	if (p == NULL){
-		free(prefix);
-		return 0;
-	}
+	if (p == NULL)
+		goto out;
 	*p++ = '\0';
 	handler = p;
-	if (!*handler) {
-		free(prefix);
-		return 0;
-	}
+	if (!*handler)
+		goto out;
 	p = strchr(handler, '/');
 	if (p != NULL)
 		*p++ = '\0';
 
-	info = NULL;
 	command = file + 1;
 	if ((s = strchr(command, '/')) != NULL) {
 		info = bozostrdup(httpd, s);

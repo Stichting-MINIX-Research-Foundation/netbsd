@@ -1,4 +1,4 @@
-/* $NetBSD: gcscehci.c,v 1.9 2011/07/01 17:37:26 dyoung Exp $ */
+/* $NetBSD: gcscehci.c,v 1.11 2014/09/21 17:59:52 christos Exp $ */
 
 /*
  * Copyright (c) 2001, 2002, 2007 The NetBSD Foundation, Inc.
@@ -31,7 +31,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: gcscehci.c,v 1.9 2011/07/01 17:37:26 dyoung Exp $");
+__KERNEL_RCSID(0, "$NetBSD: gcscehci.c,v 1.11 2014/09/21 17:59:52 christos Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -96,13 +96,13 @@ gcscehci_attach(device_t parent, device_t self, void *aux)
 	pcitag_t tag = pa->pa_tag;
 	char const *intrstr;
 	pci_intr_handle_t ih;
-	const char *vendor;
 	const char *devname = device_xname(self);
 	char devinfo[256];
 	usbd_status r;
 	bus_addr_t ehcibase;
 	int ncomp;
 	struct usb_pci *up;
+	char buf[PCI_INTRSTR_LEN];
 
 	sc->sc.sc_dev = self;
 	sc->sc.sc_bus.hci_private = sc;
@@ -136,7 +136,7 @@ gcscehci_attach(device_t parent, device_t self, void *aux)
 		aprint_error("%s: couldn't map interrupt\n", devname);
 		return;
 	}
-	intrstr = pci_intr_string(pc, ih);
+	intrstr = pci_intr_string(pc, ih, buf, sizeof(buf));
 	sc->sc_ih = pci_intr_establish(pc, ih, IPL_USB, ehci_intr, sc);
 	if (sc->sc_ih == NULL) {
 		aprint_error("%s: couldn't establish interrupt", devname);
@@ -150,13 +150,9 @@ gcscehci_attach(device_t parent, device_t self, void *aux)
 	sc->sc.sc_bus.usbrev = USBREV_2_0;
 
 	/* Figure out vendor for root hub descriptor. */
-	vendor = pci_findvendor(pa->pa_id);
 	sc->sc.sc_id_vendor = PCI_VENDOR(pa->pa_id);
-	if (vendor)
-		strlcpy(sc->sc.sc_vendor, vendor, sizeof(sc->sc.sc_vendor));
-	else
-		snprintf(sc->sc.sc_vendor, sizeof(sc->sc.sc_vendor),
-		    "vendor 0x%04x", PCI_VENDOR(pa->pa_id));
+	pci_findvendor(sc->sc.sc_vendor, sizeof(sc->sc.sc_vendor),
+	    sc->sc.sc_id_vendor);
 
 	/*
 	 * Find companion controllers.  According to the spec they always

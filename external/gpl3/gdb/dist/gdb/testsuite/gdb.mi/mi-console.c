@@ -1,3 +1,5 @@
+#include <unistd.h>
+
 void
 hello ()
 {
@@ -11,10 +13,4 @@ int
 main ()
 {
   hello ();
-}
-/*
-Local variables: 
-change-log-default-name: "ChangeLog-mi"
-End: 
-*/
-
+} /* after-hello */

@@ -1,4 +1,4 @@
-/*	$NetBSD: if_de.c,v 1.141 2013/03/30 03:21:04 christos Exp $	*/
+/*	$NetBSD: if_de.c,v 1.145 2015/04/13 16:33:25 riastradh Exp $	*/
 
 /*-
  * Copyright (c) 1994-1997 Matt Thomas (matt@3am-software.com)
@@ -37,7 +37,7 @@
  *   board which support 21040, 21041, or 21140 (mostly).
  */
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_de.c,v 1.141 2013/03/30 03:21:04 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_de.c,v 1.145 2015/04/13 16:33:25 riastradh Exp $");
 
 #define	TULIP_HDR_DATA
 
@@ -63,7 +63,7 @@ __KERNEL_RCSID(0, "$NetBSD: if_de.c,v 1.141 2013/03/30 03:21:04 christos Exp $")
 #endif
 
 #if defined(__NetBSD__)
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 #endif
 
 #include <net/if.h>
@@ -5143,7 +5143,7 @@ tulip_attach(
 
 #if defined(__NetBSD__)
     rnd_attach_source(&sc->tulip_rndsource, device_xname(sc->tulip_dev),
-		      RND_TYPE_NET, 0);
+		      RND_TYPE_NET, RND_FLAG_DEFAULT);
 #endif
 }
 
@@ -5638,6 +5638,7 @@ tulip_pci_attach(
     unsigned csrsize = TULIP_PCI_CSRSIZE;
     tulip_csrptr_t csr_base;
     tulip_chipid_t chipid = TULIP_CHIPID_UNKNOWN;
+	char intrbuf[PCI_INTRSTR_LEN];
 
     if (unit >= TULIP_MAX_DEVICES) {
 #ifdef __FreeBSD__
@@ -5875,7 +5876,7 @@ tulip_pci_attach(
 		aprint_error_dev(sc->tulip_dev, "couldn't map interrupt\n");
 		return;
 	    }
-	    intrstr = pci_intr_string(pa->pa_pc, intrhandle);
+	    intrstr = pci_intr_string(pa->pa_pc, intrhandle, intrbuf, sizeof(intrbuf));
 	    sc->tulip_ih = pci_intr_establish(pa->pa_pc, intrhandle, IPL_NET,
 					      intr_rtn, sc);
 	    if (sc->tulip_ih == NULL) {

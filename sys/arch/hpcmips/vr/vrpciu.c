@@ -1,4 +1,4 @@
-/*	$NetBSD: vrpciu.c,v 1.20 2012/10/27 17:17:56 chs Exp $	*/
+/*	$NetBSD: vrpciu.c,v 1.22 2015/10/02 05:22:51 msaitoh Exp $	*/
 
 /*-
  * Copyright (c) 2001 Enami Tsugutomo.
@@ -27,7 +27,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: vrpciu.c,v 1.20 2012/10/27 17:17:56 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: vrpciu.c,v 1.22 2015/10/02 05:22:51 msaitoh Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -91,7 +91,8 @@ static void	vrpciu_decompose_tag(pci_chipset_tag_t, pcitag_t, int *, int *,
 static pcireg_t	vrpciu_conf_read(pci_chipset_tag_t, pcitag_t, int); 
 static void	vrpciu_conf_write(pci_chipset_tag_t, pcitag_t, int, pcireg_t);
 static int	vrpciu_intr_map(const struct pci_attach_args *, pci_intr_handle_t *);
-static const char *vrpciu_intr_string(pci_chipset_tag_t, pci_intr_handle_t);
+static const char *vrpciu_intr_string(pci_chipset_tag_t, pci_intr_handle_t,
+		    char *, size_t);
 static const struct evcnt *vrpciu_intr_evcnt(pci_chipset_tag_t,
 		    pci_intr_handle_t);
 static void	*vrpciu_intr_establish(pci_chipset_tag_t, pci_intr_handle_t,
@@ -423,6 +424,9 @@ vrpciu_conf_read(pci_chipset_tag_t pc, pcitag_t tag, int reg)
 	u_int32_t val;
 	int bus, device, function;
 
+	if ((unsigned int)reg >= PCI_CONF_SIZE)
+		return ((pcireg_t) -1);
+
 	pci_decompose_tag(pc, tag, &bus, &device, &function);
 	if (bus == 0) {
 		if (device > 21)
@@ -451,6 +455,10 @@ vrpciu_conf_write(pci_chipset_tag_t pc, pcitag_t tag, int reg,
 	printf("%s: conf_write: tag = 0x%08x, reg = 0x%x, val = 0x%08x\n",
 	    device_xname(sc->sc_dev), (u_int32_t)tag, reg, (u_int32_t)data);
 #endif
+
+	if ((unsigned int)reg >= PCI_CONF_SIZE)
+		return;
+
 	vrpciu_decompose_tag(pc, tag, &bus, &device, &function);
 	if (bus == 0) {
 		if (device > 21)
@@ -484,16 +492,15 @@ vrpciu_intr_map(const struct pci_attach_args *pa, pci_intr_handle_t *ihp)
 }
 
 const char *
-vrpciu_intr_string(pci_chipset_tag_t pc, pci_intr_handle_t ih)
+vrpciu_intr_string(pci_chipset_tag_t pc, pci_intr_handle_t ih, char *buf,
+    size_t len)
 {
-	static char irqstr[sizeof("pciintr") + 16];
-
-	snprintf(irqstr, sizeof(irqstr), "pciintr %d:%d:%d",
+	snprintf(buf, len, "pciintr %d:%d:%d",
 	    CONFIG_HOOK_PCIINTR_BUS((int)ih),
 	    CONFIG_HOOK_PCIINTR_DEVICE((int)ih),
 	    CONFIG_HOOK_PCIINTR_FUNCTION((int)ih));
 
-	return (irqstr);
+	return buf;
 }
 
 const struct evcnt *

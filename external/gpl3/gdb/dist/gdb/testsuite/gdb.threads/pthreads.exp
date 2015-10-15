@@ -1,4 +1,4 @@
-# Copyright (C) 1996-2013 Free Software Foundation, Inc.
+# Copyright (C) 1996-2015 Free Software Foundation, Inc.
 
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -40,11 +40,7 @@ gdb_test_no_output "set width 0"
 
 # We'll need this when we send_gdb a ^C to GDB.  Need to do it before we
 # run the program and gdb starts saving and restoring tty states.
-# On Ultrix, we don't need it and it is really slow (because shell_escape
-# doesn't use vfork).
-if ![istarget "*-*-ultrix*"] then {
-    gdb_test "shell stty intr '^C'" ".*"
-}
+gdb_test "shell stty intr '^C'" ".*"
 
 proc all_threads_running {} {
     global gdb_prompt
@@ -79,7 +75,7 @@ proc all_threads_running {} {
     }
 
     if { $return_me == 1 } then {
-	return 0;
+	return 0
     }
 
     # Check that we stopped when we actually expected to stop, by
@@ -139,7 +135,7 @@ proc test_startup {} {
     }
 
     if { $return_me == 1 } then {
-	return 0;
+	return 0
     }
 
     # Extract the thread id number of main thread from "info threads" output.
@@ -209,7 +205,7 @@ proc check_control_c {} {
 	}
 	timeout {
 	    fail "$description (timeout)"
-	    return 1;
+	    return 1
 	}
     }
     gdb_test "bt" ".*"
@@ -218,7 +214,7 @@ proc check_control_c {} {
     if [all_threads_running] then {
 	pass "All threads running after continuing from ^C stop"
     }
-    return 0;
+    return 0
 }
 
 proc check_backtraces {} {
@@ -266,15 +262,12 @@ proc check_backtraces {} {
     }
 }
 
-setup_xfail "alpha-*-osf*"
 if [runto_main] then {
-    clear_xfail "alpha-*-osf*"
     if [test_startup] then {
 	if [check_control_c] then {
 	    warning "Could not stop child with ^C; skipping rest of tests.\n"
-	    return;
+	    return
 	}
 	check_backtraces
     }
 }
-clear_xfail "alpha-*-osf*"

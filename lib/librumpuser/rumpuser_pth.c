@@ -1,4 +1,4 @@
-/*	$NetBSD: rumpuser_pth.c,v 1.34 2013/10/27 16:39:46 rmind Exp $	*/
+/*	$NetBSD: rumpuser_pth.c,v 1.45 2015/09/18 10:56:25 pooka Exp $	*/
 
 /*
  * Copyright (c) 2007-2010 Antti Kantee.  All Rights Reserved.
@@ -28,12 +28,12 @@
 #include "rumpuser_port.h"
 
 #if !defined(lint)
-__RCSID("$NetBSD: rumpuser_pth.c,v 1.34 2013/10/27 16:39:46 rmind Exp $");
+__RCSID("$NetBSD: rumpuser_pth.c,v 1.45 2015/09/18 10:56:25 pooka Exp $");
 #endif /* !lint */
 
 #include <sys/queue.h>
-#if defined(__NetBSD__)
-#include <sys/param.h>
+
+#if defined(HAVE_SYS_ATOMIC_H)
 #include <sys/atomic.h>
 #endif
 
@@ -50,19 +50,6 @@ __RCSID("$NetBSD: rumpuser_pth.c,v 1.34 2013/10/27 16:39:46 rmind Exp $");
 #include <rump/rumpuser.h>
 
 #include "rumpuser_int.h"
-
-#if defined(__NetBSD__)
-static void *
-aligned_alloc(size_t size)
-{
-	void *ptr;
-
-	size = roundup2(size, COHERENCY_UNIT);
-	return posix_memalign(&ptr, COHERENCY_UNIT, size) ? NULL : ptr;
-}
-#else
-#define	aligned_alloc(sz)	malloc(sz)
-#endif
 
 int
 rumpuser_thread_create(void *(*f)(void *), void *arg, const char *thrname,
@@ -93,18 +80,14 @@ rumpuser_thread_create(void *(*f)(void *), void *arg, const char *thrname,
 		nanosleep(&ts, NULL);
 	}
 
-#if defined(__NetBSD__)
-	if (rv == 0 && thrname)
-		pthread_setname_np(ptid, thrname, NULL);
-#elif defined(__linux__)
-	/*
-	 * The pthread_setname_np() call varies from one Linux distro to
-	 * another.  Comment out the call pending autoconf support.
-	 */
-#if 0
-	if (rv == 0 && thrname)
-		pthread_setname_np(ptid, thrname);
-#endif
+#if defined(HAVE_PTHREAD_SETNAME3)
+	if (rv == 0 && thrname) {
+		pthread_setname_np(*ptidp, thrname, NULL);
+	}
+#elif defined(HAVE_PTHREAD_SETNAME2)
+	if (rv == 0 && thrname) {
+		pthread_setname_np(*ptidp, thrname);
+	}
 #endif
 
 	if (joinable) {
@@ -120,6 +103,17 @@ rumpuser_thread_create(void *(*f)(void *), void *arg, const char *thrname,
 __dead void
 rumpuser_thread_exit(void)
 {
+
+	/*
+	 * FIXXXME: with glibc on ARM pthread_exit() aborts because
+	 * it fails to unwind the stack.  In the typical case, only
+	 * the mountroothook thread will exit and even that's
+	 * conditional on vfs being present.
+	 */
+#if (defined(__ARMEL__) || defined(__ARMEB__)) && defined(__GLIBC__)
+	for (;;)
+		pause();
+#endif
 
 	pthread_exit(NULL);
 }
@@ -144,20 +138,25 @@ struct rumpuser_mtx {
 };
 
 void
-rumpuser_mutex_init(struct rumpuser_mtx **mtx, int flags)
+rumpuser_mutex_init(struct rumpuser_mtx **mtxp, int flags)
 {
+	struct rumpuser_mtx *mtx;
 	pthread_mutexattr_t att;
+	size_t allocsz;
 
-	NOFAIL(*mtx = aligned_alloc(sizeof(struct rumpuser_mtx)));
+	allocsz = (sizeof(*mtx)+RUMPUSER_LOCKALIGN) & ~(RUMPUSER_LOCKALIGN-1);
+	NOFAIL(mtx = aligned_alloc(RUMPUSER_LOCKALIGN, allocsz));
 
 	pthread_mutexattr_init(&att);
 	pthread_mutexattr_settype(&att, PTHREAD_MUTEX_ERRORCHECK);
-	NOFAIL_ERRNO(pthread_mutex_init(&((*mtx)->pthmtx), &att));
+	NOFAIL_ERRNO(pthread_mutex_init(&mtx->pthmtx, &att));
 	pthread_mutexattr_destroy(&att);
 
-	(*mtx)->owner = NULL;
+	mtx->owner = NULL;
 	assert(flags != 0);
-	(*mtx)->flags = flags;
+	mtx->flags = flags;
+
+	*mtxp = mtx;
 }
 
 static void
@@ -258,7 +257,7 @@ rumpuser_mutex_owner(struct rumpuser_mtx *mtx, struct lwp **lp)
 
 struct rumpuser_rw {
 	pthread_rwlock_t pthrw;
-#if !defined(__APPLE__)
+#if !defined(__APPLE__) && !defined(__ANDROID__)
 	char pad[64 - sizeof(pthread_rwlock_t)];
 	pthread_spinlock_t spin;
 #endif
@@ -321,7 +320,7 @@ static inline void
 rw_readup(struct rumpuser_rw *rw)
 {
 
-#if defined(__NetBSD__) || defined(__APPLE__)
+#if defined(__NetBSD__) || defined(__APPLE__) || defined(__ANDROID__)
 	atomic_inc_uint(&rw->readers);
 #else
 	pthread_spin_lock(&rw->spin);
@@ -334,7 +333,7 @@ static inline void
 rw_readdown(struct rumpuser_rw *rw)
 {
 
-#if defined(__NetBSD__) || defined(__APPLE__)
+#if defined(__NetBSD__) || defined(__APPLE__) || defined(__ANDROID__)
 	atomic_dec_uint(&rw->readers);
 #else
 	pthread_spin_lock(&rw->spin);
@@ -345,17 +344,23 @@ rw_readdown(struct rumpuser_rw *rw)
 }
 
 void
-rumpuser_rw_init(struct rumpuser_rw **rw)
+rumpuser_rw_init(struct rumpuser_rw **rwp)
 {
+	struct rumpuser_rw *rw;
+	size_t allocsz;
 
-	NOFAIL(*rw = aligned_alloc(sizeof(struct rumpuser_rw)));
-	NOFAIL_ERRNO(pthread_rwlock_init(&((*rw)->pthrw), NULL));
-#if !defined(__APPLE__)
-	NOFAIL_ERRNO(pthread_spin_init(&((*rw)->spin),PTHREAD_PROCESS_PRIVATE));
+	allocsz = (sizeof(*rw)+RUMPUSER_LOCKALIGN) & ~(RUMPUSER_LOCKALIGN-1);
+
+	NOFAIL(rw = aligned_alloc(RUMPUSER_LOCKALIGN, allocsz));
+	NOFAIL_ERRNO(pthread_rwlock_init(&rw->pthrw, NULL));
+#if !defined(__APPLE__) && !defined(__ANDROID__)
+	NOFAIL_ERRNO(pthread_spin_init(&rw->spin, PTHREAD_PROCESS_PRIVATE));
 #endif
-	(*rw)->readers = 0;
-	(*rw)->writer = NULL;
-	(*rw)->downgrade = 0;
+	rw->readers = 0;
+	rw->writer = NULL;
+	rw->downgrade = 0;
+
+	*rwp = rw;
 }
 
 void
@@ -456,7 +461,7 @@ rumpuser_rw_destroy(struct rumpuser_rw *rw)
 {
 
 	NOFAIL_ERRNO(pthread_rwlock_destroy(&rw->pthrw));
-#if !defined(__APPLE__)
+#if !defined(__APPLE__) && ! defined(__ANDROID__)
 	NOFAIL_ERRNO(pthread_spin_destroy(&rw->spin));
 #endif
 	free(rw);

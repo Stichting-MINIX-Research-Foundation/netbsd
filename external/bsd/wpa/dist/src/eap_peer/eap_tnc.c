@@ -2,20 +2,13 @@
  * EAP peer method: EAP-TNC (Trusted Network Connect)
  * Copyright (c) 2007, Jouni Malinen <j@w1.fi>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #include "includes.h"
 
 #include "common.h"
-#include "base64.h"
 #include "eap_i.h"
 #include "tncc.h"
 
@@ -250,7 +243,8 @@ static struct wpabuf * eap_tnc_process(struct eap_sm *sm, void *priv,
 		message_length = WPA_GET_BE32(pos);
 		pos += 4;
 
-		if (message_length < (u32) (end - pos)) {
+		if (message_length < (u32) (end - pos) ||
+		    message_length > 75000) {
 			wpa_printf(MSG_DEBUG, "EAP-TNC: Invalid Message "
 				   "Length (%d; %ld remaining in this msg)",
 				   message_length, (long) (end - pos));

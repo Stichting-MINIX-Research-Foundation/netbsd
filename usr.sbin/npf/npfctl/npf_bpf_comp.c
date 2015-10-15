@@ -1,7 +1,7 @@
-/*	$NetBSD: npf_bpf_comp.c,v 1.2 2013/11/05 01:50:30 rmind Exp $	*/
+/*	$NetBSD: npf_bpf_comp.c,v 1.8 2015/06/08 01:00:43 rmind Exp $	*/
 
 /*-
- * Copyright (c) 2010-2013 The NetBSD Foundation, Inc.
+ * Copyright (c) 2010-2014 The NetBSD Foundation, Inc.
  * All rights reserved.
  *
  * This material is based upon work partially supported by The
@@ -34,7 +34,7 @@
  */
 
 #include <sys/cdefs.h>
-__RCSID("$NetBSD: npf_bpf_comp.c,v 1.2 2013/11/05 01:50:30 rmind Exp $");
+__RCSID("$NetBSD: npf_bpf_comp.c,v 1.8 2015/06/08 01:00:43 rmind Exp $");
 
 #include <stdlib.h>
 #include <stdbool.h>
@@ -62,7 +62,8 @@ __RCSID("$NetBSD: npf_bpf_comp.c,v 1.2 2013/11/05 01:50:30 rmind Exp $");
  * something other than L4 header offset.  Generally, when BPF_LDX is used.
  */
 #define	FETCHED_L3		0x01
-#define	X_EQ_L4OFF		0x02
+#define	CHECKED_L4		0x02
+#define	X_EQ_L4OFF		0x04
 
 struct npf_bpf {
 	/*
@@ -188,6 +189,10 @@ npfctl_bpf_complete(npf_bpf_t *ctx)
 	struct bpf_program *bp = &ctx->prog;
 	const u_int retoff = bp->bf_len;
 
+	/* No instructions (optimised out). */
+	if (!bp->bf_len)
+		return NULL;
+
 	/* Add the return fragment (success and failure paths). */
 	struct bpf_insn insns_ret[] = {
 		BPF_STMT(BPF_RET+BPF_K, NPF_BPF_SUCCESS),
@@ -283,8 +288,7 @@ fetch_l3(npf_bpf_t *ctx, sa_family_t af, u_int flags)
 	}
 
 	/*
-	 * Fetch L3 information.  The coprocessor populates the following
-	 * words in the scratch memory store:
+	 * The memory store is populated with:
 	 * - BPF_MW_IPVER: IP version (4 or 6).
 	 * - BPF_MW_L4OFF: L4 header offset.
 	 * - BPF_MW_L4PROTO: L4 protocol.
@@ -307,21 +311,12 @@ fetch_l3(npf_bpf_t *ctx, sa_family_t af, u_int flags)
 		 * A <- IP version; A == expected-version?
 		 * If no particular version specified, check for non-zero.
 		 */
-		if ((ctx->flags & FETCHED_L3) == 0) {
-			struct bpf_insn insns_l3[] = {
-				BPF_STMT(BPF_MISC+BPF_COP, NPF_COP_L3),
-				BPF_JUMP(BPF_JMP+BPF_JEQ+BPF_K, ver, jt, jf),
-			};
-			add_insns(ctx, insns_l3, __arraycount(insns_l3));
-			ctx->flags |= FETCHED_L3;
-		} else {
-			/* IP version is already fetched in BPF_MW_IPVER. */
-			struct bpf_insn insns_af[] = {
-				BPF_STMT(BPF_LD+BPF_W+BPF_MEM, BPF_MW_IPVER),
-				BPF_JUMP(BPF_JMP+BPF_JEQ+BPF_K, ver, jt, jf),
-			};
-			add_insns(ctx, insns_af, __arraycount(insns_af));
-		}
+		struct bpf_insn insns_af[] = {
+			BPF_STMT(BPF_LD+BPF_W+BPF_MEM, BPF_MW_IPVER),
+			BPF_JUMP(BPF_JMP+BPF_JEQ+BPF_K, ver, jt, jf),
+		};
+		add_insns(ctx, insns_af, __arraycount(insns_af));
+		ctx->flags |= FETCHED_L3;
 		ctx->af = af;
 
 		if (af) {
@@ -369,6 +364,7 @@ npfctl_bpf_proto(npf_bpf_t *ctx, sa_family_t af, int proto)
 
 	uint32_t mwords[] = { BM_PROTO, 1, proto };
 	done_block(ctx, mwords, sizeof(mwords));
+	ctx->flags |= CHECKED_L4;
 }
 
 /*
@@ -421,15 +417,11 @@ npfctl_bpf_cidr(npf_bpf_t *ctx, u_int opts, sa_family_t af,
 			wordmask = 0;
 			length -= 32;
 		} else if (length) {
-			wordmask = 0xffffffff << (maxmask - length);
+			wordmask = 0xffffffff << (32 - length);
 			length = 0;
 		} else {
-			/*
-			 * The mask is zero - just compare the word
-			 * against zero.
-			 */
-			wordmask = 0;
-			word = 0;
+			/* The mask became zero - skip the rest. */
+			break;
 		}
 
 		/* A <- IP address (or one word of it) */
@@ -475,6 +467,7 @@ npfctl_bpf_ports(npf_bpf_t *ctx, u_int opts, in_port_t from, in_port_t to)
 	/* TCP and UDP port offsets are the same. */
 	assert(sport_off == offsetof(struct tcphdr, th_sport));
 	assert(dport_off == offsetof(struct tcphdr, th_dport));
+	assert(ctx->flags & CHECKED_L4);
 
 	assert(((opts & MATCH_SRC) != 0) ^ ((opts & MATCH_DST) != 0));
 	off = (opts & MATCH_SRC) ? sport_off : dport_off;
@@ -517,12 +510,26 @@ npfctl_bpf_ports(npf_bpf_t *ctx, u_int opts, in_port_t from, in_port_t to)
  * npfctl_bpf_tcpfl: code block to match TCP flags.
  */
 void
-npfctl_bpf_tcpfl(npf_bpf_t *ctx, uint8_t tf, uint8_t tf_mask)
+npfctl_bpf_tcpfl(npf_bpf_t *ctx, uint8_t tf, uint8_t tf_mask, bool checktcp)
 {
 	const u_int tcpfl_off = offsetof(struct tcphdr, th_flags);
+	const bool usingmask = tf_mask != tf;
 
 	/* X <- IP header length */
 	fetch_l3(ctx, AF_UNSPEC, X_EQ_L4OFF);
+	if (checktcp) {
+		const u_int jf = usingmask ? 3 : 2;
+		assert(ctx->ingroup == false);
+
+		/* A <- L4 protocol; A == TCP?  If not, jump out. */
+		struct bpf_insn insns_tcp[] = {
+			BPF_STMT(BPF_LD+BPF_W+BPF_MEM, BPF_MW_L4PROTO),
+			BPF_JUMP(BPF_JMP+BPF_JEQ+BPF_K, IPPROTO_TCP, 0, jf),
+		};
+		add_insns(ctx, insns_tcp, __arraycount(insns_tcp));
+	} else {
+		assert(ctx->flags & CHECKED_L4);
+	}
 
 	struct bpf_insn insns_tf[] = {
 		/* A <- TCP flags */
@@ -530,7 +537,7 @@ npfctl_bpf_tcpfl(npf_bpf_t *ctx, uint8_t tf, uint8_t tf_mask)
 	};
 	add_insns(ctx, insns_tf, __arraycount(insns_tf));
 
-	if (tf_mask != tf) {
+	if (usingmask) {
 		/* A <- (A & mask) */
 		struct bpf_insn insns_mask[] = {
 			BPF_STMT(BPF_ALU+BPF_AND+BPF_K, tf_mask),
@@ -544,8 +551,10 @@ npfctl_bpf_tcpfl(npf_bpf_t *ctx, uint8_t tf, uint8_t tf_mask)
 	};
 	add_insns(ctx, insns_cmp, __arraycount(insns_cmp));
 
-	uint32_t mwords[] = { BM_TCPFL, 2, tf, tf_mask};
-	done_block(ctx, mwords, sizeof(mwords));
+	if (!checktcp) {
+		uint32_t mwords[] = { BM_TCPFL, 2, tf, tf_mask};
+		done_block(ctx, mwords, sizeof(mwords));
+	}
 }
 
 /*
@@ -558,6 +567,7 @@ npfctl_bpf_icmp(npf_bpf_t *ctx, int type, int code)
 	const u_int type_off = offsetof(struct icmp, icmp_type);
 	const u_int code_off = offsetof(struct icmp, icmp_code);
 
+	assert(ctx->flags & CHECKED_L4);
 	assert(offsetof(struct icmp6_hdr, icmp6_type) == type_off);
 	assert(offsetof(struct icmp6_hdr, icmp6_code) == code_off);
 	assert(type != -1 || code != -1);

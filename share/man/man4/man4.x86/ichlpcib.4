@@ -1,4 +1,4 @@
-.\"	$NetBSD: ichlpcib.4,v 1.5 2011/03/18 21:17:17 jruoho Exp $
+.\"	$NetBSD: ichlpcib.4,v 1.10 2015/05/04 08:07:02 wiz Exp $
 .\"
 .\" Copyright (c) 2004 The NetBSD Foundation, Inc.
 .\" All rights reserved.
@@ -27,7 +27,7 @@
 .\" ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 .\" POSSIBILITY OF SUCH DAMAGE.
 .\"
-.Dd March 18, 2011
+.Dd April 4, 2015
 .Dt ICHLPCIB 4 x86
 .Os
 .Sh NAME
@@ -39,6 +39,7 @@
 .Cd "hpet0     at ichlpcib?"
 .Cd "isa0      at ichlpcib?"
 .Cd "gpio*     at ichlpcib?"
+.Cd "tco*      at ichlpcib?"
 .Sh DESCRIPTION
 The
 .Nm
@@ -48,9 +49,17 @@ Supported functions include:
 .Bl -bullet
 .It
 Watchdog timer.
-The watchdog timer may be configured for a 2 seconds (on ICH6 or newer)
-and 4 seconds (on ICH5 or older) min period and for a 39 seconds
-(on ICH5 or older) or 613 seconds max period (on ICH6 or newer).
+The watchdog timer may be configured for a 1 seconds (on ICH6 or newer)
+and 2 seconds (on ICH5 or older) min period and for a 23 seconds
+(on ICH5 or older) or 367 seconds max period (on ICH6 or newer).
+.Pp
+Prior to
+.Nx 8.0 ,
+the
+.Xr x86/tco 4
+watchdog timer was included as part of the
+.Nm
+driver, and did not require explicit configuration.
 .It
 Power Management timer.
 A 24-bit timer available to be used by the timecounters framework.
@@ -71,11 +80,12 @@ The ICH provides up to 64 I/O pins which can be accessed through the
 framework.
 .El
 .Sh SEE ALSO
-.Xr est 4 ,
-.Xr fwhrng 4 ,
 .Xr gpio 4 ,
 .Xr hpet 4 ,
-.Xr ioapic 4 ,
+.Xr x86/est 4 ,
+.Xr x86/fwhrng 4 ,
+.Xr x86/ioapic 4 ,
+.Xr x86/tco 4 ,
 .Xr sysctl 8 ,
 .Xr wdogctl 8
 .Rs

@@ -1,4 +1,4 @@
-/*	$NetBSD: if_re_pci.c,v 1.42 2013/03/30 03:21:07 christos Exp $	*/
+/*	$NetBSD: if_re_pci.c,v 1.44 2015/05/03 00:04:06 matt Exp $	*/
 
 /*
  * Copyright (c) 1997, 1998-2003
@@ -46,7 +46,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_re_pci.c,v 1.42 2013/03/30 03:21:07 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_re_pci.c,v 1.44 2015/05/03 00:04:06 matt Exp $");
 
 #include <sys/types.h>
 
@@ -183,6 +183,7 @@ re_pci_attach(device_t parent, device_t self, void *aux)
 	bus_space_tag_t iot, memt;
 	bus_space_handle_t ioh, memh;
 	bus_size_t iosize, memsize;
+	char intrbuf[PCI_INTRSTR_LEN];
 
 	sc->sc_dev = self;
 	psc->sc_pc = pa->pa_pc;
@@ -200,8 +201,12 @@ re_pci_attach(device_t parent, device_t self, void *aux)
 	switch (memtype) {
 	case PCI_MAPREG_TYPE_MEM | PCI_MAPREG_MEM_TYPE_32BIT:
 	case PCI_MAPREG_TYPE_MEM | PCI_MAPREG_MEM_TYPE_64BIT:
-		memh_valid = (pci_mapreg_map(pa, RTK_PCI_LOMEM,
-		    memtype, 0, &memt, &memh, NULL, &memsize) == 0);
+		memh_valid =
+		    (pci_mapreg_map(pa, RTK_PCI_LOMEM,
+		        memtype, 0, &memt, &memh, NULL, &memsize) == 0) ||
+		    (pci_mapreg_map(pa, RTK_PCI_LOMEM + 4,
+			PCI_MAPREG_TYPE_MEM | PCI_MAPREG_MEM_TYPE_64BIT,
+			0, &memt, &memh, NULL, &memsize) == 0);
 		break;
 	default:
 		memh_valid = 0;
@@ -252,7 +257,7 @@ re_pci_attach(device_t parent, device_t self, void *aux)
 		aprint_error_dev(self, "couldn't map interrupt\n");
 		return;
 	}
-	intrstr = pci_intr_string(pc, ih);
+	intrstr = pci_intr_string(pc, ih, intrbuf, sizeof(intrbuf));
 	psc->sc_ih = pci_intr_establish(pc, ih, IPL_NET, re_intr, sc);
 	if (psc->sc_ih == NULL) {
 		aprint_error_dev(self, "couldn't establish interrupt");

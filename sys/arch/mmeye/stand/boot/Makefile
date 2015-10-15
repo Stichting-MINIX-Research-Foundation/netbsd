@@ -1,9 +1,8 @@
-#	$NetBSD: Makefile,v 1.2 2011/03/05 01:58:01 joerg Exp $
+#	$NetBSD: Makefile,v 1.4 2014/01/16 01:15:34 christos Exp $
 
 NOMAN=		# defined
 
 .include <bsd.own.mk>
-.include <bsd.sys.mk>
 
 S=		${.CURDIR}/../../../..
 
@@ -48,6 +47,7 @@ CPPFLAGS+=	-DNETBSD_VERS='"${NETBSD_VERS}"'
 
 # XXX SHOULD NOT NEED TO DEFINE THESE!
 LIBCRT0=
+LIBCRTI=
 LIBC=
 LIBCRTBEGIN=
 LIBCRTEND=

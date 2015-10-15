@@ -1,5 +1,5 @@
 /* Data structures associated with tracepoints in GDB.
-   Copyright (C) 1997-2013 Free Software Foundation, Inc.
+   Copyright (C) 1997-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -23,6 +23,17 @@
 #include "target.h"
 #include "memrange.h"
 #include "gdb_vecs.h"
+
+/* An object describing the contents of a traceframe.  */
+
+struct traceframe_info
+{
+  /* Collected memory.  */
+  VEC(mem_range_s) *memory;
+
+  /* Collected trace state variables.  */
+  VEC(int) *tvars;
+};
 
 /* A trace state variable is a value managed by a target being
    traced.  A trace state variable (or tsv for short) can be accessed
@@ -142,6 +153,10 @@ struct trace_status *current_trace_status (void);
 
 extern char *default_collect;
 
+extern int trace_regblock_size;
+
+extern const char *stop_reason_names[];
+
 /* Struct to collect random info about tracepoints on the target.  */
 
 struct uploaded_tp
@@ -205,6 +220,38 @@ struct static_tracepoint_marker
   char *extra;
 };
 
+struct memrange
+{
+  /* memrange_absolute for absolute memory range, else basereg
+     number.  */
+  int type;
+  bfd_signed_vma start;
+  bfd_signed_vma end;
+};
+
+struct collection_list
+{
+  /* room for up to 256 regs */
+  unsigned char regs_mask[32];
+  long listsize;
+  long next_memrange;
+  struct memrange *list;
+
+  /* size of array pointed to by expr_list elt.  */
+  long aexpr_listsize;
+  long next_aexpr_elt;
+  struct agent_expr **aexpr_list;
+
+  /* True is the user requested a collection of "$_sdata", "static
+     tracepoint data".  */
+  int strace_data;
+
+  /* A set of names of wholly collected objects.  */
+  VEC(char_ptr) *wholly_collected;
+  /* A set of computed expressions.  */
+  VEC(char_ptr) *computed;
+};
+
 extern void parse_static_tracepoint_marker_definition
   (char *line, char **pp,
    struct static_tracepoint_marker *marker);
@@ -219,13 +266,8 @@ extern void (*deprecated_trace_start_stop_hook) (int start, int from_tty);
 /* Returns the current traceframe number.  */
 extern int get_traceframe_number (void);
 
-/* Make the traceframe NUM be the current GDB trace frame number, and
-   do nothing more.  In particular, this does not flush the
-   register/frame caches or notify the target about the trace frame
-   change, so that is can be used when we need to momentarily access
-   live memory.  Targets lazily switch their current traceframe to
-   match GDB's traceframe number, at the appropriate times.  */
-extern void set_traceframe_number (int);
+/* Returns the tracepoint number for current traceframe.  */
+extern int get_tracepoint_number (void);
 
 /* Make the traceframe NUM be the current trace frame, all the way to
    the target, and flushes all global state (register/frame caches,
@@ -233,19 +275,26 @@ extern void set_traceframe_number (int);
 extern void set_current_traceframe (int num);
 
 struct cleanup *make_cleanup_restore_current_traceframe (void);
-struct cleanup *make_cleanup_restore_traceframe_number (void);
 
 void free_actions (struct breakpoint *);
 
-extern char *decode_agent_options (char *exp);
+extern const char *decode_agent_options (const char *exp, int *trace_string);
 
-extern void encode_actions (struct breakpoint *t, struct bp_location *tloc,
-			    char ***tdp_actions, char ***stepping_actions);
+extern struct cleanup *
+  encode_actions_and_make_cleanup (struct bp_location *tloc,
+				   struct collection_list *tracepoint_list,
+				   struct collection_list *stepping_list);
 
-extern void validate_actionline (char **, struct breakpoint *);
+extern void encode_actions_rsp (struct bp_location *tloc,
+				char ***tdp_actions, char ***stepping_actions);
+
+extern void validate_actionline (const char *, struct breakpoint *);
 extern void validate_trace_state_variable_name (const char *name);
 
 extern struct trace_state_variable *find_trace_state_variable (const char *name);
+extern struct trace_state_variable *
+  find_trace_state_variable_by_number (int number);
+
 extern struct trace_state_variable *create_trace_state_variable (const char *name);
 
 extern int encode_source_string (int num, ULONGEST addr,
@@ -263,11 +312,20 @@ extern void parse_tsv_definition (char *line, struct uploaded_tsv **utsvp);
 
 extern struct uploaded_tp *get_uploaded_tp (int num, ULONGEST addr,
 					    struct uploaded_tp **utpp);
+extern void free_uploaded_tps (struct uploaded_tp **utpp);
+
+extern struct uploaded_tsv *get_uploaded_tsv (int num,
+					      struct uploaded_tsv **utsvp);
+extern void free_uploaded_tsvs (struct uploaded_tsv **utsvp);
 extern struct tracepoint *create_tracepoint_from_upload (struct uploaded_tp *utp);
 extern void merge_uploaded_tracepoints (struct uploaded_tp **utpp);
 extern void merge_uploaded_trace_state_variables (struct uploaded_tsv **utsvp);
 
-extern void disconnect_tracing (int from_tty);
+extern void query_if_trace_running (int from_tty);
+extern void disconnect_tracing (void);
+extern void trace_reset_local_state (void);
+
+extern void check_trace_running (struct trace_status *);
 
 extern void start_tracing (char *notes);
 extern void stop_tracing (char *notes);
@@ -278,14 +336,21 @@ extern void tvariables_info_1 (void);
 extern void save_trace_state_variables (struct ui_file *fp);
 
 extern void tfind_1 (enum trace_find_type type, int num,
-		     ULONGEST addr1, ULONGEST addr2,
+		     CORE_ADDR addr1, CORE_ADDR addr2,
 		     int from_tty);
 
-extern void trace_save (const char *filename, int target_does_save);
+extern void trace_save_tfile (const char *filename,
+			      int target_does_save);
+extern void trace_save_ctf (const char *dirname,
+			    int target_does_save);
 
 extern struct traceframe_info *parse_traceframe_info (const char *tframe_info);
 
 extern int traceframe_available_memory (VEC(mem_range_s) **result,
 					CORE_ADDR memaddr, ULONGEST len);
+
+extern struct traceframe_info *get_traceframe_info (void);
+
+extern struct bp_location *get_traceframe_location (int *stepping_frame_p);
 
 #endif	/* TRACEPOINT_H */

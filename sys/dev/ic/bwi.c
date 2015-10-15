@@ -1,4 +1,4 @@
-/*	$NetBSD: bwi.c,v 1.23 2013/10/17 21:24:24 christos Exp $	*/
+/*	$NetBSD: bwi.c,v 1.26 2015/04/10 11:47:12 maxv Exp $	*/
 /*	$OpenBSD: bwi.c,v 1.74 2008/02/25 21:13:30 mglocker Exp $	*/
 
 /*
@@ -48,7 +48,7 @@
 
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: bwi.c,v 1.23 2013/10/17 21:24:24 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: bwi.c,v 1.26 2015/04/10 11:47:12 maxv Exp $");
 
 #include <sys/param.h>
 #include <sys/callout.h>
@@ -610,14 +610,9 @@ SYSCTL_SETUP(sysctl_bwi, "sysctl bwi(4) subtree setup")
 	const struct sysctlnode *cnode;
 
 	if ((rc = sysctl_createv(clog, 0, NULL, &rnode,
-	    CTLFLAG_PERMANENT, CTLTYPE_NODE, "hw", NULL,
-	    NULL, 0, NULL, 0, CTL_HW, CTL_EOL)) != 0)
-		goto err;
-
-	if ((rc = sysctl_createv(clog, 0, &rnode, &rnode,
 	    CTLFLAG_PERMANENT, CTLTYPE_NODE, "bwi",
 	    SYSCTL_DESCR("bwi global controls"),
-	    NULL, 0, NULL, 0, CTL_CREATE, CTL_EOL)) != 0)
+	    NULL, 0, NULL, 0, CTL_HW, CTL_CREATE, CTL_EOL)) != 0)
 		goto err;
 
 	if ((rc = sysctl_createv(clog, 0, &rnode, &cnode,
@@ -643,14 +638,9 @@ bwi_sysctlattach(struct bwi_softc *sc)
 	struct sysctllog **clog = &sc->sc_sysctllog;
 
 	if ((rc = sysctl_createv(clog, 0, NULL, &rnode,
-	    CTLFLAG_PERMANENT, CTLTYPE_NODE, "hw", NULL,
-	    NULL, 0, NULL, 0, CTL_HW, CTL_EOL)) != 0)
-		goto err;
-
-	if ((rc = sysctl_createv(clog, 0, &rnode, &rnode,
 	    CTLFLAG_PERMANENT, CTLTYPE_NODE, device_xname(sc->sc_dev),
 	    SYSCTL_DESCR("bwi controls and statistics"),
-	    NULL, 0, NULL, 0, CTL_CREATE, CTL_EOL)) != 0)
+	    NULL, 0, NULL, 0, CTL_HW, CTL_CREATE, CTL_EOL)) != 0)
 		goto err;
 
 	if ((rc = sysctl_createv(clog, 0, &rnode, &cnode,
@@ -1949,7 +1939,7 @@ invalid:
 	error = EINVAL;
 
 free_and_fail:
-	firmware_free(fwi->fwi_data, 0);
+	firmware_free(fwi->fwi_data, fwi->fwi_size);
 	fwi->fwi_data = NULL;
 	fwi->fwi_size = 0;
 
@@ -1963,7 +1953,7 @@ bwi_mac_fw_image_free(struct bwi_mac *mac, struct bwi_fw_image *fwi)
 	if (fwi->fwi_data != NULL) {
 		DPRINTF(mac->mac_sc, BWI_DBG_FIRMWARE, "freeing firmware %s\n",
 		    fwi->fwi_name);
-		firmware_free(fwi->fwi_data, 0);
+		firmware_free(fwi->fwi_data, fwi->fwi_size);
 		fwi->fwi_data = NULL;
 		fwi->fwi_size = 0;
 	}
@@ -9150,7 +9140,6 @@ bwi_encap(struct bwi_softc *sc, int idx, struct mbuf *m,
 
 		MGETHDR(m_new, M_DONTWAIT, MT_DATA);
 		if (m_new == NULL) {
-			m_freem(m);
 			error = ENOBUFS;
 			aprint_error_dev(sc->sc_dev,
 			    "can't defrag TX buffer (1)\n");
@@ -9161,7 +9150,6 @@ bwi_encap(struct bwi_softc *sc, int idx, struct mbuf *m,
 		if (m->m_pkthdr.len > MHLEN) {
 			MCLGET(m_new, M_DONTWAIT);
 			if (!(m_new->m_flags & M_EXT)) {
-				m_freem(m);
 				m_freem(m_new);
 				error = ENOBUFS;
 			}

@@ -2,14 +2,8 @@
  * IEEE 802.1X-2004 Authenticator - EAPOL state machine (internal definitions)
  * Copyright (c) 2002-2009, Jouni Malinen <j@w1.fi>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #ifndef EAPOL_AUTH_SM_I_H
@@ -36,6 +30,9 @@ struct eapol_authenticator {
 
 	u8 *default_wep_key;
 	u8 default_wep_key_idx;
+
+	u32 acct_multi_session_id_hi;
+	u32 acct_multi_session_id_lo;
 };
 
 
@@ -163,6 +160,7 @@ struct eapol_state_machine {
 			      * Authentication server */
 	u8 eap_type_supp; /* EAP type of the last EAP packet from Supplicant */
 	struct radius_class_data radius_class;
+	struct wpabuf *radius_cui; /* Chargeable-User-Identity */
 
 	/* Keys for encrypting and signing EAPOL-Key frames */
 	u8 *eapol_key_sign;
@@ -178,6 +176,11 @@ struct eapol_state_machine {
 	struct eapol_authenticator *eapol;
 
 	void *sta; /* station context pointer to use in callbacks */
+
+	int remediation;
+
+	u32 acct_multi_session_id_hi;
+	u32 acct_multi_session_id_lo;
 };
 
 #endif /* EAPOL_AUTH_SM_I_H */

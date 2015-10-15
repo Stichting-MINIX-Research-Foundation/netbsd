@@ -7,7 +7,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -65,6 +65,7 @@
 #define AML_PACKAGE_OP              (UINT16) 0x12
 #define AML_VAR_PACKAGE_OP          (UINT16) 0x13     /* ACPI 2.0 */
 #define AML_METHOD_OP               (UINT16) 0x14
+#define AML_EXTERNAL_OP             (UINT16) 0x15     /* ACPI 6.0 */
 #define AML_DUAL_NAME_PREFIX        (UINT16) 0x2e
 #define AML_MULTI_NAME_PREFIX_OP    (UINT16) 0x2f
 #define AML_NAME_CHAR_SUBSEQ        (UINT16) 0x30
@@ -191,6 +192,15 @@
 
 
 /*
+ * Opcodes for "Field" operators
+ */
+#define AML_FIELD_OFFSET_OP         (UINT8) 0x00
+#define AML_FIELD_ACCESS_OP         (UINT8) 0x01
+#define AML_FIELD_CONNECTION_OP     (UINT8) 0x02        /* ACPI 5.0 */
+#define AML_FIELD_EXT_ACCESS_OP     (UINT8) 0x03        /* ACPI 5.0 */
+
+
+/*
  * Internal opcodes
  * Use only "Unknown" AML opcodes, don't attempt to use
  * any valid ACPI ASCII values (A-Z, 0-9, '-')
@@ -200,11 +210,11 @@
 #define AML_INT_RESERVEDFIELD_OP    (UINT16) 0x0031
 #define AML_INT_ACCESSFIELD_OP      (UINT16) 0x0032
 #define AML_INT_BYTELIST_OP         (UINT16) 0x0033
-#define AML_INT_STATICSTRING_OP     (UINT16) 0x0034
 #define AML_INT_METHODCALL_OP       (UINT16) 0x0035
 #define AML_INT_RETURN_VALUE_OP     (UINT16) 0x0036
 #define AML_INT_EVAL_SUBTREE_OP     (UINT16) 0x0037
-
+#define AML_INT_CONNECTION_OP       (UINT16) 0x0038
+#define AML_INT_EXTACCESSFIELD_OP   (UINT16) 0x0039
 
 #define ARG_NONE                    0x0
 
@@ -478,13 +488,16 @@ typedef enum
  */
 typedef enum
 {
-    AML_FIELD_ATTRIB_SMB_QUICK      = 0x02,
-    AML_FIELD_ATTRIB_SMB_SEND_RCV   = 0x04,
-    AML_FIELD_ATTRIB_SMB_BYTE       = 0x06,
-    AML_FIELD_ATTRIB_SMB_WORD       = 0x08,
-    AML_FIELD_ATTRIB_SMB_BLOCK      = 0x0A,
-    AML_FIELD_ATTRIB_SMB_WORD_CALL  = 0x0C,
-    AML_FIELD_ATTRIB_SMB_BLOCK_CALL = 0x0D
+    AML_FIELD_ATTRIB_QUICK          = 0x02,
+    AML_FIELD_ATTRIB_SEND_RCV       = 0x04,
+    AML_FIELD_ATTRIB_BYTE           = 0x06,
+    AML_FIELD_ATTRIB_WORD           = 0x08,
+    AML_FIELD_ATTRIB_BLOCK          = 0x0A,
+    AML_FIELD_ATTRIB_MULTIBYTE      = 0x0B,
+    AML_FIELD_ATTRIB_WORD_CALL      = 0x0C,
+    AML_FIELD_ATTRIB_BLOCK_CALL     = 0x0D,
+    AML_FIELD_ATTRIB_RAW_BYTES      = 0x0E,
+    AML_FIELD_ATTRIB_RAW_PROCESS    = 0x0F
 
 } AML_ACCESS_ATTRIBUTE;
 

@@ -1,4 +1,4 @@
-/*	$NetBSD: mkfs.c,v 1.120 2013/06/23 22:03:34 dholland Exp $	*/
+/*	$NetBSD: mkfs.c,v 1.125 2015/06/16 23:18:55 christos Exp $	*/
 
 /*
  * Copyright (c) 1980, 1989, 1993
@@ -73,7 +73,7 @@
 #if 0
 static char sccsid[] = "@(#)mkfs.c	8.11 (Berkeley) 5/3/95";
 #else
-__RCSID("$NetBSD: mkfs.c,v 1.120 2013/06/23 22:03:34 dholland Exp $");
+__RCSID("$NetBSD: mkfs.c,v 1.125 2015/06/16 23:18:55 christos Exp $");
 #endif
 #endif /* not lint */
 
@@ -110,7 +110,8 @@ union dinode {
 
 static void initcg(int, const struct timeval *);
 static int fsinit(const struct timeval *, mode_t, uid_t, gid_t);
-static int makedir(struct direct *, int);
+union Buffer;
+static int makedir(union Buffer *, struct direct *, int);
 static daddr_t alloc(int, int);
 static void iput(union dinode *, ino_t);
 static void rdfs(daddr_t, int, void *);
@@ -131,9 +132,14 @@ static void *mkfs_malloc(size_t size);
 
 union {
 	struct fs fs;
-	char pad[SBLOCKSIZE];
-} fsun;
-#define	sblock	fsun.fs
+	char data[SBLOCKSIZE];
+} *fsun;
+#define	sblock	fsun->fs
+
+union Buffer {
+	struct quota2_header q2h;
+	char data[MAXBSIZE];
+};
 
 struct	csum *fscs_0;		/* first block of cylinder summaries */
 struct	csum *fscs_next;	/* place for next summary */
@@ -144,8 +150,8 @@ uint	fs_csaddr;		/* fragment number to write to */
 union {
 	struct cg cg;
 	char pad[MAXBSIZE];
-} cgun;
-#define	acg	cgun.cg
+} *cgun;
+#define	acg	cgun->cg
 
 #define DIP(dp, field) \
 	((sblock.fs_magic == FS_UFS1_MAGIC) ? \
@@ -194,6 +200,11 @@ mkfs(const char *fsys, int fi, int fo,
 			exit(12);
 	}
 #endif
+	if ((fsun = calloc(1, sizeof(*fsun))) == NULL)
+		exit(12);
+	if ((cgun = calloc(1, sizeof(*cgun))) == NULL)
+		exit(12);
+
 	fsi = fi;
 	fso = fo;
 	if (Oflag == 0) {
@@ -1012,13 +1023,14 @@ struct odirect olost_found_dir[] = {
 	{ 0, DIRBLKSIZ, 0, 0 },
 };
 #endif
-char buf[MAXBSIZE];
+
 static void copy_dir(struct direct *, struct direct *);
 
 int
 fsinit(const struct timeval *tv, mode_t mfsmode, uid_t mfsuid, gid_t mfsgid)
 {
 	union dinode node;
+	union Buffer buf;
 	int i;
 	int qblocks = 0;
 	int qinos = 0;
@@ -1043,12 +1055,12 @@ fsinit(const struct timeval *tv, mode_t mfsmode, uid_t mfsuid, gid_t mfsgid)
 	 */
 	memset(&node, 0, sizeof(node));
 	if (Oflag == 0) {
-		(void)makedir((struct direct *)olost_found_dir, 2);
+		(void)makedir(&buf, (struct direct *)olost_found_dir, 2);
 		for (i = dirblksiz; i < sblock.fs_bsize; i += dirblksiz)
 			copy_dir((struct direct*)&olost_found_dir[2],
 				(struct direct*)&buf[i]);
 	} else {
-		(void)makedir(lost_found_dir, 2);
+		(void)makedir(&buf, lost_found_dir, 2);
 		for (i = dirblksiz; i < sblock.fs_bsize; i += dirblksiz)
 			copy_dir(&lost_found_dir[2], (struct direct*)&buf[i]);
 	}
@@ -1114,17 +1126,17 @@ fsinit(const struct timeval *tv, mode_t mfsmode, uid_t mfsuid, gid_t mfsgid)
 		}
 		node.dp1.di_nlink = PREDEFDIR;
 		if (Oflag == 0)
-			node.dp1.di_size = makedir((struct direct *)oroot_dir,
-			    PREDEFDIR);
+			node.dp1.di_size = makedir(&buf, 
+			    (struct direct *)oroot_dir, PREDEFDIR);
 		else
-			node.dp1.di_size = makedir(root_dir, PREDEFDIR);
+			node.dp1.di_size = makedir(&buf, root_dir, PREDEFDIR);
 		node.dp1.di_db[0] = alloc(sblock.fs_fsize, node.dp1.di_mode);
 		if (node.dp1.di_db[0] == 0)
 			return (0);
 		node.dp1.di_blocks = btodb(ffs_fragroundup(&sblock,
 		    node.dp1.di_size));
 		qblocks += node.dp1.di_blocks;
-		wtfs(FFS_FSBTODB(&sblock, node.dp1.di_db[0]), sblock.fs_fsize, buf);
+		wtfs(FFS_FSBTODB(&sblock, node.dp1.di_db[0]), sblock.fs_fsize, &buf);
 	} else {
 		if (mfs) {
 			node.dp2.di_mode = IFDIR | mfsmode;
@@ -1144,14 +1156,14 @@ fsinit(const struct timeval *tv, mode_t mfsmode, uid_t mfsuid, gid_t mfsgid)
 		node.dp2.di_birthtime = tv->tv_sec;
 		node.dp2.di_birthnsec = tv->tv_usec * 1000;
 		node.dp2.di_nlink = PREDEFDIR;
-		node.dp2.di_size = makedir(root_dir, PREDEFDIR);
+		node.dp2.di_size = makedir(&buf, root_dir, PREDEFDIR);
 		node.dp2.di_db[0] = alloc(sblock.fs_fsize, node.dp2.di_mode);
 		if (node.dp2.di_db[0] == 0)
 			return (0);
 		node.dp2.di_blocks = btodb(ffs_fragroundup(&sblock,
 		    node.dp2.di_size));
 		qblocks += node.dp2.di_blocks;
-		wtfs(FFS_FSBTODB(&sblock, node.dp2.di_db[0]), sblock.fs_fsize, buf);
+		wtfs(FFS_FSBTODB(&sblock, node.dp2.di_db[0]), sblock.fs_fsize, &buf);
 	}
 	qinos++;
 	iput(&node, UFS_ROOTINO);
@@ -1177,12 +1189,12 @@ fsinit(const struct timeval *tv, mode_t mfsmode, uid_t mfsuid, gid_t mfsgid)
 
 		if ((quotas & FS_Q2_DO_TYPE(i)) == 0)
 			continue;
-		quota2_create_blk0(sblock.fs_bsize, buf, q2h_hash_shift,
+		quota2_create_blk0(sblock.fs_bsize, &buf, q2h_hash_shift,
 		    i, needswap);
 		/* grab an entry from header for root dir */
-		q2h = (void *)buf;
+		q2h = &buf.q2h;
 		offset = ufs_rw64(q2h->q2h_free, needswap);
-		q2e = (void *)((char *)buf + offset);
+		q2e = (void *)((char *)&buf + offset);
 		q2h->q2h_free = q2e->q2e_next;
 		memcpy(q2e, &q2h->q2h_defentry, sizeof(*q2e));
 		q2e->q2e_uid = ufs_rw32(uid, needswap);
@@ -1213,7 +1225,7 @@ fsinit(const struct timeval *tv, mode_t mfsmode, uid_t mfsuid, gid_t mfsgid)
 			node.dp1.di_uid = geteuid();
 			node.dp1.di_gid = getegid();
 			wtfs(FFS_FSBTODB(&sblock, node.dp1.di_db[0]),
-			     node.dp1.di_size, buf);
+			     node.dp1.di_size, &buf);
 		} else {
 			node.dp2.di_atime = tv->tv_sec;
 			node.dp2.di_atimensec = tv->tv_usec * 1000;
@@ -1235,7 +1247,7 @@ fsinit(const struct timeval *tv, mode_t mfsmode, uid_t mfsuid, gid_t mfsgid)
 			node.dp2.di_uid = geteuid();
 			node.dp2.di_gid = getegid();
 			wtfs(FFS_FSBTODB(&sblock, node.dp2.di_db[0]),
-			    node.dp2.di_size, buf);
+			    node.dp2.di_size, &buf);
 		}
 		iput(&node, nextino);
 		sblock.fs_quotafile[i] = nextino;
@@ -1249,7 +1261,7 @@ fsinit(const struct timeval *tv, mode_t mfsmode, uid_t mfsuid, gid_t mfsgid)
  * return size of directory.
  */
 int
-makedir(struct direct *protodir, int entries)
+makedir(union Buffer *buf, struct direct *protodir, int entries)
 {
 	char *cp;
 	int i, spcleft;
@@ -1257,9 +1269,9 @@ makedir(struct direct *protodir, int entries)
 	if (isappleufs)
 		dirblksiz = APPLEUFS_DIRBLKSIZ;
 
-	memset(buf, 0, UFS_DIRBLKSIZ);
+	memset(buf, 0, dirblksiz);
 	spcleft = dirblksiz;
-	for (cp = buf, i = 0; i < entries - 1; i++) {
+	for (cp = buf->data, i = 0; i < entries - 1; i++) {
 		protodir[i].d_reclen = UFS_DIRSIZ(Oflag == 0, &protodir[i], 0);
 		copy_dir(&protodir[i], (struct direct*)cp);
 		cp += protodir[i].d_reclen;
@@ -1372,8 +1384,10 @@ iput(union dinode *ip, ino_t ino)
 		if (needswap) {
 			ffs_dinode1_swap(&ip->dp1, dp1);
 			/* ffs_dinode1_swap() doesn't swap blocks addrs */
-			for (i=0; i<UFS_NDADDR + UFS_NIADDR; i++)
+			for (i=0; i<UFS_NDADDR; i++)
 			    dp1->di_db[i] = bswap32(ip->dp1.di_db[i]);
+			for (i=0; i<UFS_NIADDR; i++)
+			    dp1->di_ib[i] = bswap32(ip->dp1.di_ib[i]);
 		} else
 			*dp1 = ip->dp1;
 		dp1->di_gen = arc4random() & INT32_MAX;
@@ -1382,8 +1396,10 @@ iput(union dinode *ip, ino_t ino)
 		dp2 += ino_to_fsbo(&sblock, ino);
 		if (needswap) {
 			ffs_dinode2_swap(&ip->dp2, dp2);
-			for (i=0; i<UFS_NDADDR + UFS_NIADDR; i++)
+			for (i=0; i<UFS_NDADDR; i++)
 			    dp2->di_db[i] = bswap64(ip->dp2.di_db[i]);
+			for (i=0; i<UFS_NIADDR; i++)
+			    dp2->di_ib[i] = bswap64(ip->dp2.di_ib[i]);
 		} else
 			*dp2 = ip->dp2;
 		dp2->di_gen = arc4random() & INT32_MAX;
@@ -1557,7 +1573,7 @@ ilog2(int val)
 	for (n = 0; n < sizeof(n) * CHAR_BIT; n++)
 		if (1 << n == val)
 			return (n);
-	errx(1, "ilog2: %d is not a power of 2\n", val);
+	errx(1, "ilog2: %d is not a power of 2", val);
 }
 
 static void

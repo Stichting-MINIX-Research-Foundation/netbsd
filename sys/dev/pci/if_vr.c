@@ -1,4 +1,4 @@
-/*	$NetBSD: if_vr.c,v 1.112 2012/12/27 16:23:48 jmcneill Exp $	*/
+/*	$NetBSD: if_vr.c,v 1.115 2015/04/13 16:33:25 riastradh Exp $	*/
 
 /*-
  * Copyright (c) 1998, 1999 The NetBSD Foundation, Inc.
@@ -97,7 +97,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_vr.c,v 1.112 2012/12/27 16:23:48 jmcneill Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_vr.c,v 1.115 2015/04/13 16:33:25 riastradh Exp $");
 
 
 
@@ -111,7 +111,7 @@ __KERNEL_RCSID(0, "$NetBSD: if_vr.c,v 1.112 2012/12/27 16:23:48 jmcneill Exp $")
 #include <sys/socket.h>
 #include <sys/device.h>
 
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 
 #include <net/if.h>
 #include <net/if_arp.h>
@@ -1490,6 +1490,7 @@ vr_attach(device_t parent, device_t self, void *aux)
 	struct ifnet *ifp;
 	uint8_t eaddr[ETHER_ADDR_LEN], mac;
 	int i, rseg, error;
+	char intrbuf[PCI_INTRSTR_LEN];
 
 #define	PCI_CONF_WRITE(r, v)	pci_conf_write(sc->vr_pc, sc->vr_tag, (r), (v))
 #define	PCI_CONF_READ(r)	pci_conf_read(sc->vr_pc, sc->vr_tag, (r))
@@ -1570,7 +1571,7 @@ vr_attach(device_t parent, device_t self, void *aux)
 			aprint_error_dev(self, "couldn't map interrupt\n");
 			return;
 		}
-		intrstr = pci_intr_string(pa->pa_pc, intrhandle);
+		intrstr = pci_intr_string(pa->pa_pc, intrhandle, intrbuf, sizeof(intrbuf));
 		sc->vr_ih = pci_intr_establish(pa->pa_pc, intrhandle, IPL_NET,
 						vr_intr, sc);
 		if (sc->vr_ih == NULL) {
@@ -1741,7 +1742,7 @@ vr_attach(device_t parent, device_t self, void *aux)
 	ether_ifattach(ifp, sc->vr_enaddr);
 
 	rnd_attach_source(&sc->rnd_source, device_xname(self),
-	    RND_TYPE_NET, 0);
+	    RND_TYPE_NET, RND_FLAG_DEFAULT);
 
 	if (pmf_device_register1(self, NULL, vr_resume, vr_shutdown))
 		pmf_class_network_register(self, ifp);

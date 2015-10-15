@@ -1,5 +1,5 @@
 /* Low level interface to ptrace, for the remote server for GDB.
-   Copyright (C) 1995-2013 Free Software Foundation, Inc.
+   Copyright (C) 1995-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -100,6 +100,7 @@ static const struct regs_range_t fpregs_ranges[] = {
 
 /* Defined in auto-generated file reg-sparc64.c.  */
 void init_registers_sparc64 (void);
+extern const struct target_desc *tdesc_sparc64;
 
 static int
 sparc_cannot_store_register (int regno)
@@ -119,12 +120,12 @@ sparc_fill_gregset_to_stack (struct regcache *regcache, const void *buf)
   int i;
   CORE_ADDR addr = 0;
   unsigned char tmp_reg_buf[8];
-  const int l0_regno = find_regno ("l0");
+  const int l0_regno = find_regno (regcache->tdesc, "l0");
   const int i7_regno = l0_regno + 15;
 
   /* These registers have to be stored in the stack.  */
   memcpy (&addr,
-	  ((char *) buf) + sparc_regmap[find_regno ("sp")],
+	  ((char *) buf) + sparc_regmap[find_regno (regcache->tdesc, "sp")],
 	  sizeof (addr));
 
   addr += BIAS;
@@ -171,12 +172,12 @@ sparc_store_gregset_from_stack (struct regcache *regcache, const void *buf)
   int i;
   CORE_ADDR addr = 0;
   unsigned char tmp_reg_buf[8];
-  const int l0_regno = find_regno ("l0");
+  const int l0_regno = find_regno (regcache->tdesc, "l0");
   const int i7_regno = l0_regno + 15;
 
   /* These registers have to be obtained from the stack.  */
   memcpy (&addr,
-	  ((char *) buf) + sparc_regmap[find_regno ("sp")],
+	  ((char *) buf) + sparc_regmap[find_regno (regcache->tdesc, "sp")],
 	  sizeof (addr));
 
   addr += BIAS;
@@ -230,7 +231,7 @@ sparc_get_pc (struct regcache *regcache)
   unsigned long pc;
   collect_register_by_name (regcache, "pc", &pc);
   if (debug_threads)
-    fprintf (stderr, "stop pc is %08lx\n", pc);
+    debug_printf ("stop pc is %08lx\n", pc);
   return pc;
 }
 
@@ -262,15 +263,20 @@ sparc_breakpoint_at (CORE_ADDR where)
 static CORE_ADDR
 sparc_reinsert_addr (void)
 {
-  struct regcache *regcache = get_thread_regcache (current_inferior, 1);
+  struct regcache *regcache = get_thread_regcache (current_thread, 1);
   CORE_ADDR lr;
   /* O7 is the equivalent to the 'lr' of other archs.  */
   collect_register_by_name (regcache, "o7", &lr);
   return lr;
 }
 
+static void
+sparc_arch_setup (void)
+{
+  current_process ()->tdesc = tdesc_sparc64;
+}
 
-struct regset_info target_regsets[] = {
+static struct regset_info sparc_regsets[] = {
   { PTRACE_GETREGS, PTRACE_SETREGS, 0, sizeof (elf_gregset_t),
     GENERAL_REGS,
     sparc_fill_gregset, sparc_store_gregset },
@@ -280,12 +286,37 @@ struct regset_info target_regsets[] = {
   { 0, 0, 0, -1, -1, NULL, NULL }
 };
 
+static struct regsets_info sparc_regsets_info =
+  {
+    sparc_regsets, /* regsets */
+    0, /* num_regsets */
+    NULL, /* disabled_regsets */
+  };
+
+static struct usrregs_info sparc_usrregs_info =
+  {
+    sparc_num_regs,
+    /* No regmap needs to be provided since this impl. doesn't use
+       USRREGS.  */
+    NULL
+  };
+
+static struct regs_info regs_info =
+  {
+    NULL, /* regset_bitmap */
+    &sparc_usrregs_info,
+    &sparc_regsets_info
+  };
+
+static const struct regs_info *
+sparc_regs_info (void)
+{
+  return &regs_info;
+}
+
 struct linux_target_ops the_low_target = {
-  init_registers_sparc64,
-  sparc_num_regs,
-  /* No regmap needs to be provided since this impl. doesn't use USRREGS.  */
-  NULL,
-  NULL,
+  sparc_arch_setup,
+  sparc_regs_info,
   sparc_cannot_fetch_register,
   sparc_cannot_store_register,
   NULL, /* fetch_register */
@@ -297,6 +328,16 @@ struct linux_target_ops the_low_target = {
   sparc_reinsert_addr,
   0,
   sparc_breakpoint_at,
+  NULL,  /* supports_z_point_type */
   NULL, NULL, NULL, NULL,
   NULL, NULL
 };
+
+void
+initialize_low_arch (void)
+{
+  /* Initialize the Linux target descriptions.  */
+  init_registers_sparc64 ();
+
+  initialize_regsets_info (&sparc_regsets_info);
+}

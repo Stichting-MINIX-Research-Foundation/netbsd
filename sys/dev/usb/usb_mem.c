@@ -1,4 +1,4 @@
-/*	$NetBSD: usb_mem.c,v 1.63 2013/09/15 15:47:27 martin Exp $	*/
+/*	$NetBSD: usb_mem.c,v 1.65 2014/09/12 16:40:38 skrll Exp $	*/
 
 /*
  * Copyright (c) 1998 The NetBSD Foundation, Inc.
@@ -38,7 +38,11 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: usb_mem.c,v 1.63 2013/09/15 15:47:27 martin Exp $");
+__KERNEL_RCSID(0, "$NetBSD: usb_mem.c,v 1.65 2014/09/12 16:40:38 skrll Exp $");
+
+#ifdef _KERNEL_OPT
+#include "opt_usb.h"
+#endif
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -128,7 +132,7 @@ usb_block_allocmem(bus_dma_tag_t tag, size_t size, size_t align,
 	}
 
 #ifdef DIAGNOSTIC
-	if (cpu_intr_p()) {
+	if (cpu_softintr_p() || cpu_intr_p()) {
 		printf("usb_block_allocmem: in interrupt context, size=%lu\n",
 		    (unsigned long) size);
 	}
@@ -152,7 +156,7 @@ usb_block_allocmem(bus_dma_tag_t tag, size_t size, size_t align,
 	}
 
 #ifdef DIAGNOSTIC
-	if (cpu_intr_p()) {
+	if (cpu_softintr_p() || cpu_intr_p()) {
 		printf("usb_block_allocmem: in interrupt context, failed\n");
 		return (USBD_NOMEM);
 	}
@@ -225,7 +229,7 @@ void
 usb_block_real_freemem(usb_dma_block_t *b)
 {
 #ifdef DIAGNOSTIC
-	if (cpu_intr_p()) {
+	if (cpu_softintr_p() || cpu_intr_p()) {
 		printf("usb_block_real_freemem: in interrupt context\n");
 		return;
 	}

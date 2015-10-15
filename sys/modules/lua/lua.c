@@ -1,7 +1,8 @@
-/*	$NetBSD: lua.c,v 1.5 2013/11/23 15:53:37 mbalmer Exp $ */
+/*	$NetBSD: lua.c,v 1.16 2015/02/07 04:09:13 christos Exp $ */
 
 /*
- * Copyright (c) 2011, 2013 by Marc Balmer <mbalmer@NetBSD.org>.
+ * Copyright (c) 2014 by Lourival Vieira Neto <lneto@NetBSD.org>.
+ * Copyright (c) 2011 - 2014 by Marc Balmer <mbalmer@NetBSD.org>.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -45,6 +46,7 @@
 #include <sys/queue.h>
 #include <sys/sysctl.h>
 #include <sys/vnode.h>
+#include <sys/cpu.h>
 
 #include <lauxlib.h>
 
@@ -92,8 +94,18 @@ dev_type_close(luaclose);
 dev_type_ioctl(luaioctl);
 
 const struct cdevsw lua_cdevsw = {
-	luaopen, luaclose, noread, nowrite, luaioctl, nostop, notty,
-	nopoll, nommap, nokqfilter, D_OTHER | D_MPSAFE
+	.d_open = luaopen,
+	.d_close = luaclose,
+	.d_read = noread,
+	.d_write = nowrite,
+	.d_ioctl = luaioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_OTHER | D_MPSAFE
 };
 
 struct lua_loadstate {
@@ -132,11 +144,6 @@ lua_attach(device_t parent, device_t self, void *aux)
 	pmf_device_register(self, NULL, NULL);
 
 	/* Sysctl to provide some control over behaviour */
-	sysctl_createv(NULL, 0, NULL, NULL,
-            CTLFLAG_PERMANENT,
-            CTLTYPE_NODE, "kern", NULL,
-            NULL, 0, NULL, 0,
-            CTL_KERN, CTL_EOL);
         sysctl_createv(&sc->sc_log, 0, NULL, &node,
             CTLFLAG_OWNDESC,
             CTLTYPE_NODE, "lua",
@@ -188,7 +195,7 @@ lua_attach(device_t parent, device_t self, void *aux)
             NULL, 0, &lua_max_instr, 0,
 	    CTL_CREATE, CTL_EOL);
 
-	aprint_normal_dev(self, "%s  %s\n", LUA_RELEASE, LUA_COPYRIGHT);
+	aprint_normal_dev(self, "%s\n", LUA_COPYRIGHT);
 }
 
 static int
@@ -326,8 +333,7 @@ luaioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 				return EBUSY;
 			}
 
-		K = klua_newstate(lua_alloc, NULL, create->name,
-		    create->desc);
+		K = kluaL_newstate(create->name, create->desc, IPL_NONE);
 		K->ks_user = true;
 
 		if (K == NULL)
@@ -360,7 +366,13 @@ luaioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 					    		    "%s to state %s\n",
 					    		    m->mod_name,
 					    		    s->lua_name);
-					    	m->open(s->K->L);
+						klua_lock(s->K);
+						luaL_requiref(
+							s->K->L,
+							m->mod_name,
+							m->open,
+							1);
+						klua_unlock(s->K);
 					    	m->refcount++;
 					    	LIST_INSERT_HEAD(
 					    	    &s->lua_modules, m,
@@ -415,8 +427,9 @@ luaioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 				ls.off = 0L;
 				ls.size = va.va_size;
 				VOP_UNLOCK(nd.ni_vp);
+				klua_lock(s->K);
 				error = lua_load(s->K->L, lua_reader, &ls,
-				    strrchr(load->path, '/') + 1);
+				    strrchr(load->path, '/') + 1, "bt");
 				vn_close(nd.ni_vp, FREAD, cred);
 				switch (error) {
 				case 0:	/* no error */
@@ -425,11 +438,13 @@ luaioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 					if (lua_verbose)
 						device_printf(sc->sc_dev,
 						    "syntax error\n");
+					klua_unlock(s->K);
 					return EINVAL;
 				case LUA_ERRMEM:
 					if (lua_verbose)
 						device_printf(sc->sc_dev,
 						    "memory error\n");
+					klua_unlock(s->K);
 					return ENOMEM;
 				default:
 					if (lua_verbose)
@@ -437,6 +452,7 @@ luaioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 						    "load error %d: %s\n",
 						    error,
 						    lua_tostring(s->K->L, -1));
+					klua_unlock(s->K);
 					return EINVAL;
 				}
 				if (lua_max_instr > 0)
@@ -449,8 +465,10 @@ luaioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 						    "execution error: %s\n",
 						    lua_tostring(s->K->L, -1));
 					}
+					klua_unlock(s->K);
 					return EINVAL;
 				}
+				klua_unlock(s->K);
 				return 0;
 			}
 		return ENXIO;
@@ -493,30 +511,49 @@ lua_require(lua_State *L)
 					device_printf(sc_self,
 					    "require module %s\n",
 					    md->mod_name);
-				md->open(L);
+				luaL_requiref(L, md->mod_name, md->open, 0);
+
 				md->refcount++;
 				LIST_INSERT_HEAD(&s->lua_modules, md, mod_next);
-				return 0;
+				return 1;
 			}
 
 	lua_pushstring(L, "module not found");
 	return lua_error(L);
 }
 
-void *
+typedef struct {
+	size_t size;
+} __packed alloc_header_t;
+
+static void *
 lua_alloc(void *ud, void *ptr, size_t osize, size_t nsize)
 {
-	void *nptr;
+	void *nptr = NULL;
 
-	if (nsize == 0) {
-		nptr = NULL;
+	const size_t hdr_size = sizeof(alloc_header_t);
+	alloc_header_t *hdr = (alloc_header_t *) ((char *) ptr - hdr_size);
+
+	if (nsize == 0) { /* freeing */
 		if (ptr != NULL)
-			kmem_free(ptr, osize);
-	} else {
-		nptr = kmem_alloc(nsize, KM_SLEEP);
-		if (ptr != NULL) {
+			kmem_intr_free(hdr, hdr->size);
+	} else if (ptr != NULL && nsize <= hdr->size - hdr_size) /* shrinking */
+		return ptr; /* don't need to reallocate */
+	else { /* creating or expanding */
+		km_flag_t sleep = cpu_intr_p() || cpu_softintr_p() ?
+			KM_NOSLEEP : KM_SLEEP;
+
+		size_t alloc_size = nsize + hdr_size;
+		alloc_header_t *nhdr = kmem_intr_alloc(alloc_size, sleep);
+		if (nhdr == NULL) /* failed to allocate */
+			return NULL;
+
+		nhdr->size = alloc_size;
+		nptr = (void *) ((char *) nhdr + hdr_size);
+
+		if (ptr != NULL) { /* expanding */
 			memcpy(nptr, ptr, osize);
-			kmem_free(ptr, osize);
+			kmem_intr_free(hdr, hdr->size);
 		}
 	}
 	return nptr;
@@ -557,7 +594,7 @@ lua_maxcount(lua_State *L, lua_Debug *d)
 }
 
 int
-lua_mod_register(const char *name, int (*open)(void *))
+klua_mod_register(const char *name, lua_CFunction open)
 {
 	struct lua_module *m;
 
@@ -575,7 +612,7 @@ lua_mod_register(const char *name, int (*open)(void *))
 }
 
 int
-lua_mod_unregister(const char *name)
+klua_mod_unregister(const char *name)
 {
 	struct lua_module *m;
 
@@ -596,7 +633,8 @@ lua_mod_unregister(const char *name)
 }
 
 klua_State *
-klua_newstate(lua_Alloc f, void *ud, const char *name, const char *desc)
+klua_newstate(lua_Alloc f, void *ud, const char *name, const char *desc,
+    int ipl)
 {
 	klua_State *K;
 	struct lua_state *s;
@@ -615,8 +653,10 @@ klua_newstate(lua_Alloc f, void *ud, const char *name, const char *desc)
 		sc->sc_state = true;
 	mutex_exit(&sc->sc_state_lock);
 
-	if (error)
+	if (error) {
+		kmem_free(s, sizeof(struct lua_state));
 		return NULL;
+	}
 
 	K = kmem_zalloc(sizeof(klua_State), KM_SLEEP);
 	K->L = lua_newstate(f, ud);
@@ -637,8 +677,7 @@ klua_newstate(lua_Alloc f, void *ud, const char *name, const char *desc)
 	}
 	LIST_INSERT_HEAD(&lua_states, s, lua_next);
 
-	mutex_init(&K->ks_lock, MUTEX_DEFAULT, IPL_VM);
-	cv_init(&K->ks_inuse_cv, "luainuse");
+	mutex_init(&K->ks_lock, MUTEX_DEFAULT, ipl);
 
 finish:
 	mutex_enter(&sc->sc_state_lock);
@@ -646,6 +685,12 @@ finish:
 	cv_signal(&sc->sc_state_cv);
 	mutex_exit(&sc->sc_state_lock);
 	return K;
+}
+
+inline klua_State *
+kluaL_newstate(const char *name, const char *desc, int ipl)
+{
+	return klua_newstate(lua_alloc, NULL, name, desc, ipl);
 }
 
 void
@@ -656,18 +701,10 @@ klua_close(klua_State *K)
 	struct lua_module *m;
 	int error = 0;
 
-	/* Notify the Lua state that it is about to be closed */
-	if (klua_lock(K))
-		return;		/* Nothing we can do about */
-
+	/* XXX consider registering a handler instead of a fixed name. */
 	lua_getglobal(K->L, "onClose");
 	if (lua_isfunction(K->L, -1))
 		lua_pcall(K->L, -1, 0, 0);
-
-	/*
-	 * Don't unlock, make sure no one uses the state until it is destroyed
-	 * klua_unlock(K);
-	 */
 
 	sc = device_private(sc_self);
 	mutex_enter(&sc->sc_state_lock);
@@ -692,7 +729,6 @@ klua_close(klua_State *K)
 		}
 
 	lua_close(K->L);
-	cv_destroy(&K->ks_inuse_cv);
 	mutex_destroy(&K->ks_lock);
 	kmem_free(K, sizeof(klua_State));
 
@@ -738,33 +774,15 @@ klua_find(const char *name)
 	return K;
 }
 
-int
+inline void
 klua_lock(klua_State *K)
 {
-	int error;
-
-	error = 0;
 	mutex_enter(&K->ks_lock);
-	while (K->ks_inuse == true) {
-		error = cv_wait_sig(&K->ks_inuse_cv, &K->ks_lock);
-		if (error)
-			break;
-	}
-	if (!error)
-		K->ks_inuse = true;
-	mutex_exit(&K->ks_lock);
-
-	if (error)
-		return error;
-	return 0;
 }
 
-void
+inline void
 klua_unlock(klua_State *K)
 {
-	mutex_enter(&K->ks_lock);
-	K->ks_inuse = false;
-	cv_signal(&K->ks_inuse_cv);
 	mutex_exit(&K->ks_lock);
 }
 
@@ -774,9 +792,11 @@ MODULE(MODULE_CLASS_MISC, lua, NULL);
 static const struct cfiattrdata luabus_iattrdata = {
 	"luabus", 0, { { NULL, NULL, 0 },}
 };
+
 static const struct cfiattrdata *const lua_attrs[] = {
 	&luabus_iattrdata, NULL
 };
+
 CFDRIVER_DECL(lua, DV_DULL, lua_attrs);
 extern struct cfattach lua_ca;
 static int lualoc[] = {
@@ -784,6 +804,7 @@ static int lualoc[] = {
 	-1,
 	-1
 };
+
 static struct cfdata lua_cfdata[] = {
 	{
 		.cf_name = "lua",

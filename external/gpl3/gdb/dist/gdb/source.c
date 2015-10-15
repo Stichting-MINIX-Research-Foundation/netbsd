@@ -1,5 +1,5 @@
 /* List lines of source files for GDB, the GNU debugger.
-   Copyright (C) 1986-2013 Free Software Foundation, Inc.
+   Copyright (C) 1986-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -26,11 +26,10 @@
 #include "gdbcmd.h"
 #include "frame.h"
 #include "value.h"
-#include "gdb_assert.h"
+#include "filestuff.h"
 
 #include <sys/types.h>
-#include "gdb_string.h"
-#include "gdb_stat.h"
+#include <sys/stat.h>
 #include <fcntl.h>
 #include "gdbcore.h"
 #include "gdb_regex.h"
@@ -43,9 +42,6 @@
 #include "completer.h"
 #include "ui-out.h"
 #include "readline/readline.h"
-
-#include "psymtab.h"
-
 
 #define OPEN_MODE (O_RDONLY | O_BINARY)
 #define FDOPEN_MODE FOPEN_RB
@@ -135,7 +131,9 @@ show_filename_display_string (struct ui_file *file, int from_tty,
 
 static int last_line_listed;
 
-/* First line number listed by last listing command.  */
+/* First line number listed by last listing command.  If 0, then no
+   source lines have yet been listed since the last time the current
+   source line was changed.  */
 
 static int first_line_listed;
 
@@ -153,6 +151,16 @@ int
 get_first_line_listed (void)
 {
   return first_line_listed;
+}
+
+/* Clear line listed range.  This makes the next "list" center the
+   printed source lines around the current source line.  */
+
+static void
+clear_lines_listed_range (void)
+{
+  first_line_listed = 0;
+  last_line_listed = 0;
 }
 
 /* Return the default number of lines to print with commands like the
@@ -222,6 +230,9 @@ set_current_source_symtab_and_line (const struct symtab_and_line *sal)
   current_source_symtab = sal->symtab;
   current_source_line = sal->line;
 
+  /* Force the next "list" to center around the current line.  */
+  clear_lines_listed_range ();
+
   return cursal;
 }
 
@@ -248,6 +259,7 @@ select_source_symtab (struct symtab *s)
   struct symtabs_and_lines sals;
   struct symtab_and_line sal;
   struct objfile *ofp;
+  struct compunit_symtab *cu;
 
   if (s)
     {
@@ -280,19 +292,16 @@ select_source_symtab (struct symtab *s)
 
   current_source_line = 1;
 
-  ALL_OBJFILES (ofp)
+  ALL_FILETABS (ofp, cu, s)
     {
-      for (s = ofp->symtabs; s; s = s->next)
-	{
-	  const char *name = s->filename;
-	  int len = strlen (name);
+      const char *name = s->filename;
+      int len = strlen (name);
 
-	  if (!(len > 2 && (strcmp (&name[len - 2], ".h") == 0
-	      || strcmp (name, "<<C++-namespaces>>") == 0)))
-	    {
-	      current_source_pspace = current_program_space;
-	      current_source_symtab = s;
-	    }
+      if (!(len > 2 && (strcmp (&name[len - 2], ".h") == 0
+			|| strcmp (name, "<<C++-namespaces>>") == 0)))
+	{
+	  current_source_pspace = current_program_space;
+	  current_source_symtab = s;
 	}
     }
 
@@ -361,9 +370,10 @@ show_directories_command (struct ui_file *file, int from_tty,
 void
 forget_cached_source_info_for_objfile (struct objfile *objfile)
 {
+  struct compunit_symtab *cu;
   struct symtab *s;
 
-  ALL_OBJFILE_SYMTABS (objfile, s)
+  ALL_OBJFILE_FILETABS (objfile, cu, s)
     {
       if (s->line_charpos != NULL)
 	{
@@ -576,17 +586,33 @@ add_path (char *dirname, char **which_path, int parse_separators)
 	char tinybuf[2];
 
 	p = *which_path;
-	/* FIXME: we should use realpath() or its work-alike
-	   before comparing.  Then all the code above which
-	   removes excess slashes and dots could simply go away.  */
-	if (!filename_cmp (p, name))
+	while (1)
 	  {
-	    /* Found it in the search path, remove old copy.  */
-	    if (p > *which_path)
-	      p--;		/* Back over leading separator.  */
-	    if (prefix > p - *which_path)
-	      goto skip_dup;	/* Same dir twice in one cmd.  */
-	    memmove (p, &p[len + 1], strlen (&p[len + 1]) + 1);	/* Copy from next \0 or  : */
+	    /* FIXME: we should use realpath() or its work-alike
+	       before comparing.  Then all the code above which
+	       removes excess slashes and dots could simply go away.  */
+	    if (!filename_ncmp (p, name, len)
+		&& (p[len] == '\0' || p[len] == DIRNAME_SEPARATOR))
+	      {
+		/* Found it in the search path, remove old copy.  */
+		if (p > *which_path)
+		  {
+		    /* Back over leading separator.  */
+		    p--;
+		  }
+		if (prefix > p - *which_path)
+		  {
+		    /* Same dir twice in one cmd.  */
+		    goto skip_dup;
+		  }
+		/* Copy from next '\0' or ':'.  */
+		memmove (p, &p[len + 1], strlen (&p[len + 1]) + 1);
+	      }
+	    p = strchr (p, DIRNAME_SEPARATOR);
+	    if (p != 0)
+	      ++p;
+	    else
+	      break;
 	  }
 
 	tinybuf[0] = DIRNAME_SEPARATOR;
@@ -635,8 +661,8 @@ source_info (char *ignore, int from_tty)
       return;
     }
   printf_filtered (_("Current source file is %s\n"), s->filename);
-  if (s->dirname)
-    printf_filtered (_("Compilation directory is %s\n"), s->dirname);
+  if (SYMTAB_DIRNAME (s) != NULL)
+    printf_filtered (_("Compilation directory is %s\n"), SYMTAB_DIRNAME (s));
   if (s->fullname)
     printf_filtered (_("Located in %s\n"), s->fullname);
   if (s->nlines)
@@ -644,9 +670,11 @@ source_info (char *ignore, int from_tty)
 		     s->nlines == 1 ? "" : "s");
 
   printf_filtered (_("Source language is %s.\n"), language_str (s->language));
-  printf_filtered (_("Compiled with %s debugging format.\n"), s->debugformat);
+  printf_filtered (_("Compiled with %s debugging format.\n"),
+		   COMPUNIT_DEBUGFORMAT (SYMTAB_COMPUNIT (s)));
   printf_filtered (_("%s preprocessor macro info.\n"),
-                   s->macro_table ? "Includes" : "Does not include");
+		   COMPUNIT_MACRO_TABLE (SYMTAB_COMPUNIT (s)) != NULL
+		   ? "Includes" : "Does not include");
 }
 
 
@@ -676,9 +704,10 @@ is_regular_file (const char *name)
 
    If OPF_TRY_CWD_FIRST, try to open ./STRING before searching PATH.
    (ie pretend the first element of PATH is ".").  This also indicates
-   that a slash in STRING disables searching of the path (this is
-   so that "exec-file ./foo" or "symbol-file ./foo" insures that you
-   get that particular version of foo or an error message).
+   that, unless OPF_SEARCH_IN_PATH is also specified, a slash in STRING
+   disables searching of the path (this is so that "exec-file ./foo" or
+   "symbol-file ./foo" insures that you get that particular version of
+   foo or an error message).
 
    If OPTS has OPF_SEARCH_IN_PATH set, absolute names will also be
    searched in path (we usually want this for source files but not for
@@ -690,10 +719,10 @@ is_regular_file (const char *name)
    and the file, sigh!  Emacs gets confuzzed by this when we print the
    source file name!!! 
 
-   If OPTS does not have OPF_DISABLE_REALPATH set return FILENAME_OPENED
-   resolved by gdb_realpath.  Even with OPF_DISABLE_REALPATH this function
-   still returns filename starting with "/".  If FILENAME_OPENED is NULL
-   this option has no effect.
+   If OPTS has OPF_RETURN_REALPATH set return FILENAME_OPENED resolved by
+   gdb_realpath.  Even without OPF_RETURN_REALPATH this function still returns
+   filename starting with "/".  If FILENAME_OPENED is NULL this option has no
+   effect.
 
    If a file is found, return the descriptor.
    Otherwise, return -1, with errno set for the last name we tried to open.  */
@@ -742,7 +771,7 @@ openp (const char *path, int opts, const char *string,
 	{
 	  filename = alloca (strlen (string) + 1);
 	  strcpy (filename, string);
-	  fd = open (filename, mode);
+	  fd = gdb_open_cloexec (filename, mode, 0);
 	  if (fd >= 0)
 	    goto done;
 	}
@@ -840,7 +869,7 @@ openp (const char *path, int opts, const char *string,
 
       if (is_regular_file (filename))
 	{
-	  fd = open (filename, mode);
+	  fd = gdb_open_cloexec (filename, mode, 0);
 	  if (fd >= 0)
 	    break;
 	}
@@ -854,28 +883,10 @@ done:
       /* If a file was opened, canonicalize its filename.  */
       if (fd < 0)
 	*filename_opened = NULL;
+      else if ((opts & OPF_RETURN_REALPATH) != 0)
+	*filename_opened = gdb_realpath (filename);
       else
-	{
-	  char *(*realpath_fptr) (const char *);
-
-	  realpath_fptr = ((opts & OPF_DISABLE_REALPATH) != 0
-			   ? xstrdup : gdb_realpath);
-
-	  if (IS_ABSOLUTE_PATH (filename))
-	    *filename_opened = realpath_fptr (filename);
-	  else
-	    {
-	      /* Beware the // my son, the Emacs barfs, the botch that catch...  */
-
-	      char *f = concat (current_directory,
-				IS_DIR_SEPARATOR (current_directory[strlen (current_directory) - 1])
-				? "" : SLASH_STRING,
-				filename, (char *)NULL);
-
-	      *filename_opened = realpath_fptr (f);
-	      xfree (f);
-	    }
-	}
+	*filename_opened = gdb_abspath (filename);
     }
 
   return fd;
@@ -898,8 +909,9 @@ source_full_path_of (const char *filename, char **full_pathname)
 {
   int fd;
 
-  fd = openp (source_path, OPF_TRY_CWD_FIRST | OPF_SEARCH_IN_PATH, filename,
-	      O_RDONLY, full_pathname);
+  fd = openp (source_path,
+	      OPF_TRY_CWD_FIRST | OPF_SEARCH_IN_PATH | OPF_RETURN_REALPATH,
+	      filename, O_RDONLY, full_pathname);
   if (fd < 0)
     {
       *full_pathname = NULL;
@@ -919,27 +931,20 @@ substitute_path_rule_matches (const struct substitute_path_rule *rule,
 {
   const int from_len = strlen (rule->from);
   const int path_len = strlen (path);
-  char *path_start;
 
   if (path_len < from_len)
     return 0;
 
   /* The substitution rules are anchored at the start of the path,
-     so the path should start with rule->from.  There is no filename
-     comparison routine, so we need to extract the first FROM_LEN
-     characters from PATH first and use that to do the comparison.  */
+     so the path should start with rule->from.  */
 
-  path_start = alloca (from_len + 1);
-  strncpy (path_start, path, from_len);
-  path_start[from_len] = '\0';
-
-  if (FILENAME_CMP (path_start, rule->from) != 0)
+  if (filename_ncmp (path, rule->from, from_len) != 0)
     return 0;
 
   /* Make sure that the region in the path that matches the substitution
      rule is immediately followed by a directory separator (or the end of
      string character).  */
-  
+
   if (path[from_len] != '\0' && !IS_DIR_SEPARATOR (path[from_len]))
     return 0;
 
@@ -997,6 +1002,7 @@ find_and_open_source (const char *filename,
   char *path = source_path;
   const char *p;
   int result;
+  struct cleanup *cleanup;
 
   /* Quick way out if we already know its full name.  */
 
@@ -1013,7 +1019,7 @@ find_and_open_source (const char *filename,
           *fullname = rewritten_fullname;
         }
 
-      result = open (*fullname, OPEN_MODE);
+      result = gdb_open_cloexec (*fullname, OPEN_MODE, 0);
       if (result >= 0)
 	{
 	  char *lpath = gdb_realpath (*fullname);
@@ -1027,6 +1033,8 @@ find_and_open_source (const char *filename,
       xfree (*fullname);
       *fullname = NULL;
     }
+
+  cleanup = make_cleanup (null_cleanup, NULL);
 
   if (dirname != NULL)
     {
@@ -1075,15 +1083,18 @@ find_and_open_source (const char *filename,
         }
     }
 
-  result = openp (path, OPF_SEARCH_IN_PATH, filename, OPEN_MODE, fullname);
+  result = openp (path, OPF_SEARCH_IN_PATH | OPF_RETURN_REALPATH, filename,
+		  OPEN_MODE, fullname);
   if (result < 0)
     {
       /* Didn't work.  Try using just the basename.  */
       p = lbasename (filename);
       if (p != filename)
-	result = openp (path, OPF_SEARCH_IN_PATH, p, OPEN_MODE, fullname);
+	result = openp (path, OPF_SEARCH_IN_PATH | OPF_RETURN_REALPATH, p,
+			OPEN_MODE, fullname);
     }
 
+  do_cleanups (cleanup);
   return result;
 }
 
@@ -1098,7 +1109,7 @@ open_source_file (struct symtab *s)
   if (!s)
     return -1;
 
-  return find_and_open_source (s->filename, s->dirname, &s->fullname);
+  return find_and_open_source (s->filename, SYMTAB_DIRNAME (s), &s->fullname);
 }
 
 /* Finds the fullname that a symtab represents.
@@ -1118,7 +1129,8 @@ symtab_to_fullname (struct symtab *s)
      to handle cases like the file being moved.  */
   if (s->fullname == NULL)
     {
-      int fd = find_and_open_source (s->filename, s->dirname, &s->fullname);
+      int fd = find_and_open_source (s->filename, SYMTAB_DIRNAME (s),
+				     &s->fullname);
 
       if (fd >= 0)
 	close (fd);
@@ -1130,10 +1142,11 @@ symtab_to_fullname (struct symtab *s)
 	  /* rewrite_source_path would be applied by find_and_open_source, we
 	     should report the pathname where GDB tried to find the file.  */
 
-	  if (s->dirname == NULL || IS_ABSOLUTE_PATH (s->filename))
+	  if (SYMTAB_DIRNAME (s) == NULL || IS_ABSOLUTE_PATH (s->filename))
 	    fullname = xstrdup (s->filename);
 	  else
-	    fullname = concat (s->dirname, SLASH_STRING, s->filename, NULL);
+	    fullname = concat (SYMTAB_DIRNAME (s), SLASH_STRING, s->filename,
+			       NULL);
 
 	  back_to = make_cleanup (xfree, fullname);
 	  s->fullname = rewrite_source_path (fullname);
@@ -1182,8 +1195,8 @@ find_source_lines (struct symtab *s, int desc)
   if (fstat (desc, &st) < 0)
     perror_with_name (symtab_to_filename_for_display (s));
 
-  if (s->objfile && s->objfile->obfd)
-    mtime = s->objfile->mtime;
+  if (SYMTAB_OBJFILE (s) != NULL && SYMTAB_OBJFILE (s)->obfd != NULL)
+    mtime = SYMTAB_OBJFILE (s)->mtime;
   else if (exec_bfd)
     mtime = exec_bfd_mtime;
 
@@ -1287,12 +1300,11 @@ identify_source_line (struct symtab *s, int line, int mid_statement,
     /* Don't index off the end of the line_charpos array.  */
     return 0;
   annotate_source (s->fullname, line, s->line_charpos[line - 1],
-		   mid_statement, get_objfile_arch (s->objfile), pc);
+		   mid_statement, get_objfile_arch (SYMTAB_OBJFILE (s)), pc);
 
   current_source_line = line;
-  first_line_listed = line;
-  last_line_listed = line;
   current_source_symtab = s;
+  clear_lines_listed_range ();
   return 1;
 }
 
@@ -1484,7 +1496,11 @@ line_info (char *arg, int from_tty)
     {
       sal.symtab = current_source_symtab;
       sal.pspace = current_program_space;
-      sal.line = last_line_listed;
+      if (last_line_listed != 0)
+	sal.line = last_line_listed;
+      else
+	sal.line = current_source_line;
+
       sals.nelts = 1;
       sals.sals = (struct symtab_and_line *)
 	xmalloc (sizeof (struct symtab_and_line));
@@ -1528,7 +1544,8 @@ line_info (char *arg, int from_tty)
       else if (sal.line > 0
 	       && find_line_pc_range (sal, &start_pc, &end_pc))
 	{
-	  struct gdbarch *gdbarch = get_objfile_arch (sal.symtab->objfile);
+	  struct gdbarch *gdbarch
+	    = get_objfile_arch (SYMTAB_OBJFILE (sal.symtab));
 
 	  if (start_pc == end_pc)
 	    {
@@ -1625,7 +1642,7 @@ forward_search_command (char *regex, int from_tty)
       buf = xmalloc (cursize);
       p = buf;
 
-      c = getc (stream);
+      c = fgetc (stream);
       if (c == EOF)
 	break;
       do
@@ -1639,7 +1656,7 @@ forward_search_command (char *regex, int from_tty)
 	      cursize = newsize;
 	    }
 	}
-      while (c != '\n' && (c = getc (stream)) >= 0);
+      while (c != '\n' && (c = fgetc (stream)) >= 0);
 
       /* Remove the \r, if any, at the end of the line, otherwise
          regular expressions that end with $ or \n won't work.  */
@@ -1710,14 +1727,14 @@ reverse_search_command (char *regex, int from_tty)
       char buf[4096];		/* Should be reasonable???  */
       char *p = buf;
 
-      c = getc (stream);
+      c = fgetc (stream);
       if (c == EOF)
 	break;
       do
 	{
 	  *p++ = c;
 	}
-      while (c != '\n' && (c = getc (stream)) >= 0);
+      while (c != '\n' && (c = fgetc (stream)) >= 0);
 
       /* Remove the \r, if any, at the end of the line, otherwise
          regular expressions that end with $ or \n won't work.  */
@@ -1852,9 +1869,10 @@ show_substitute_path_command (char *args, int from_tty)
   struct substitute_path_rule *rule = substitute_path_rules;
   char **argv;
   char *from = NULL;
+  struct cleanup *cleanup;
   
   argv = gdb_buildargv (args);
-  make_cleanup_freeargv (argv);
+  cleanup = make_cleanup_freeargv (argv);
 
   /* We expect zero or one argument.  */
 
@@ -1874,10 +1892,12 @@ show_substitute_path_command (char *args, int from_tty)
 
   while (rule != NULL)
     {
-      if (from == NULL || FILENAME_CMP (rule->from, from) == 0)
+      if (from == NULL || substitute_path_rule_matches (rule, from) != 0)
         printf_filtered ("  `%s' -> `%s'.\n", rule->from, rule->to);
       rule = rule->next;
     }
+
+  do_cleanups (cleanup);
 }
 
 /* Implement the "unset substitute-path" command.  */
@@ -1889,10 +1909,11 @@ unset_substitute_path_command (char *args, int from_tty)
   char **argv = gdb_buildargv (args);
   char *from = NULL;
   int rule_found = 0;
+  struct cleanup *cleanup;
 
   /* This function takes either 0 or 1 argument.  */
 
-  make_cleanup_freeargv (argv);
+  cleanup = make_cleanup_freeargv (argv);
   if (argv != NULL && argv[0] != NULL && argv[1] != NULL)
     error (_("Incorrect usage, too many arguments in command"));
 
@@ -1930,6 +1951,8 @@ unset_substitute_path_command (char *args, int from_tty)
     error (_("No substitution rule defined for `%s'"), from);
 
   forget_cached_source_info ();
+
+  do_cleanups (cleanup);
 }
 
 /* Add a new source path substitution rule.  */
@@ -1939,9 +1962,10 @@ set_substitute_path_command (char *args, int from_tty)
 {
   char **argv;
   struct substitute_path_rule *rule;
+  struct cleanup *cleanup;
   
   argv = gdb_buildargv (args);
-  make_cleanup_freeargv (argv);
+  cleanup = make_cleanup_freeargv (argv);
 
   if (argv == NULL || argv[0] == NULL || argv [1] == NULL)
     error (_("Incorrect usage, too few arguments in command"));
@@ -1968,6 +1992,8 @@ set_substitute_path_command (char *args, int from_tty)
 
   add_substitute_path_rule (argv[0], argv[1]);
   forget_cached_source_info ();
+
+  do_cleanups (cleanup);
 }
 
 
@@ -2059,7 +2085,10 @@ The matching line number is also stored as the value of \"$_\"."));
 
   add_setshow_integer_cmd ("listsize", class_support, &lines_to_list, _("\
 Set number of source lines gdb will list by default."), _("\
-Show number of source lines gdb will list by default."), NULL,
+Show number of source lines gdb will list by default."), _("\
+Use this to choose how many source lines the \"list\" displays (unless\n\
+the \"list\" argument explicitly specifies some other number).\n\
+A value of \"unlimited\", or zero, means there's no limit."),
 			    NULL,
 			    show_lines_to_list,
 			    &setlist, &showlist);

@@ -1,4 +1,4 @@
-/*	$NetBSD: cache.h,v 1.22 2011/06/06 02:49:39 mrg Exp $ */
+/*	$NetBSD: cache.h,v 1.28 2015/01/05 11:40:56 palle Exp $ */
 
 /*
  * Copyright (c) 2011 Matthew R. Green
@@ -82,6 +82,7 @@
  */
 
 #include <machine/psl.h>
+#include <machine/hypervisor.h>
 
 /* Various cache size/line sizes */
 extern	int	ecache_min_line_size;
@@ -100,15 +101,7 @@ void 	blast_icache_usiii(void);	/* Clear entire I$ */
 /* The following flush a range from the D$ and I$ but not E$. */
 void	cache_flush_phys_us(paddr_t, psize_t, int);
 void	cache_flush_phys_usiii(paddr_t, psize_t, int);
-
-static __inline__ void
-cache_flush_phys(paddr_t pa, psize_t size, int ecache)
-{
-	if (CPU_IS_USIII_UP() || CPU_IS_SPARC64_V_UP())
-		cache_flush_phys_usiii(pa, size, ecache);
-	else
-		cache_flush_phys_us(pa, size, ecache);
-}
+extern void (*cache_flush_phys)(paddr_t, psize_t, int);
 
 /* SPARC64 specific */
 /* Assembly routines to flush TLB mappings */
@@ -117,28 +110,13 @@ void sp_tlb_flush_pte_usiii(vaddr_t, int);
 void sp_tlb_flush_all_us(void);
 void sp_tlb_flush_all_usiii(void);
 
-static __inline__ void
-sp_tlb_flush_pte(vaddr_t va, int ctx)
-{
-	if (CPU_IS_USIII_UP() || CPU_IS_SPARC64_V_UP())
-		sp_tlb_flush_pte_usiii(va, ctx);
-	else
-		sp_tlb_flush_pte_us(va, ctx);
-}
-
-static __inline__ void
-sp_tlb_flush_all(void)
-{
-	if (CPU_IS_USIII_UP() || CPU_IS_SPARC64_V_UP())
-		sp_tlb_flush_all_usiii();
-	else
-		sp_tlb_flush_all_us();
-}
 
 extern	void	(*dcache_flush_page)(paddr_t);
 extern	void	(*dcache_flush_page_cpuset)(paddr_t, sparc64_cpuset_t);
 extern	void	(*blast_dcache)(void);
 extern	void	(*blast_icache)(void);
+extern	void	(*sp_tlb_flush_pte)(vaddr_t, int);
+extern	void	(*sp_tlb_flush_all)(void);
 
 void cache_setup_funcs(void);
 

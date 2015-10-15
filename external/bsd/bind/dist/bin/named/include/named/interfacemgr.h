@@ -1,7 +1,7 @@
-/*	$NetBSD: interfacemgr.h,v 1.4 2012/06/05 00:39:08 christos Exp $	*/
+/*	$NetBSD: interfacemgr.h,v 1.6 2014/12/10 04:37:52 christos Exp $	*/
 
 /*
- * Copyright (C) 2004, 2005, 2007, 2011  Internet Systems Consortium, Inc. ("ISC")
+ * Copyright (C) 2004, 2005, 2007, 2011, 2013, 2014  Internet Systems Consortium, Inc. ("ISC")
  * Copyright (C) 1999-2002  Internet Software Consortium.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
@@ -82,6 +82,7 @@ struct ns_interface {
 	dns_dispatch_t *	udpdispatch[MAX_UDP_DISPATCH];
 						/*%< UDP dispatchers. */
 	isc_socket_t *		tcpsocket;	/*%< TCP socket. */
+	isc_dscp_t		dscp;		/*%< "listen-on" DSCP value */
 	int			ntcptarget;	/*%< Desired number of concurrent
 						     TCP accepts */
 	int			ntcpcurrent;	/*%< Current ditto, locked */
@@ -98,7 +99,7 @@ isc_result_t
 ns_interfacemgr_create(isc_mem_t *mctx, isc_taskmgr_t *taskmgr,
 		       isc_socketmgr_t *socketmgr,
 		       dns_dispatchmgr_t *dispatchmgr,
-		       ns_interfacemgr_t **mgrp);
+		       isc_task_t *task, ns_interfacemgr_t **mgrp);
 /*%
  * Create a new interface manager.
  *

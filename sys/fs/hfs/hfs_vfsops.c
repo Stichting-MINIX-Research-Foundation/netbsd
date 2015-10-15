@@ -1,4 +1,4 @@
-/*	$NetBSD: hfs_vfsops.c,v 1.29 2012/06/13 22:56:50 joerg Exp $	*/
+/*	$NetBSD: hfs_vfsops.c,v 1.33 2014/12/29 17:17:54 maxv Exp $	*/
 
 /*-
  * Copyright (c) 2005, 2007 The NetBSD Foundation, Inc.
@@ -99,7 +99,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: hfs_vfsops.c,v 1.29 2012/06/13 22:56:50 joerg Exp $");
+__KERNEL_RCSID(0, "$NetBSD: hfs_vfsops.c,v 1.33 2014/12/29 17:17:54 maxv Exp $");
 
 #ifdef _KERNEL_OPT
 #include "opt_compat_netbsd.h"
@@ -139,7 +139,7 @@ MODULE(MODULE_CLASS_VFS, hfs, NULL);
 
 MALLOC_JUSTDEFINE(M_HFSMNT, "hfs mount", "hfs mount structures");
 
-extern kmutex_t hfs_hashlock;
+struct pool hfs_node_pool;
 
 const struct vnodeopv_desc * const hfs_vnodeopv_descs[] = {
 	&hfs_vnodeop_opv_desc,
@@ -149,41 +149,37 @@ const struct vnodeopv_desc * const hfs_vnodeopv_descs[] = {
 };
 
 struct vfsops hfs_vfsops = {
-	MOUNT_HFS,
-	sizeof (struct hfs_args),
-	hfs_mount,
-	hfs_start,
-	hfs_unmount,
-	hfs_root,
-	(void *)eopnotsupp,		/* vfs_quotactl */
-	hfs_statvfs,
-	hfs_sync,
-	hfs_vget,
-	hfs_fhtovp,
-	hfs_vptofh,
-	hfs_init,
-	hfs_reinit,
-	hfs_done,
-	NULL,				/* vfs_mountroot */
-	NULL,				/* vfs_snapshot */
-	vfs_stdextattrctl,
-	(void *)eopnotsupp,		/* vfs_suspendctl */
-	genfs_renamelock_enter,
-	genfs_renamelock_exit,
-	(void *)eopnotsupp,
-	hfs_vnodeopv_descs,
-	0,
-	{ NULL, NULL },
+	.vfs_name = MOUNT_HFS,
+	.vfs_min_mount_data = sizeof (struct hfs_args),
+	.vfs_mount = hfs_mount,
+	.vfs_start = hfs_start,
+	.vfs_unmount = hfs_unmount,
+	.vfs_root = hfs_root,
+	.vfs_quotactl = (void *)eopnotsupp,
+	.vfs_statvfs = hfs_statvfs,
+	.vfs_sync = hfs_sync,
+	.vfs_vget = hfs_vget,
+	.vfs_loadvnode = hfs_loadvnode,
+	.vfs_fhtovp = hfs_fhtovp,
+	.vfs_vptofh = hfs_vptofh,
+	.vfs_init = hfs_init,
+	.vfs_reinit = hfs_reinit,
+	.vfs_done = hfs_done,
+	.vfs_extattrctl = vfs_stdextattrctl,
+	.vfs_suspendctl = (void *)eopnotsupp,
+	.vfs_renamelock_enter = genfs_renamelock_enter,
+	.vfs_renamelock_exit = genfs_renamelock_exit,
+	.vfs_fsync = (void *)eopnotsupp,
+	.vfs_opv_descs = hfs_vnodeopv_descs
 };
 
 static const struct genfs_ops hfs_genfsops = {
-        .gop_size = genfs_size,
+	.gop_size = genfs_size,
 };
 
 static int
 hfs_modcmd(modcmd_t cmd, void *arg)
 {
-
 	switch (cmd) {
 	case MODULE_CMD_INIT:
 		return vfs_attach(&hfs_vfsops);
@@ -205,13 +201,15 @@ hfs_mount(struct mount *mp, const char *path, void *data, size_t *data_len)
 	int update;
 	mode_t accessmode;
 
+	if (args == NULL)
+		return EINVAL;
 	if (*data_len < sizeof *args)
 		return EINVAL;
 
-#ifdef HFS_DEBUG	
+#ifdef HFS_DEBUG
 	printf("vfsop = hfs_mount()\n");
 #endif /* HFS_DEBUG */
-	
+
 	if (mp->mnt_flag & MNT_GETARGS) {
 		hmp = VFSTOHFS(mp);
 		if (hmp == NULL)
@@ -220,9 +218,6 @@ hfs_mount(struct mount *mp, const char *path, void *data, size_t *data_len)
 		*data_len = sizeof *args;
 		return 0;
 	}
-
-	if (data == NULL)
-		return EINVAL;
 
 /* FIXME: For development ONLY - disallow remounting for now */
 #if 0
@@ -240,7 +235,7 @@ hfs_mount(struct mount *mp, const char *path, void *data, size_t *data_len)
 					NSM_FOLLOW_NOEMULROOT, &devvp);
 		if (error != 0)
 			return error;
-	
+
 		if (!update) {
 			/*
 			 * Be sure this is a valid block device
@@ -270,7 +265,6 @@ hfs_mount(struct mount *mp, const char *path, void *data, size_t *data_len)
 		}
 	}
 
-	
 	/*
 	 * If mount by non-root, then verify that user has necessary
 	 * permissions on the device.
@@ -303,14 +297,14 @@ hfs_mount(struct mount *mp, const char *path, void *data, size_t *data_len)
 
 	if ((error = hfs_mountfs(devvp, mp, l, args->fspec)) != 0)
 		goto error;
-	
+
 	error = set_statvfs_info(path, UIO_USERSPACE, args->fspec, UIO_USERSPACE,
 		mp->mnt_op->vfs_name, mp, l);
 
 #ifdef HFS_DEBUG
 	if(!update) {
 		char* volname;
-		
+
 		hmp = VFSTOHFS(mp);
 		volname = malloc(hmp->hm_vol.name.length + 1, M_TEMP, M_WAITOK);
 		if (volname == NULL)
@@ -325,9 +319,9 @@ hfs_mount(struct mount *mp, const char *path, void *data, size_t *data_len)
 		}
 	}
 #endif /* HFS_DEBUG */
-		
+
 	return error;
-	
+
 error:
 	vrele(devvp);
 	return error;
@@ -336,8 +330,7 @@ error:
 int
 hfs_start(struct mount *mp, int flags)
 {
-
-#ifdef HFS_DEBUG	
+#ifdef HFS_DEBUG
 	printf("vfsop = hfs_start()\n");
 #endif /* HFS_DEBUG */
 
@@ -354,20 +347,18 @@ hfs_mountfs(struct vnode *devvp, struct mount *mp, struct lwp *l,
 	struct hfsmount *hmp;
 	kauth_cred_t cred;
 	int error;
-	
+
 	cred = l ? l->l_cred : NOCRED;
 	error = 0;
 	hmp = NULL;
 
 	/* Create mounted volume structure. */
-	hmp = (struct hfsmount*)malloc(sizeof(struct hfsmount),
-            M_HFSMNT, M_WAITOK);
+	hmp = malloc(sizeof(struct hfsmount), M_HFSMNT, M_WAITOK|M_ZERO);
 	if (hmp == NULL) {
 		error = ENOMEM;
 		goto error;
 	}
-	memset(hmp, 0, sizeof(struct hfsmount));
-	
+
 	mp->mnt_data = hmp;
 	mp->mnt_flag |= MNT_LOCAL;
 	vfs_getnewfsid(mp);
@@ -375,12 +366,12 @@ hfs_mountfs(struct vnode *devvp, struct mount *mp, struct lwp *l,
 	hmp->hm_mountp = mp;
 	hmp->hm_dev = devvp->v_rdev;
 	hmp->hm_devvp = devvp;
-	
+
 	/*
 	 * Use libhfs to open the volume and read the volume header and other
 	 * useful information.
 	 */
-	 
+
 	hfslib_init_cbargs(&cbargs);
 	argsopen.cred = argsread.cred = cred;
 	argsopen.l = argsread.l = l;
@@ -391,7 +382,7 @@ hfs_mountfs(struct vnode *devvp, struct mount *mp, struct lwp *l,
 	if ((error = hfslib_open_volume(devpath, mp->mnt_flag & MNT_RDONLY,
 		&hmp->hm_vol, &cbargs)) != 0)
 		goto error;
-		
+
 	/* Make sure this is not a journaled volume whose journal is dirty. */
 	if (!hfslib_is_journal_clean(&hmp->hm_vol)) {
 		printf("volume journal is dirty; not mounting\n");
@@ -400,16 +391,15 @@ hfs_mountfs(struct vnode *devvp, struct mount *mp, struct lwp *l,
 	}
 
 	mp->mnt_fs_bshift = 0;
-        while ((1 << mp->mnt_fs_bshift) < hmp->hm_vol.vh.block_size)
+	while ((1 << mp->mnt_fs_bshift) < hmp->hm_vol.vh.block_size)
 		mp->mnt_fs_bshift++;
 	mp->mnt_dev_bshift = DEV_BSHIFT;
 
 	return 0;
-	
+
 error:
 	if (hmp != NULL)
 		free(hmp, M_HFSMNT);
-		
 	return error;
 }
 
@@ -421,17 +411,17 @@ hfs_unmount(struct mount *mp, int mntflags)
 	struct hfsmount* hmp;
 	int error;
 	int flags;
-	
-#ifdef HFS_DEBUG	
+
+#ifdef HFS_DEBUG
 	printf("vfsop = hfs_unmount()\n");
 #endif /* HFS_DEBUG */
 
 	hmp = VFSTOHFS(mp);
-	
+
 	flags = 0;
 	if (mntflags & MNT_FORCE)
 		flags |= FORCECLOSE;
-	
+
 	if ((error = vflush(mp, NULLVP, flags)) != 0)
 		return error;
 
@@ -439,13 +429,13 @@ hfs_unmount(struct mount *mp, int mntflags)
 	argsclose.l = curlwp;
 	cbargs.closevol = (void*)&argsclose;
 	hfslib_close_volume(&hmp->hm_vol, &cbargs);
-	
+
 	vrele(hmp->hm_devvp);
 
 	free(hmp, M_HFSMNT);
 	mp->mnt_data = NULL;
 	mp->mnt_flag &= ~MNT_LOCAL;
-	
+
 	return error;
 }
 
@@ -455,14 +445,14 @@ hfs_root(struct mount *mp, struct vnode **vpp)
 	struct vnode *nvp;
 	int error;
 
-#ifdef HFS_DEBUG	
+#ifdef HFS_DEBUG
 	printf("vfsop = hfs_root()\n");
 #endif /* HFS_DEBUG */
-	
+
 	if ((error = VFS_VGET(mp, HFS_CNID_ROOT_FOLDER, &nvp)) != 0)
 		return error;
 	*vpp = nvp;
-	
+
 	return 0;
 }
 
@@ -470,13 +460,13 @@ int
 hfs_statvfs(struct mount *mp, struct statvfs *sbp)
 {
 	hfs_volume_header_t *vh;
-	
-#ifdef HFS_DEBUG	
+
+#ifdef HFS_DEBUG
 	printf("vfsop = hfs_statvfs()\n");
 #endif /* HFS_DEBUG */
 
 	vh = &VFSTOHFS(mp)->hm_vol.vh;
-	
+
 	sbp->f_bsize = vh->block_size;
 	sbp->f_frsize = sbp->f_bsize;
 	sbp->f_iosize = 4096;/* mac os x uses a 4 kb io size, so do the same */
@@ -487,15 +477,14 @@ hfs_statvfs(struct mount *mp, struct statvfs *sbp)
 	sbp->f_files =  vh->file_count; /* total files */
 	sbp->f_ffree = (1<<31) - vh->file_count; /* free file nodes */
 	copy_statvfs_info(sbp, mp);
-	
+
 	return 0;
 }
 
 int
 hfs_sync(struct mount *mp, int waitfor, kauth_cred_t cred)
 {
-
-#ifdef HFS_DEBUG	
+#ifdef HFS_DEBUG
 	printf("vfsop = hfs_sync()\n");
 #endif /* HFS_DEBUG */
 
@@ -509,7 +498,18 @@ hfs_sync(struct mount *mp, int waitfor, kauth_cred_t cred)
 int
 hfs_vget(struct mount *mp, ino_t ino, struct vnode **vpp)
 {
-    return hfs_vget_internal(mp, ino, HFS_DATAFORK, vpp);
+	int error;
+
+	error = hfs_vget_internal(mp, ino, HFS_DATAFORK, vpp);
+	if (error)
+		return error;
+	error = vn_lock(*vpp, LK_EXCLUSIVE);
+	if (error) {
+		vrele(*vpp);
+		*vpp = NULL;
+		return error;
+	}
+	return 0;
 }
 
 /*
@@ -519,93 +519,60 @@ int
 hfs_vget_internal(struct mount *mp, ino_t ino, uint8_t fork,
     struct vnode **vpp)
 {
+	struct hfsnode_key key;
+
+	memset(&key, 0, sizeof(key));
+	key.hnk_cnid = (hfs_cnid_t)ino;
+	key.hnk_fork = (fork != HFS_RSRCFORK ? HFS_DATAFORK : HFS_RSRCFORK);
+
+	return vcache_get(mp, &key, sizeof(key), vpp);
+}
+
+int
+hfs_loadvnode(struct mount *mp, struct vnode *vp,
+    const void *key, size_t key_len, const void **new_key)
+{
 	struct hfsmount *hmp;
 	struct hfsnode *hnode;
-	struct vnode *vp;
+	struct hfsnode_key hfskey;
 	hfs_callback_args cbargs;
-	hfs_cnid_t cnid;
 	hfs_catalog_keyed_record_t rec;
-	hfs_catalog_key_t key; /* the search key used to find this file on disk */
+	hfs_catalog_key_t cat_key; /* the search key used to find this file on disk */
 	dev_t dev;
-	int error;
 
-#ifdef HFS_DEBUG	
-	printf("vfsop = hfs_vget()\n");
+#ifdef HFS_DEBUG
+	printf("vfsop = hfs_loadvnode()\n");
 #endif /* HFS_DEBUG */
 
-	hnode = NULL;
-	vp = NULL;
+	KASSERT(key_len == sizeof(hfskey));
+	memcpy(&hfskey, key, key_len);
+
 	hmp = VFSTOHFS(mp);
 	dev = hmp->hm_dev;
-	cnid = (hfs_cnid_t)ino;
 
-	if (fork != HFS_RSRCFORK)
-	    fork = HFS_DATAFORK;
-
- retry:
-	/* Check if this vnode has already been allocated. If so, just return it. */
-	if ((*vpp = hfs_nhashget(dev, cnid, fork, LK_EXCLUSIVE)) != NULL)
-		return 0;
-
-	/* Allocate a new vnode/inode. */
-	error = getnewvnode(VT_HFS, mp, hfs_vnodeop_p, NULL, &vp);
-	if (error) {
-		goto error;
-	}
-	hnode = malloc(sizeof(struct hfsnode), M_TEMP,
-		M_WAITOK | M_ZERO);
-
-	/*
-	 * If someone beat us to it while sleeping in getnewvnode(),
-	 * push back the freshly allocated vnode we don't need, and return.
-	 */
-	mutex_enter(&hfs_hashlock);
-	if (hfs_nhashget(dev, cnid, fork, 0) != NULL) {
-		mutex_exit(&hfs_hashlock);
-		ungetnewvnode(vp);
-		free(hnode, M_TEMP);
-		goto retry;
-	}
-
-	vp->v_vflag |= VV_LOCKSWORK;	
-	vp->v_data = hnode;
-	genfs_node_init(vp, &hfs_genfsops);
-	
+	hnode = pool_get(&hfs_node_pool, PR_WAITOK);
+	memset(hnode, 0, sizeof(*hnode));
 	hnode->h_vnode = vp;
 	hnode->h_hmp = hmp;
 	hnode->dummy = 0x1337BABE;
-	
-	/*
-	 * We need to put this vnode into the hash chain and lock it so that other
-	 * requests for this inode will block if they arrive while we are sleeping
-	 * waiting for old data structures to be purged or for the contents of the
-	 * disk portion of this inode to be read. The hash chain requires the node's
-	 * device and cnid to be known. Since this information was passed in the
-	 * arguments, fill in the appropriate hfsnode fields without reading having
-	 * to read the disk.
-	 */
 	hnode->h_dev = dev;
-	hnode->h_rec.u.cnid = cnid;
-	hnode->h_fork = fork;
-
-	hfs_nhashinsert(hnode);
-	mutex_exit(&hfs_hashlock);
-
+	hnode->h_rec.u.cnid = hfskey.hnk_cnid;
+	hnode->h_fork = hfskey.hnk_fork;
+	hnode->h_key = hfskey;
 
 	/*
 	 * Read catalog record from disk.
 	 */
 	hfslib_init_cbargs(&cbargs);
-	
-	if (hfslib_find_catalog_record_with_cnid(&hmp->hm_vol, cnid,
-		&rec, &key, &cbargs) != 0) {
-		vput(vp);
-		error = EBADF;
-		goto error;
+
+	if (hfslib_find_catalog_record_with_cnid(&hmp->hm_vol, hfskey.hnk_cnid,
+		&rec, &cat_key, &cbargs) != 0) {
+		pool_put(&hfs_node_pool, hnode);
+		return EBADF;
 	}
-		
+
 	memcpy(&hnode->h_rec, &rec, sizeof(hnode->h_rec));
-	hnode->h_parent = key.parent_cnid;
+	hnode->h_parent = cat_key.parent_cnid;
 
 	/* XXX Eventually need to add an "ignore permissions" mount option */
 
@@ -615,13 +582,18 @@ hfs_vget_internal(struct mount *mp, ino_t ino, uint8_t fork,
 	 */
 	/* DATE AND TIME */
 
+	vp->v_tag = VT_HFS;
+	vp->v_op = hfs_vnodeop_p;
+	vp->v_vflag |= VV_LOCKSWORK;
+	vp->v_data = hnode;
+	genfs_node_init(vp, &hfs_genfsops);
+
 	/*
 	 * Initialize the vnode from the hfsnode, check for aliases.
-	 * Note that the underlying vnode may change.
 	 */
 	hfs_vinit(mp, hfs_specop_p, hfs_fifoop_p, &vp);
 
-	hnode->h_devvp = hmp->hm_devvp;	
+	hnode->h_devvp = hmp->hm_devvp;
 	vref(hnode->h_devvp);  /* Increment the ref count to the volume's device. */
 
 	/* Make sure UVM has allocated enough memory. (?) */
@@ -636,20 +608,15 @@ hfs_vget_internal(struct mount *mp, ino_t ino, uint8_t fork,
 	else
 		uvm_vnp_setsize(vp, 0); /* no directly reading directories */
 		
-	*vpp = vp;
-	
+	*new_key = &hnode->h_key;
 	return 0;
-
-error:
-	*vpp = NULL;
-	return error;
 }
 
 int
 hfs_fhtovp(struct mount *mp, struct fid *fhp, struct vnode **vpp)
 {
 
-#ifdef HFS_DEBUG	
+#ifdef HFS_DEBUG
 	printf("vfsop = hfs_fhtovp()\n");
 #endif /* HFS_DEBUG */
 
@@ -659,8 +626,7 @@ hfs_fhtovp(struct mount *mp, struct fid *fhp, struct vnode **vpp)
 int
 hfs_vptofh(struct vnode *vp, struct fid *fhp, size_t *fh_size)
 {
-
-#ifdef HFS_DEBUG	
+#ifdef HFS_DEBUG
 	printf("vfsop = hfs_vptofh()\n");
 #endif /* HFS_DEBUG */
 
@@ -672,11 +638,13 @@ hfs_init(void)
 {
 	hfs_callbacks	callbacks;
 
-#ifdef HFS_DEBUG	
+#ifdef HFS_DEBUG
 	printf("vfsop = hfs_init()\n");
 #endif /* HFS_DEBUG */
 
 	malloc_type_attach(M_HFSMNT);
+	pool_init(&hfs_node_pool, sizeof(struct hfsnode), 0, 0, 0, "hfsndpl",
+	    &pool_allocator_nointr, IPL_NONE);
 
 	callbacks.error = hfs_libcb_error;
 	callbacks.allocmem = hfs_libcb_malloc;
@@ -686,15 +654,13 @@ hfs_init(void)
 	callbacks.closevol = hfs_libcb_closedev;
 	callbacks.read = hfs_libcb_read;
 
-	hfs_nhashinit();
 	hfslib_init(&callbacks);
 }
 
 void
 hfs_reinit(void)
 {
-
-#ifdef HFS_DEBUG	
+#ifdef HFS_DEBUG
 	printf("vfsop = hfs_reinit()\n");
 #endif /* HFS_DEBUG */
 
@@ -704,22 +670,19 @@ hfs_reinit(void)
 void
 hfs_done(void)
 {
-
-#ifdef HFS_DEBUG	
+#ifdef HFS_DEBUG
 	printf("vfsop = hfs_done()\n");
 #endif /* HFS_DEBUG */
 
 	malloc_type_detach(M_HFSMNT);
-
+	pool_destroy(&hfs_node_pool);
 	hfslib_done();
-	hfs_nhashdone();
 }
 
 int
 hfs_mountroot(void)
 {
-
-#ifdef HFS_DEBUG	
+#ifdef HFS_DEBUG
 	printf("vfsop = hfs_mountroot()\n");
 #endif /* HFS_DEBUG */
 

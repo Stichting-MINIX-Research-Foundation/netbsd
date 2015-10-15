@@ -1,4 +1,4 @@
-/*	$NetBSD: pci_gio.c,v 1.11 2012/10/27 17:18:09 chs Exp $	*/
+/*	$NetBSD: pci_gio.c,v 1.15 2015/10/02 05:22:52 msaitoh Exp $	*/
 
 /*
  * Copyright (c) 2006 Stephen M. Rumble
@@ -25,7 +25,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: pci_gio.c,v 1.11 2012/10/27 17:18:09 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: pci_gio.c,v 1.15 2015/10/02 05:22:52 msaitoh Exp $");
 
 /*
  * Glue for PCI devices that are connected to the GIO bus by various little
@@ -82,7 +82,8 @@ static int	giopci_conf_hook(pci_chipset_tag_t, int, int, int, pcireg_t);
 static int	giopci_intr_map(const struct pci_attach_args *,
 		    pci_intr_handle_t *);
 static const char *
-		giopci_intr_string(pci_chipset_tag_t, pci_intr_handle_t);
+		giopci_intr_string(pci_chipset_tag_t, pci_intr_handle_t,
+		    char *, size_t);
 static void    *giopci_intr_establish(int, int, int (*)(void *), void *);
 static void	giopci_intr_disestablish(void *);
 
@@ -100,6 +101,10 @@ static void	giopci_intr_disestablish(void *);
 
 CFATTACH_DECL_NEW(giopci, sizeof(struct giopci_softc),
     giopci_match, giopci_attach, NULL, NULL);
+
+static void pcimem_bus_mem_init(bus_space_tag_t, void *);
+static struct mips_bus_space	pcimem_mbst;
+bus_space_tag_t	gio_pci_memt = NULL;
 
 static int
 giopci_match(device_t parent, cfdata_t match, void *aux)
@@ -143,6 +148,9 @@ giopci_attach(device_t parent, device_t self, void *aux)
 	sc->sc_iot	= ga->ga_iot;
 	sc->sc_slot	= ga->ga_slot;
 	sc->sc_gprid	= GIO_PRODUCT_PRODUCTID(ga->ga_product);
+
+	pcimem_bus_mem_init(&pcimem_mbst, NULL);
+	gio_pci_memt = &pcimem_mbst;
 
 	if (mach_type == MACH_SGI_IP22 &&
 	    mach_subtype == MACH_SGI_IP22_FULLHOUSE)
@@ -219,7 +227,7 @@ giopci_attach(device_t parent, device_t self, void *aux)
 #endif
 
 	memset(&pba, 0, sizeof(pba));
-	pba.pba_memt	= SGIMIPS_BUS_SPACE_MEM;
+	pba.pba_memt	= gio_pci_memt;
 	pba.pba_dmat	= ga->ga_dmat;
 	pba.pba_pc	= pc;
 	pba.pba_flags	= PCI_FLAGS_MEM_OKAY;
@@ -241,6 +249,9 @@ giopci_conf_read(pci_chipset_tag_t pc, pcitag_t tag, int reg)
 	struct giopci_softc *sc = pc->cookie;
 	int bus, dev, func;
 	pcireg_t data;
+
+	if ((unsigned int)reg >= PCI_CONF_SIZE)
+		return (pcireg_t) -1;
 
 	pci_decompose_tag(pc, tag, &bus, &dev, &func);
 	if (bus != 0 || dev != 0 || func != 0)
@@ -264,6 +275,9 @@ giopci_conf_write(pci_chipset_tag_t pc, pcitag_t tag, int reg, pcireg_t data)
 {
 	struct giopci_softc *sc = pc->cookie;
 	int bus, dev, func;
+
+	if ((unsigned int)reg >= PCI_CONF_SIZE)
+		return;
 
 	pci_decompose_tag(pc, tag, &bus, &dev, &func);
 	if (bus != 0 || dev != 0 || func != 0)
@@ -300,14 +314,12 @@ giopci_intr_map(const struct pci_attach_args *pa, pci_intr_handle_t *ihp)
 }
 
 static const char *
-giopci_intr_string(pci_chipset_tag_t pc, pci_intr_handle_t ih)
+giopci_intr_string(pci_chipset_tag_t pc, pci_intr_handle_t ih, char * buf,
+    size_t len)
 {
-	static char str[10];
-
-	snprintf(str, sizeof(str), "slot %s",
-	    (ih == GIO_SLOT_EXP0) ? "EXP0" :
+	snprintf(buf, len, "slot %s", (ih == GIO_SLOT_EXP0) ? "EXP0" :
 	    (ih == GIO_SLOT_EXP1) ? "EXP1" : "GFX");
-	return (str);
+	return buf;
 }
 
 static void *
@@ -323,3 +335,14 @@ giopci_intr_disestablish(void *cookie)
 
 	panic("giopci_intr_disestablish: impossible.");
 }
+
+#define CHIP	   		pcimem
+#define	CHIP_MEM		/* defined */
+#define CHIP_WRONG_ENDIAN
+
+#define	CHIP_W1_BUS_START(v)	0x00000000UL
+#define CHIP_W1_BUS_END(v)	0xffffffffUL
+#define	CHIP_W1_SYS_START(v)	0x00000000UL
+#define	CHIP_W1_SYS_END(v)	0xffffffffUL
+
+#include <mips/mips/bus_space_alignstride_chipdep.c>

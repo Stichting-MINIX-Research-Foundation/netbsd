@@ -1,4 +1,4 @@
-/*	$NetBSD: sdmmc.c,v 1.21 2013/10/12 16:49:01 christos Exp $	*/
+/*	$NetBSD: sdmmc.c,v 1.31 2015/08/09 13:18:46 mlelstv Exp $	*/
 /*	$OpenBSD: sdmmc.c,v 1.18 2009/01/09 10:58:38 jsg Exp $	*/
 
 /*
@@ -49,7 +49,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: sdmmc.c,v 1.21 2013/10/12 16:49:01 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: sdmmc.c,v 1.31 2015/08/09 13:18:46 mlelstv Exp $");
 
 #ifdef _KERNEL_OPT
 #include "opt_sdmmc.h"
@@ -72,7 +72,7 @@ __KERNEL_RCSID(0, "$NetBSD: sdmmc.c,v 1.21 2013/10/12 16:49:01 christos Exp $");
 #include <dev/sdmmc/sdmmcvar.h>
 
 #ifdef SDMMC_DEBUG
-int sdmmcdebug = 1;
+int sdmmcdebug = 0;
 static void sdmmc_dump_command(struct sdmmc_softc *, struct sdmmc_command *);
 #define DPRINTF(n,s)	do { if ((n) <= sdmmcdebug) printf s; } while (0)
 #else
@@ -141,12 +141,6 @@ sdmmc_attach(device_t parent, device_t self, void *aux)
 		}
 	}
 
-	if (ISSET(sc->sc_caps, SMC_CAPS_POLL_CARD_DET)) {
-		callout_init(&sc->sc_card_detect_ch, 0);
-		callout_reset(&sc->sc_card_detect_ch, hz,
-		    sdmmc_polling_card, sc);
-	}
-
 	SIMPLEQ_INIT(&sc->sf_head);
 	TAILQ_INIT(&sc->sc_tskq);
 	TAILQ_INIT(&sc->sc_intrq);
@@ -154,11 +148,17 @@ sdmmc_attach(device_t parent, device_t self, void *aux)
 	sdmmc_init_task(&sc->sc_discover_task, sdmmc_discover_task, sc);
 	sdmmc_init_task(&sc->sc_intr_task, sdmmc_intr_task, sc);
 
-	mutex_init(&sc->sc_mtx, MUTEX_DEFAULT, IPL_SDMMC);
+	mutex_init(&sc->sc_mtx, MUTEX_DEFAULT, IPL_NONE);
 	mutex_init(&sc->sc_tskq_mtx, MUTEX_DEFAULT, IPL_SDMMC);
 	mutex_init(&sc->sc_discover_task_mtx, MUTEX_DEFAULT, IPL_SDMMC);
 	mutex_init(&sc->sc_intr_task_mtx, MUTEX_DEFAULT, IPL_SDMMC);
 	cv_init(&sc->sc_tskq_cv, "mmctaskq");
+
+	if (ISSET(sc->sc_caps, SMC_CAPS_POLL_CARD_DET)) {
+		callout_init(&sc->sc_card_detect_ch, 0);
+		callout_reset(&sc->sc_card_detect_ch, hz,
+		    sdmmc_polling_card, sc);
+	}
 
 	if (!pmf_device_register(self, NULL, NULL)) {
 		aprint_error_dev(self, "couldn't establish power handler\n");
@@ -198,6 +198,17 @@ sdmmc_detach(device_t self, int flags)
 		bus_dmamap_destroy(sc->sc_dmat, sc->sc_dmap);
 	}
 
+	if (ISSET(sc->sc_caps, SMC_CAPS_POLL_CARD_DET)) {
+		callout_halt(&sc->sc_card_detect_ch, NULL);
+		callout_destroy(&sc->sc_card_detect_ch);
+	}
+
+	cv_destroy(&sc->sc_tskq_cv);
+	mutex_destroy(&sc->sc_intr_task_mtx);
+	mutex_destroy(&sc->sc_discover_task_mtx);
+	mutex_destroy(&sc->sc_tskq_mtx);
+	mutex_destroy(&sc->sc_mtx);
+
 	return 0;
 }
 
@@ -206,7 +217,7 @@ sdmmc_doattach(device_t dev)
 {
 	struct sdmmc_softc *sc = device_private(dev);
 
-	if (kthread_create(PRI_NONE, KTHREAD_MPSAFE, NULL,
+	if (kthread_create(PRI_BIO, 0, NULL,
 	    sdmmc_task_thread, sc, &sc->sc_tskq_lwp, "%s", device_xname(dev))) {
 		aprint_error_dev(dev, "couldn't create task thread\n");
 	}
@@ -304,19 +315,28 @@ static void
 sdmmc_discover_task(void *arg)
 {
 	struct sdmmc_softc *sc = (struct sdmmc_softc *)arg;
+	int card_detect, card_present;
 
-	if (sdmmc_chip_card_detect(sc->sc_sct, sc->sc_sch)) {
-		if (!ISSET(sc->sc_flags, SMF_CARD_PRESENT)) {
-			SET(sc->sc_flags, SMF_CARD_PRESENT);
+	mutex_enter(&sc->sc_discover_task_mtx);
+	card_detect = sdmmc_chip_card_detect(sc->sc_sct, sc->sc_sch);
+	card_present = ISSET(sc->sc_flags, SMF_CARD_PRESENT);
+	if (card_detect)
+		SET(sc->sc_flags, SMF_CARD_PRESENT);
+	else
+		CLR(sc->sc_flags, SMF_CARD_PRESENT);
+	mutex_exit(&sc->sc_discover_task_mtx);
+
+	if (card_detect) {
+		if (!card_present) {
 			sdmmc_card_attach(sc);
+			mutex_enter(&sc->sc_discover_task_mtx);
 			if (!ISSET(sc->sc_flags, SMF_CARD_ATTACHED))
 				CLR(sc->sc_flags, SMF_CARD_PRESENT);
+			mutex_exit(&sc->sc_discover_task_mtx);
 		}
 	} else {
-		if (ISSET(sc->sc_flags, SMF_CARD_PRESENT)) {
-			CLR(sc->sc_flags, SMF_CARD_PRESENT);
+		if (card_present)
 			sdmmc_card_detach(sc, DETACH_FORCE);
-		}
 	}
 }
 
@@ -324,21 +344,15 @@ static void
 sdmmc_polling_card(void *arg)
 {
 	struct sdmmc_softc *sc = (struct sdmmc_softc *)arg;
-	int card_detect;
-	int s;
+	int card_detect, card_present;
 
-	s = splsdmmc();
+	mutex_enter(&sc->sc_discover_task_mtx);
 	card_detect = sdmmc_chip_card_detect(sc->sc_sct, sc->sc_sch);
-	if (card_detect) {
-		if (!ISSET(sc->sc_flags, SMF_CARD_PRESENT)) {
-			sdmmc_needs_discover(sc->sc_dev);
-		}
-	} else {
-		if (ISSET(sc->sc_flags, SMF_CARD_PRESENT)) {
-			sdmmc_needs_discover(sc->sc_dev);
-		}
-	}
-	splx(s);
+	card_present = ISSET(sc->sc_flags, SMF_CARD_PRESENT);
+	mutex_exit(&sc->sc_discover_task_mtx);
+
+	if (card_detect != card_present)
+		sdmmc_needs_discover(sc->sc_dev);
 
 	callout_schedule(&sc->sc_card_detect_ch, hz);
 }
@@ -513,7 +527,8 @@ sdmmc_enable(struct sdmmc_softc *sc)
 	/*
 	 * Select the minimum clock frequency.
 	 */
-	error = sdmmc_chip_bus_clock(sc->sc_sct, sc->sc_sch, SDMMC_SDCLK_400K);
+	error = sdmmc_chip_bus_clock(sc->sc_sct, sc->sc_sch, SDMMC_SDCLK_400K,
+	    false);
 	if (error) {
 		aprint_error_dev(sc->sc_dev, "couldn't supply clock\n");
 		goto out;
@@ -559,7 +574,8 @@ sdmmc_disable(struct sdmmc_softc *sc)
 
 	/* Turn off bus power and clock. */
 	(void)sdmmc_chip_bus_width(sc->sc_sct, sc->sc_sch, 1);
-	(void)sdmmc_chip_bus_clock(sc->sc_sct, sc->sc_sch, SDMMC_SDCLK_OFF);
+	(void)sdmmc_chip_bus_clock(sc->sc_sct, sc->sc_sch, SDMMC_SDCLK_OFF,
+	    false);
 	(void)sdmmc_chip_bus_power(sc->sc_sct, sc->sc_sch, 0);
 	sc->sc_busclk = sc->sc_clkmax;
 }
@@ -615,25 +631,31 @@ sdmmc_function_alloc(struct sdmmc_softc *sc)
 		bus_dma_segment_t ds;
 		int rseg, error;
 
-		error = bus_dmamap_create(sc->sc_dmat, SDMMC_SECTOR_SIZE, 1,
-		    SDMMC_SECTOR_SIZE, 0, BUS_DMA_WAITOK, &sf->bbuf_dmap);
+		error = bus_dmamap_create(sc->sc_dmat, MAXPHYS, 1,
+		    MAXPHYS, 0, BUS_DMA_WAITOK, &sf->bbuf_dmap);
 		if (error)
 			goto fail1;
-		error = bus_dmamem_alloc(sc->sc_dmat, SDMMC_SECTOR_SIZE,
+		error = bus_dmamem_alloc(sc->sc_dmat, MAXPHYS,
 		    PAGE_SIZE, 0, &ds, 1, &rseg, BUS_DMA_WAITOK);
 		if (error)
 			goto fail2;
-		error = bus_dmamem_map(sc->sc_dmat, &ds, 1, SDMMC_SECTOR_SIZE,
+		error = bus_dmamem_map(sc->sc_dmat, &ds, 1, MAXPHYS,
 		    &sf->bbuf, BUS_DMA_WAITOK);
 		if (error)
 			goto fail3;
 		error = bus_dmamap_load(sc->sc_dmat, sf->bbuf_dmap,
-		    sf->bbuf, SDMMC_SECTOR_SIZE, NULL,
+		    sf->bbuf, MAXPHYS, NULL,
 		    BUS_DMA_WAITOK|BUS_DMA_READ|BUS_DMA_WRITE);
+		if (error)
+			goto fail4;
+		error = bus_dmamap_create(sc->sc_dmat, MAXPHYS, 1,
+		    MAXPHYS, 0, BUS_DMA_WAITOK, &sf->sseg_dmap);
 		if (!error)
 			goto out;
 
-		bus_dmamem_unmap(sc->sc_dmat, sf->bbuf, SDMMC_SECTOR_SIZE);
+		bus_dmamap_unload(sc->sc_dmat, sf->bbuf_dmap);
+fail4:
+		bus_dmamem_unmap(sc->sc_dmat, sf->bbuf, MAXPHYS);
 fail3:
 		bus_dmamem_free(sc->sc_dmat, &ds, 1);
 fail2:
@@ -655,8 +677,9 @@ sdmmc_function_free(struct sdmmc_function *sf)
 	if (ISSET(sc->sc_flags, SMF_MEM_MODE) &&
 	    ISSET(sc->sc_caps, SMC_CAPS_DMA) &&
 	    !ISSET(sc->sc_caps, SMC_CAPS_MULTI_SEG_DMA)) {
+		bus_dmamap_destroy(sc->sc_dmat, sf->sseg_dmap);
 		bus_dmamap_unload(sc->sc_dmat, sf->bbuf_dmap);
-		bus_dmamem_unmap(sc->sc_dmat, sf->bbuf, SDMMC_SECTOR_SIZE);
+		bus_dmamem_unmap(sc->sc_dmat, sf->bbuf, MAXPHYS);
 		bus_dmamem_free(sc->sc_dmat,
 		    sf->bbuf_dmap->dm_segs, sf->bbuf_dmap->dm_nsegs);
 		bus_dmamap_destroy(sc->sc_dmat, sf->bbuf_dmap);
@@ -745,13 +768,8 @@ sdmmc_app_command(struct sdmmc_softc *sc, struct sdmmc_function *sf, struct sdmm
 
 	memset(&acmd, 0, sizeof(acmd));
 	acmd.c_opcode = MMC_APP_CMD;
-	if (sf != NULL) {
-		acmd.c_arg = sf->rca << 16;
-		acmd.c_flags = SCF_CMD_AC | SCF_RSP_R1 | SCF_RSP_SPI_R1;
-	} else {
-		acmd.c_arg = 0;
-		acmd.c_flags = SCF_CMD_BCR | SCF_RSP_R1 | SCF_RSP_SPI_R1;
-	}
+	acmd.c_arg = (sf != NULL) ? (sf->rca << 16) : 0;
+	acmd.c_flags = SCF_CMD_AC | SCF_RSP_R1 | SCF_RSP_SPI_R1;
 
 	error = sdmmc_mmc_command(sc, &acmd);
 	if (error == 0) {
@@ -799,7 +817,32 @@ sdmmc_mmc_command(struct sdmmc_softc *sc, struct sdmmc_command *cmd)
 
 	DPRINTF(1,("sdmmc_mmc_command: error=%d\n", error));
 
+	if (error &&
+	   (cmd->c_opcode == MMC_READ_BLOCK_MULTIPLE ||
+	    cmd->c_opcode == MMC_WRITE_BLOCK_MULTIPLE)) {
+		sdmmc_stop_transmission(sc);
+	}
+
 	return error;
+}
+
+/*
+ * Send the "STOP TRANSMISSION" command
+ */
+void
+sdmmc_stop_transmission(struct sdmmc_softc *sc)
+{
+	struct sdmmc_command cmd;
+
+	DPRINTF(1,("sdmmc_stop_transmission\n"));
+
+	/* Don't lock */
+
+	memset(&cmd, 0, sizeof(cmd));
+	cmd.c_opcode = MMC_STOP_TRANSMISSION;
+	cmd.c_flags = SCF_CMD_AC | SCF_RSP_R1B | SCF_RSP_SPI_R1B;
+
+	(void)sdmmc_mmc_command(sc, &cmd);
 }
 
 /*
@@ -832,8 +875,11 @@ sdmmc_set_relative_addr(struct sdmmc_softc *sc, struct sdmmc_function *sf)
 
 	/* Don't lock */
 
-	if (ISSET(sc->sc_caps, SMC_CAPS_SPI_MODE))
+	if (ISSET(sc->sc_caps, SMC_CAPS_SPI_MODE)) {
+		aprint_error_dev(sc->sc_dev,
+			"sdmmc_set_relative_addr: SMC_CAPS_SPI_MODE set");
 		return EIO;
+	}
 
 	memset(&cmd, 0, sizeof(cmd));
 	if (ISSET(sc->sc_flags, SMF_SD_MODE)) {
@@ -862,8 +908,11 @@ sdmmc_select_card(struct sdmmc_softc *sc, struct sdmmc_function *sf)
 
 	/* Don't lock */
 
-	if (ISSET(sc->sc_caps, SMC_CAPS_SPI_MODE))
+	if (ISSET(sc->sc_caps, SMC_CAPS_SPI_MODE)) {
+		aprint_error_dev(sc->sc_dev,
+			"sdmmc_select_card: SMC_CAPS_SPI_MODE set");
 		return EIO;
+	}
 
 	if (sc->sc_card == sf
 	 || (sf && sc->sc_card && sc->sc_card->rca == sf->rca)) {

@@ -1,4 +1,4 @@
-# $NetBSD: GENERIC,v 1.19 2013/06/30 21:38:55 rmind Exp $
+# $NetBSD: GENERIC,v 1.25 2015/08/12 07:53:57 maxv Exp $
 #
 # GENERIC machine description file
 # 
@@ -22,7 +22,7 @@ include "arch/amigappc/conf/std.amigappc"
 
 options 	INCLUDE_CONFIG_FILE     # embed config file in kernel binary
 
-#ident          "GENERIC-$Revision: 1.19 $"
+#ident          "GENERIC-$Revision: 1.25 $"
 
 maxusers	8
 
@@ -66,9 +66,8 @@ options 	SYSVSEM		# System V-like semaphores
 #options 	DIAGNOSTIC	# Extra kernel sanity checks
 #options 	DEBUG		# Enable misc. kernel debugging code
 #options 	DEBUG_KERNEL_START
-#options 	KMEMSTATS	# kernel memory statistics (vmstat -m)
 options 	DDB		# in-kernel debugger
-#options 	DDB_ONPANIC=1	# see also sysctl(8): `ddb.onpanic'
+#options 	DDB_ONPANIC=1	# see also sysctl(7): `ddb.onpanic'
 options 	DDB_HISTORY_SIZE=512	# Enable history editing in DDB
 #options 	SCSIDEBUG	# Add SCSI debugging statements
 #options 	SERCONSOLE	# console via Amiga serial port
@@ -86,10 +85,11 @@ options 	COMPAT_14	# NetBSD 1.4,
 options 	COMPAT_15	# NetBSD 1.5,
 options 	COMPAT_16	# NetBSD 1.6,
 options 	COMPAT_20	# NetBSD 2.0,
-options 	COMPAT_30	# NetBSD 3.0 compatibility.
-options 	COMPAT_40	# NetBSD 4.0 compatibility.
-options 	COMPAT_50	# NetBSD 5.0 compatibility.
-options 	COMPAT_60	# NetBSD 6.0 compatibility.
+options 	COMPAT_30	# NetBSD 3.0,
+options 	COMPAT_40	# NetBSD 4.0,
+options 	COMPAT_50	# NetBSD 5.0,
+options 	COMPAT_60	# NetBSD 6.0, and
+options 	COMPAT_70	# NetBSD 7.0 binary compatibility.
 options 	COMPAT_43	# and 4.3BSD
 #options 	COMPAT_386BSD_MBRPART # recognize old partition ID
 #options 	COMPAT_LINUX	# Linux binary compatibility
@@ -128,6 +128,7 @@ options 	QUOTA2		# new, in-filesystem UFS quotas
 #options	UFS_DIRHASH	# UFS Large Directory Hashing - Experimental
 options 	NFSSERVER	# Network File System server side code
 #options 	FFS_NO_SNAPSHOT	# No FFS snapshot support
+options 	UFS_EXTATTR	# Extended attribute support for UFS1
 #options 	EXT2FS_SYSTEM_FLAGS # makes ext2fs file flags (append and
 				# immutable) behave as system flags.
 

@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.268 2013/11/28 22:34:44 christos Exp $
+#	$NetBSD: Makefile,v 1.271 2015/08/17 06:42:46 knakahara Exp $
 #	from: @(#)Makefile	5.20 (Berkeley) 6/12/93
 
 .include <bsd.own.mk>
@@ -11,7 +11,7 @@ SUBDIR=	ac accton acpitools altq apm apmd arp \
 	flashctl fssconfig fusermount fwctl \
 	gpioctl grfconfig gspa \
 	hdaudioctl \
-	i2cscan ifwatchd inetd installboot iopctl iostat ipwctl irdaattach \
+	i2cscan ifwatchd inetd installboot intrctl iopctl iostat ipwctl irdaattach \
 	isdn isibootd iteconfig iwictl \
 	kgmon \
 	lastlogin ldpd link lmcconfig lockstat lpr \
@@ -24,8 +24,9 @@ SUBDIR=	ac accton acpitools altq apm apmd arp \
 	quot quotacheck quotaon quotarestore \
 	rarpd rbootd rdate repquota rmt rpc.bootparamd rpc.lockd \
 	rpc.pcnfsd rpc.statd rpcbind rwhod \
-	sa screenblank sdpd services_mkdb sesd schedctl sliplogin spray \
-	srtconfig sti sunlabel sup syslogd \
+	sa screenblank sdpd service services_mkdb sesd schedctl \
+	sliplogin spray \
+	srtconfig sti sunlabel sup sysinst syslogd \
 	tadpolectl tcpdchk tcpdmatch tcpdrop timed tpctl tprof traceroute trpt \
 	unlink usbdevs user \
 	videomode vipw veriexecgen vnconfig \

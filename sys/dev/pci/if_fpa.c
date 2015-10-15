@@ -1,4 +1,4 @@
-/*	$NetBSD: if_fpa.c,v 1.58 2012/10/27 17:18:32 chs Exp $	*/
+/*	$NetBSD: if_fpa.c,v 1.60 2015/01/25 07:33:24 martin Exp $	*/
 
 /*-
  * Copyright (c) 1995, 1996 Matt Thomas <matt@3am-software.com>
@@ -34,7 +34,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_fpa.c,v 1.58 2012/10/27 17:18:32 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_fpa.c,v 1.60 2015/01/25 07:33:24 martin Exp $");
 
 #ifdef __NetBSD__
 #include "opt_inet.h"
@@ -406,8 +406,11 @@ pdq_pci_attach(device_t const parent, device_t const self, void *const aux)
     bus_space_tag_t iot, memt;
     bus_space_handle_t ioh, memh;
     int ioh_valid, memh_valid;
+    char intrbuf[PCI_INTRSTR_LEN];
 
     aprint_naive(": FDDI controller\n");
+
+    sc->sc_dev = self;
 
     data = pci_conf_read(pa->pa_pc, pa->pa_tag, PCI_CFLT);
     if ((data & 0xFF00) < (DEFPA_LATENCY << 8)) {
@@ -470,7 +473,7 @@ pdq_pci_attach(device_t const parent, device_t const self, void *const aux)
 	aprint_error_dev(self, "couldn't map interrupt\n");
 	return;
     }
-    intrstr = pci_intr_string(pa->pa_pc, intrhandle);
+    intrstr = pci_intr_string(pa->pa_pc, intrhandle, intrbuf, sizeof(intrbuf));
     sc->sc_ih = pci_intr_establish(pa->pa_pc, intrhandle, IPL_NET, pdq_pci_ifintr, sc);
     if (sc->sc_ih == NULL) {
 	aprint_error_dev(self, "couldn't establish interrupt");

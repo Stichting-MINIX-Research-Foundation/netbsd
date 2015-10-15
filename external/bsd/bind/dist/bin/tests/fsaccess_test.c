@@ -1,4 +1,4 @@
-/*	$NetBSD: fsaccess_test.c,v 1.5 2013/07/27 19:23:10 christos Exp $	*/
+/*	$NetBSD: fsaccess_test.c,v 1.8 2014/12/10 04:37:53 christos Exp $	*/
 
 /*
  * Copyright (C) 2004, 2005, 2007, 2012  Internet Systems Consortium, Inc. ("ISC")
@@ -41,11 +41,6 @@ main(void) {
 	isc_result_t result;
 	FILE *fp;
 	int n;
-
-	isc__mem_register();
-	isc__task_register();
-	isc__timer_register();
-	isc__socket_register();
 
 	n = remove(PATH);
 	if (n != 0 && errno != ENOENT) {

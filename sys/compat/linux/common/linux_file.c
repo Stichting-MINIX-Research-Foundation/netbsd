@@ -1,4 +1,4 @@
-/*	$NetBSD: linux_file.c,v 1.106 2013/11/18 01:32:52 chs Exp $	*/
+/*	$NetBSD: linux_file.c,v 1.115 2015/03/01 13:19:39 njoly Exp $	*/
 
 /*-
  * Copyright (c) 1995, 1998, 2008 The NetBSD Foundation, Inc.
@@ -35,7 +35,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: linux_file.c,v 1.106 2013/11/18 01:32:52 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: linux_file.c,v 1.115 2015/03/01 13:19:39 njoly Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -48,7 +48,6 @@ __KERNEL_RCSID(0, "$NetBSD: linux_file.c,v 1.106 2013/11/18 01:32:52 chs Exp $")
 #include <sys/ioctl.h>
 #include <sys/kernel.h>
 #include <sys/mount.h>
-#include <sys/malloc.h>
 #include <sys/namei.h>
 #include <sys/vnode.h>
 #include <sys/tty.h>
@@ -69,7 +68,6 @@ __KERNEL_RCSID(0, "$NetBSD: linux_file.c,v 1.106 2013/11/18 01:32:52 chs Exp $")
 
 #include <compat/linux/linux_syscallargs.h>
 
-static int linux_to_bsd_ioflags(int);
 static int bsd_to_linux_ioflags(int);
 #ifndef __amd64__
 static void bsd_to_linux_stat(struct stat *, struct linux_stat *);
@@ -86,7 +84,7 @@ conv_linux_flock(linux, flock)
  * The next two functions convert between the Linux and NetBSD values
  * of the flags used in open(2) and fcntl(2).
  */
-static int
+int
 linux_to_bsd_ioflags(int lflags)
 {
 	int res = 0;
@@ -94,15 +92,19 @@ linux_to_bsd_ioflags(int lflags)
 	res |= cvtto_bsd_mask(lflags, LINUX_O_WRONLY, O_WRONLY);
 	res |= cvtto_bsd_mask(lflags, LINUX_O_RDONLY, O_RDONLY);
 	res |= cvtto_bsd_mask(lflags, LINUX_O_RDWR, O_RDWR);
+
 	res |= cvtto_bsd_mask(lflags, LINUX_O_CREAT, O_CREAT);
 	res |= cvtto_bsd_mask(lflags, LINUX_O_EXCL, O_EXCL);
 	res |= cvtto_bsd_mask(lflags, LINUX_O_NOCTTY, O_NOCTTY);
 	res |= cvtto_bsd_mask(lflags, LINUX_O_TRUNC, O_TRUNC);
+	res |= cvtto_bsd_mask(lflags, LINUX_O_APPEND, O_APPEND);
+	res |= cvtto_bsd_mask(lflags, LINUX_O_NONBLOCK, O_NONBLOCK);
 	res |= cvtto_bsd_mask(lflags, LINUX_O_NDELAY, O_NDELAY);
 	res |= cvtto_bsd_mask(lflags, LINUX_O_SYNC, O_FSYNC);
 	res |= cvtto_bsd_mask(lflags, LINUX_FASYNC, O_ASYNC);
-	res |= cvtto_bsd_mask(lflags, LINUX_O_APPEND, O_APPEND);
+	res |= cvtto_bsd_mask(lflags, LINUX_O_DIRECT, O_DIRECT);
 	res |= cvtto_bsd_mask(lflags, LINUX_O_DIRECTORY, O_DIRECTORY);
+	res |= cvtto_bsd_mask(lflags, LINUX_O_NOFOLLOW, O_NOFOLLOW);
 	res |= cvtto_bsd_mask(lflags, LINUX_O_CLOEXEC, O_CLOEXEC);
 
 	return res;
@@ -116,15 +118,19 @@ bsd_to_linux_ioflags(int bflags)
 	res |= cvtto_linux_mask(bflags, O_WRONLY, LINUX_O_WRONLY);
 	res |= cvtto_linux_mask(bflags, O_RDONLY, LINUX_O_RDONLY);
 	res |= cvtto_linux_mask(bflags, O_RDWR, LINUX_O_RDWR);
+
 	res |= cvtto_linux_mask(bflags, O_CREAT, LINUX_O_CREAT);
 	res |= cvtto_linux_mask(bflags, O_EXCL, LINUX_O_EXCL);
 	res |= cvtto_linux_mask(bflags, O_NOCTTY, LINUX_O_NOCTTY);
 	res |= cvtto_linux_mask(bflags, O_TRUNC, LINUX_O_TRUNC);
+	res |= cvtto_linux_mask(bflags, O_APPEND, LINUX_O_APPEND);
+	res |= cvtto_linux_mask(bflags, O_NONBLOCK, LINUX_O_NONBLOCK);
 	res |= cvtto_linux_mask(bflags, O_NDELAY, LINUX_O_NDELAY);
 	res |= cvtto_linux_mask(bflags, O_FSYNC, LINUX_O_SYNC);
 	res |= cvtto_linux_mask(bflags, O_ASYNC, LINUX_FASYNC);
-	res |= cvtto_linux_mask(bflags, O_APPEND, LINUX_O_APPEND);
+	res |= cvtto_linux_mask(bflags, O_DIRECT, LINUX_O_DIRECT);
 	res |= cvtto_linux_mask(bflags, O_DIRECTORY, LINUX_O_DIRECTORY);
+	res |= cvtto_linux_mask(bflags, O_NOFOLLOW, LINUX_O_NOFOLLOW);
 	res |= cvtto_linux_mask(bflags, O_CLOEXEC, LINUX_O_CLOEXEC);
 
 	return res;
@@ -144,7 +150,7 @@ linux_sys_creat(struct lwp *l, const struct linux_sys_creat_args *uap, register_
 {
 	/* {
 		syscallarg(const char *) path;
-		syscallarg(int) mode;
+		syscallarg(linux_umode_t) mode;
 	} */
 	struct sys_open_args oa;
 
@@ -193,7 +199,7 @@ linux_sys_open(struct lwp *l, const struct linux_sys_open_args *uap, register_t 
 	/* {
 		syscallarg(const char *) path;
 		syscallarg(int) flags;
-		syscallarg(int) mode;
+		syscallarg(linux_umode_t) mode;
 	} */
 	int error, fl;
 	struct sys_open_args boa;
@@ -205,7 +211,7 @@ linux_sys_open(struct lwp *l, const struct linux_sys_open_args *uap, register_t 
 	SCARG(&boa, mode) = SCARG(uap, mode);
 
 	if ((error = sys_open(l, &boa, retval)))
-		return error;
+		return (error == EFTYPE) ? ELOOP : error;
 
 	linux_open_ctty(l, fl, *retval);
 	return 0;
@@ -215,9 +221,10 @@ int
 linux_sys_openat(struct lwp *l, const struct linux_sys_openat_args *uap, register_t *retval)
 {
 	/* {
+		syscallarg(int) fd;
 		syscallarg(const char *) path;
 		syscallarg(int) flags;
-		syscallarg(int) mode;
+		syscallarg(linux_umode_t) mode;
 	} */
 	int error, fl;
 	struct sys_openat_args boa;
@@ -230,7 +237,7 @@ linux_sys_openat(struct lwp *l, const struct linux_sys_openat_args *uap, registe
 	SCARG(&boa, mode) = SCARG(uap, mode);
 
 	if ((error = sys_openat(l, &boa, retval)))
-		return error;
+		return (error == EFTYPE) ? ELOOP : error;
 
 	linux_open_ctty(l, fl, *retval);
 	return 0;
@@ -409,6 +416,10 @@ linux_sys_fcntl(struct lwp *l, const struct linux_sys_fcntl_args *uap, register_
 		tp->t_pgrp = pgrp;
 		mutex_exit(proc_lock);
 		return 0;
+
+	case LINUX_F_DUPFD_CLOEXEC:
+		cmd = F_DUPFD_CLOEXEC;
+		break;
 
 	default:
 		return EOPNOTSUPP;
@@ -738,13 +749,14 @@ linux_sys_pread(struct lwp *l, const struct linux_sys_pread_args *uap, register_
 		syscallarg(int) fd;
 		syscallarg(void *) buf;
 		syscallarg(size_t) nbyte;
-		syscallarg(linux_off_t) offset;
+		syscallarg(off_t) offset;
 	} */
 	struct sys_pread_args pra;
 
 	SCARG(&pra, fd) = SCARG(uap, fd);
 	SCARG(&pra, buf) = SCARG(uap, buf);
 	SCARG(&pra, nbyte) = SCARG(uap, nbyte);
+	SCARG(&pra, PAD) = 0;
 	SCARG(&pra, offset) = SCARG(uap, offset);
 
 	return sys_pread(l, &pra, retval);
@@ -760,13 +772,14 @@ linux_sys_pwrite(struct lwp *l, const struct linux_sys_pwrite_args *uap, registe
 		syscallarg(int) fd;
 		syscallarg(void *) buf;
 		syscallarg(size_t) nbyte;
-		syscallarg(linux_off_t) offset;
+		syscallarg(off_t) offset;
 	} */
 	struct sys_pwrite_args pra;
 
 	SCARG(&pra, fd) = SCARG(uap, fd);
 	SCARG(&pra, buf) = SCARG(uap, buf);
 	SCARG(&pra, nbyte) = SCARG(uap, nbyte);
+	SCARG(&pra, PAD) = 0;
 	SCARG(&pra, offset) = SCARG(uap, offset);
 
 	return sys_pwrite(l, &pra, retval);
@@ -781,14 +794,16 @@ linux_sys_dup3(struct lwp *l, const struct linux_sys_dup3_args *uap,
 		syscallarg(int) to;
 		syscallarg(int) flags;
 	} */
-	int error;
-	if ((error = sys_dup2(l, (const struct sys_dup2_args *)uap, retval)))
-		return error;
+	int flags;
 
-	if (SCARG(uap, flags) & LINUX_O_CLOEXEC)
-		fd_set_exclose(l, SCARG(uap, to), true);
+	flags = linux_to_bsd_ioflags(SCARG(uap, flags));
+	if ((flags & ~O_CLOEXEC) != 0)
+		return EINVAL;
 
-	return 0;
+	if (SCARG(uap, from) == SCARG(uap, to))
+		return EINVAL;
+
+	return dodup(l, SCARG(uap, from), SCARG(uap, to), flags, retval);
 }
 
 

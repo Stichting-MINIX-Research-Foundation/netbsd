@@ -1,4 +1,4 @@
-/*	$NetBSD: cons.c,v 1.1 2013/01/05 17:44:24 tsutsui Exp $	*/
+/*	$NetBSD: cons.c,v 1.3 2015/02/14 05:58:02 tsutsui Exp $	*/
 
 /*
  * Copyright (c) 1992 OMRON Corporation.
@@ -126,17 +126,19 @@ cninit(void)
 int
 cngetc(void)
 {
+
 	if (cn_tab == NULL)
-		return(0);
-	return((*cn_tab->cn_getc)(cn_tab->cn_dev));
+		return 0;
+	return (*cn_tab->cn_getc)(cn_tab->cn_dev);
 }
 
 void
 cnputc(int c)
 {
+
 	if (cn_tab == NULL)
 		return;
-	if (c) {
+	if (c != 0) {
 		(*cn_tab->cn_putc)(cn_tab->cn_dev, c);
 		if (c == '\n')
 			(*cn_tab->cn_putc)(cn_tab->cn_dev, '\r');

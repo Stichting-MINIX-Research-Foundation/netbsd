@@ -24,12 +24,16 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#if HAVE_NBTOOL_CONFIG_H
+#include "nbtool_config.h"
+#endif
+
 #include <sys/cdefs.h>
 #ifdef __FBSDID
 __FBSDID("$FreeBSD: src/sbin/gpt/recover.c,v 1.8 2005/08/31 01:47:19 marcel Exp $");
 #endif
 #ifdef __RCSID
-__RCSID("$NetBSD: recover.c,v 1.4 2011/08/27 17:38:16 joerg Exp $");
+__RCSID("$NetBSD: recover.c,v 1.6 2015/06/18 01:37:23 jnemeth Exp $");
 #endif
 
 #include <sys/types.h>
@@ -60,7 +64,7 @@ usage_recover(void)
 static void
 recover(int fd)
 {
-	off_t last;
+	uint64_t last;
 	map_t *gpt, *tpg;
 	map_t *tbl, *lbt;
 	struct gpt_hdr *hdr;
@@ -87,6 +91,13 @@ recover(int fd)
 	}
 
 	last = mediasz / secsz - 1LL;
+
+	if (gpt != NULL &&
+	    ((struct gpt_hdr *)(gpt->map_data))->hdr_lba_alt != last) {
+		warnx("%s: media size has changed, please use 'gpt resizedisk'",
+		   device_name);
+		return;
+	}
 
 	if (tbl != NULL && lbt == NULL) {
 		lbt = map_add(last - tbl->map_size, tbl->map_size,

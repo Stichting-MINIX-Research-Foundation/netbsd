@@ -1,4 +1,4 @@
-/*	$NetBSD: ds1307.c,v 1.16 2012/07/25 03:07:37 matt Exp $	*/
+/*	$NetBSD: ds1307.c,v 1.21 2014/11/20 16:34:26 christos Exp $	*/
 
 /*
  * Copyright (c) 2003 Wasabi Systems, Inc.
@@ -36,7 +36,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ds1307.c,v 1.16 2012/07/25 03:07:37 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ds1307.c,v 1.21 2014/11/20 16:34:26 christos Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -51,6 +51,7 @@ __KERNEL_RCSID(0, "$NetBSD: ds1307.c,v 1.16 2012/07/25 03:07:37 matt Exp $");
 
 #include <dev/i2c/i2cvar.h>
 #include <dev/i2c/ds1307reg.h>
+#include <dev/sysmon/sysmonvar.h>
 
 struct dsrtc_model {
 	uint16_t dm_model;
@@ -63,6 +64,7 @@ struct dsrtc_model {
 	uint8_t dm_flags;
 #define	DSRTC_FLAG_CLOCK_HOLD	1
 #define	DSRTC_FLAG_BCD		2	
+#define	DSRTC_FLAG_TEMP		4	
 };
 
 static const struct dsrtc_model dsrtc_models[] = {
@@ -86,6 +88,16 @@ static const struct dsrtc_model dsrtc_models[] = {
 		.dm_rtc_size = DS1672_RTC_SIZE,
 		.dm_flags = 0,
 	}, {
+		.dm_model = 3231,
+		.dm_rtc_start = DS3232_RTC_START,
+		.dm_rtc_size = DS3232_RTC_SIZE,
+		/*
+		 * XXX
+		 * the DS3232 likely has the temperature sensor too but I can't
+		 * easily verify or test that right now
+		 */
+		.dm_flags = DSRTC_FLAG_BCD | DSRTC_FLAG_TEMP,
+	}, {
 		.dm_model = 3232,
 		.dm_rtc_start = DS3232_RTC_START,
 		.dm_rtc_size = DS3232_RTC_SIZE,
@@ -102,6 +114,8 @@ struct dsrtc_softc {
 	bool sc_open;
 	struct dsrtc_model sc_model;
 	struct todr_chip_handle sc_todr;
+	struct sysmon_envsys *sc_sme;
+	envsys_data_t sc_sensor;
 };
 
 static void	dsrtc_attach(device_t, device_t, void *);
@@ -117,8 +131,18 @@ dev_type_read(dsrtc_read);
 dev_type_write(dsrtc_write);
 
 const struct cdevsw dsrtc_cdevsw = {
-	dsrtc_open, dsrtc_close, dsrtc_read, dsrtc_write, noioctl,
-	nostop, notty, nopoll, nommap, nokqfilter, D_OTHER
+	.d_open = dsrtc_open,
+	.d_close = dsrtc_close,
+	.d_read = dsrtc_read,
+	.d_write = dsrtc_write,
+	.d_ioctl = noioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_OTHER
 };
 
 static int dsrtc_gettime_ymdhms(struct todr_chip_handle *, struct clock_ymdhms *);
@@ -130,6 +154,9 @@ static int dsrtc_gettime_timeval(struct todr_chip_handle *, struct timeval *);
 static int dsrtc_settime_timeval(struct todr_chip_handle *, struct timeval *);
 static int dsrtc_clock_read_timeval(struct dsrtc_softc *, time_t *);
 static int dsrtc_clock_write_timeval(struct dsrtc_softc *, time_t);
+
+static int dsrtc_read_temp(struct dsrtc_softc *, uint32_t *);
+static void dsrtc_refresh(struct sysmon_envsys *, envsys_data_t *);
 
 static const struct dsrtc_model *
 dsrtc_model(u_int model)
@@ -192,6 +219,35 @@ dsrtc_attach(device_t parent, device_t self, void *arg)
 	sc->sc_todr.todr_setwen = NULL;
 
 	todr_attach(&sc->sc_todr);
+	if ((sc->sc_model.dm_flags & DSRTC_FLAG_TEMP) != 0) {
+		int error;
+
+		sc->sc_sme = sysmon_envsys_create();
+		sc->sc_sme->sme_name = device_xname(self);
+		sc->sc_sme->sme_cookie = sc;
+		sc->sc_sme->sme_refresh = dsrtc_refresh;
+
+		sc->sc_sensor.units =  ENVSYS_STEMP;
+		sc->sc_sensor.state = ENVSYS_SINVALID;
+		sc->sc_sensor.flags = 0;
+		(void)strlcpy(sc->sc_sensor.desc, "temperature",
+		    sizeof(sc->sc_sensor.desc));
+
+		if (sysmon_envsys_sensor_attach(sc->sc_sme, &sc->sc_sensor)) {
+			aprint_error_dev(self, "unable to attach sensor\n");
+			goto bad;
+		}
+
+		error = sysmon_envsys_register(sc->sc_sme);
+		if (error) {
+			aprint_error_dev(self, 
+			    "error %d registering with sysmon\n", error);
+			goto bad;
+		}
+	}
+	return;
+bad:
+	sysmon_envsys_destroy(sc->sc_sme);
 }
 
 /*ARGSUSED*/
@@ -376,23 +432,23 @@ dsrtc_clock_read_ymdhms(struct dsrtc_softc *sc, struct clock_ymdhms *dt)
 	/*
 	 * Convert the RTC's register values into something useable
 	 */
-	dt->dt_sec = FROMBCD(bcd[DSXXXX_SECONDS] & DSXXXX_SECONDS_MASK);
-	dt->dt_min = FROMBCD(bcd[DSXXXX_MINUTES] & DSXXXX_MINUTES_MASK);
+	dt->dt_sec = bcdtobin(bcd[DSXXXX_SECONDS] & DSXXXX_SECONDS_MASK);
+	dt->dt_min = bcdtobin(bcd[DSXXXX_MINUTES] & DSXXXX_MINUTES_MASK);
 
 	if ((bcd[DSXXXX_HOURS] & DSXXXX_HOURS_12HRS_MODE) != 0) {
-		dt->dt_hour = FROMBCD(bcd[DSXXXX_HOURS] &
+		dt->dt_hour = bcdtobin(bcd[DSXXXX_HOURS] &
 		    DSXXXX_HOURS_12MASK) % 12; /* 12AM -> 0, 12PM -> 12 */
 		if (bcd[DSXXXX_HOURS] & DSXXXX_HOURS_12HRS_PM)
 			dt->dt_hour += 12;
 	} else
-		dt->dt_hour = FROMBCD(bcd[DSXXXX_HOURS] &
+		dt->dt_hour = bcdtobin(bcd[DSXXXX_HOURS] &
 		    DSXXXX_HOURS_24MASK);
 
-	dt->dt_day = FROMBCD(bcd[DSXXXX_DATE] & DSXXXX_DATE_MASK);
-	dt->dt_mon = FROMBCD(bcd[DSXXXX_MONTH] & DSXXXX_MONTH_MASK);
+	dt->dt_day = bcdtobin(bcd[DSXXXX_DATE] & DSXXXX_DATE_MASK);
+	dt->dt_mon = bcdtobin(bcd[DSXXXX_MONTH] & DSXXXX_MONTH_MASK);
 
 	/* XXX: Should be an MD way to specify EPOCH used by BIOS/Firmware */
-	dt->dt_year = FROMBCD(bcd[DSXXXX_YEAR]) + POSIX_BASE_YEAR;
+	dt->dt_year = bcdtobin(bcd[DSXXXX_YEAR]) + POSIX_BASE_YEAR;
 	if (bcd[DSXXXX_MONTH] & DSXXXX_MONTH_CENTURY)
 		dt->dt_year += 100;
 
@@ -412,13 +468,13 @@ dsrtc_clock_write_ymdhms(struct dsrtc_softc *sc, struct clock_ymdhms *dt)
 	 * Convert our time representation into something the DSXXXX
 	 * can understand.
 	 */
-	bcd[DSXXXX_SECONDS] = TOBCD(dt->dt_sec);
-	bcd[DSXXXX_MINUTES] = TOBCD(dt->dt_min);
-	bcd[DSXXXX_HOURS] = TOBCD(dt->dt_hour); /* DSXXXX_HOURS_12HRS_MODE=0 */
-	bcd[DSXXXX_DATE] = TOBCD(dt->dt_day);
-	bcd[DSXXXX_DAY] = TOBCD(dt->dt_wday);
-	bcd[DSXXXX_MONTH] = TOBCD(dt->dt_mon);
-	bcd[DSXXXX_YEAR] = TOBCD((dt->dt_year - POSIX_BASE_YEAR) % 100);
+	bcd[DSXXXX_SECONDS] = bintobcd(dt->dt_sec);
+	bcd[DSXXXX_MINUTES] = bintobcd(dt->dt_min);
+	bcd[DSXXXX_HOURS] = bintobcd(dt->dt_hour); /* DSXXXX_HOURS_12HRS_MODE=0 */
+	bcd[DSXXXX_DATE] = bintobcd(dt->dt_day);
+	bcd[DSXXXX_DAY] = bintobcd(dt->dt_wday);
+	bcd[DSXXXX_MONTH] = bintobcd(dt->dt_mon);
+	bcd[DSXXXX_YEAR] = bintobcd((dt->dt_year - POSIX_BASE_YEAR) % 100);
 	if (dt->dt_year - POSIX_BASE_YEAR >= 100)
 		bcd[DSXXXX_MONTH] |= DSXXXX_MONTH_CENTURY;
 
@@ -613,4 +669,57 @@ dsrtc_clock_write_timeval(struct dsrtc_softc *sc, time_t t)
 	}
 
 	return 1;
+}
+
+static int
+dsrtc_read_temp(struct dsrtc_softc *sc, uint32_t *temp)
+{
+	int error, tc;
+	uint8_t reg = DS3232_TEMP_MSB;
+	uint8_t buf[2];
+
+	if ((sc->sc_model.dm_flags & DSRTC_FLAG_TEMP) == 0)
+		return ENOTSUP;
+
+	if ((error = iic_acquire_bus(sc->sc_tag, I2C_F_POLL)) != 0) {
+		aprint_error_dev(sc->sc_dev,
+		    "%s: failed to acquire I2C bus: %d\n",
+		    __func__, error);
+		return 0;
+	}
+
+	/* read temperature registers: */
+	error = iic_exec(sc->sc_tag, I2C_OP_READ_WITH_STOP, sc->sc_address,
+	     &reg, 1, buf, 2, I2C_F_POLL);
+
+	/* Done with I2C */
+	iic_release_bus(sc->sc_tag, I2C_F_POLL);
+
+	if (error != 0) {
+		aprint_error_dev(sc->sc_dev,
+		    "%s: failed to read temperature: %d\n",
+		    __func__, error);
+		return 0;
+	}
+
+	/* convert to microkelvin */
+	tc = buf[0] * 1000000 + (buf[1] >> 6) * 250000;
+	*temp = tc + 273150000;
+	return 1;
+}
+
+static void
+dsrtc_refresh(struct sysmon_envsys *sme, envsys_data_t *edata)
+{
+	struct dsrtc_softc *sc = sme->sme_cookie;
+	uint32_t temp = 0;	/* XXX gcc */
+
+	if (dsrtc_read_temp(sc, &temp) == 0) {
+		edata->state = ENVSYS_SINVALID;
+		return;
+	}
+
+	edata->value_cur = temp;
+
+	edata->state = ENVSYS_SVALID;
 }

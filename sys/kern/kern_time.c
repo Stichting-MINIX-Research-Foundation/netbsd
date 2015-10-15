@@ -1,4 +1,4 @@
-/*	$NetBSD: kern_time.c,v 1.179 2013/05/22 16:00:52 christos Exp $	*/
+/*	$NetBSD: kern_time.c,v 1.182 2015/10/06 15:03:34 christos Exp $	*/
 
 /*-
  * Copyright (c) 2000, 2004, 2005, 2007, 2008, 2009 The NetBSD Foundation, Inc.
@@ -61,7 +61,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: kern_time.c,v 1.179 2013/05/22 16:00:52 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: kern_time.c,v 1.182 2015/10/06 15:03:34 christos Exp $");
 
 #include <sys/param.h>
 #include <sys/resourcevar.h>
@@ -238,7 +238,7 @@ sys___clock_getres50(struct lwp *l, const struct sys___clock_getres50_args *uap,
 		syscallarg(struct timespec *) tp;
 	} */
 	struct timespec ts;
-	int error = 0;
+	int error;
 
 	if ((error = clock_getres1(SCARG(uap, clock_id), &ts)) != 0)
 		return error;
@@ -310,15 +310,18 @@ sys_clock_nanosleep(struct lwp *l, const struct sys_clock_nanosleep_args *uap,
 
 	error = copyin(SCARG(uap, rqtp), &rqt, sizeof(struct timespec));
 	if (error)
-		return (error);
+		goto out;
 
 	error = nanosleep1(l, SCARG(uap, clock_id), SCARG(uap, flags), &rqt,
 	    SCARG(uap, rmtp) ? &rmt : NULL);
 	if (SCARG(uap, rmtp) == NULL || (error != 0 && error != EINTR))
-		return error;
+		goto out;
 
-	error1 = copyout(&rmt, SCARG(uap, rmtp), sizeof(rmt));
-	return error1 ? error1 : error;
+	if ((error1 = copyout(&rmt, SCARG(uap, rmtp), sizeof(rmt))) != 0)
+		error = error1;
+out:
+	*retval = error;
+	return 0;
 }
 
 int
@@ -454,7 +457,7 @@ sys___adjtime50(struct lwp *l, const struct sys___adjtime50_args *uap,
 		syscallarg(const struct timeval *) delta;
 		syscallarg(struct timeval *) olddelta;
 	} */
-	int error = 0;
+	int error;
 	struct timeval atv, oldatv;
 
 	if ((error = kauth_authorize_system(l->l_cred, KAUTH_SYSTEM_TIME,

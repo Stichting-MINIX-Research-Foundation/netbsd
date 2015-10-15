@@ -5,7 +5,7 @@
  ******************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -40,9 +40,6 @@
  * IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGES.
  */
-
-
-#define __UTMATH_C__
 
 #include "acpi.h"
 #include "accommon.h"
@@ -90,7 +87,7 @@ typedef union uint64_overlay
  * RETURN:      Status (Checks for divide-by-zero)
  *
  * DESCRIPTION: Perform a short (maximum 64 bits divided by 32 bits)
- *              divide and modulo.  The result is a 64-bit quotient and a
+ *              divide and modulo. The result is a 64-bit quotient and a
  *              32-bit remainder.
  *
  ******************************************************************************/
@@ -375,5 +372,3 @@ AcpiUtDivide (
 }
 
 #endif
-
-

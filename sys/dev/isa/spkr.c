@@ -1,4 +1,4 @@
-/*	$NetBSD: spkr.c,v 1.33 2012/04/06 20:16:58 plunky Exp $	*/
+/*	$NetBSD: spkr.c,v 1.36 2015/05/17 05:20:37 pgoyette Exp $	*/
 
 /*
  * Copyright (c) 1990 Eric S. Raymond (esr@snark.thyrsus.com)
@@ -43,7 +43,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: spkr.c,v 1.33 2012/04/06 20:16:58 plunky Exp $");
+__KERNEL_RCSID(0, "$NetBSD: spkr.c,v 1.36 2015/05/17 05:20:37 pgoyette Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -51,6 +51,7 @@ __KERNEL_RCSID(0, "$NetBSD: spkr.c,v 1.33 2012/04/06 20:16:58 plunky Exp $");
 #include <sys/errno.h>
 #include <sys/device.h>
 #include <sys/malloc.h>
+#include <sys/module.h>
 #include <sys/uio.h>
 #include <sys/proc.h>
 #include <sys/ioctl.h>
@@ -64,9 +65,19 @@ __KERNEL_RCSID(0, "$NetBSD: spkr.c,v 1.33 2012/04/06 20:16:58 plunky Exp $");
 
 int spkrprobe(device_t, cfdata_t, void *);
 void spkrattach(device_t, device_t, void *);
+int spkrdetach(device_t, int);
+
+#include "ioconf.h"
+
+MODULE(MODULE_CLASS_DRIVER, spkr, NULL /* "pcppi" */);
+
+#ifdef _MODULE
+#include "ioconf.c"
+#endif
+
 
 CFATTACH_DECL_NEW(spkr, 0,
-    spkrprobe, spkrattach, NULL, NULL);
+    spkrprobe, spkrattach, spkrdetach, NULL);
 
 dev_type_open(spkropen);
 dev_type_close(spkrclose);
@@ -74,8 +85,18 @@ dev_type_write(spkrwrite);
 dev_type_ioctl(spkrioctl);
 
 const struct cdevsw spkr_cdevsw = {
-	spkropen, spkrclose, noread, spkrwrite, spkrioctl,
-	nostop, notty, nopoll, nommap, nokqfilter, D_OTHER,
+	.d_open = spkropen,
+	.d_close = spkrclose,
+	.d_read = noread,
+	.d_write = spkrwrite,
+	.d_ioctl = spkrioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_OTHER
 };
 
 static pcppi_tag_t ppicookie;
@@ -166,7 +187,7 @@ static const int pitchtab[] =
 /* 5 */ 2093, 2217, 2349, 2489, 2637, 2794, 2960, 3136, 3322, 3520, 3729, 3951,
 /* 6 */ 4186, 4435, 4698, 4978, 5274, 5588, 5920, 6272, 6644, 7040, 7459, 7902,
 };
-#define NOCTAVES (__arraycount(pitchtab) / OCTAVE_NOTES)
+#define NOCTAVES (int)(__arraycount(pitchtab) / OCTAVE_NOTES)
 
 static void
 playinit(void)
@@ -414,6 +435,17 @@ spkrattach(device_t parent, device_t self, void *aux)
 }
 
 int
+spkrdetach(device_t self, int flags)
+{
+
+	pmf_device_deregister(self);
+	spkr_attached = 0;
+	ppicookie = NULL;
+
+	return 0;
+}
+
+int
 spkropen(dev_t dev, int	flags, int mode, struct lwp *l)
 {
 #ifdef SPKRDEBUG
@@ -514,4 +546,43 @@ spkrioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
     return(0);
 }
 
+static int
+spkr_modcmd(modcmd_t cmd, void *arg)
+{
+#ifdef _MODULE
+	devmajor_t bmajor, cmajor;
+#endif
+	int error = 0;
+
+#ifdef _MODULE
+	switch(cmd) {
+	case MODULE_CMD_INIT:
+		bmajor = cmajor = -1;
+		error = devsw_attach(spkr_cd.cd_name, NULL, &bmajor,
+		    &spkr_cdevsw, &cmajor);
+		if (error)
+			break;
+
+		error = config_init_component(cfdriver_ioconf_spkr,
+			cfattach_ioconf_spkr, cfdata_ioconf_spkr);
+		if (error) {
+			devsw_detach(NULL, &spkr_cdevsw);
+		}
+		break;
+
+	case MODULE_CMD_FINI:
+		if (spkr_active)
+			return EBUSY;
+		error = config_fini_component(cfdriver_ioconf_spkr,
+			cfattach_ioconf_spkr, cfdata_ioconf_spkr);
+		devsw_detach(NULL, &spkr_cdevsw);
+		break;
+	default:
+		error = ENOTTY;
+		break;
+	}
+#endif
+
+	return error;
+}
 /* spkr.c ends here */

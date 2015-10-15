@@ -79,14 +79,14 @@ findelfsecidx(Elf *elf, const char *file, const char *tofind)
 
 		if (gelf_getshdr(scn, &shdr) == NULL) {
 			elfterminate(file,
-			    "Couldn't read header for section %d",
+			    "Couldn't read header for section %zu",
 			    elf_ndxscn(scn));
 		}
 
 		if ((name = elf_strptr(elf, ehdr.e_shstrndx,
 		    (size_t)shdr.sh_name)) == NULL) {
 			elfterminate(file,
-			    "Couldn't get name for section %d",
+			    "Couldn't get name for section %zu",
 			    elf_ndxscn(scn));
 		}
 
@@ -253,8 +253,8 @@ tdesc_name(tdesc_t *tdp)
 	return (tdp->t_name == NULL ? "(anon)" : tdp->t_name);
 }
 
-char	*watch_address = NULL;
-int	watch_length = 0;
+static char	*watch_address = NULL;
+static int	watch_length = 0;
 
 void
 watch_set(void *addr, int len)

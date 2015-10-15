@@ -1,6 +1,6 @@
 /* Target description support for GDB.
 
-   Copyright (C) 2006-2013 Free Software Foundation, Inc.
+   Copyright (C) 2006-2015 Free Software Foundation, Inc.
 
    Contributed by CodeSourcery.
 
@@ -31,7 +31,6 @@
 #include "xml-tdesc.h"
 #include "osabi.h"
 
-#include "gdb_assert.h"
 #include "gdb_obstack.h"
 #include "hashtab.h"
 #include "inferior.h"
@@ -804,7 +803,7 @@ tdesc_data_init (struct obstack *obstack)
 struct tdesc_arch_data *
 tdesc_data_alloc (void)
 {
-  return XZALLOC (struct tdesc_arch_data);
+  return XCNEW (struct tdesc_arch_data);
 }
 
 /* Free something allocated by tdesc_data_alloc, if it is not going
@@ -1242,7 +1241,7 @@ tdesc_create_reg (struct tdesc_feature *feature, const char *name,
 		  int regnum, int save_restore, const char *group,
 		  int bitsize, const char *type)
 {
-  struct tdesc_reg *reg = XZALLOC (struct tdesc_reg);
+  struct tdesc_reg *reg = XCNEW (struct tdesc_reg);
 
   reg->name = xstrdup (name);
   reg->target_regnum = regnum;
@@ -1304,7 +1303,7 @@ struct tdesc_type *
 tdesc_create_vector (struct tdesc_feature *feature, const char *name,
 		     struct tdesc_type *field_type, int count)
 {
-  struct tdesc_type *type = XZALLOC (struct tdesc_type);
+  struct tdesc_type *type = XCNEW (struct tdesc_type);
 
   type->name = xstrdup (name);
   type->kind = TDESC_TYPE_VECTOR;
@@ -1318,7 +1317,7 @@ tdesc_create_vector (struct tdesc_feature *feature, const char *name,
 struct tdesc_type *
 tdesc_create_struct (struct tdesc_feature *feature, const char *name)
 {
-  struct tdesc_type *type = XZALLOC (struct tdesc_type);
+  struct tdesc_type *type = XCNEW (struct tdesc_type);
 
   type->name = xstrdup (name);
   type->kind = TDESC_TYPE_STRUCT;
@@ -1341,7 +1340,7 @@ tdesc_set_struct_size (struct tdesc_type *type, LONGEST size)
 struct tdesc_type *
 tdesc_create_union (struct tdesc_feature *feature, const char *name)
 {
-  struct tdesc_type *type = XZALLOC (struct tdesc_type);
+  struct tdesc_type *type = XCNEW (struct tdesc_type);
 
   type->name = xstrdup (name);
   type->kind = TDESC_TYPE_UNION;
@@ -1354,7 +1353,7 @@ struct tdesc_type *
 tdesc_create_flags (struct tdesc_feature *feature, const char *name,
 		    LONGEST size)
 {
-  struct tdesc_type *type = XZALLOC (struct tdesc_type);
+  struct tdesc_type *type = XCNEW (struct tdesc_type);
 
   type->name = xstrdup (name);
   type->kind = TDESC_TYPE_FLAGS;
@@ -1436,7 +1435,7 @@ tdesc_free_feature (struct tdesc_feature *feature)
 struct tdesc_feature *
 tdesc_create_feature (struct target_desc *tdesc, const char *name)
 {
-  struct tdesc_feature *new_feature = XZALLOC (struct tdesc_feature);
+  struct tdesc_feature *new_feature = XCNEW (struct tdesc_feature);
 
   new_feature->name = xstrdup (name);
 
@@ -1447,7 +1446,7 @@ tdesc_create_feature (struct target_desc *tdesc, const char *name)
 struct target_desc *
 allocate_target_description (void)
 {
-  return XZALLOC (struct target_desc);
+  return XCNEW (struct target_desc);
 }
 
 static void
@@ -1550,7 +1549,7 @@ static struct cmd_list_element *tdesc_unset_cmdlist;
 static void
 set_tdesc_cmd (char *args, int from_tty)
 {
-  help_list (tdesc_set_cmdlist, "set tdesc ", -1, gdb_stdout);
+  help_list (tdesc_set_cmdlist, "set tdesc ", all_commands, gdb_stdout);
 }
 
 static void
@@ -1562,7 +1561,7 @@ show_tdesc_cmd (char *args, int from_tty)
 static void
 unset_tdesc_cmd (char *args, int from_tty)
 {
-  help_list (tdesc_unset_cmdlist, "unset tdesc ", -1, gdb_stdout);
+  help_list (tdesc_unset_cmdlist, "unset tdesc ", all_commands, gdb_stdout);
 }
 
 static void
@@ -1675,7 +1674,8 @@ maint_print_c_tdesc_cmd (char *args, int from_tty)
 	      printed_field_type = 1;
 	    }
 
-	  if (type->kind == TDESC_TYPE_UNION
+	  if ((type->kind == TDESC_TYPE_UNION
+	      || type->kind == TDESC_TYPE_STRUCT)
 	      && VEC_length (tdesc_type_field, type->u.u.fields) > 0)
 	    {
 	      printf_unfiltered ("  struct tdesc_type *type;\n");
@@ -1745,6 +1745,36 @@ feature = tdesc_create_feature (result, \"%s\");\n",
 	      printf_unfiltered
 		("  tdesc_create_vector (feature, \"%s\", field_type, %d);\n",
 		 type->name, type->u.v.count);
+	      break;
+	    case TDESC_TYPE_STRUCT:
+	      printf_unfiltered
+		("  type = tdesc_create_struct (feature, \"%s\");\n",
+		 type->name);
+	      if (type->u.u.size != 0)
+		printf_unfiltered
+		  ("  tdesc_set_struct_size (type, %s);\n",
+		   plongest (type->u.u.size));
+	      for (ix3 = 0;
+		   VEC_iterate (tdesc_type_field, type->u.u.fields, ix3, f);
+		   ix3++)
+		{
+		  /* Going first for implicitly sized types, else part handles
+		     bitfields.  As reported on xml-tdesc.c implicitly sized types
+		     cannot contain a bitfield.  */
+		  if (f->type != NULL)
+		    {
+		      printf_unfiltered
+			("  field_type = tdesc_named_type (feature, \"%s\");\n",
+			 f->type->name);
+		      printf_unfiltered
+			("  tdesc_add_field (type, \"%s\", field_type);\n",
+			 f->name);
+		    }
+		  else
+		    printf_unfiltered
+		      ("  tdesc_add_bitfield (type, \"%s\", %d, %d);\n",
+		       f->name, f->start, f->end);
+		}
 	      break;
 	    case TDESC_TYPE_UNION:
 	      printf_unfiltered

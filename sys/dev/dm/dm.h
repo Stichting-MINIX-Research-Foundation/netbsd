@@ -1,4 +1,4 @@
-/*        $NetBSD: dm.h,v 1.24 2012/07/28 00:43:22 matt Exp $      */
+/*        $NetBSD: dm.h,v 1.27 2014/10/02 21:58:16 justin Exp $      */
 
 /*
  * Copyright (c) 2008 The NetBSD Foundation, Inc.
@@ -48,6 +48,8 @@
 #include <sys/device.h>
 #include <sys/disk.h>
 #include <sys/disklabel.h>
+
+#include <miscfs/specfs/specdev.h> /* for v_rdev */
 
 #include <prop/proplib.h>
 
@@ -102,7 +104,7 @@ typedef struct dm_table_head {
 /*
  * This structure is used to store opened vnodes for disk with name.
  * I need this because devices can be opened only once, but I can
- * have more then one device on one partition.
+ * have more than one device on one partition.
  */
 
 typedef struct dm_pdev {
@@ -248,7 +250,7 @@ typedef struct dm_target {
 	int (*secsize)(dm_table_entry_t *, unsigned *);
 
 	uint32_t version[3];
-	int ref_cnt;
+	uint32_t ref_cnt;
 
 	TAILQ_ENTRY(dm_target) dm_target_next;
 } dm_target_t;

@@ -1,4 +1,4 @@
-/*	$NetBSD: os-osf4.h,v 1.1.1.3 2013/04/06 15:57:52 christos Exp $	*/
+/*	$NetBSD: os-osf4.h,v 1.3 2015/03/31 21:39:43 christos Exp $	*/
 
 /*
  * Copyright (c) 1993, 1994, 1995, 1996, 1997
@@ -19,12 +19,10 @@
  * THIS SOFTWARE IS PROVIDED ``AS IS'' AND WITHOUT ANY EXPRESS OR IMPLIED
  * WARRANTIES, INCLUDING, WITHOUT LIMITATION, THE IMPLIED WARRANTIES OF
  * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE.
- *
- * @(#) Header: /tcpdump/master/libpcap/lbl/os-osf4.h,v 1.2 2000-12-22 11:51:33 guy Exp  (LBL)
  */
 
 /* Prototypes missing in Digital UNIX 4.x */
 int	snprintf(char *, size_t, const char *, ...);
 int	vsnprintf(char *, size_t, const char *, va_list);
 int	pfopen(char *, int);
-   
+

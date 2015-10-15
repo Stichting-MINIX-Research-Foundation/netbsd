@@ -1,4 +1,4 @@
-#	$NetBSD: files.ath_hal,v 1.4 2011/03/05 14:42:11 cegger Exp $
+#	$NetBSD: files.ath_hal,v 1.6 2014/10/14 08:17:27 uebayasi Exp $
 
 defflag opt_athhal.h	ATHHAL_ASSERT ATHHAL_DEBUG ATHHAL_DEBUG_ALQ
 defflag opt_athhal.h	ATHHAL_WRITE_EEPROM ATHHAL_WRITE_REGDOMAIN

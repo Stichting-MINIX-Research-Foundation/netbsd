@@ -1,4 +1,4 @@
-/*	$NetBSD: kern_sysctl.c,v 1.243 2013/04/27 20:13:16 christos Exp $	*/
+/*	$NetBSD: kern_sysctl.c,v 1.257 2015/08/24 22:50:32 pooka Exp $	*/
 
 /*-
  * Copyright (c) 2003, 2007, 2008 The NetBSD Foundation, Inc.
@@ -68,12 +68,13 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: kern_sysctl.c,v 1.243 2013/04/27 20:13:16 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: kern_sysctl.c,v 1.257 2015/08/24 22:50:32 pooka Exp $");
 
+#ifdef _KERNEL_OPT
 #include "opt_defcorename.h"
-#include "ksyms.h"
+#endif
 
-#define SYSCTL_PRIVATE
+#include "ksyms.h"
 
 #include <sys/param.h>
 #define __COMPAT_SYSCTL
@@ -86,7 +87,7 @@ __KERNEL_RCSID(0, "$NetBSD: kern_sysctl.c,v 1.243 2013/04/27 20:13:16 christos E
 #include <sys/syscallargs.h>
 #include <sys/kauth.h>
 #include <sys/ktrace.h>
-#include <sys/cprng.h>
+#include <sys/rndsource.h>
 
 #define	MAXDESCLEN	1024
 MALLOC_DEFINE(M_SYSCTLNODE, "sysctlnode", "sysctl node structures");
@@ -126,13 +127,7 @@ struct sysctlnode sysctl_root = {
 	    CTLFLAG_ROOT|CTLFLAG_READWRITE|
 	    CTLTYPE_NODE,
 	.sysctl_num = 0,
-	/*
-	 * XXX once all ports are on gcc3, we can get rid of this
-	 * ugliness and simply make it into
-	 *
-	 *	.sysctl_size = sizeof(struct sysctlnode),
-	 */
-	sysc_init_field(_sysctl_size, sizeof(struct sysctlnode)),
+	.sysctl_size = sizeof(struct sysctlnode),
 	.sysctl_name = "(root)",
 };
 
@@ -166,8 +161,6 @@ long hostid;
 #define	DEFCORENAME	"%n.core"
 #endif
 char defcorename[MAXPATHLEN] = DEFCORENAME;
-
-cprng_strong_t *sysctl_prng;
 
 /*
  * ********************************************************************
@@ -239,6 +232,7 @@ sysctl_init(void)
 	 * dynamic mib numbers start here
 	 */
 	sysctl_root.sysctl_num = CREATE_BASE;
+	sysctl_basenode_init();
 
         __link_set_foreach(sysctl_setup, sysctl_funcs) {
 		(**sysctl_setup)(NULL);
@@ -260,8 +254,7 @@ sysctl_init(void)
 void
 sysctl_finalize(void)
 {
-        sysctl_prng = cprng_strong_create("sysctl", IPL_NONE,
-					  CPRNG_INIT_ANY|CPRNG_REKEY_ANY);
+
 	sysctl_root.sysctl_flags |= CTLFLAG_PERMANENT;
 }
 
@@ -309,14 +302,14 @@ sys___sysctl(struct lwp *l, const struct sys___sysctl_args *uap, register_t *ret
 
 	ktrmib(name, SCARG(uap, namelen));
 
-	sysctl_lock(SCARG(uap, new) != NULL);
+	sysctl_lock(SCARG(uap, newv) != NULL);
 
 	/*
 	 * do sysctl work (NULL means main built-in default tree)
 	 */
 	error = sysctl_dispatch(&name[0], SCARG(uap, namelen),
-				SCARG(uap, old), &oldlen,
-				SCARG(uap, new), SCARG(uap, newlen),
+				SCARG(uap, oldv), &oldlen,
+				SCARG(uap, newv), SCARG(uap, newlen),
 				&name[0], l, NULL);
 
 	/*
@@ -339,7 +332,7 @@ sys___sysctl(struct lwp *l, const struct sys___sysctl_args *uap, register_t *ret
 	 * if the only problem is that we weren't given enough space,
 	 * that's an ENOMEM error
 	 */
-	if (error == 0 && SCARG(uap, old) != NULL && savelen < oldlen)
+	if (error == 0 && SCARG(uap, oldv) != NULL && savelen < oldlen)
 		error = ENOMEM;
 
 	return (error);
@@ -1443,6 +1436,9 @@ sysctl_lookup(SYSCTLFN_ARGS)
 		return EINVAL;
 	}
 
+	if (newlen == 0)
+		newp = NULL;
+
 	error = 0;
 
 	/*
@@ -1501,23 +1497,13 @@ sysctl_lookup(SYSCTLFN_ARGS)
 		 * note that we discard const here because we are
 		 * modifying the contents of the node (which is okay
 		 * because it's ours)
+		 *
+		 * It also doesn't matter which field of the union we pick.
 		 */
-		switch (SYSCTL_TYPE(rnode->sysctl_flags)) {
-		case CTLTYPE_BOOL:
-			d = __UNCONST(&rnode->sysctl_bdata);
-			break;
-		case CTLTYPE_INT:
-			d = __UNCONST(&rnode->sysctl_idata);
-			break;
-		case CTLTYPE_QUAD:
-			d = __UNCONST(&rnode->sysctl_qdata);
-			break;
-		default:
-			DPRINTF(("%s: bad type\n", __func__));
-			return EINVAL;
-		}
+		d = __UNCONST(&rnode->sysctl_qdata);
 	} else
 		d = rnode->sysctl_data;
+
 	if (SYSCTL_TYPE(rnode->sysctl_flags) == CTLTYPE_STRING)
 		sz = strlen(d) + 1; /* XXX@@@ possible fault here */
 	else
@@ -1534,7 +1520,7 @@ sysctl_lookup(SYSCTLFN_ARGS)
 	/*
 	 * are we done?
 	 */
-	if (newp == NULL || newlen == 0)
+	if (newp == NULL)
 		return 0;
 
 	/*
@@ -1555,13 +1541,11 @@ sysctl_lookup(SYSCTLFN_ARGS)
 			return EINVAL;
 		}
 		error = sysctl_copyin(l, newp, &tmp, sz);
+		if (error)
+			break;
 		if (tmp != true && tmp != false) {
 			DPRINTF(("%s: tmp %d\n", __func__, tmp));
 			return EINVAL;
-		}
-		if (error) {
-			DPRINTF(("%s: copyin %d\n", __func__, error));
-			break;
 		}
 		*(bool *)d = tmp;
 		break;
@@ -1573,12 +1557,10 @@ sysctl_lookup(SYSCTLFN_ARGS)
 		 * these data must be *exactly* the same size coming
 		 * in.
 		 */
-		if (newlen != sz) {
-			DPRINTF(("%s: bad size %zu != %zu\n", __func__, newlen,
-			    sz));
-			return EINVAL;
-		}
+		if (newlen != sz)
+			goto bad_size;
 		error = sysctl_copyin(l, newp, d, sz);
+		rnd_add_data(NULL, d, sz, 0);
 		break;
 	case CTLTYPE_STRING: {
 		/*
@@ -1590,11 +1572,8 @@ sysctl_lookup(SYSCTLFN_ARGS)
 		/*
 		 * too much new string?
 		 */
-		if (newlen > sz) {
-			DPRINTF(("%s: bad size %zu > %zu\n", __func__, newlen,
-			    sz));
-			return EINVAL;
-		}
+		if (newlen > sz)
+			goto bad_size;
 
 		/*
 		 * temporary copy of new inbound string
@@ -1625,8 +1604,10 @@ sysctl_lookup(SYSCTLFN_ARGS)
 		/*
 		 * looks good, so pop it into place and zero the rest.
 		 */
-		if (len > 0)
+		if (len > 0) {
 			memcpy(d, newbuf, len);
+			rnd_add_data(NULL, d, len, 0);
+		}
 		if (sz != len)
 			memset((char*)d + len, 0, sz - len);
 		free(newbuf, M_SYSCTLDATA);
@@ -1641,6 +1622,10 @@ sysctl_lookup(SYSCTLFN_ARGS)
 	}
 
 	return error;
+
+    bad_size:
+	DPRINTF(("%s: bad size %zu > %zu\n", __func__, newlen, sz));
+	return EINVAL;
 }
 
 /*
@@ -1654,6 +1639,7 @@ sysctl_mmap(SYSCTLFN_ARGS)
 	const struct sysctlnode *node;
 	struct sysctlnode nnode;
 	int error;
+	int sysctl_num;
 
 	if (SYSCTL_VERS(rnode->sysctl_flags) != SYSCTL_VERSION) {
 		printf("sysctl_mmap: rnode %p wrong version\n", rnode);
@@ -1681,7 +1667,8 @@ sysctl_mmap(SYSCTLFN_ARGS)
 	if (namelen != 1)
 		return (EOPNOTSUPP);
 	node = rnode;
-        error = sysctl_locate(l, &nnode.sysctl_num, 1, &node, NULL);
+	sysctl_num = nnode.sysctl_num;
+	error = sysctl_locate(l, &sysctl_num, 1, &node, NULL);
 	if (error)
 		return (error);
 
@@ -2073,6 +2060,11 @@ sysctl_createv(struct sysctllog **log, int cflags,
 	pnode = root;
 	error = sysctl_locate(NULL, &name[0], namelen - 1, &pnode, &ni);
 	if (error) {
+		/*
+		 * XXX: If you are seeing this printf in early bringup
+		 * stages, perhaps your setfault is not functioning and
+		 * thus kcopy() is mis-behaving.
+		 */
 		printf("sysctl_createv: sysctl_locate(%s) returned %d\n",
 		       nnode.sysctl_name, error);
 		sysctl_unlock();

@@ -1,7 +1,7 @@
-/*	$NetBSD: opensslrsa_link.c,v 1.6 2013/07/27 19:23:12 christos Exp $	*/
+/*	$NetBSD: opensslrsa_link.c,v 1.10 2015/09/03 07:33:34 christos Exp $	*/
 
 /*
- * Copyright (C) 2004-2009, 2011, 2012  Internet Systems Consortium, Inc. ("ISC")
+ * Copyright (C) 2004-2009, 2011-2014  Internet Systems Consortium, Inc. ("ISC")
  * Copyright (C) 2000-2003  Internet Software Consortium.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
@@ -483,7 +483,7 @@ opensslrsa_sign(dst_context_t *dctx, isc_buffer_t *sig) {
 		INSIST(prefixlen + digestlen <= sizeof(digest));
 
 		memmove(digest + prefixlen, digest, digestlen);
-		memcpy(digest, prefix, prefixlen);
+		memmove(digest, prefix, prefixlen);
 		status = RSA_private_encrypt(digestlen + prefixlen,
 					     digest, r.base, rsa,
 					     RSA_PKCS1_PADDING);
@@ -746,8 +746,7 @@ opensslrsa_compare(const dst_key_t *key1, const dst_key_t *key2) {
 
 #if OPENSSL_VERSION_NUMBER > 0x00908000L
 static int
-progress_cb(int p, int n, BN_GENCB *cb)
-{
+progress_cb(int p, int n, BN_GENCB *cb) {
 	union {
 		void *dptr;
 		void (*fptr)(int);
@@ -967,6 +966,7 @@ opensslrsa_fromdns(dst_key_t *key, isc_buffer_t *data) {
 	RSA *rsa;
 	isc_region_t r;
 	unsigned int e_bytes;
+	unsigned int length;
 #if USE_EVP
 	EVP_PKEY *pkey;
 #endif
@@ -974,6 +974,7 @@ opensslrsa_fromdns(dst_key_t *key, isc_buffer_t *data) {
 	isc_buffer_remainingregion(data, &r);
 	if (r.length == 0)
 		return (ISC_R_SUCCESS);
+	length = r.length;
 
 	rsa = RSA_new();
 	if (rsa == NULL)
@@ -984,17 +985,18 @@ opensslrsa_fromdns(dst_key_t *key, isc_buffer_t *data) {
 		RSA_free(rsa);
 		return (DST_R_INVALIDPUBLICKEY);
 	}
-	e_bytes = *r.base++;
-	r.length--;
+	e_bytes = *r.base;
+	isc_region_consume(&r, 1);
 
 	if (e_bytes == 0) {
 		if (r.length < 2) {
 			RSA_free(rsa);
 			return (DST_R_INVALIDPUBLICKEY);
 		}
-		e_bytes = ((*r.base++) << 8);
-		e_bytes += *r.base++;
-		r.length -= 2;
+		e_bytes = (*r.base) << 8;
+		isc_region_consume(&r, 1);
+		e_bytes += *r.base;
+		isc_region_consume(&r, 1);
 	}
 
 	if (r.length < e_bytes) {
@@ -1002,14 +1004,13 @@ opensslrsa_fromdns(dst_key_t *key, isc_buffer_t *data) {
 		return (DST_R_INVALIDPUBLICKEY);
 	}
 	rsa->e = BN_bin2bn(r.base, e_bytes, NULL);
-	r.base += e_bytes;
-	r.length -= e_bytes;
+	isc_region_consume(&r, e_bytes);
 
 	rsa->n = BN_bin2bn(r.base, r.length, NULL);
 
 	key->key_size = BN_num_bits(rsa->n);
 
-	isc_buffer_forward(data, r.length);
+	isc_buffer_forward(data, length);
 
 #if USE_EVP
 	pkey = EVP_PKEY_new();
@@ -1050,8 +1051,14 @@ opensslrsa_tofile(const dst_key_t *key, const char *directory) {
 		return (DST_R_NULLKEY);
 	rsa = key->keydata.rsa;
 #endif
-
 	memset(bufs, 0, sizeof(bufs));
+
+	if (key->external) {
+		priv.nelements = 0;
+		result = dst__privstruct_writefile(key, &priv, directory);
+		goto fail;
+	}
+
 	for (i = 0; i < 8; i++) {
 		bufs[i] = isc_mem_get(key->mctx, BN_num_bytes(rsa->n));
 		if (bufs[i] == NULL) {
@@ -1192,6 +1199,24 @@ opensslrsa_parse(dst_key_t *key, isc_lex_t *lexer, dst_key_t *pub) {
 	EVP_PKEY *pkey = NULL;
 #endif
 
+	/* read private key file */
+	ret = dst__privstruct_parse(key, DST_ALG_RSA, lexer, mctx, &priv);
+	if (ret != ISC_R_SUCCESS)
+		goto err;
+
+	if (key->external) {
+		if (priv.nelements != 0)
+			DST_RET(DST_R_INVALIDPRIVATEKEY);
+		if (pub == NULL)
+			DST_RET(DST_R_INVALIDPRIVATEKEY);
+		key->keydata.pkey = pub->keydata.pkey;
+		pub->keydata.pkey = NULL;
+		key->key_size = pub->key_size;
+		dst__privstruct_free(&priv, mctx);
+		memset(&priv, 0, sizeof(priv));
+		return (ISC_R_SUCCESS);
+	}
+
 #if USE_EVP
 	if (pub != NULL && pub->keydata.pkey != NULL)
 		pubrsa = EVP_PKEY_get1_RSA(pub->keydata.pkey);
@@ -1201,11 +1226,6 @@ opensslrsa_parse(dst_key_t *key, isc_lex_t *lexer, dst_key_t *pub) {
 		pub->keydata.rsa = NULL;
 	}
 #endif
-
-	/* read private key file */
-	ret = dst__privstruct_parse(key, DST_ALG_RSA, lexer, mctx, &priv);
-	if (ret != ISC_R_SUCCESS)
-		goto err;
 
 	for (i = 0; i < priv.nelements; i++) {
 		switch (priv.elements[i].tag) {
@@ -1219,6 +1239,7 @@ opensslrsa_parse(dst_key_t *key, isc_lex_t *lexer, dst_key_t *pub) {
 			break;
 		}
 	}
+
 	/*
 	 * Is this key is stored in a HSM?
 	 * See if we can fetch it.
@@ -1288,8 +1309,6 @@ opensslrsa_parse(dst_key_t *key, isc_lex_t *lexer, dst_key_t *pub) {
 		case TAG_RSA_ENGINE:
 			continue;
 		case TAG_RSA_LABEL:
-			continue;
-		case TAG_RSA_PIN:
 			continue;
 		default:
 			bn = BN_bin2bn(priv.elements[i].data,
@@ -1438,6 +1457,7 @@ opensslrsa_fromlabel(dst_key_t *key, const char *engine, const char *label,
 
 static dst_func_t opensslrsa_functions = {
 	opensslrsa_createctx,
+	NULL, /*%< createctx2 */
 	opensslrsa_destroyctx,
 	opensslrsa_adddata,
 	opensslrsa_sign,

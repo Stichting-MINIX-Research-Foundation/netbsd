@@ -2,14 +2,8 @@
  * http_client - HTTP client
  * Copyright (c) 2009, Jouni Malinen <j@w1.fi>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #include "includes.h"
@@ -98,7 +92,7 @@ static void http_client_tx_ready(int sock, void *eloop_ctx, void *sock_ctx)
 		   (unsigned long) wpabuf_len(c->req),
 		   (unsigned long) wpabuf_len(c->req) - c->req_pos);
 
-	res = send(c->sd, wpabuf_head(c->req) + c->req_pos,
+	res = send(c->sd, wpabuf_head_u8(c->req) + c->req_pos,
 		   wpabuf_len(c->req) - c->req_pos, 0);
 	if (res < 0) {
 		wpa_printf(MSG_DEBUG, "HTTP: Failed to send buffer: %s",

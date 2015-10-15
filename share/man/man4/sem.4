@@ -1,4 +1,4 @@
-.\" $NetBSD: sem.4,v 1.4 2013/03/01 18:39:52 joerg Exp $
+.\" $NetBSD: sem.4,v 1.6 2015/08/20 11:05:06 wiz Exp $
 .\"
 .\" Copyright (c) 2002 Tim J. Robbins
 .\" All rights reserved.
@@ -26,17 +26,14 @@
 .\"
 .\" From: FreeBSD: src/share/man/man4/sem.4,v 1.2 2003/06/02 11:19:23 ru
 .\"
-.Dd March 1, 2013
+.Dd August 20, 2015
 .Dt SEM 4
 .Os
 .Sh NAME
 .Nm sem
 .Nd POSIX semaphores
 .Sh SYNOPSIS
-To link into the kernel:
-.Bd -ragged -offset indent
-.Cd "options P1003_1B_SEMAPHORE"
-.Ed
+The POSIX semaphore code is included by default in all kernels.
 .Sh DESCRIPTION
 The
 .Nm
@@ -58,4 +55,6 @@ semaphores.
 The
 .Nm
 facility appeared as a kernel option in
-.Nx 2.0 .
+.Nx 2.0
+and became non-optional in
+.Nx 7.0 .

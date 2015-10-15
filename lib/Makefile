@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.209 2013/11/28 12:08:56 mrg Exp $
+#	$NetBSD: Makefile,v 1.235 2015/09/28 17:12:12 christos Exp $
 #	from: @(#)Makefile	5.25.1.1 (Berkeley) 5/7/91
 
 .include <bsd.own.mk>
@@ -6,17 +6,7 @@
 SUBDIR=		csu .WAIT
 
 .if (${MKGCC} != "no")
-. if ${HAVE_GCC} == 4
-.  if (${USE_COMPILERCRTSTUFF} == "yes")
-SUBDIR+=	../gnu/lib/crtstuff4 .WAIT
-.  endif
-SUBDIR+=	../gnu/lib/libgcc4 .WAIT
-. else
-.  if (${USE_COMPILERCRTSTUFF} == "yes")
-SUBDIR+=	../external/gpl3/gcc/lib/crtstuff .WAIT
-.  endif
-SUBDIR+=	../external/gpl3/gcc/lib/libgcc .WAIT
-. endif
+SUBDIR+=	../external/gpl3/${EXTERNAL_GCC_SUBDIR}/lib/libgcc .WAIT
 .endif
 
 SUBDIR+=	libc
@@ -43,9 +33,10 @@ SUBDIR+=	libarch \
 SUBDIR+=	libkern
 .endif
 
-.if (${MACHINE_CPU} == "arm")
+.if (${MACHINE_CPU} == "arm" || ${MACHINE_CPU} == "aarch64")
 LIBC_MACHINE_ARCH?=${MACHINE_ARCH}
-.if empty(LIBC_MACHINE_ARCH:M*hf*)
+LIBC_MACHINE_CPU?=${MACHINE_CPU}
+.if ${LIBC_MACHINE_CPU} == "arm" && empty(LIBC_MACHINE_ARCH:M*hf*)
 SUBDIR+=	libc_vfp
 .endif
 .endif
@@ -61,30 +52,41 @@ SUBDIR+=	../external/apache2/mDNSResponder/lib
 .endif
 
 SUBDIR+=	../external/bsd/am-utils/lib
+SUBDIR+=	../external/bsd/blacklist/lib
 
 SUBDIR+=	../external/bsd/flex/lib
 SUBDIR+=	../external/bsd/tre/lib
-SUBDIR+=	../external/bsd/libelf/lib
+SUBDIR+=	../external/bsd/elftoolchain/lib/libelf
 SUBDIR+=	../external/bsd/liblzf/lib
 SUBDIR+=	../external/bsd/libpcap/lib
+
+.if ${MKSLJIT} != "no"
+SUBDIR+=	../external/bsd/sljit/lib
+SUBDIR+=	libbpfjit
+.endif
+
+.if (${MKZFS} != "no")
+SUBDIR+=        ../external/cddl/osnet/lib/libavl
+SUBDIR+=        ../external/cddl/osnet/lib/libnvpair
+SUBDIR+=        ../external/cddl/osnet/lib/libumem
+SUBDIR+=        ../external/cddl/osnet/lib/libuutil
+.endif
 
 SUBDIR+=	../external/mit/expat/lib
 
 SUBDIR+=	../external/public-domain/sqlite/lib
-SUBDIR+=	../external/public-domain/xz/lib
 
 SUBDIR+=	../gnu/lib/libmalloc
 
 .if (${MKGCC} != "no")
-. if ${HAVE_GCC} == 4
-SUBDIR+=	../gnu/lib/libobjc4
-. else
-SUBDIR+=	../external/gpl3/gcc/lib/libobjc
-SUBDIR+=	../external/gpl3/gcc/lib/libgomp
-. endif
-. if ${HAVE_GCC} >= 45 && !defined(MLIBDIR)
+SUBDIR+=	../external/gpl3/${EXTERNAL_GCC_SUBDIR}/lib/libobjc
+SUBDIR+=	../external/gpl3/${EXTERNAL_GCC_SUBDIR}/lib/libgomp
+SUBDIR+=	../external/gpl3/${EXTERNAL_GCC_SUBDIR}/lib/libmudflap
+SUBDIR+=	../external/gpl3/${EXTERNAL_GCC_SUBDIR}/lib/libmudflapth
 # Should probably move GMP, MPFR and MPC builds into the GCC >= 4.5
 # specific build area, but we get better parallelism this way.
+# We don't build compat versions of these.
+. if !defined(MLIBDIR)
 SUBDIR+=	../external/lgpl3/gmp/lib/libgmp
 SUBDIR+=	../external/lgpl3/mpfr/lib/libmpfr
 SUBDIR+=	../external/lgpl3/mpc/lib/libmpc
@@ -98,12 +100,22 @@ SUBDIR+=	../external/lgpl3/mpc/lib/libmpc
 #==================== 1st library dependency barrier ====================
 SUBDIR+=	.WAIT
 
+.if ${MKDTRACE} != "no"
+SUBDIR+=	../external/bsd/librtld_db/lib		# depends on libutil
+.endif
+
+.if ${MKDTRACE} != "no" || ${MKCTF} != "no"
+SUBDIR+=        ../external/cddl/osnet/lib/libctf
+.endif
+
+SUBDIR+=	../external/public-domain/xz/lib	# depends on libpthread
+
 .if (${MKCRYPTO} != "no")
 SUBDIR+=	../crypto/external/bsd/netpgp/libmj
 SUBDIR+=	../crypto/external/bsd/netpgp/lib/verify # depends on libz
 .endif
 
-SUBDIR+=	../external/bsd/libdwarf/lib # depends on libelf
+SUBDIR+=	../external/bsd/elftoolchain/lib/libdwarf # depends on libelf
 SUBDIR+=	../external/mit/lua/lib # depends on libm
 SUBDIR+=	libcurses	# depends on libterminfo
 SUBDIR+=	libdm		# depends on libprop
@@ -133,7 +145,10 @@ SUBDIR+=	../external/bsd/file/lib	# depends on libz
 SUBDIR+=	../external/bsd/iscsi/lib	# depends on libpthread
 .endif
 
-SUBDIR+=	../external/bsd/libarchive/lib	# depends on libxz
+.if (${MKZFS} != "no")
+SUBDIR+=        ../external/cddl/osnet/lib/libzfs
+SUBDIR+=        ../external/cddl/osnet/lib/libzpool
+.endif
 
 .if (${MKLVM} != "no")
 SUBDIR+=	../external/gpl2/lvm2/lib	# depends on libprop
@@ -148,17 +163,19 @@ SUBDIR+=	../external/bsd/libc++
 .endif
 
 .if (${MKGCC} != "no" && ${MKCXX} != "no" && ${MKLIBSTDCXX} != "no")
-. if ${HAVE_GCC} == 4
-SUBDIR+=	../gnu/lib/libstdc++-v3_4	# depends on libm
-SUBDIR+=	../gnu/lib/libsupc++4
-. else
-SUBDIR+=	../external/gpl3/gcc/lib/libstdc++-v3
-SUBDIR+=	../external/gpl3/gcc/lib/libsupc++
-. endif
+SUBDIR+=	../external/gpl3/${EXTERNAL_GCC_SUBDIR}/lib/libstdc++-v3
+SUBDIR+=	../external/gpl3/${EXTERNAL_GCC_SUBDIR}/lib/libsupc++
 .endif
 
 #==================== 2nd library dependency barrier ====================
 SUBDIR+=	.WAIT
+
+SANITIZER_DIR=../external/gpl3/${EXTERNAL_GCC_SUBDIR}/lib/libasan
+.if exists(${SANITIZER_DIR})
+SUBDIR+=	${SANITIZER_DIR}
+.endif
+
+SUBDIR+=	../external/bsd/libarchive/lib	# depends on libxz
 
 .if (${MKNPF} != "no")
 SUBDIR+=	npf		# depends on libnpf
@@ -190,6 +207,9 @@ SUBDIR+=	../crypto/external/bsd/netpgp/lib  # depends on libcrypto, ...
 .endif
 
 SUBDIR+=	../external/bsd/libevent/lib	# depends on libcrypto
+.if ${MKDTRACE} != "no"
+SUBDIR+=	../external/bsd/libproc/lib	# depends on libstdc++, libctf
+.endif
 SUBDIR+=	../external/bsd/fetch/lib	# depends on libssl
 
 .if (${MKLDAP} != "no")
@@ -200,6 +220,10 @@ SUBDIR+=	../external/bsd/openldap/lib	# depends on libcrypto, ...
 SUBDIR+=	.WAIT
 
 SUBDIR+=	../external/bsd/bind/lib	# depends on heimdal, libcrypto
+
+.if ${MKDTRACE} != "no"
+SUBDIR+=        ../external/cddl/osnet/lib/libdtrace	# depends on libproc
+.endif
 
 .if (${MKRUMP} != "no")
 SUBDIR+=	librumpdev	# depends on librump
@@ -213,12 +237,6 @@ SUBDIR+=	libpam		# depends on heimdal
 
 .if (${MKCRYPTO} != "no")
 SUBDIR+=	../crypto/external/bsd/libsaslc	# depends on heimdal, openssl
-.endif
-
-.if ${MKSLJIT} != "no"
-SUBDIR+=	../external/bsd/sljit/lib
-SUBDIR+=	.WAIT
-SUBDIR+=	libbpfjit
 .endif
 
 SUBDIR+=	../external/bsd/mdocml/lib
@@ -252,6 +270,9 @@ SUBDIR+=	../sys/rump/net/lib
 
 # Lua bindings come last, they might depend on anything
 SUBDIR+=	lua
+
+# Needed by rump and rescue which are outside the smbfs tree
+SUBDIR+=	../external/bsd/smbfs/lib
 
 .include <bsd.buildinstall.mk>
 .include <bsd.subdir.mk>

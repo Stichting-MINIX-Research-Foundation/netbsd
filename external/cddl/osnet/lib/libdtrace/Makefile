@@ -1,6 +1,9 @@
-#	$NetBSD: Makefile,v 1.7 2013/06/21 19:16:01 christos Exp $
+#	$NetBSD: Makefile,v 1.14 2015/10/05 17:49:10 christos Exp $
 
 # $FreeBSD: src/cddl/lib/libdtrace/Makefile,v 1.2.2.1 2009/08/03 08:13:06 kensmith Exp $
+
+WARNS=1
+.include <bsd.own.mk>
 
 .include	"../../Makefile.inc"
 
@@ -34,7 +37,9 @@ SRCS=		dt_aggregate.c \
 		dt_parser.c \
 		dt_pcb.c \
 		dt_pid.c \
+		dt_pq.c \
 		dt_pragma.c \
+		dt_print.c \
 		dt_printf.c \
 		dt_proc.c \
 		dt_program.c \
@@ -56,6 +61,7 @@ DSRCS=		errno.d			\
 .PATH:		${.CURDIR}/../../dist/lib/libdtrace/common
 
 CPPFLAGS+=	-I${.OBJDIR} \
+		-I${.CURDIR} \
 		-I${OSNETDIR}/sys \
 		-I${OSNETDIR}/include \
 		-I${OPENSOLARIS_USR_DISTDIR}/head \
@@ -77,6 +83,7 @@ COPTS.dt_link.c		+= -Wno-stack-protector
 COPTS.dt_options.c	+= -Wno-stack-protector
 COPTS.dt_parser.c	+= -Wno-stack-protector
 COPTS.dt_pragma.c	+= -Wno-stack-protector
+COPTS.dt_print.c	+= -Wno-stack-protector
 COPTS.dt_printf.c	+= -Wno-stack-protector
 COPTS.dt_program.c	+= -Wno-stack-protector
 COPTS.dt_provider.c	+= -Wno-stack-protector
@@ -84,9 +91,12 @@ COPTS.dt_subr.c		+= -Wno-stack-protector
 
 .if ${MACHINE_ARCH} == "i386" || ${MACHINE_ARCH} == "x86_64"
 CPPFLAGS+=	-I${OPENSOLARIS_SYS_DISTDIR}/uts/intel
+CPPFLAGS+=	-I${.CURDIR}/../../dev/dtrace/i386
+.PATH:		${.CURDIR}/../../dist/lib/libdtrace/i386 ${.CURDIR}/../../dev/dtrace/i386
+SRCS+=	dt_isadep.c # dis_tables.c
 .elif ${MACHINE_ARCH} == "sparc64"
 CPPFLAGS+=	-I${OPENSOLARIS_SYS_DISTDIR}/uts/sparc
-.elif ${MACHINE_ARCH} == "arm"
+.elif ${MACHINE_CPU} == "arm"
 CPPFLAGS+=	-I${OPENSOLARIS_SYS_DISTDIR}/uts/arm
 .PATH:		${.CURDIR}/../../dist/lib/libdtrace/arm
 SRCS+=	dt_isadep.c
@@ -98,22 +108,22 @@ YFLAGS+=-d
 
 CLEANFILES=	dt_errtags.c dt_names.c dt_grammar.h
 
-dt_errtags.c:
-	sh ${OPENSOLARIS_USR_DISTDIR}/lib/libdtrace/common/mkerrtags.sh < ${OPENSOLARIS_USR_DISTDIR}/lib/libdtrace/common/dt_errtags.h > dt_errtags.c
+MKERRTAGS=${OPENSOLARIS_USR_DISTDIR}/lib/libdtrace/common/mkerrtags.sh 
+dt_errtags.c: ${MKERRTAGS} ${OPENSOLARIS_USR_DISTDIR}/lib/libdtrace/common/dt_errtags.h 
+	sh ${MKERRTAGS} < ${.ALLSRC:M*.h} > ${.TARGET}
 
-dt_names.c:
-	sh ${OPENSOLARIS_USR_DISTDIR}/lib/libdtrace/common/mknames.sh < ${OPENSOLARIS_SYS_DISTDIR}/uts/common/sys/dtrace.h > dt_names.c
+MKNAMES=${OPENSOLARIS_USR_DISTDIR}/lib/libdtrace/common/mknames.sh
+dt_names.c: ${MKNAMES} ${OPENSOLARIS_SYS_DISTDIR}/uts/common/sys/dtrace.h
+	sh ${MKNAMES} < ${.ALLSRC:M*.h} > ${.TARGET}
 
 beforedepend:	dt_errtags.c dt_names.c
 
 foo:
 	echo ${OPENSOLARIS_USR_DISTDIR}
 
-#beforeinstall:
-#.if exists(${DESTDIR}/usr/lib/dtrace)
-#.for file in ${DSRCS}
-#	${INSTALL} -o ${BINOWN} -g ${BINGRP} -m ${NOBINMODE} ${.CURDIR}/${file} ${DESTDIR}/usr/lib/dtrace
-#.endfor
-#.endif
+FILES=		${DSRCS}
+FILESDIR=	/usr/lib/dtrace
+
+LIBDPLIBS=	proc	${NETBSDSRCDIR}/external/bsd/libproc/lib
 
 .include <bsd.lib.mk>

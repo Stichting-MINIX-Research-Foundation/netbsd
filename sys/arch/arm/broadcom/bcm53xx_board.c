@@ -1,4 +1,4 @@
-/*	$NetBSD: bcm53xx_board.c,v 1.17 2013/10/28 22:51:16 matt Exp $	*/
+/*	$NetBSD: bcm53xx_board.c,v 1.22 2014/09/14 21:06:37 skrll Exp $	*/
 /*-
  * Copyright (c) 2012 The NetBSD Foundation, Inc.
  * All rights reserved.
@@ -29,12 +29,13 @@
  */
 
 #include "opt_broadcom.h"
+#include "arml2cc.h"
 
 #define	_ARM32_BUS_DMA_PRIVATE
 
 #include <sys/cdefs.h>
 
-__KERNEL_RCSID(1, "$NetBSD: bcm53xx_board.c,v 1.17 2013/10/28 22:51:16 matt Exp $");
+__KERNEL_RCSID(1, "$NetBSD: bcm53xx_board.c,v 1.22 2014/09/14 21:06:37 skrll Exp $");
 
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -77,15 +78,15 @@ struct arm32_dma_range bcm53xx_dma_ranges[] = {
 		.dr_sysbase = 0x90000000,
 		.dr_busbase = 0x90000000,
 	},
-#elif defined(BCM56340)
+#elif defined(BCM563XX)
 	[0] = {
 		.dr_sysbase = 0x60000000,
 		.dr_busbase = 0x60000000,
 		.dr_len = 0x20000000,
 	}, [1] = {
-		.dr_sysbase = 0xa0000000,
-		.dr_busbase = 0xa0000000,
-	}.
+		.dr_sysbase = 0x80000000,
+		.dr_busbase = 0x80000000,
+	},
 #endif
 };
 
@@ -115,8 +116,8 @@ struct arm32_dma_range bcm53xx_coherent_dma_ranges[] = {
 		.dr_len = 0x20000000,
 		.dr_flags = _BUS_DMAMAP_COHERENT,
 	}, [1] = {
-		.dr_sysbase = 0xa0000000,
-		.dr_busbase = 0xa0000000,
+		.dr_sysbase = 0x80000000,
+		.dr_busbase = 0x80000000,
 	},
 #endif
 };
@@ -554,8 +555,10 @@ bcm53xx_bootstrap(vaddr_t iobase)
 
 	curcpu()->ci_data.cpu_cc_freq = clk->clk_cpu;
 
+#if NARML2CC > 0
 	arml2cc_init(bcm53xx_armcore_bst, bcm53xx_armcore_bsh,
 	    ARMCORE_L2C_BASE);
+#endif
 }
 
 void
@@ -600,7 +603,7 @@ bcm53xx_device_register(device_t self, void *aux)
 		/*
 		 * XXX KLUDGE ALERT XXX
 		 * The iot mainbus supplies is completely wrong since it scales
-		 * addresses by 2.  The simpliest remedy is to replace with our
+		 * addresses by 2.  The simplest remedy is to replace with our
 		 * bus space used for the armcore regisers (which armperiph uses). 
 		 */
 		struct mainbus_attach_args * const mb = aux;
@@ -637,6 +640,7 @@ bcm53xx_device_register(device_t self, void *aux)
 	}
 }
 
+#ifdef SRAB_BASE
 static kmutex_t srab_lock __cacheline_aligned;
 
 void
@@ -739,3 +743,4 @@ bcm53xx_srab_write_8(u_int pageoffset, uint64_t val)
 	bcm53xx_srab_busywait(bst, bsh);
 	mutex_spin_exit(&srab_lock);
 }
+#endif

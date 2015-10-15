@@ -1,4 +1,4 @@
-/*	$NetBSD: virtioreg.h,v 1.1 2011/10/30 12:12:21 hannken Exp $	*/
+/*	$NetBSD: virtioreg.h,v 1.3 2015/05/04 14:08:57 ozaki-r Exp $	*/
 
 /*
  * Copyright (c) 2010 Minoura Makoto.
@@ -95,7 +95,7 @@
 #define  VIRTIO_CONFIG_ISR_CONFIG_CHANGE	2
 #define VIRTIO_CONFIG_CONFIG_VECTOR	20 /* 16bit, optional */
 #define VIRTIO_CONFIG_DEVICE_CONFIG_NOMSI	20
-#define VIRTIO_CONFIG_DEVICE_CONFIG_MSI		22
+#define VIRTIO_CONFIG_DEVICE_CONFIG_MSI		24
 
 /* Virtqueue */
 /* This marks a buffer as continuing via the next field. */
@@ -146,6 +146,29 @@ struct vring_used {
         uint16_t idx;
         struct vring_used_elem ring[0];
 } __packed;
+
+/* The standard layout for the ring is a continuous chunk of memory which
+ * looks like this.  We assume num is a power of 2.
+ *
+ * struct vring {
+ *      // The actual descriptors (16 bytes each)
+ *      struct vring_desc desc[num];
+ *
+ *      // A ring of available descriptor heads with free-running index.
+ *      __u16 avail_flags;
+ *      __u16 avail_idx;
+ *      __u16 available[num];
+ *
+ *      // Padding to the next align boundary.
+ *      char pad[];
+ *
+ *      // A ring of used descriptor heads with free-running index.
+ *      __u16 used_flags;
+ *      __u16 used_idx;
+ *      struct vring_used_elem used[num];
+ * };
+ * Note: for virtio PCI, align is 4096.
+ */
 
 #define VIRTIO_PAGE_SIZE	(4096)
 

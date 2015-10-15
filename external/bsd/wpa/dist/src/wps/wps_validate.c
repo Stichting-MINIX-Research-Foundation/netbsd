@@ -2,14 +2,8 @@
  * Wi-Fi Protected Setup - Strict protocol validation routines
  * Copyright (c) 2010, Atheros Communications, Inc.
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #include "utils/includes.h"
@@ -273,7 +267,7 @@ static int wps_validate_config_error(const u8 *config_error, int mandatory)
 		return 0;
 	}
 	val = WPA_GET_BE16(config_error);
-	if (val > 18) {
+	if (val > 20) {
 		wpa_printf(MSG_INFO, "WPS-STRICT: Invalid Configuration Error "
 			   "attribute value 0x%04x", val);
 		return -1;
@@ -296,7 +290,7 @@ static int wps_validate_dev_password_id(const u8 *dev_password_id,
 		return 0;
 	}
 	val = WPA_GET_BE16(dev_password_id);
-	if (val >= 0x0006 && val <= 0x000f) {
+	if (val >= 0x0008 && val <= 0x000f) {
 		wpa_printf(MSG_INFO, "WPS-STRICT: Invalid Device Password ID "
 			   "attribute value 0x%04x", val);
 		return -1;

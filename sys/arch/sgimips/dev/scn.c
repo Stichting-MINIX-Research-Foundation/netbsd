@@ -1,4 +1,4 @@
-/*	$NetBSD: scn.c,v 1.4 2012/10/27 17:18:09 chs Exp $ */
+/*	$NetBSD: scn.c,v 1.8 2015/04/04 14:12:40 macallan Exp $ */
 
 /*
  * Resurrected from the old pc532 port 1/18/2009.
@@ -92,7 +92,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: scn.c,v 1.4 2012/10/27 17:18:09 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: scn.c,v 1.8 2015/04/04 14:12:40 macallan Exp $");
 
 #include "opt_ddb.h"
 #include "opt_kgdb.h"
@@ -155,8 +155,18 @@ dev_type_tty(scntty);
 dev_type_poll(scnpoll);
 
 const struct cdevsw scn_cdevsw = {
-	scnopen, scnclose, scnread, scnwrite, scnioctl,
-	scnstop, scntty, scnpoll, nommap, ttykqfilter, D_TTY
+	.d_open = scnopen,
+	.d_close = scnclose,
+	.d_read = scnread,
+	.d_write = scnwrite,
+	.d_ioctl = scnioctl,
+	.d_stop = scnstop,
+	.d_tty = scntty,
+	.d_poll = scnpoll,
+	.d_mmap = nommap,
+	.d_kqfilter = ttykqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_TTY
 };
 
 struct consdev scn_cn = {
@@ -508,6 +518,7 @@ scn_setchip(struct scn_softc *sc)
 				u_char temp;
 				/* start C/T running */
 				temp = dp->base[DU_CSTRT];
+				__USE(temp);
 			}
 			dp->ocounter = dp->counter;
 		}
@@ -797,14 +808,13 @@ scn_attach(device_t parent, device_t self, void *aux)
 	int channel;
 	int speed;
 	int s;
-	int maj;
+	int maj __diagused;
 	u_char unit;
 	u_char duartno;
 	u_char delim = ':';
 	u_char mr1, mr2;
 	enum scntype scntype = SCNUNK;
 	const char *duart_type = "Unknown";
-	char *intrname;
 	bool console, first;
 	devmajor_t major;
 
@@ -894,9 +904,6 @@ scn_attach(device_t parent, device_t self, void *aux)
 		ch_base[CH_MR] = mr1;
 		ch_base[CH_MR] = mr2;
 		splx(s);
-
-		intrname = malloc(sizeof("scnXX"), M_DEVBUF, M_NOWAIT);
-		snprintf(intrname, sizeof("scnXX"), "scn%d", unit);
 
 		/*
 		 * On IP6 the console chip is duart1. The keyboard/mouse
@@ -1071,7 +1078,6 @@ scnopen(dev_t dev, int flags, int mode, struct lwp *l)
 	int unit = DEV_UNIT(dev);
 	struct scn_softc *sc;
 	int error = 0;
-	int hwset = 0;
 
 	if (unit >= scn_cd.cd_ndevs)
 		return ENXIO;
@@ -1121,7 +1127,6 @@ scnopen(dev_t dev, int flags, int mode, struct lwp *l)
 
 		/* enable receiver interrupts */
 		scn_rxenable(sc);
-		hwset = 1;
 
 		/* set carrier state; */
 		if ((sc->sc_swflags & SCN_SW_SOFTCAR) || /* check ttyflags */
@@ -1661,15 +1666,10 @@ scnioctl(dev_t dev, u_long cmd, void *data, int flags, struct lwp *l)
 
 	case TIOCMGET: {
 			int     bits;
-			unsigned char ip, op;
+			unsigned char ip;
 
 			/* s = spltty(); */
 			ip = sc->sc_duart->base[DU_IP];
-			/*
-			 * XXX sigh; cannot get op current state!! even if
-			 * maintained in private, RTS is done in h/w!!
-			 */
-			op = 0;
 			/* splx(s); */
 
 			bits = 0;
@@ -1679,6 +1679,11 @@ scnioctl(dev_t dev, u_long cmd, void *data, int flags, struct lwp *l)
 				bits |= TIOCM_CTS;
 
 #if 0
+			/*
+			 * XXX sigh; cannot get op current state!! even if
+			 * maintained in private, RTS is done in h/w!!
+			 */
+			unsigned char op = 0;
 			if (op & sc->sc_op_dtr)
 				bits |= TIOCM_DTR;
 			if (op & sc->sc_op_rts)

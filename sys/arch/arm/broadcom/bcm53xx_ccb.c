@@ -34,7 +34,7 @@
 
 #include <sys/cdefs.h>
 
-__KERNEL_RCSID(1, "$NetBSD: bcm53xx_ccb.c,v 1.4 2013/10/28 22:51:16 matt Exp $");
+__KERNEL_RCSID(1, "$NetBSD: bcm53xx_ccb.c,v 1.6 2014/03/26 03:19:11 matt Exp $");
 
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -81,13 +81,13 @@ bcmccb_print(void *aux, const char *pnp)
 	return QUIET;
 }
 
-static inline uint32_t
+__unused static inline uint32_t
 bcmccb_read_4(struct bcmccb_softc *sc, bus_size_t o)
 {
 	return bus_space_read_4(sc->sc_bst, sc->sc_bsh, o);
 }
 
-static inline void
+__unused static inline void
 bcmccb_write_4(struct bcmccb_softc *sc, bus_size_t o, uint32_t v)
 {
 	return bus_space_write_4(sc->sc_bst, sc->sc_bsh, o, v);
@@ -99,7 +99,9 @@ static const struct bcm_locators bcmccb_locators[] = {
 	{ "bcmrng", RNG_BASE, 0x1000, BCMCCBCF_PORT_DEFAULT, 1, { IRQ_RNG } },
 	{ "bcmtmr", TIMER0_BASE, 0x1000, BCMCCBCF_PORT_DEFAULT, 2, { IRQ_TIMER0_1, IRQ_TIMER0_2 } },
 	{ "bcmtmr", TIMER1_BASE, 0x1000, BCMCCBCF_PORT_DEFAULT, 2, { IRQ_TIMER1_1, IRQ_TIMER1_2 } },
+#ifdef SRAB_BASE
 	{ "bcmsw", SRAB_BASE, 0x1000, BCMCCBCF_PORT_DEFAULT, },
+#endif
 	{ "bcmcom", UART2_BASE, 0x1000, BCMCCBCF_PORT_DEFAULT, 1, { IRQ_UART2 } },
 #ifdef BCM5301X
 	{ "bcmi2c", SMBUS1_BASE, 0x1000, BCMCCBCF_PORT_DEFAULT, 1, { IRQ_SMBUS1 } },

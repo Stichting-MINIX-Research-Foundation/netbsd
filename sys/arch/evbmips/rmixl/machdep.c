@@ -1,4 +1,4 @@
-/*	$NetBSD: machdep.c,v 1.13 2012/03/03 00:20:33 matt Exp $	*/
+/*	$NetBSD: machdep.c,v 1.17 2015/06/30 02:39:03 matt Exp $	*/
 
 /*
  * Copyright 2001, 2002 Wasabi Systems, Inc.
@@ -74,7 +74,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.13 2012/03/03 00:20:33 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.17 2015/06/30 02:39:03 matt Exp $");
 
 #define __INTR_PRIVATE
 
@@ -90,6 +90,7 @@ __KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.13 2012/03/03 00:20:33 matt Exp $");
 #include <sys/systm.h>
 #include <sys/kernel.h>
 #include <sys/buf.h>
+#include <sys/cpu.h>
 #include <sys/reboot.h>
 #include <sys/mount.h>
 #include <sys/kcore.h>
@@ -194,9 +195,6 @@ static u_long rmixl_physaddr_storage[
 	EXTENT_FIXED_STORAGE_SIZE(32)/sizeof(u_long)
 ];
 
-/* For sysctl_hw. */
-extern char cpu_model[];
-
 /* Maps for VM objects. */
 struct vm_map *phys_map = NULL;
 
@@ -219,7 +217,7 @@ void rmixlfw_mmap_print(rmixlfw_mmap_t *);
 
 
 #ifdef MULTIPROCESSOR
-static bool rmixl_fixup_cop0_oscratch(int32_t, uint32_t [2]);
+static bool rmixl_fixup_cop0_oscratch(int32_t, uint32_t [2], void *);
 void rmixl_get_wakeup_info(struct rmixl_config *);
 #ifdef MACHDEP_DEBUG
 static void rmixl_wakeup_info_print(volatile rmixlfw_cpu_wakeup_info_t *);
@@ -262,7 +260,7 @@ mach_init(int argc, int32_t *argv, void *envp, int64_t infop)
 #endif
 
 	/* mips_vector_init initialized mips_options */
-	strcpy(cpu_model, mips_options.mips_cpu->cpu_name);
+	cpu_setmodel("%s", mips_options.mips_cpu->cpu_name);
 
 	/* get system info from firmware */
 	memsize = rmixlfw_init(infop);
@@ -410,7 +408,7 @@ mach_init(int argc, int32_t *argv, void *envp, int64_t infop)
 	__asm __volatile("dmtc0 %0,$%1"
 		:: "r"(&cpu_info_store), "n"(MIPS_COP_0_OSSCRATCH));
 #ifdef MULTIPROCESSOR
-	mips_fixup_exceptions(rmixl_fixup_cop0_oscratch);
+	mips_fixup_exceptions(rmixl_fixup_cop0_oscratch, NULL);
 #endif
 	rmixl_fixup_curcpu();
 }
@@ -453,7 +451,7 @@ rmixl_pcr_init_core(void)
 
 #ifdef MULTIPROCESSOR
 static bool
-rmixl_fixup_cop0_oscratch(int32_t load_addr, uint32_t new_insns[2])
+rmixl_fixup_cop0_oscratch(int32_t load_addr, uint32_t new_insns[2], void *arg)
 {
 	size_t offset = load_addr - (intptr_t)&cpu_info_store;
 
@@ -980,37 +978,14 @@ consinit(void)
 void
 cpu_startup(void)
 {
-	vaddr_t minaddr, maxaddr;
-	char pbuf[9];
-
-	/*
-	 * Good {morning,afternoon,evening,night}.
-	 */
-	printf("%s%s", copyright, version);
-	format_bytes(pbuf, sizeof(pbuf), ctob((uint64_t)physmem));
-	printf("total memory = %s\n", pbuf);
-
 	/*
 	 * Virtual memory is bootstrapped -- notify the bus spaces
 	 * that memory allocation is now safe.
 	 */
 	rmixl_configuration.rc_mallocsafe = 1;
 
-	minaddr = 0;
-	/*
-	 * Allocate a submap for physio.
-	 */
-	phys_map = uvm_km_suballoc(kernel_map, &minaddr, &maxaddr,
-				    VM_PHYS_SIZE, 0, FALSE, NULL);
-
-	/*
-	 * (No need to allocate an mbuf cluster submap.  Mbuf clusters
-	 * are allocated via the pool allocator, and we use XKSEG to
-	 * map those pages.)
-	 */
-
-	format_bytes(pbuf, sizeof(pbuf), ptoa(uvmexp.free));
-	printf("avail memory = %s\n", pbuf);
+	/* Do the usual stuff */
+	cpu_startup_common();
 }
 
 int	waittime = -1;
@@ -1020,7 +995,7 @@ cpu_reboot(int howto, char *bootstr)
 {
 
 	/* Take a snapshot before clobbering any registers. */
-	savectx(curpcb);
+	savectx(lwp_getpcb(curlwp));
 
 	if (cold) {
 		howto |= RB_HALT;

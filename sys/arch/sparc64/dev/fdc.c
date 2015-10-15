@@ -1,4 +1,4 @@
-/*	$NetBSD: fdc.c,v 1.38 2013/05/30 16:01:25 martin Exp $	*/
+/*	$NetBSD: fdc.c,v 1.44 2015/04/26 15:15:19 mlelstv Exp $	*/
 
 /*-
  * Copyright (c) 2000 The NetBSD Foundation, Inc.
@@ -101,7 +101,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: fdc.c,v 1.38 2013/05/30 16:01:25 martin Exp $");
+__KERNEL_RCSID(0, "$NetBSD: fdc.c,v 1.44 2015/04/26 15:15:19 mlelstv Exp $");
 
 #include "opt_ddb.h"
 #include "opt_md.h"
@@ -339,12 +339,29 @@ dev_type_ioctl(fdioctl);
 dev_type_strategy(fdstrategy);
 
 const struct bdevsw fd_bdevsw = {
-	fdopen, fdclose, fdstrategy, fdioctl, nodump, nosize, D_DISK
+	.d_open = fdopen,
+	.d_close = fdclose,
+	.d_strategy = fdstrategy,
+	.d_ioctl = fdioctl,
+	.d_dump = nodump,
+	.d_psize = nosize,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
 const struct cdevsw fd_cdevsw = {
-	fdopen, fdclose, fdread, fdwrite, fdioctl,
-	nostop, notty, nopoll, nommap, nokqfilter, D_DISK
+	.d_open = fdopen,
+	.d_close = fdclose,
+	.d_read = fdread,
+	.d_write = fdwrite,
+	.d_ioctl = fdioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
 void fdgetdisklabel(dev_t);
@@ -353,7 +370,9 @@ void fdstrategy(struct buf *);
 void fdstart(struct fd_softc *);
 int fdprint(void *, const char *);
 
-struct dkdriver fddkdriver = { fdstrategy, NULL };
+struct dkdriver fddkdriver = {
+	.d_strategy = fdstrategy
+};
 
 struct	fd_type *fd_nvtotype(char *, int, int);
 void	fd_set_motor(struct fdc_softc *);
@@ -2413,9 +2432,9 @@ fdgetdisklabel(dev_t dev)
 	struct cpu_disklabel *clp = fd->sc_dk.dk_cpulabel;
 
 	memset(lp, 0, sizeof(struct disklabel));
-	memset(lp, 0, sizeof(struct cpu_disklabel));
+	memset(clp, 0, sizeof(struct cpu_disklabel));
 
-	lp->d_type = DTYPE_FLOPPY;
+	lp->d_type = DKTYPE_FLOPPY;
 	lp->d_secsize = FD_BSIZE(fd);
 	lp->d_secpercyl = fd->sc_type->seccyl;
 	lp->d_nsectors = fd->sc_type->sectrac;

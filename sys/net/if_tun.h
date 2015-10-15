@@ -1,4 +1,4 @@
-/*	$NetBSD: if_tun.h,v 1.17 2012/01/28 01:02:27 rmind Exp $	*/
+/*	$NetBSD: if_tun.h,v 1.19 2015/09/06 06:01:01 dholland Exp $	*/
 
 /*
  * Copyright (c) 1988, Julian Onions <jpo@cs.nott.ac.uk>
@@ -8,7 +8,7 @@
  * in any changes that are made.
  *
  * This driver takes packets off the IP i/f and hands them up to a
- * user process to have it's wicked way with. This driver has it's
+ * user process to have its wicked way with. This driver has its
  * roots in a similar driver written by Phil Cockcroft (formerly) at
  * UCL. This driver is based much more on read/write/select mode of
  * operation though.
@@ -18,6 +18,8 @@
 
 #ifndef _NET_IF_TUN_H_
 #define _NET_IF_TUN_H_
+
+#include <sys/ioccom.h>
 
 #ifdef _KERNEL
 struct tun_softc {

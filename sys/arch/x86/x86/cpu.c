@@ -1,4 +1,4 @@
-/*	$NetBSD: cpu.c,v 1.107 2013/12/01 01:05:16 christos Exp $	*/
+/*	$NetBSD: cpu.c,v 1.116 2015/09/17 23:48:01 nat Exp $	*/
 
 /*-
  * Copyright (c) 2000-2012 NetBSD Foundation, Inc.
@@ -62,7 +62,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: cpu.c,v 1.107 2013/12/01 01:05:16 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: cpu.c,v 1.116 2015/09/17 23:48:01 nat Exp $");
 
 #include "opt_ddb.h"
 #include "opt_mpbios.h"		/* for MPDEBUG */
@@ -71,10 +71,6 @@ __KERNEL_RCSID(0, "$NetBSD: cpu.c,v 1.107 2013/12/01 01:05:16 christos Exp $");
 
 #include "lapic.h"
 #include "ioapic.h"
-
-#ifdef i386
-#include "npx.h"
-#endif
 
 #include <sys/param.h>
 #include <sys/proc.h>
@@ -106,6 +102,8 @@ __KERNEL_RCSID(0, "$NetBSD: cpu.c,v 1.107 2013/12/01 01:05:16 christos Exp $");
 #include <machine/mtrr.h>
 #include <machine/pio.h>
 #include <machine/cpu_counter.h>
+
+#include <x86/fpu.h>
 
 #ifdef i386
 #include <machine/tlog.h>
@@ -359,6 +357,7 @@ cpu_attach(device_t parent, device_t self, void *aux)
 	ci->ci_acpiid = caa->cpu_id;
 	ci->ci_cpuid = caa->cpu_number;
 	ci->ci_func = caa->cpu_func;
+	aprint_normal("\n");
 
 	/* Must be before mi_cpu_attach(). */
 	cpu_vm_init(ci);
@@ -368,7 +367,6 @@ cpu_attach(device_t parent, device_t self, void *aux)
 
 		error = mi_cpu_attach(ci);
 		if (error != 0) {
-			aprint_normal("\n");
 			aprint_error_dev(self,
 			    "mi_cpu_attach failed with %d\n", error);
 			return;
@@ -448,7 +446,6 @@ cpu_attach(device_t parent, device_t self, void *aux)
 #endif
 
 	default:
-		aprint_normal("\n");
 		panic("unknown processor type??\n");
 	}
 
@@ -554,6 +551,7 @@ cpu_childdetached(device_t self, device_t child)
 void
 cpu_init(struct cpu_info *ci)
 {
+	uint32_t cr4 = 0;
 
 	lcr0(rcr0() | CR0_WP);
 
@@ -562,20 +560,33 @@ cpu_init(struct cpu_info *ci)
 	 * hardware supports it.
 	 */
 	if (cpu_feature[0] & CPUID_PGE)
-		lcr4(rcr4() | CR4_PGE);	/* enable global TLB caching */
+		cr4 |= CR4_PGE;	/* enable global TLB caching */
 
 	/*
 	 * If we have FXSAVE/FXRESTOR, use them.
 	 */
 	if (cpu_feature[0] & CPUID_FXSR) {
-		lcr4(rcr4() | CR4_OSFXSR);
+		cr4 |= CR4_OSFXSR;
 
 		/*
 		 * If we have SSE/SSE2, enable XMM exceptions.
 		 */
 		if (cpu_feature[0] & (CPUID_SSE|CPUID_SSE2))
-			lcr4(rcr4() | CR4_OSXMMEXCPT);
+			cr4 |= CR4_OSXMMEXCPT;
 	}
+
+	/* If xsave is supported, enable it */
+	if (cpu_feature[1] & CPUID2_XSAVE)
+		cr4 |= CR4_OSXSAVE;
+
+	if (cr4) {
+		cr4 |= rcr4();
+		lcr4(cr4);
+	}
+
+	/* If xsave is enabled, enable all fpu features */
+	if (cr4 & CR4_OSXSAVE)
+		wrxcr(0, x86_xsave_features & XCR0_FPU);
 
 #ifdef MTRR
 	/*
@@ -845,17 +856,13 @@ cpu_hatch(void *v)
 
 	cpu_init_idt();
 	gdt_init_cpu(ci);
+#if NLAPIC > 0
 	lapic_enable();
 	lapic_set_lvt();
 	lapic_initclocks();
+#endif
 
-#ifdef i386
-#if NNPX > 0
-	npxinit(ci);
-#endif
-#else
 	fpuinit(ci);
-#endif
 	lldt(GSYSSEL(GLDT_SEL, SEL_KPL));
 	ltr(ci->ci_tss_sel);
 
@@ -1035,7 +1042,9 @@ mp_cpu_start(struct cpu_info *ci, paddr_t target)
 	dwordptr[0] = 0;
 	dwordptr[1] = target >> 4;
 
+#if NLAPIC > 0
 	memcpy((uint8_t *)cmos_data_mapping + 0x467, dwordptr, 4);
+#endif
 
 	if ((cpu_feature[0] & CPUID_APIC) == 0) {
 		aprint_error("mp_cpu_start: CPU does not have APIC\n");
@@ -1123,13 +1132,7 @@ cpu_offline_md(void)
 	int s;
 
 	s = splhigh();
-#ifdef i386
-#if NNPX > 0
-	npxsave_cpu(true);
-#endif
-#else
 	fpusave_cpu(true);
-#endif
 	splx(s);
 }
 
@@ -1274,6 +1277,7 @@ cpu_load_pmap(struct pmap *pmap, struct pmap *oldpmap)
 {
 #ifdef PAE
 	struct cpu_info *ci = curcpu();
+	bool interrupts_enabled;
 	pd_entry_t *l3_pd = ci->ci_pae_l3_pdir;
 	int i;
 
@@ -1282,11 +1286,16 @@ cpu_load_pmap(struct pmap *pmap, struct pmap *oldpmap)
 	 * while this doesn't block NMIs, it's probably ok as NMIs unlikely
 	 * reload cr3.
 	 */
-	x86_disable_intr();
+	interrupts_enabled = (x86_read_flags() & PSL_I) != 0;
+	if (interrupts_enabled)
+		x86_disable_intr();
+
 	for (i = 0 ; i < PDP_SIZE; i++) {
 		l3_pd[i] = pmap->pm_pdirpa[i] | PG_V;
 	}
-	x86_enable_intr();
+	
+	if (interrupts_enabled)
+		x86_enable_intr();
 	tlbflush();
 #else /* PAE */
 	lcr3(pmap_pdirpa(pmap, 0));

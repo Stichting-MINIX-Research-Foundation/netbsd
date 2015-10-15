@@ -1,4 +1,4 @@
-/*	$NetBSD: trap.c,v 1.266 2012/12/08 12:36:30 kiyohara Exp $	*/
+/*	$NetBSD: trap.c,v 1.275 2015/02/27 17:45:52 christos Exp $	*/
 
 /*-
  * Copyright (c) 1998, 2000, 2005, 2006, 2007, 2008 The NetBSD Foundation, Inc.
@@ -68,7 +68,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: trap.c,v 1.266 2012/12/08 12:36:30 kiyohara Exp $");
+__KERNEL_RCSID(0, "$NetBSD: trap.c,v 1.275 2015/02/27 17:45:52 christos Exp $");
 
 #include "opt_ddb.h"
 #include "opt_kgdb.h"
@@ -112,8 +112,6 @@ __KERNEL_RCSID(0, "$NetBSD: trap.c,v 1.266 2012/12/08 12:36:30 kiyohara Exp $");
 
 #include <sys/kgdb.h>
 
-#include "npx.h"
-
 #ifdef KDTRACE_HOOKS
 #include <sys/dtrace_bsd.h>
 
@@ -128,7 +126,6 @@ dtrace_doubletrap_func_t	dtrace_doubletrap_func = NULL;
 #endif
 
 
-static inline int xmm_si_code(struct lwp *);
 void trap(struct trapframe *);
 void trap_tss(struct i386tss *, int, int);
 void trap_return_fault_return(struct trapframe *) __dead;
@@ -188,46 +185,6 @@ trap_tss(struct i386tss *tss, int trapno, int code)
 	tf.tf_esp = tss->tss_esp;
 	tf.tf_ss = tss->__tss_ss;
 	trap(&tf);
-}
-
-static inline int
-xmm_si_code(struct lwp *l)
-{
-	struct pcb *pcb;
-	uint32_t mxcsr, mask;
-
-	if (!i386_use_fxsave) {
-#ifdef DIAGNOSTIC
-		panic("SSE FP Exception, but no SSE");
-#endif
-		return 0;
-	}
-	pcb = lwp_getpcb(l);
-	mxcsr = pcb->pcb_savefpu.sv_xmm.sv_env.en_mxcsr;
-
-	/*
-         * Since we only have a single status and control register,
-	 * we use the exception mask bits to mask disabled exceptions
-	 */
-	mask = ~((mxcsr & __INITIAL_MXCSR__) >> 7) & 0xff;
-        switch (mask & mxcsr) {
-	case EN_SW_INVOP:
-		return FPE_FLTINV;
-	case EN_SW_DENORM:
-	case EN_SW_PRECLOSS:
-		return FPE_FLTRES;
-	case EN_SW_ZERODIV:
-		return FPE_FLTDIV;
-	case EN_SW_OVERFLOW:
-		return FPE_FLTOVF;
-	case EN_SW_UNDERFLOW:
-		return FPE_FLTUND;
-	case EN_SW_DATACHAIN:
-		return FPE_FLTSUB;
-	case 0:
-	default:
-		return 0;
-	}
 }
 
 static void *
@@ -346,7 +303,7 @@ trap(struct trapframe *frame)
 	/*
 	 * A trap can occur while DTrace executes a probe. Before
 	 * executing the probe, DTrace blocks re-scheduling and sets
-	 * a flag in it's per-cpu flags to indicate that it doesn't
+	 * a flag in its per-cpu flags to indicate that it doesn't
 	 * want to fault. On returning from the the probe, the no-fault
 	 * flag is cleared and finally re-scheduling is enabled.
 	 *
@@ -556,27 +513,13 @@ kernelfault:
 		}
 		goto out;
 
-	case T_DNA|T_USER: {
-		KSI_INIT_TRAP(&ksi);
-		ksi.ksi_signo = SIGKILL;
-		ksi.ksi_addr = (void *)frame->tf_eip;
-		printf("pid %d killed due to lack of floating point\n",
-		    p->p_pid);
-		goto trapsignal;
-	}
-
-	case T_XMM|T_USER:
 	case T_BOUND|T_USER:
 	case T_OFLOW|T_USER:
 	case T_DIVIDE|T_USER:
-	case T_ARITHTRAP|T_USER:
 		KSI_INIT_TRAP(&ksi);
 		ksi.ksi_signo = SIGFPE;
 		ksi.ksi_addr = (void *)frame->tf_eip;
 		switch (type) {
-		case T_XMM|T_USER:
-			ksi.ksi_code = xmm_si_code(l);
-			break;
 		case T_BOUND|T_USER:
 			ksi.ksi_code = FPE_FLTSUB;
 			break;
@@ -586,11 +529,6 @@ kernelfault:
 		case T_DIVIDE|T_USER:
 			ksi.ksi_code = FPE_INTDIV;
 			break;
-#if NNPX > 0
-		case T_ARITHTRAP|T_USER:
-			ksi.ksi_code = npxtrap(l);
-			break;
-#endif
 		default:
 			ksi.ksi_code = 0;
 			break;
@@ -715,15 +653,6 @@ faultcommon:
 			}
 			goto out;
 		}
-		KSI_INIT_TRAP(&ksi);
-		ksi.ksi_trap = type & ~T_USER;
-		ksi.ksi_addr = (void *)cr2;
-		if (error == EACCES) {
-			ksi.ksi_code = SEGV_ACCERR;
-			error = EFAULT;
-		} else {
-			ksi.ksi_code = SEGV_MAPERR;
-		}
 
 		if (type == T_PAGEFLT) {
 			onfault = onfault_handler(pcb, frame);
@@ -733,15 +662,37 @@ faultcommon:
 			    map, va, ftype, error);
 			goto kernelfault;
 		}
-		if (error == ENOMEM) {
-			ksi.ksi_signo = SIGKILL;
-			printf("UVM: pid %d (%s), uid %d killed: out of swap\n",
-			       p->p_pid, p->p_comm,
-			       l->l_cred ?
-			       kauth_cred_geteuid(l->l_cred) : -1);
-		} else {
+
+		KSI_INIT_TRAP(&ksi);
+		ksi.ksi_trap = type & ~T_USER;
+		ksi.ksi_addr = (void *)cr2;
+		switch (error) {
+		case EINVAL:
+			ksi.ksi_signo = SIGBUS;
+			ksi.ksi_code = BUS_ADRERR;
+			break;
+		case EACCES:
 			ksi.ksi_signo = SIGSEGV;
+			ksi.ksi_code = SEGV_ACCERR;
+			error = EFAULT;
+			break;
+		case ENOMEM:
+			ksi.ksi_signo = SIGKILL;
+			printf("UVM: pid %d.%d (%s), uid %d killed: "
+			    "out of swap\n", p->p_pid, l->l_lid, p->p_comm,
+			    l->l_cred ?  kauth_cred_geteuid(l->l_cred) : -1);
+			break;
+		default:
+			ksi.ksi_signo = SIGSEGV;
+			ksi.ksi_code = SEGV_MAPERR;
+			break;
 		}
+
+#ifdef TRAP_SIGDEBUG
+		printf("pid %d.%d (%s): signal %d at eip %x addr %lx "
+		    "error %d\n", p->p_pid, l->l_lid, p->p_comm, ksi.ksi_signo,
+		    frame->tf_eip, va, error);
+#endif
 		(*p->p_emul->e_trapsignal)(l, &ksi);
 		break;
 	}
@@ -809,7 +760,7 @@ startlwp(void *arg)
 {
 	ucontext_t *uc = arg;
 	lwp_t *l = curlwp;
-	int error;
+	int error __diagused;
 
 	error = cpu_setmcontext(l, &uc->uc_mcontext, uc->uc_flags);
 	KASSERT(error == 0);

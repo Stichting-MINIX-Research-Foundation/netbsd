@@ -1,4 +1,4 @@
-/*	$NetBSD: pack.c,v 1.8 2010/03/08 10:19:14 pooka Exp $	*/
+/*	$NetBSD: pack.c,v 1.10 2015/09/12 19:11:13 joerg Exp $	*/
 
 /*
  * Copyright (c) 1992, 1993
@@ -43,6 +43,9 @@
 #if HAVE_NBTOOL_CONFIG_H
 #include "nbtool_config.h"
 #endif
+
+#include <sys/cdefs.h>
+__RCSID("$NetBSD: pack.c,v 1.10 2015/09/12 19:11:13 joerg Exp $");
 
 #include <sys/param.h>
 #include <stdlib.h>
@@ -116,7 +119,7 @@ pack(void)
 	 */
 	locspace = 0;
 	TAILQ_FOREACH(i, &alldevi, i_next) {
-		if (!i->i_active == DEVI_ACTIVE || i->i_collapsed)
+		if (i->i_active != DEVI_ACTIVE || i->i_collapsed)
 			continue;
 		if ((p = i->i_pspec) == NULL)
 			continue;
@@ -137,7 +140,7 @@ packdevi(void)
 {
 	struct devi *firststar, *i, **ip, *l, *p;
 	struct devbase *d;
-	int j, m, n;
+	u_short j, m, n;
 
 	/*
 	 * Sort all the cloning units to after the non-cloning units,

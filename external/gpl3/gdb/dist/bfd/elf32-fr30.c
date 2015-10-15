@@ -1,7 +1,5 @@
 /* FR30-specific support for 32-bit ELF.
-   Copyright 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008,
-   2010, 2012
-   Free Software Foundation, Inc.
+   Copyright (C) 1998-2015 Free Software Foundation, Inc.
 
    This file is part of BFD, the Binary File Descriptor library.
 
@@ -377,7 +375,11 @@ fr30_info_to_howto_rela (bfd *abfd ATTRIBUTE_UNUSED,
   unsigned int r_type;
 
   r_type = ELF32_R_TYPE (dst->r_info);
-  BFD_ASSERT (r_type < (unsigned int) R_FR30_max);
+  if (r_type >= (unsigned int) R_FR30_max)
+    {
+      _bfd_error_handler (_("%A: invalid FR30 reloc number: %d"), abfd, r_type);
+      r_type = 0;
+    }
   cache_ptr->howto = & fr30_elf_howto_table [r_type];
 }
 
@@ -547,12 +549,12 @@ fr30_elf_relocate_section (bfd *output_bfd,
 	}
       else
 	{
-	  bfd_boolean unresolved_reloc, warned;
+	  bfd_boolean unresolved_reloc, warned, ignored;
 
 	  RELOC_FOR_GLOBAL_SYMBOL (info, input_bfd, input_section, rel,
 				   r_symndx, symtab_hdr, sym_hashes,
 				   h, sec, relocation,
-				   unresolved_reloc, warned);
+				   unresolved_reloc, warned, ignored);
 
 	  name = h->root.root.string;
 	}
@@ -671,6 +673,10 @@ fr30_elf_check_relocs (bfd *abfd,
 	  while (h->root.type == bfd_link_hash_indirect
 		 || h->root.type == bfd_link_hash_warning)
 	    h = (struct elf_link_hash_entry *) h->root.u.i.link;
+
+	  /* PR15323, ref flags aren't set for references in the same
+	     object.  */
+	  h->root.non_ir_ref = 1;
 	}
 
       switch (ELF32_R_TYPE (rel->r_info))
@@ -701,7 +707,7 @@ fr30_elf_check_relocs (bfd *abfd,
 #define ELF_MACHINE_ALT1	EM_CYGNUS_FR30
 #define ELF_MAXPAGESIZE		0x1000
 
-#define TARGET_BIG_SYM          bfd_elf32_fr30_vec
+#define TARGET_BIG_SYM          fr30_elf32_vec
 #define TARGET_BIG_NAME		"elf32-fr30"
 
 #define elf_info_to_howto_rel			NULL

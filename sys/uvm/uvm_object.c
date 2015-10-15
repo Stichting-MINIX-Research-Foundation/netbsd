@@ -1,4 +1,4 @@
-/*	$NetBSD: uvm_object.c,v 1.11 2011/08/27 09:11:53 christos Exp $	*/
+/*	$NetBSD: uvm_object.c,v 1.13 2015/08/24 22:50:32 pooka Exp $	*/
 
 /*
  * Copyright (c) 2006, 2010 The NetBSD Foundation, Inc.
@@ -37,9 +37,11 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: uvm_object.c,v 1.11 2011/08/27 09:11:53 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: uvm_object.c,v 1.13 2015/08/24 22:50:32 pooka Exp $");
 
+#ifdef _KERNEL_OPT
 #include "opt_ddb.h"
+#endif
 
 #include <sys/param.h>
 #include <sys/mutex.h>
@@ -227,7 +229,7 @@ uvm_obj_unwirepages(struct uvm_object *uobj, off_t start, off_t end)
 	mutex_exit(uobj->vmobjlock);
 }
 
-#if (defined(DDB) || defined(DEBUGPRINT)) && !defined(_RUMPKERNEL)
+#if defined(DDB) || defined(DEBUGPRINT)
 
 /*
  * uvm_object_printit: actually prints the object

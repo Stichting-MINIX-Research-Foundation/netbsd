@@ -1,4 +1,4 @@
-/*	$NetBSD: atari5380.c,v 1.59 2012/02/12 16:34:07 matt Exp $	*/
+/*	$NetBSD: atari5380.c,v 1.62 2014/10/18 08:33:25 snj Exp $	*/
 
 /*
  * Copyright (c) 1995 Leo Weppelman.
@@ -26,7 +26,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: atari5380.c,v 1.59 2012/02/12 16:34:07 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: atari5380.c,v 1.62 2014/10/18 08:33:25 snj Exp $");
 
 #include "opt_atariscsi.h"
 
@@ -325,10 +325,8 @@ scsi_tt_idisable(void)
 static inline void
 scsi_tt_clr_ipend(void)
 {
-	int tmp;
-
 	SCSI_DMA->s_dma_ctrl = 0;
-	tmp = GET_TT_REG(NCR5380_IRCV);
+	GET_TT_REG(NCR5380_IRCV);
 	if (machineid & ATARI_TT)
 		MFP2->mf_iprb = (uint8_t)~IB_SCDM;
 	MFP2->mf_ipra = (uint8_t)~IA_SCSI;
@@ -447,7 +445,7 @@ tt_get_dma_result(SC_REQ *reqp, u_long *bytes_left)
 	if (dmastat & SD_BUSERR) {
 		/*
 		 * The DMA-controller seems to access 8 bytes beyond
-		 * it's limits on output. Therefore check also the byte
+		 * its limits on output. Therefore check also the byte
 		 * count. If it's zero, ignore the bus error.
 		 */
 		if (leftover != 0) {
@@ -733,9 +731,8 @@ scsi_falcon_idisable(void)
 static inline void
 scsi_falcon_clr_ipend(void)
 {
-	int tmp;
 
-	tmp = get_falcon_5380_reg(NCR5380_IRCV);
+	(void)get_falcon_5380_reg(NCR5380_IRCV);
 	rem_sicallback((si_farg)ncr_ctrl_intr);
 }
 

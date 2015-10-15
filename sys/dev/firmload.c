@@ -1,4 +1,4 @@
-/*	$NetBSD: firmload.c,v 1.17 2012/04/29 20:27:31 dsl Exp $	*/
+/*	$NetBSD: firmload.c,v 1.21 2015/01/04 19:25:32 pooka Exp $	*/
 
 /*-
  * Copyright (c) 2005, 2006 The NetBSD Foundation, Inc.
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: firmload.c,v 1.17 2012/04/29 20:27:31 dsl Exp $");
+__KERNEL_RCSID(0, "$NetBSD: firmload.c,v 1.21 2015/01/04 19:25:32 pooka Exp $");
 
 /*
  * The firmload API provides an interface for device drivers to access
@@ -40,7 +40,7 @@ __KERNEL_RCSID(0, "$NetBSD: firmload.c,v 1.17 2012/04/29 20:27:31 dsl Exp $");
 #include <sys/param.h>
 #include <sys/fcntl.h>
 #include <sys/filedesc.h>
-#include <sys/malloc.h>
+#include <sys/kmem.h>
 #include <sys/namei.h>
 #include <sys/systm.h>
 #include <sys/sysctl.h>
@@ -49,8 +49,6 @@ __KERNEL_RCSID(0, "$NetBSD: firmload.c,v 1.17 2012/04/29 20:27:31 dsl Exp $");
 #include <sys/lwp.h>
 
 #include <dev/firmload.h>
-
-MALLOC_DEFINE(M_DEVFIRM, "devfirm", "device firmware buffers");
 
 struct firmware_handle {
 	struct vnode	*fh_vp;
@@ -61,14 +59,14 @@ static firmware_handle_t
 firmware_handle_alloc(void)
 {
 
-	return (malloc(sizeof(struct firmware_handle), M_DEVFIRM, M_WAITOK));
+	return (kmem_alloc(sizeof(struct firmware_handle), KM_SLEEP));
 }
 
 static void
 firmware_handle_free(firmware_handle_t fh)
 {
 
-	free(fh, M_DEVFIRM);
+	kmem_free(fh, sizeof(*fh));
 }
 
 #if !defined(FIRMWARE_PATHS)
@@ -117,18 +115,9 @@ sysctl_hw_firmware_path(SYSCTLFN_ARGS)
 	return (0);
 }
 
-SYSCTL_SETUP_PROTO(sysctl_hw_firmware_setup);
-
 SYSCTL_SETUP(sysctl_hw_firmware_setup, "sysctl hw.firmware subtree setup")
 {
 	const struct sysctlnode *firmware_node;
-
-	if (sysctl_createv(clog, 0, NULL, NULL,
-	    CTLFLAG_PERMANENT,
-	    CTLTYPE_NODE, "hw", NULL,
-	    NULL, 0, NULL, 0,
-	    CTL_HW, CTL_EOL) != 0)
-	    	return;
 	
 	if (sysctl_createv(clog, 0, NULL, &firmware_node,
 	    CTLFLAG_PERMANENT,
@@ -192,11 +181,8 @@ firmware_path_next(const char *drvname, const char *imgname, char *pnbuf,
 		prefix++;
 	*prefixp = prefix;
 
-	/*
-	 * This sprintf() is safe because of the maxprefix calculation
-	 * performed above.
-	 */
-	sprintf(&pnbuf[i], "/%s/%s", drvname, imgname);
+	KASSERT(MAXPATHLEN >= i);
+	snprintf(pnbuf + i, MAXPATHLEN - i, "/%s/%s", drvname, imgname);
 
 	return (pnbuf);
 }
@@ -346,7 +332,7 @@ void *
 firmware_malloc(size_t size)
 {
 
-	return (malloc(size, M_DEVFIRM, M_WAITOK));
+	return (kmem_alloc(size, KM_SLEEP));
 }
 
 /*
@@ -359,5 +345,5 @@ void
 firmware_free(void *v, size_t size)
 {
 
-	free(v, M_DEVFIRM);
+	kmem_free(v, size);
 }

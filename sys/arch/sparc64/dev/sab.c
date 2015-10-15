@@ -1,4 +1,4 @@
-/*	$NetBSD: sab.c,v 1.50 2013/09/15 13:45:31 martin Exp $	*/
+/*	$NetBSD: sab.c,v 1.54 2014/11/15 19:20:02 christos Exp $	*/
 /*	$OpenBSD: sab.c,v 1.7 2002/04/08 17:49:42 jason Exp $	*/
 
 /*
@@ -42,7 +42,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: sab.c,v 1.50 2013/09/15 13:45:31 martin Exp $");
+__KERNEL_RCSID(0, "$NetBSD: sab.c,v 1.54 2014/11/15 19:20:02 christos Exp $");
 
 #include "opt_kgdb.h"
 #include <sys/types.h>
@@ -71,8 +71,8 @@ __KERNEL_RCSID(0, "$NetBSD: sab.c,v 1.50 2013/09/15 13:45:31 martin Exp $");
 
 #include "locators.h"
 
-#define SABUNIT(x)		(minor(x) & 0x7ffff)
-#define SABDIALOUT(x)		(minor(x) & 0x80000)
+#define SABUNIT(x)		TTUNIT(x)
+#define SABDIALOUT(x)		TTDIALOUT(x)
 
 #define	SABTTY_RBUF_SIZE	1024	/* must be divisible by 2 */
 
@@ -152,7 +152,7 @@ void sabtty_flush(struct sabtty_softc *);
 int sabtty_speed(int);
 void sabtty_console_flags(struct sabtty_softc *);
 void sabtty_cnpollc(struct sabtty_softc *, int);
-void sabtty_shutdown(void *);
+bool sabtty_shutdown(device_t, int);
 int sabttyparam(struct sabtty_softc *, struct tty *, struct termios *);
 
 #ifdef KGDB
@@ -185,8 +185,18 @@ dev_type_poll(sabpoll);
 static struct cnm_state sabtty_cnm_state;
 
 const struct cdevsw sabtty_cdevsw = {
-	sabopen, sabclose, sabread, sabwrite, sabioctl,
-	sabstop, sabtty, sabpoll, nommap, ttykqfilter, D_TTY
+	.d_open = sabopen,
+	.d_close = sabclose,
+	.d_read = sabread,
+	.d_write = sabwrite,
+	.d_ioctl = sabioctl,
+	.d_stop = sabstop,
+	.d_tty = sabtty,
+	.d_poll = sabpoll,
+	.d_mmap = nommap,
+	.d_kqfilter = ttykqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_TTY
 };
 
 struct sabtty_rate {
@@ -460,7 +470,7 @@ sabtty_attach(device_t parent, device_t self, void *aux)
 			cn_tab->cn_getc = sab_cngetc;
 			maj = cdevsw_lookup_major(&sabtty_cdevsw);
 			cn_tab->cn_dev = makedev(maj, device_unit(self));
-			shutdownhook_establish(sabtty_shutdown, sc);
+			pmf_device_register1(self, NULL, NULL, sabtty_shutdown);
 			cn_init_magic(&sabtty_cnm_state);
 			cn_set_magic("\047\001"); /* default magic is BREAK */
 		}
@@ -1311,10 +1321,10 @@ sabtty_console_flags(struct sabtty_softc *sc)
 		sc->sc_flags |= SABTTYF_IS_RSC;
 }
 
-void
-sabtty_shutdown(void *vsc)
+bool
+sabtty_shutdown(device_t dev, int how)
 {
-	struct sabtty_softc *sc = vsc;
+	struct sabtty_softc *sc = device_private(dev);
 
 	/* Have to put the chip back into single char mode */
 	sc->sc_flags |= SABTTYF_DONTDDB;
@@ -1322,6 +1332,7 @@ sabtty_shutdown(void *vsc)
 	sabtty_cec_wait(sc);
 	SAB_WRITE(sc, SAB_CMDR, SAB_CMDR_RRES);
 	sabtty_cec_wait(sc);
+	return true;
 }
 
 #ifdef KGDB

@@ -1,4 +1,4 @@
-/*	$NetBSD: if_dge.c,v 1.36 2013/10/17 21:06:15 christos Exp $ */
+/*	$NetBSD: if_dge.c,v 1.40 2015/04/13 16:33:25 riastradh Exp $ */
 
 /*
  * Copyright (c) 2004, SUNET, Swedish University Computer Network.
@@ -80,7 +80,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_dge.c,v 1.36 2013/10/17 21:06:15 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_dge.c,v 1.40 2015/04/13 16:33:25 riastradh Exp $");
 
 
 
@@ -96,7 +96,7 @@ __KERNEL_RCSID(0, "$NetBSD: if_dge.c,v 1.36 2013/10/17 21:06:15 christos Exp $")
 #include <sys/device.h>
 #include <sys/queue.h>
 
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 
 #include <net/if.h>
 #include <net/if_dl.h>
@@ -630,7 +630,7 @@ static uint16_t	dge_eeprom_word(struct dge_softc *sc, int addr);
 static int	dge_xgmii_mediachange(struct ifnet *);
 static void	dge_xgmii_mediastatus(struct ifnet *, struct ifmediareq *);
 static void	dge_xgmii_reset(struct dge_softc *);
-static void	dge_xgmii_writereg(device_t, int, int, int);
+static void	dge_xgmii_writereg(struct dge_softc *, int, int, int);
 
 
 CFATTACH_DECL_NEW(dge, sizeof(struct dge_softc),
@@ -669,6 +669,7 @@ dge_attach(device_t parent, device_t self, void *aux)
 	uint8_t enaddr[ETHER_ADDR_LEN];
 	pcireg_t preg, memtype;
 	uint32_t reg;
+	char intrbuf[PCI_INTRSTR_LEN];
 
 	sc->sc_dev = self;
 	sc->sc_dmat = pa->pa_dmat;
@@ -697,7 +698,7 @@ dge_attach(device_t parent, device_t self, void *aux)
 		aprint_error_dev(sc->sc_dev, "unable to map interrupt\n");
 		return;
 	}
-	intrstr = pci_intr_string(pc, ih);
+	intrstr = pci_intr_string(pc, ih, intrbuf, sizeof(intrbuf));
 	sc->sc_ih = pci_intr_establish(pc, ih, IPL_NET, dge_intr, sc);
 	if (sc->sc_ih == NULL) {
 		aprint_error_dev(sc->sc_dev, "unable to establish interrupt");
@@ -894,7 +895,7 @@ dge_attach(device_t parent, device_t self, void *aux)
 	if_attach(ifp);
 	ether_ifattach(ifp, enaddr);
 	rnd_attach_source(&sc->rnd_source, device_xname(sc->sc_dev),
-	    RND_TYPE_NET, 0);
+	    RND_TYPE_NET, RND_FLAG_DEFAULT);
 
 #ifdef DGE_EVENT_COUNTERS
 	/* Fix segment event naming */
@@ -2378,11 +2379,9 @@ phwait(struct dge_softc *sc, int p, int r, int d, int type)
         return mdic;
 }
 
-
 static void
-dge_xgmii_writereg(device_t self, int phy, int reg, int val)
+dge_xgmii_writereg(struct dge_softc *sc, int phy, int reg, int val)
 {
-	struct dge_softc *sc = device_private(self);
 	int mdic;
 
 	CSR_WRITE(sc, DGE_MDIRW, val);
@@ -2392,7 +2391,7 @@ dge_xgmii_writereg(device_t self, int phy, int reg, int val)
 		return;
 	}
 	if (((mdic = phwait(sc, phy, reg, 1, MDIO_WRITE)) & MDIO_CMD)) {
-		printf("%s: read cycle timeout; phy %d reg %d\n",
+		printf("%s: write cycle timeout; phy %d reg %d\n",
 		    device_xname(sc->sc_dev), phy, reg);
 		return;
 	}
@@ -2401,7 +2400,7 @@ dge_xgmii_writereg(device_t self, int phy, int reg, int val)
 static void
 dge_xgmii_reset(struct dge_softc *sc)
 {
-	dge_xgmii_writereg((void *)sc, 0, 0, BMCR_RESET);
+	dge_xgmii_writereg(sc, 0, 0, BMCR_RESET);
 }
 
 static int

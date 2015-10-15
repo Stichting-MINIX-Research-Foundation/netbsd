@@ -1,4 +1,4 @@
-/*	$NetBSD: uvm_fault.c,v 1.195 2013/09/15 15:52:35 martin Exp $	*/
+/*	$NetBSD: uvm_fault.c,v 1.197 2015/06/22 06:24:17 matt Exp $	*/
 
 /*
  * Copyright (c) 1997 Charles D. Cranor and Washington University.
@@ -32,7 +32,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: uvm_fault.c,v 1.195 2013/09/15 15:52:35 martin Exp $");
+__KERNEL_RCSID(0, "$NetBSD: uvm_fault.c,v 1.197 2015/06/22 06:24:17 matt Exp $");
 
 #include "opt_uvmhist.h"
 
@@ -803,12 +803,10 @@ uvm_fault_internal(struct vm_map *orig_map, vaddr_t vaddr,
 	struct vm_anon *anons_store[UVM_MAXRANGE], **anons;
 	struct vm_page *pages_store[UVM_MAXRANGE], **pages;
 	int error;
-#if 0
-	uintptr_t delta, delta2, delta3;
-#endif
+
 	UVMHIST_FUNC("uvm_fault"); UVMHIST_CALLED(maphist);
 
-	UVMHIST_LOG(maphist, "(map=0x%x, vaddr=0x%x, at=%d, ff=%d)",
+	UVMHIST_LOG(maphist, "(map=%p, vaddr=%#lx, at=%d, ff=%d)",
 	      orig_map, vaddr, access_type, fault_flag);
 
 	cd = &(curcpu()->ci_data);
@@ -818,37 +816,7 @@ uvm_fault_internal(struct vm_map *orig_map, vaddr_t vaddr,
 	/* Don't flood RNG subsystem with samples. */
 	if (cd->cpu_nfault % 503)
 		goto norng;
-#if 0
-	/*
-	 * Avoid trying to count "entropy" for accesses of regular
-	 * stride, by checking the 1st, 2nd, 3rd order differentials
-	 * of vaddr, like the rnd code does internally with sample times.
-	 *
-	 * XXX If the selection of only every 503rd fault above is
-	 * XXX removed, this code should exclude most samples, but
-	 * XXX does not, and is therefore disabled.
-	 */
-	if (ucpu->last_fltaddr > (uintptr_t)trunc_page(vaddr))
-		delta = ucpu->last_fltaddr - (uintptr_t)trunc_page(vaddr);
-	else
-		delta = (uintptr_t)trunc_page(vaddr) - ucpu->last_fltaddr;
 
-	if (ucpu->last_delta > delta) 
-		delta2 = ucpu->last_delta - delta;
-	else
-		delta2 = delta - ucpu->last_delta;
-
-	if (ucpu->last_delta2 > delta2)
-		delta3 = ucpu->last_delta2 - delta2;
-	else
-		delta3 = delta2 - ucpu->last_delta2;
-
-	ucpu->last_fltaddr = (uintptr_t)vaddr;
-	ucpu->last_delta = delta;
-	ucpu->last_delta2 = delta2;
-
-	if (delta != 0 && delta2 != 0 && delta3 != 0)
-#endif
 	/* Don't count anything until user interaction is possible */
 	if (__predict_true(start_init_exec)) {
 		kpreempt_disable();
@@ -979,7 +947,7 @@ uvm_fault_check(
 	    ufi->entry->max_protection : ufi->entry->protection;
 	if ((check_prot & flt->access_type) != flt->access_type) {
 		UVMHIST_LOG(maphist,
-		    "<- protection failure (prot=0x%x, access=0x%x)",
+		    "<- protection failure (prot=%#x, access=%#x)",
 		    ufi->entry->protection, flt->access_type, 0, 0);
 		uvmfault_unlockmaps(ufi, false);
 		return EACCES;
@@ -1092,9 +1060,9 @@ uvm_fault_check(
 	const voff_t eoff = flt->startva - ufi->entry->start;
 
 	/* locked: maps(read) */
-	UVMHIST_LOG(maphist, "  narrow=%d, back=%d, forw=%d, startva=0x%x",
+	UVMHIST_LOG(maphist, "  narrow=%d, back=%d, forw=%d, startva=%#lx",
 		    flt->narrow, nback, nforw, flt->startva);
-	UVMHIST_LOG(maphist, "  entry=0x%x, amap=0x%x, obj=0x%x", ufi->entry,
+	UVMHIST_LOG(maphist, "  entry=%p, amap=%p, obj=%p", ufi->entry,
 		    amap, uobj, 0);
 
 	/*
@@ -1261,7 +1229,7 @@ uvm_fault_upper_neighbor(
 	uvm_pageenqueue(pg);
 	mutex_exit(&uvm_pageqlock);
 	UVMHIST_LOG(maphist,
-	    "  MAPPING: n anon: pm=0x%x, va=0x%x, pg=0x%x",
+	    "  MAPPING: n anon: pm=%p, va=%#lx, pg=%p",
 	    ufi->orig_map->pmap, currva, pg, 0);
 	uvmexp.fltnamap++;
 
@@ -1308,7 +1276,7 @@ uvm_fault_upper(
 	 * handle case 1: fault on an anon in our amap
 	 */
 
-	UVMHIST_LOG(maphist, "  case 1 fault: anon=0x%x", anon, 0,0,0);
+	UVMHIST_LOG(maphist, "  case 1 fault: anon=%p", anon, 0,0,0);
 
 	/*
 	 * no matter if we have case 1A or case 1B we are going to need to
@@ -1538,7 +1506,7 @@ uvm_fault_upper_enter(
 	 */
 
 	UVMHIST_LOG(maphist,
-	    "  MAPPING: anon: pm=0x%x, va=0x%x, pg=0x%x, promote=%d",
+	    "  MAPPING: anon: pm=%p, va=%#lx, pg=%p, promote=%d",
 	    ufi->orig_map->pmap, ufi->orig_rvaddr, pg, flt->promote);
 	if (pmap_enter(ufi->orig_map->pmap, ufi->orig_rvaddr,
 	    VM_PAGE_TO_PHYS(pg),
@@ -1835,7 +1803,7 @@ uvm_fault_lower_neighbor(
 	uvm_pageenqueue(pg);
 	mutex_exit(&uvm_pageqlock);
 	UVMHIST_LOG(maphist,
-	    "  MAPPING: n obj: pm=0x%x, va=0x%x, pg=0x%x",
+	    "  MAPPING: n obj: pm=%p, va=%#lx, pg=%p",
 	    ufi->orig_map->pmap, currva, pg, 0);
 	uvmexp.fltnomap++;
 
@@ -2218,7 +2186,7 @@ uvm_fault_lower_enter(
 	 */
 
 	UVMHIST_LOG(maphist,
-	    "  MAPPING: case2: pm=0x%x, va=0x%x, pg=0x%x, promote=%d",
+	    "  MAPPING: case2: pm=%p, va=%#lx, pg=%#x, promote=%d",
 	    ufi->orig_map->pmap, ufi->orig_rvaddr, pg, flt->promote);
 	KASSERT((flt->access_type & VM_PROT_WRITE) == 0 ||
 		(pg->flags & PG_RDONLY) == 0);

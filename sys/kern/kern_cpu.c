@@ -1,4 +1,4 @@
-/*	$NetBSD: kern_cpu.c,v 1.61 2013/11/24 21:58:38 rmind Exp $	*/
+/*	$NetBSD: kern_cpu.c,v 1.71 2015/08/29 12:24:00 maxv Exp $	*/
 
 /*-
  * Copyright (c) 2007, 2008, 2009, 2010, 2012 The NetBSD Foundation, Inc.
@@ -56,7 +56,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: kern_cpu.c,v 1.61 2013/11/24 21:58:38 rmind Exp $");
+__KERNEL_RCSID(0, "$NetBSD: kern_cpu.c,v 1.71 2015/08/29 12:24:00 maxv Exp $");
 
 #include "opt_cpu_ucode.h"
 #include "opt_compat_netbsd.h"
@@ -83,6 +83,8 @@ __KERNEL_RCSID(0, "$NetBSD: kern_cpu.c,v 1.61 2013/11/24 21:58:38 rmind Exp $");
 
 #include <uvm/uvm_extern.h>
 
+#include "ioconf.h"
+
 /*
  * If the port has stated that cpu_data is the first thing in cpu_info,
  * verify that the claim is true. This will prevent them from getting out
@@ -94,17 +96,24 @@ CTASSERT(offsetof(struct cpu_info, ci_data) == 0);
 CTASSERT(offsetof(struct cpu_info, ci_data) != 0);
 #endif
 
-void	cpuctlattach(int);
-
 static void	cpu_xc_online(struct cpu_info *);
 static void	cpu_xc_offline(struct cpu_info *);
 
 dev_type_ioctl(cpuctl_ioctl);
 
 const struct cdevsw cpuctl_cdevsw = {
-	nullopen, nullclose, nullread, nullwrite, cpuctl_ioctl,
-	nullstop, notty, nopoll, nommap, nokqfilter,
-	D_OTHER | D_MPSAFE
+	.d_open = nullopen,
+	.d_close = nullclose,
+	.d_read = nullread,
+	.d_write = nullwrite,
+	.d_ioctl = cpuctl_ioctl,
+	.d_stop = nullstop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_OTHER | D_MPSAFE
 };
 
 kmutex_t	cpu_lock		__cacheline_aligned;
@@ -118,6 +127,9 @@ struct cpu_info **cpu_infos		__read_mostly;
 /* Note: set on mi_cpu_attach() and idle_loop(). */
 kcpuset_t *	kcpuset_attached	__read_mostly	= NULL;
 kcpuset_t *	kcpuset_running		__read_mostly	= NULL;
+
+
+static char cpu_model[128];
 
 /*
  * mi_cpu_init: early initialisation of MI CPU related structures.
@@ -159,8 +171,8 @@ mi_cpu_attach(struct cpu_info *ci)
 	    cpu_index(ci));
 
 	if (__predict_false(cpu_infos == NULL)) {
-		size_t nslots = maxcpus * sizeof(struct cpu_info *) + 1;
-		cpu_infos = kmem_zalloc(nslots, KM_SLEEP);
+		size_t ci_bufsize = (maxcpus + 1) * sizeof(struct cpu_info *);
+		cpu_infos = kmem_zalloc(ci_bufsize, KM_SLEEP);
 	}
 	cpu_infos[cpu_index(ci)] = ci;
 
@@ -192,7 +204,7 @@ mi_cpu_attach(struct cpu_info *ci)
 }
 
 void
-cpuctlattach(int dummy)
+cpuctlattach(int dummy __unused)
 {
 
 	KASSERT(cpu_infos != NULL);
@@ -432,7 +444,6 @@ cpu_setstate(struct cpu_info *ci, bool online)
 		if ((spc->spc_flags & SPCF_OFFLINE) == 0)
 			return 0;
 		func = (xcfunc_t)cpu_xc_online;
-		ncpuonline++;
 	} else {
 		if ((spc->spc_flags & SPCF_OFFLINE) != 0)
 			return 0;
@@ -451,20 +462,41 @@ cpu_setstate(struct cpu_info *ci, bool online)
 		if (nonline == 1)
 			return EBUSY;
 		func = (xcfunc_t)cpu_xc_offline;
-		ncpuonline--;
 	}
 
 	where = xc_unicast(0, func, ci, NULL, ci);
 	xc_wait(where);
 	if (online) {
 		KASSERT((spc->spc_flags & SPCF_OFFLINE) == 0);
-	} else if ((spc->spc_flags & SPCF_OFFLINE) == 0) {
-		/* If was not set offline, then it is busy */
-		return EBUSY;
+		ncpuonline++;
+	} else {
+		if ((spc->spc_flags & SPCF_OFFLINE) == 0) {
+			/* If was not set offline, then it is busy */
+			return EBUSY;
+		}
+		ncpuonline--;
 	}
 
 	spc->spc_lastmod = time_second;
 	return 0;
+}
+
+int
+cpu_setmodel(const char *fmt, ...)
+{
+	int len;
+	va_list ap;
+
+	va_start(ap, fmt);
+	len = vsnprintf(cpu_model, sizeof(cpu_model), fmt, ap);
+	va_end(ap);
+	return len;
+}
+
+const char *
+cpu_getmodel(void)
+{
+	return cpu_model;
 }
 
 #ifdef __HAVE_INTR_CONTROL
@@ -575,7 +607,7 @@ cpu_ucode_load(struct cpu_ucode_softc *sc, const char *fwname)
 	int error;
 
 	if (sc->sc_blob != NULL) {
-		firmware_free(sc->sc_blob, 0);
+		firmware_free(sc->sc_blob, sc->sc_blobsize);
 		sc->sc_blob = NULL;
 		sc->sc_blobsize = 0;
 	}
@@ -602,7 +634,7 @@ cpu_ucode_load(struct cpu_ucode_softc *sc, const char *fwname)
 	return 0;
 
 err1:
-	firmware_free(sc->sc_blob, 0);
+	firmware_free(sc->sc_blob, sc->sc_blobsize);
 	sc->sc_blob = NULL;
 	sc->sc_blobsize = 0;
 err0:

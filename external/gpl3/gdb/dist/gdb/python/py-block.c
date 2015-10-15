@@ -1,6 +1,6 @@
 /* Python interface to blocks.
 
-   Copyright (C) 2008-2013 Free Software Foundation, Inc.
+   Copyright (C) 2008-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -78,7 +78,8 @@ typedef struct {
       }									\
   } while (0)
 
-static PyTypeObject block_syms_iterator_object_type;
+static PyTypeObject block_syms_iterator_object_type
+    CPYCHECKER_TYPE_OBJECT_FOR_TYPEDEF ("block_syms_iterator_object");
 static const struct objfile_data *blpy_objfile_data_key;
 
 static PyObject *
@@ -370,9 +371,8 @@ PyObject *
 gdbpy_block_for_pc (PyObject *self, PyObject *args)
 {
   gdb_py_ulongest pc;
-  struct block *block = NULL;
-  struct obj_section *section = NULL;
-  struct symtab *symtab = NULL;
+  const struct block *block = NULL;
+  struct compunit_symtab *cust = NULL;
   volatile struct gdb_exception except;
 
   if (!PyArg_ParseTuple (args, GDB_PY_LLU_ARG, &pc))
@@ -380,15 +380,14 @@ gdbpy_block_for_pc (PyObject *self, PyObject *args)
 
   TRY_CATCH (except, RETURN_MASK_ALL)
     {
-      section = find_pc_mapped_section (pc);
-      symtab = find_pc_sect_symtab (pc, section);
+      cust = find_pc_compunit_symtab (pc);
 
-      if (symtab != NULL && symtab->objfile != NULL)
+      if (cust != NULL && COMPUNIT_OBJFILE (cust) != NULL)
 	block = block_for_pc (pc);
     }
   GDB_PY_HANDLE_EXCEPTION (except);
 
-  if (!symtab || symtab->objfile == NULL)
+  if (cust == NULL || COMPUNIT_OBJFILE (cust) == NULL)
     {
       PyErr_SetString (PyExc_RuntimeError,
 		       _("Cannot locate object file for block."));
@@ -396,7 +395,7 @@ gdbpy_block_for_pc (PyObject *self, PyObject *args)
     }
 
   if (block)
-    return block_to_block_object (block, symtab->objfile);
+    return block_to_block_object (block, COMPUNIT_OBJFILE (cust));
 
   Py_RETURN_NONE;
 }
@@ -424,16 +423,16 @@ del_objfile_blocks (struct objfile *objfile, void *datum)
     }
 }
 
-void
+int
 gdbpy_initialize_blocks (void)
 {
   block_object_type.tp_new = PyType_GenericNew;
   if (PyType_Ready (&block_object_type) < 0)
-    return;
+    return -1;
 
   block_syms_iterator_object_type.tp_new = PyType_GenericNew;
   if (PyType_Ready (&block_syms_iterator_object_type) < 0)
-    return;
+    return -1;
 
   /* Register an objfile "free" callback so we can properly
      invalidate blocks when an object file is about to be
@@ -441,12 +440,12 @@ gdbpy_initialize_blocks (void)
   blpy_objfile_data_key
     = register_objfile_data_with_cleanup (NULL, del_objfile_blocks);
 
-  Py_INCREF (&block_object_type);
-  PyModule_AddObject (gdb_module, "Block", (PyObject *) &block_object_type);
+  if (gdb_pymodule_addobject (gdb_module, "Block",
+			      (PyObject *) &block_object_type) < 0)
+    return -1;
 
-  Py_INCREF (&block_syms_iterator_object_type);
-  PyModule_AddObject (gdb_module, "BlockIterator",
-		      (PyObject *) &block_syms_iterator_object_type);
+  return gdb_pymodule_addobject (gdb_module, "BlockIterator",
+				 (PyObject *) &block_syms_iterator_object_type);
 }
 
 

@@ -1,4 +1,4 @@
-/*	$NetBSD: installboot.c,v 1.25 2011/11/05 00:34:01 christos Exp $	*/
+/*	$NetBSD: installboot.c,v 1.35 2015/08/12 17:59:51 tsutsui Exp $	*/
 
 /*
  * Copyright (c) 1995 Waldi Ravens
@@ -54,7 +54,9 @@
 #include "installboot.h"
 
 static void	usage(void);
+#ifdef CHECK_OS_BOOTVERSION
 static void	oscheck(void);
+#endif
 static u_int	abcksum(void *);
 static void	setNVpref(void);
 static void	setIDEpar(u_int8_t *, size_t);
@@ -71,23 +73,26 @@ static struct ahdi_root ahdiboot;
 static const char	mdecpath[] = PATH_MDEC;
 static const char	stdpath[] = PATH_STD;
 static const char	milanpath[] = PATH_MILAN;
-static int		nowrite = 0;
-static int		verbose = 0;
-static int		trackpercyl = 0;
-static int		secpertrack = 0;
-static int		milan = 0;
+static bool		nowrite;
+static bool		verbose;
+static int		trackpercyl;
+static int		secpertrack;
+static bool		milan;
 
 static void
 usage(void)
 {
 	fprintf(stderr,
 		"usage: installboot [options] device\n"
+#ifndef NO_USAGE
 		"where options are:\n"
 		"\t-N  do not actually write anything on the disk\n"
 		"\t-m  use Milan boot blocks\n"
 		"\t-t  number of tracks per cylinder (IDE disk)\n"
 		"\t-u  number of sectors per track (IDE disk)\n"
-		"\t-v  verbose mode\n");
+		"\t-v  verbose mode\n"
+#endif
+		);
 	exit(EXIT_FAILURE);
 }
 
@@ -99,17 +104,19 @@ main(int argc, char *argv[])
 	char		 *devchr;
 	int		 fd, c;
 
+#ifdef CHECK_OS_BOOTVERSION
 	/* check OS bootversion */
 	oscheck();
+#endif
 
 	/* parse options */
 	while ((c = getopt(argc, argv, "Nmt:u:v")) != -1) {
 		switch (c) {
 		  case 'N':
-			nowrite = 1;
+			nowrite = true;
 			break;
 		  case 'm':
-			milan = 1;
+			milan = true;
 			break;
 		  case 't':
 			trackpercyl = atoi(optarg);
@@ -118,7 +125,7 @@ main(int argc, char *argv[])
 			secpertrack = atoi(optarg);
 			break;
 		  case 'v':
-			verbose = 1;
+			verbose = true;
 			break;
 		  default:
 			usage();
@@ -130,16 +137,18 @@ main(int argc, char *argv[])
 		usage();
 
 	/* get disk label */
-	dn = alloca(sizeof(_PATH_DEV) + strlen(argv[0]) + 8);
+	size_t dnlen = sizeof(_PATH_DEV) + strlen(argv[0]) + 8;
+	dn = alloca(dnlen);
 	if (!strchr(argv[0], '/')) {
-		sprintf(dn, "%sr%s%c", _PATH_DEV, argv[0], RAW_PART + 'a');
+		snprintf(dn, dnlen, "%sr%s%c", _PATH_DEV, argv[0],
+		    RAW_PART + 'a');
 		fd = open(dn, O_RDONLY);
 		if (fd < 0 && errno == ENOENT) {
-			sprintf(dn, "%sr%s", _PATH_DEV, argv[0]);
+			snprintf(dn, dnlen, "%sr%s", _PATH_DEV, argv[0]);
 			fd = open(dn, O_RDONLY);
 		}
 	} else {
-		sprintf(dn, "%s", argv[0]);
+		snprintf(dn, dnlen, "%s", argv[0]);
 		fd = open(dn, O_RDONLY);
 	}
 	if (fd < 0)
@@ -175,6 +184,7 @@ main(int argc, char *argv[])
 	return(EXIT_SUCCESS);
 }
 
+#ifdef CHECK_OS_BOOTVERSION
 static void
 oscheck(void)
 {
@@ -206,6 +216,7 @@ oscheck(void)
 		errx(EXIT_FAILURE, "Kern bootversion: %d, expected: %d",
 		    kvers, BOOTVERSION);
 }
+#endif
 
 static void
 install_fd(char *devnm, struct disklabel *label)
@@ -226,10 +237,11 @@ install_fd(char *devnm, struct disklabel *label)
 		machpath = milanpath;
 	else
 		machpath = stdpath;
-	xxboot = alloca(strlen(mdecpath) + strlen(machpath) + 8);
-	sprintf(xxboot, "%s%sfdboot", mdecpath, machpath);
-	bootxx = alloca(strlen(mdecpath) + strlen(machpath) + 8);
-	sprintf(bootxx, "%s%sbootxx", mdecpath, machpath);
+	size_t xxbootlen = strlen(mdecpath) + strlen(machpath) + 8;
+	xxboot = alloca(xxbootlen);
+	snprintf(xxboot, xxbootlen, "%s%sfdboot", mdecpath, machpath);
+	bootxx = alloca(xxbootlen);
+	snprintf(bootxx, xxbootlen, "%s%sbootxx", mdecpath, machpath);
 
 	/* first used partition (a, b or c) */		/* XXX */
 	for (rootpart = label->d_partitions; ; ++rootpart) {
@@ -287,19 +299,22 @@ install_sd(char *devnm, struct disklabel *label)
 	else
 		machpath = stdpath;
 	if (bbsec) {
-		xxb00t = alloca(strlen(mdecpath) + strlen(machpath) + 14);
-		sprintf(xxb00t, "%s%ssdb00t.ahdi", mdecpath, machpath);
-		xxboot = alloca(strlen(mdecpath) + strlen(machpath) + 14);
-		sprintf(xxboot, "%s%sxxboot.ahdi", mdecpath, machpath);
+		size_t xxb00tlen = strlen(mdecpath) + strlen(machpath) + 14;
+		xxb00t = alloca(xxb00tlen);
+		snprintf(xxb00t, xxb00tlen, "%s%ssdb00t.ahdi", mdecpath, machpath);
+		xxboot = alloca(xxb00tlen);
+		snprintf(xxboot, xxb00tlen, "%s%sxxboot.ahdi", mdecpath, machpath);
 		magic = AHDIMAGIC;
 	} else {
+		size_t xxbootlen = strlen(mdecpath) + strlen(machpath) + 8;
 		xxb00t = NULL;
-		xxboot = alloca(strlen(mdecpath) + strlen(machpath) + 8);
-		sprintf(xxboot, "%s%ssdboot", mdecpath, machpath);
+		xxboot = alloca(xxbootlen);
+		snprintf(xxboot, xxbootlen, "%s%ssdboot", mdecpath, machpath);
 		magic = NBDAMAGIC;
 	}
-	bootxx = alloca(strlen(mdecpath) + strlen(machpath) + 8);
-	sprintf(bootxx, "%s%sbootxx", mdecpath, machpath);
+	size_t bootxxlen = strlen(mdecpath) + strlen(machpath) + 8;
+	bootxx = alloca(bootxxlen);
+	snprintf(bootxx, bootxxlen, "%s%sbootxx", mdecpath, machpath);
 
 	trackpercyl = secpertrack = 0;
 	if (xxb00t)
@@ -360,19 +375,22 @@ install_wd(char *devnm, struct disklabel *label)
 	else
 		machpath = stdpath;
 	if (bbsec) {
-		xxb00t = alloca(strlen(mdecpath) + strlen(machpath) + 14);
-		sprintf(xxb00t, "%s%swdb00t.ahdi", mdecpath, machpath);
-		xxboot = alloca(strlen(mdecpath) + strlen(machpath) + 14);
-		sprintf(xxboot, "%s%sxxboot.ahdi", mdecpath, machpath);
+		size_t xxb00tlen = strlen(mdecpath) + strlen(machpath) + 14;
+		xxb00t = alloca(xxb00tlen);
+		snprintf(xxb00t, xxb00tlen, "%s%swdb00t.ahdi", mdecpath, machpath);
+		xxboot = alloca(xxb00tlen);
+		snprintf(xxboot, xxb00tlen, "%s%sxxboot.ahdi", mdecpath, machpath);
 		magic = AHDIMAGIC;
 	} else {
+		size_t xxbootlen = strlen(mdecpath) + strlen(machpath) + 8;
 		xxb00t = NULL;
-		xxboot = alloca(strlen(mdecpath) + strlen(machpath) + 8);
-		sprintf(xxboot, "%s%swdboot", mdecpath, machpath);
+		xxboot = alloca(xxbootlen);
+		snprintf(xxboot, xxbootlen, "%s%swdboot", mdecpath, machpath);
 		magic = NBDAMAGIC;
 	}
-	bootxx = alloca(strlen(mdecpath) + strlen(machpath) + 8);
-	sprintf(bootxx, "%s%sbootxx", mdecpath, machpath);
+	size_t bootxxlen = strlen(mdecpath) + strlen(machpath) + 8;
+	bootxx = alloca(bootxxlen);
+	snprintf(bootxx, bootxxlen, "%s%sbootxx", mdecpath, machpath);
 
 	if (xxb00t)
 		mkahdiboot(&ahdiboot, xxb00t, devnm, bbsec);

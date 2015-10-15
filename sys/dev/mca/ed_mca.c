@@ -1,4 +1,4 @@
-/*	$NetBSD: ed_mca.c,v 1.53 2012/10/27 17:18:26 chs Exp $	*/
+/*	$NetBSD: ed_mca.c,v 1.64 2015/04/26 15:15:20 mlelstv Exp $	*/
 
 /*
  * Copyright (c) 2001 The NetBSD Foundation, Inc.
@@ -34,7 +34,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ed_mca.c,v 1.53 2012/10/27 17:18:26 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ed_mca.c,v 1.64 2015/04/26 15:15:20 mlelstv Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -53,7 +53,7 @@ __KERNEL_RCSID(0, "$NetBSD: ed_mca.c,v 1.53 2012/10/27 17:18:26 chs Exp $");
 #include <sys/syslog.h>
 #include <sys/proc.h>
 #include <sys/vnode.h>
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 
 #include <sys/intr.h>
 #include <sys/bus.h>
@@ -96,16 +96,35 @@ dev_type_dump(edmcadump);
 dev_type_size(edmcasize);
 
 const struct bdevsw ed_bdevsw = {
-	edmcaopen, edmcaclose, edmcastrategy, edmcaioctl,
-	edmcadump, edmcasize, D_DISK
+	.d_open = edmcaopen,
+	.d_close = edmcaclose,
+	.d_strategy = edmcastrategy,
+	.d_ioctl = edmcaioctl,
+	.d_dump = edmcadump,
+	.d_psize = edmcasize,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
 const struct cdevsw ed_cdevsw = {
-	edmcaopen, edmcaclose, edmcaread, edmcawrite, edmcaioctl,
-	nostop, notty, nopoll, nommap, nokqfilter, D_DISK
+	.d_open = edmcaopen,
+	.d_close = edmcaclose,
+	.d_read = edmcaread,
+	.d_write = edmcawrite,
+	.d_ioctl = edmcaioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
-static struct dkdriver eddkdriver = { edmcastrategy, minphys };
+static struct dkdriver eddkdriver = {
+	.d_strategy = edmcastrategy,
+	.d_minphys = minphys
+};
 
 /*
  * Just check if it's possible to identify the disk.
@@ -144,7 +163,7 @@ ed_mca_attach(device_t parent, device_t self, void *aux)
 	edc_add_disk(sc, ed);
 
 	bufq_alloc(&ed->sc_q, "disksort", BUFQ_SORT_RAWBLOCK);
-	simple_lock_init(&ed->sc_q_lock);
+	mutex_init(&ed->sc_q_lock, MUTEX_DEFAULT, IPL_VM);
 
 	if (ed_get_params(ed, &drv_flags)) {
 		printf(": IDENTIFY failed, no disk found\n");
@@ -173,7 +192,7 @@ ed_mca_attach(device_t parent, device_t self, void *aux)
 	disk_init(&ed->sc_dk, device_xname(ed->sc_dev), &eddkdriver);
 	disk_attach(&ed->sc_dk);
 	rnd_attach_source(&ed->rnd_source, device_xname(ed->sc_dev),
-			  RND_TYPE_DISK, 0);
+			  RND_TYPE_DISK, RND_FLAG_DEFAULT);
 
 	ed->sc_flags |= EDF_INIT;
 
@@ -243,9 +262,9 @@ edmcastrategy(struct buf *bp)
 	bp->b_rawblkno = blkno;
 
 	/* Queue transfer on drive, activate drive and controller if idle. */
-	simple_lock(&ed->sc_q_lock);
+	mutex_enter(&ed->sc_q_lock);
 	bufq_put(ed->sc_q, bp);
-	simple_unlock(&ed->sc_q_lock);
+	mutex_exit(&ed->sc_q_lock);
 
 	/* Ring the worker thread */
 	wakeup(ed->edc_softc);
@@ -394,7 +413,7 @@ edgetdefaultlabel(struct ed_softc *ed, struct disklabel *lp)
 	lp->d_ncylinders = ed->cyl;
 	lp->d_secpercyl = lp->d_ntracks * lp->d_nsectors;
 
-	lp->d_type = DTYPE_ESDI;
+	lp->d_type = DKTYPE_ESDI;
 
 	strncpy(lp->d_typename, "ESDI", 16);
 	strncpy(lp->d_packname, "fictitious", 16);
@@ -462,17 +481,11 @@ edmcaioctl(dev_t dev, u_long xfer, void *addr, int flag, struct lwp *l)
 	if ((ed->sc_flags & WDF_LOADED) == 0)
 		return EIO;
 
+        error = disk_ioctl(&ed->sc_dk, dev, xfer, addr, flag, l);
+	if (error != EPASSTHROUGH)
+		return error;
+
 	switch (xfer) {
-	case DIOCGDINFO:
-		*(struct disklabel *)addr = *(ed->sc_dk.dk_label);
-		return 0;
-
-	case DIOCGPART:
-		((struct partinfo *)addr)->disklab = ed->sc_dk.dk_label;
-		((struct partinfo *)addr)->part =
-		    &ed->sc_dk.dk_label->d_partitions[DISKPART(dev)];
-		return 0;
-
 	case DIOCWDINFO:
 	case DIOCSDINFO:
 	{
@@ -552,39 +565,6 @@ edmcaioctl(dev_t dev, u_long xfer, void *addr, int flag, struct lwp *l)
 		return error;
 		}
 #endif
-
-	case DIOCAWEDGE:
-	    {
-	    	struct dkwedge_info *dkw = (void *) addr;
-
-		if ((flag & FWRITE) == 0)
-			return (EBADF);
-
-		/* If the ioctl happens here, the parent is us. */
-		strlcpy(dkw->dkw_parent, device_xname(ed->sc_dev),
-			sizeof(dkw->dkw_parent));
-		return (dkwedge_add(dkw));
-	    }
-
-	case DIOCDWEDGE:
-	    {
-	    	struct dkwedge_info *dkw = (void *) addr;
-
-		if ((flag & FWRITE) == 0)
-			return (EBADF);
-
-		/* If the ioctl happens here, the parent is us. */
-		strlcpy(dkw->dkw_parent, device_xname(ed->sc_dev),
-			sizeof(dkw->dkw_parent));
-		return (dkwedge_del(dkw));
-	    }
-
-	case DIOCLWEDGES:
-	    {
-	    	struct dkwedge_list *dkwl = (void *) addr;
-
-		return (dkwedge_list(&ed->sc_dk, dkwl, l));
-	    }
 
 	default:
 		return ENOTTY;

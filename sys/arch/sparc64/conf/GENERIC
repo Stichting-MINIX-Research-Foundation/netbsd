@@ -1,4 +1,4 @@
-# $NetBSD: GENERIC,v 1.169 2013/09/24 18:12:59 jdc Exp $
+# $NetBSD: GENERIC,v 1.182 2015/09/26 11:16:13 maxv Exp $
 #
 # GENERIC machine description file
 #
@@ -22,7 +22,7 @@ include	"arch/sparc64/conf/std.sparc64"
 
 options 	INCLUDE_CONFIG_FILE	# embed config file in kernel binary
 
-#ident 		"GENERIC-$Revision: 1.169 $"
+#ident 		"GENERIC-$Revision: 1.182 $"
 
 maxusers	64
 
@@ -31,6 +31,7 @@ maxusers	64
 
 # Options for variants of the Sun SPARC architecure.
 options 	SUN4U		# sun4u - UltraSPARC
+options 	SUN4V		# sun4v - UltraSPARC T1/T2+/T3/T4/T5
 #options 	BLINK		# blink the system LED
 
 #### System options that are the same for all ports
@@ -50,17 +51,13 @@ config		netbsd	root on ? type ?
 ## System call tracing (see ktrace(1)).
 options 	KTRACE
 
-## Collect statistics on kernel malloc's and free's.  This does have a
-## significant performance hit on slower machines, so it is intended for
-## diagnostic use only.
-#options 	KMEMSTATS
-
 ## System V compatible IPC subsystem.  (msgctl(2), semctl(2), and shmctl(2))
 options 	SYSVMSG		# System V message queues
 options 	SYSVSEM		# System V semaphores
 options 	SYSVSHM		# System V shared memory
 
 options		MODULAR		# new style module(7) framework
+options		MODULAR_DEFAULT_AUTOLOAD
 
 options 	USERCONF	# userconf(4) support
 #options 	PIPE_SOCKETPAIR	# smaller, but slower pipe(2)
@@ -85,7 +82,7 @@ options 	NFS_BOOT_DHCP
 options 	DDB			# kernel dynamic debugger
 options 	DDB_HISTORY_SIZE=100	# enable history editing in DDB
 options 	DDB_VERBOSE_HELP	# enable verbose online help
-#options 	DDB_ONPANIC=1		# see also sysctl(8): `ddb.onpanic'
+#options 	DDB_ONPANIC=1		# see also sysctl(7): `ddb.onpanic'
 
 ## You may also use gdb, on another computer connected to this machine over
 ## a serial port.
@@ -137,19 +134,20 @@ options 	MIIVERBOSE	# verbose PHY autoconfig messages
 ## compat_sunos(8) and compat_svr4(8).
 
 options 	COMPAT_43	# 4.3BSD system interfaces
-options 	COMPAT_09	# NetBSD 0.9 binary compatibility
-options 	COMPAT_10	# NetBSD 1.0 binary compatibility
-options 	COMPAT_11	# NetBSD 1.1 binary compatibility
-options 	COMPAT_12	# NetBSD 1.2 binary compatibility
-options 	COMPAT_13	# NetBSD 1.3 binary compatibility
-options 	COMPAT_14	# NetBSD 1.4 binary compatibility
-options 	COMPAT_15	# NetBSD 1.5 binary compatibility
-options 	COMPAT_16	# NetBSD 1.6 binary compatibility
-options 	COMPAT_20	# NetBSD 2.0 binary compatibility
-options 	COMPAT_30	# NetBSD 3.0 binary compatibility
-options 	COMPAT_40	# NetBSD 4.0 binary compatibility
-options 	COMPAT_50	# NetBSD 5.0 compatibility.
-options 	COMPAT_60	# NetBSD 6.0 compatibility.
+options 	COMPAT_09	# NetBSD 0.9,
+options 	COMPAT_10	# NetBSD 1.0,
+options 	COMPAT_11	# NetBSD 1.1,
+options 	COMPAT_12	# NetBSD 1.2,
+options 	COMPAT_13	# NetBSD 1.3,
+options 	COMPAT_14	# NetBSD 1.4,
+options 	COMPAT_15	# NetBSD 1.5,
+options 	COMPAT_16	# NetBSD 1.6,
+options 	COMPAT_20	# NetBSD 2.0,
+options 	COMPAT_30	# NetBSD 3.0,
+options 	COMPAT_40	# NetBSD 4.0,
+options 	COMPAT_50	# NetBSD 5.0,
+options 	COMPAT_60	# NetBSD 6.0, and
+options 	COMPAT_70	# NetBSD 7.0 binary compatibility.
 options 	COMPAT_SUNOS	# SunOS 4.x binary compatibility
 options 	COMPAT_SVR4	# SunOS 5.x binary compatibility
 options 	COMPAT_SVR4_32	# SunOS 5.x 32-bit binary compatibility -- 64-bit only
@@ -187,6 +185,7 @@ options 	QUOTA2		# new, in-filesystem UFS quotas
 options 	FFS_EI		# FFS Endian Independent support
 options 	WAPBL		# File system journaling support
 #options 	FFS_NO_SNAPSHOT	# No FFS snapshot support
+options 	UFS_EXTATTR	# Extended attribute support for UFS1
 
 ## Network protocol support.  In most environments, INET is required.
 options 	INET		# IP (Internet Protocol) v4
@@ -234,11 +233,13 @@ sbus*	at mainbus0				# SBus-based systems
 psycho*	at mainbus0				# PCI-based systems
 schizo*	at mainbus?
 pyro*	at mainbus?
+vpci*	at mainbus0
 central* at mainbus?
 fhc*	at mainbus?
 pci*	at psycho?
 pci*	at schizo?
 pci*	at pyro?
+pci*	at vpci?
 pci*	at ppb?
 ppb*	at pci?
 fhc*	at central?
@@ -420,7 +421,7 @@ ld*	at mlx? unit ?
 ## Floppy controller and drive found on SPARCstations.
 
 # need share with the sparc, and everyone else.  needs to use auxio.
-# actually, the ebus version has (will have) direct access to it's AUXIO
+# actually, the ebus version has (will have) direct access to its AUXIO
 # register space (it is mapped in to fdthree not auxio).
 fdc0	at sbus? slot ? offset ?		# SUNW,fdtwo
 #fdc0	at ebus?				# fdthree, EXPERIMENTAL
@@ -510,6 +511,7 @@ fxp*	at pci? dev ? function ?	# Intel EtherExpress PRO 10+/100B
 gem*	at pci? dev ? function ?	# Apple GMAC and Sun ERI gigabit enet
 gem*	at sbus? slot ? offset ?
 gsip*	at pci? dev ? function ?	# National Semiconductor DP83820 GigE
+ixg*	at pci? dev ? function ?	# Intel 8259x 10 gigabit
 # XXX lacks bus_dmamap_sync()
 #le*	at pci? dev ? function ?	# PCnet-PCI Ethernet
 # XXX uses vtophys()
@@ -884,6 +886,9 @@ cgthree*	at sbus? slot ? offset ?
 ## Sun "cgsix" accelerated color framebuffer.
 cgsix*		at sbus? slot ? offset ?
 
+## Southland Media Systems (now Quantum 3D) MGX
+mgx* 		at sbus? slot ? offset ?
+
 ## Sun FFB
 ffb*		at mainbus0
 upa*		at mainbus?
@@ -906,6 +911,7 @@ wcfb*		at pci?
 
 # generic PCI framebuffers
 genfb*		at pci?
+genfb* 		at sbus? slot ? offset ?
 
 # make sure the console display is always wsdisplay0
 wsdisplay0	at wsemuldisplaydev? console 1

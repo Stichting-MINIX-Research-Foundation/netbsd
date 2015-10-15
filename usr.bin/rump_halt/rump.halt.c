@@ -1,4 +1,4 @@
-/*	$NetBSD: rump.halt.c,v 1.3 2011/09/16 15:39:28 joerg Exp $	*/
+/*	$NetBSD: rump.halt.c,v 1.5 2014/11/04 19:05:17 pooka Exp $	*/
 
 /*-
  * Copyright (c) 2010 Antti Kantee.  All Rights Reserved.
@@ -25,9 +25,11 @@
  * SUCH DAMAGE.
  */
 
+#include <rump/rumpuser_port.h>
+
 #include <sys/cdefs.h>
 #ifndef lint
-__RCSID("$NetBSD: rump.halt.c,v 1.3 2011/09/16 15:39:28 joerg Exp $");
+__RCSID("$NetBSD: rump.halt.c,v 1.5 2014/11/04 19:05:17 pooka Exp $");
 #endif /* !lint */
 
 #include <sys/types.h>
@@ -45,6 +47,10 @@ __RCSID("$NetBSD: rump.halt.c,v 1.3 2011/09/16 15:39:28 joerg Exp $");
 
 #define ARGFLAGS "dhn"
 
+#ifndef HAVE_GETPROGNAME
+#define getprogname() "rump_halt"
+#endif
+
 __dead static void
 usage(void)
 {
@@ -59,7 +65,6 @@ main(int argc, char *argv[])
 	int ch, flags;
 
 	setprogname(argv[0]);
-
 	flags = 0;
 	while ((ch = getopt(argc, argv, ARGFLAGS)) != -1) {
 		switch (ch) {

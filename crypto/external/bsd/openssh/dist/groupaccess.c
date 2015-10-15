@@ -1,5 +1,5 @@
-/*	$NetBSD: groupaccess.c,v 1.3 2013/11/08 19:18:25 christos Exp $	*/
-/* $OpenBSD: groupaccess.c,v 1.14 2013/05/17 00:13:13 djm Exp $ */
+/*	$NetBSD: groupaccess.c,v 1.6 2015/07/03 01:00:00 christos Exp $	*/
+/* $OpenBSD: groupaccess.c,v 1.16 2015/05/04 06:10:48 djm Exp $ */
 /*
  * Copyright (c) 2001 Kevin Steves.  All rights reserved.
  *
@@ -25,15 +25,15 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: groupaccess.c,v 1.3 2013/11/08 19:18:25 christos Exp $");
+__RCSID("$NetBSD: groupaccess.c,v 1.6 2015/07/03 01:00:00 christos Exp $");
 #include <sys/types.h>
-#include <sys/param.h>
 
 #include <grp.h>
 #include <unistd.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 
 #include "xmalloc.h"
 #include "groupaccess.h"
@@ -90,11 +90,9 @@ int
 ga_match_pattern_list(const char *group_pattern)
 {
 	int i, found = 0;
-	size_t len = strlen(group_pattern);
 
 	for (i = 0; i < ngroups; i++) {
-		switch (match_pattern_list(groups_byname[i],
-		    group_pattern, len, 0)) {
+		switch (match_pattern_list(groups_byname[i], group_pattern, 0)) {
 		case -1:
 			return 0;	/* Negated match wins */
 		case 0:

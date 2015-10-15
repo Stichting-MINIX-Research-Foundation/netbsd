@@ -1,4 +1,4 @@
-/*	$NetBSD: p5pb.c,v 1.12 2012/10/27 17:17:34 chs Exp $ */
+/*	$NetBSD: p5pb.c,v 1.14 2015/10/02 05:22:49 msaitoh Exp $ */
 
 /*-
  * Copyright (c) 2011, 2012 The NetBSD Foundation, Inc.
@@ -321,6 +321,7 @@ p5pb_find_resources(struct p5pb_softc *sc)
 void
 p5pb_set_props(struct p5pb_softc *sc) 
 {
+#if NGENFB > 0
 	prop_dictionary_t dict;
 	device_t dev;
 	
@@ -328,7 +329,6 @@ p5pb_set_props(struct p5pb_softc *sc)
 	dict = device_properties(dev);
 
 	/* genfb needs additional properties, like virtual, physical address */
-#if (NGENFB > 0)
 	/* XXX: currently genfb is supported only on CVPPC/BVPPC */
 	prop_dictionary_set_uint64(dict, "virtual_address",
 	    sc->pci_mem_area.base);
@@ -343,6 +343,9 @@ p5pb_pci_conf_read(pci_chipset_tag_t pc, pcitag_t tag, int reg)
 	uint32_t data;
 	uint32_t bus, dev, func;
 	uint32_t offset;
+
+	if ((unsigned int)reg >= PCI_CONF_SIZE)
+		return 0xFFFFFFFF;
 
 	pci_decompose_tag(pc, tag, &bus, &dev, &func);
 
@@ -375,6 +378,9 @@ p5pb_pci_conf_write(pci_chipset_tag_t pc, pcitag_t tag, int reg, pcireg_t val)
 {
 	uint32_t bus, dev, func;
 	uint32_t offset;
+
+	if ((unsigned int)reg >= PCI_CONF_SIZE)
+		return;
 
 	pci_decompose_tag(pc, tag, &bus, &dev, &func);
 

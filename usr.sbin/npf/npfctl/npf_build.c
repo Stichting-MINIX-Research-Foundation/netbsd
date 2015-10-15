@@ -1,7 +1,7 @@
-/*	$NetBSD: npf_build.c,v 1.31 2013/11/22 00:25:51 rmind Exp $	*/
+/*	$NetBSD: npf_build.c,v 1.40 2015/06/08 01:00:43 rmind Exp $	*/
 
 /*-
- * Copyright (c) 2011-2013 The NetBSD Foundation, Inc.
+ * Copyright (c) 2011-2014 The NetBSD Foundation, Inc.
  * All rights reserved.
  *
  * This material is based upon work partially supported by The
@@ -34,19 +34,23 @@
  */
 
 #include <sys/cdefs.h>
-__RCSID("$NetBSD: npf_build.c,v 1.31 2013/11/22 00:25:51 rmind Exp $");
+__RCSID("$NetBSD: npf_build.c,v 1.40 2015/06/08 01:00:43 rmind Exp $");
 
 #include <sys/types.h>
-#include <sys/ioctl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <netinet/tcp.h>
 
 #include <stdlib.h>
 #include <inttypes.h>
 #include <string.h>
 #include <ctype.h>
+#include <unistd.h>
 #include <errno.h>
 #include <err.h>
 
 #include <pcap/pcap.h>
+#include <cdbw.h>
 
 #include "npfctl.h"
 
@@ -87,6 +91,10 @@ npfctl_config_send(int fd, const char *out)
 	}
 	npf_rule_insert(npf_conf, NULL, defgroup);
 	error = npf_config_submit(npf_conf, fd);
+	if (error == EEXIST) { /* XXX */
+		errx(EXIT_FAILURE, "(re)load failed: "
+		    "some table has a duplicate entry?");
+	}
 	if (error) {
 		nl_error_t ne;
 		_npf_config_error(npf_conf, &ne);
@@ -123,10 +131,25 @@ npfctl_debug_addif(const char *ifname)
 	return 0;
 }
 
-bool
-npfctl_table_exists_p(const char *name)
+unsigned
+npfctl_table_getid(const char *name)
 {
-	return npf_conf ? npf_table_exists_p(npf_conf, name) : false;
+	unsigned tid = (unsigned)-1;
+	nl_table_t *tl;
+
+	/* XXX dynamic ruleset */
+	if (!npf_conf) {
+		return (unsigned)-1;
+	}
+
+	/* XXX: Iterating all as we need to rewind for the next call. */
+	while ((tl = npf_table_iterate(npf_conf)) != NULL) {
+		const char *tname = npf_table_getname(tl);
+		if (strcmp(tname, name) == 0) {
+			tid = npf_table_getid(tl);
+		}
+	}
+	return tid;
 }
 
 static in_port_t
@@ -217,7 +240,8 @@ npfctl_build_vars(npf_bpf_t *ctx, sa_family_t family, npfvar_t *vars, int opts)
 			break;
 		}
 		case NPFVAR_TABLE: {
-			u_int tid = atoi(data);
+			u_int tid;
+			memcpy(&tid, data, sizeof(u_int));
 			npfctl_bpf_table(ctx, opts, tid);
 			break;
 		}
@@ -248,7 +272,7 @@ npfctl_build_proto(npf_bpf_t *ctx, sa_family_t family, const opt_proto_t *op)
 			assert(npfvar_get_count(popts) == 2);
 			tf = npfvar_get_data(popts, NPFVAR_TCPFLAG, 0);
 			tf_mask = npfvar_get_data(popts, NPFVAR_TCPFLAG, 1);
-			npfctl_bpf_tcpfl(ctx, *tf, *tf_mask);
+			npfctl_bpf_tcpfl(ctx, *tf, *tf_mask, false);
 		}
 		break;
 	case IPPROTO_ICMP:
@@ -273,10 +297,10 @@ static bool
 npfctl_build_code(nl_rule_t *rl, sa_family_t family, const opt_proto_t *op,
     const filt_opts_t *fopts)
 {
+	bool noproto, noaddrs, noports, need_tcpudp = false;
 	const addr_port_t *apfrom = &fopts->fo_from;
 	const addr_port_t *apto = &fopts->fo_to;
 	const int proto = op->op_proto;
-	bool noproto, noaddrs, noports;
 	npf_bpf_t *bc;
 	size_t len;
 
@@ -297,7 +321,9 @@ npfctl_build_code(nl_rule_t *rl, sa_family_t family, const opt_proto_t *op,
 		switch (proto) {
 		case IPPROTO_TCP:
 		case IPPROTO_UDP:
+			break;
 		case -1:
+			need_tcpudp = true;
 			break;
 		default:
 			yyerror("invalid filter options for protocol %d", proto);
@@ -309,11 +335,28 @@ npfctl_build_code(nl_rule_t *rl, sa_family_t family, const opt_proto_t *op,
 	/* Build layer 4 protocol blocks. */
 	npfctl_build_proto(bc, family, op);
 
+	/*
+	 * If this is a stateful rule and TCP flags are not specified,
+	 * then add "flags S/SAFR" filter for TCP protocol case.
+	 */
+	if ((npf_rule_getattr(rl) & NPF_RULE_STATEFUL) != 0 &&
+	    (proto == -1 || (proto == IPPROTO_TCP && !op->op_opts))) {
+		npfctl_bpf_tcpfl(bc, TH_SYN,
+		    TH_SYN | TH_ACK | TH_FIN | TH_RST, proto == -1);
+	}
+
 	/* Build IP address blocks. */
 	npfctl_build_vars(bc, family, apfrom->ap_netaddr, MATCH_SRC);
 	npfctl_build_vars(bc, family, apto->ap_netaddr, MATCH_DST);
 
 	/* Build port-range blocks. */
+	if (need_tcpudp) {
+		/* TCP/UDP check for the ports. */
+		npfctl_bpf_group(bc);
+		npfctl_bpf_proto(bc, AF_UNSPEC, IPPROTO_TCP);
+		npfctl_bpf_proto(bc, AF_UNSPEC, IPPROTO_UDP);
+		npfctl_bpf_endgroup(bc);
+	}
 	npfctl_build_vars(bc, family, apfrom->ap_portrange, MATCH_SRC);
 	npfctl_build_vars(bc, family, apto->ap_portrange, MATCH_DST);
 
@@ -325,6 +368,10 @@ npfctl_build_code(nl_rule_t *rl, sa_family_t family, const opt_proto_t *op,
 
 	/* Complete BPF byte-code and pass to the rule. */
 	struct bpf_program *bf = npfctl_bpf_complete(bc);
+	if (bf == NULL) {
+		npfctl_bpf_destroy(bc);
+		return true;
+	}
 	len = bf->bf_len * sizeof(struct bpf_insn);
 
 	if (npf_rule_setcode(rl, NPF_CODE_BPF, bf->bf_insns, len) == -1) {
@@ -514,56 +561,28 @@ npfctl_build_rule(uint32_t attr, const char *ifname, sa_family_t family,
  * npfctl_build_nat: create a single NAT policy of a specified
  * type with a given filter options.
  */
-static void
-npfctl_build_nat(int type, const char *ifname, sa_family_t family,
-    const addr_port_t *ap, const filt_opts_t *fopts, bool binat)
+static nl_nat_t *
+npfctl_build_nat(int type, const char *ifname, const addr_port_t *ap,
+    const filt_opts_t *fopts, u_int flags)
 {
 	const opt_proto_t op = { .op_proto = -1, .op_opts = NULL };
-	fam_addr_mask_t *am;
+	fam_addr_mask_t *am = npfctl_get_singlefam(ap->ap_netaddr);
 	in_port_t port;
 	nl_nat_t *nat;
 
-	if (!ap->ap_netaddr) {
-		yyerror("%s network segment is not specified",
-		    type == NPF_NATIN ? "inbound" : "outbound");
-	}
-	am = npfctl_get_singlefam(ap->ap_netaddr);
-	if (am->fam_family != family) {
-		yyerror("IPv6 NAT is not supported");
-	}
-
-	switch (type) {
-	case NPF_NATOUT:
-		/*
-		 * Outbound NAT (or source NAT) policy, usually used for the
-		 * traditional NAPT.  If it is a half for bi-directional NAT,
-		 * then no port translation with mapping.
-		 */
-		nat = npf_nat_create(NPF_NATOUT, !binat ?
-		    (NPF_NAT_PORTS | NPF_NAT_PORTMAP) : 0,
-		    ifname, &am->fam_addr, am->fam_family, 0);
-		break;
-	case NPF_NATIN:
-		/*
-		 * Inbound NAT (or destination NAT).  Unless bi-NAT, a port
-		 * must be specified, since it has to be redirection.
-		 */
+	if (ap->ap_portrange) {
+		port = npfctl_get_singleport(ap->ap_portrange);
+		flags &= ~NPF_NAT_PORTMAP;
+		flags |= NPF_NAT_PORTS;
+	} else {
 		port = 0;
-		if (!binat) {
-			if (!ap->ap_portrange) {
-				yyerror("inbound port is not specified");
-			}
-			port = npfctl_get_singleport(ap->ap_portrange);
-		}
-		nat = npf_nat_create(NPF_NATIN, !binat ? NPF_NAT_PORTS : 0,
-		    ifname, &am->fam_addr, am->fam_family, port);
-		break;
-	default:
-		assert(false);
 	}
 
-	npfctl_build_code(nat, family, &op, fopts);
+	nat = npf_nat_create(type, flags, ifname, am->fam_family,
+	    &am->fam_addr, am->fam_mask, port);
+	npfctl_build_code(nat, am->fam_family, &op, fopts);
 	npf_nat_insert(npf_conf, nat, NPF_PRI_LAST);
+	return nat;
 }
 
 /*
@@ -572,24 +591,70 @@ npfctl_build_nat(int type, const char *ifname, sa_family_t family,
 void
 npfctl_build_natseg(int sd, int type, const char *ifname,
     const addr_port_t *ap1, const addr_port_t *ap2,
-    const filt_opts_t *fopts)
+    const filt_opts_t *fopts, u_int algo)
 {
-	sa_family_t af = AF_INET;
+	fam_addr_mask_t *am1 = NULL, *am2 = NULL;
+	nl_nat_t *nt1 = NULL, *nt2 = NULL;
 	filt_opts_t imfopts;
+	uint16_t adj = 0;
+	u_int flags;
 	bool binat;
 
-	if (sd == NPFCTL_NAT_STATIC) {
-		yyerror("static NAT is not yet supported");
-	}
-	assert(sd == NPFCTL_NAT_DYNAMIC);
 	assert(ifname != NULL);
 
 	/*
 	 * Bi-directional NAT is a combination of inbound NAT and outbound
-	 * NAT policies.  Note that the translation address is local IP and
-	 * the filter criteria is inverted accordingly.
+	 * NAT policies with the translation segments inverted respectively.
 	 */
 	binat = (NPF_NATIN | NPF_NATOUT) == type;
+
+	switch (sd) {
+	case NPFCTL_NAT_DYNAMIC:
+		/*
+		 * Dynamic NAT: traditional NAPT is expected.  Unless it
+		 * is bi-directional NAT, perform port mapping.
+		 */
+		flags = !binat ? (NPF_NAT_PORTS | NPF_NAT_PORTMAP) : 0;
+		break;
+	case NPFCTL_NAT_STATIC:
+		/* Static NAT: mechanic translation. */
+		flags = NPF_NAT_STATIC;
+		break;
+	default:
+		abort();
+	}
+
+	/*
+	 * Validate the mappings and their configuration.
+	 */
+
+	if ((type & NPF_NATIN) != 0) {
+		if (!ap1->ap_netaddr)
+			yyerror("inbound network segment is not specified");
+		am1 = npfctl_get_singlefam(ap1->ap_netaddr);
+	}
+	if ((type & NPF_NATOUT) != 0) {
+		if (!ap2->ap_netaddr)
+			yyerror("outbound network segment is not specified");
+		am2 = npfctl_get_singlefam(ap2->ap_netaddr);
+	}
+
+	switch (algo) {
+	case NPF_ALGO_NPT66:
+		if (am1 == NULL || am2 == NULL)
+			yyerror("1:1 mapping of two segments must be "
+			    "used for NPTv6");
+		if (am1->fam_mask != am2->fam_mask)
+			yyerror("asymmetric translation is not supported");
+		adj = npfctl_npt66_calcadj(am1->fam_mask,
+		    &am1->fam_addr, &am2->fam_addr);
+		break;
+	default:
+		if ((am1 && am1->fam_mask != NPF_NO_NETMASK) ||
+		    (am2 && am2->fam_mask != NPF_NO_NETMASK))
+			yyerror("net-to-net translation is not supported");
+		break;
+	}
 
 	/*
 	 * If the filter criteria is not specified explicitly, apply implicit
@@ -604,12 +669,17 @@ npfctl_build_natseg(int sd, int type, const char *ifname,
 	if (type & NPF_NATIN) {
 		memset(&imfopts, 0, sizeof(filt_opts_t));
 		memcpy(&imfopts.fo_to, ap2, sizeof(addr_port_t));
-		npfctl_build_nat(NPF_NATIN, ifname, af, ap1, fopts, binat);
+		nt1 = npfctl_build_nat(NPF_NATIN, ifname, ap1, fopts, flags);
 	}
 	if (type & NPF_NATOUT) {
 		memset(&imfopts, 0, sizeof(filt_opts_t));
 		memcpy(&imfopts.fo_from, ap1, sizeof(addr_port_t));
-		npfctl_build_nat(NPF_NATOUT, ifname, af, ap2, fopts, binat);
+		nt2 = npfctl_build_nat(NPF_NATOUT, ifname, ap2, fopts, flags);
+	}
+
+	if (algo == NPF_ALGO_NPT66) {
+		npf_nat_setnpt66(nt1, ~adj);
+		npf_nat_setnpt66(nt2, adj);
 	}
 }
 
@@ -619,11 +689,15 @@ npfctl_build_natseg(int sd, int type, const char *ifname,
 static void
 npfctl_fill_table(nl_table_t *tl, u_int type, const char *fname)
 {
+	struct cdbw *cdbw = NULL;	/* XXX: gcc */
 	char *buf = NULL;
 	int l = 0;
 	FILE *fp;
 	size_t n;
 
+	if (type == NPF_TABLE_CDB && (cdbw = cdbw_open()) == NULL) {
+		err(EXIT_FAILURE, "cdbw_open");
+	}
 	fp = fopen(fname, "r");
 	if (fp == NULL) {
 		err(EXIT_FAILURE, "open '%s'", fname);
@@ -640,17 +714,55 @@ npfctl_fill_table(nl_table_t *tl, u_int type, const char *fname)
 			errx(EXIT_FAILURE,
 			    "%s:%d: invalid table entry", fname, l);
 		}
-		if (type == NPF_TABLE_HASH && fam.fam_mask != NPF_NO_NETMASK) {
-			errx(EXIT_FAILURE,
-			    "%s:%d: mask used with the hash table", fname, l);
+		if (type != NPF_TABLE_TREE && fam.fam_mask != NPF_NO_NETMASK) {
+			errx(EXIT_FAILURE, "%s:%d: mask used with the "
+			    "non-tree table", fname, l);
 		}
 
-		/* Create and add a table entry. */
-		npf_table_add_entry(tl, fam.fam_family,
-		    &fam.fam_addr, fam.fam_mask);
+		/*
+		 * Create and add a table entry.
+		 */
+		if (type == NPF_TABLE_CDB) {
+			const npf_addr_t *addr = &fam.fam_addr;
+			if (cdbw_put(cdbw, addr, alen, addr, alen) == -1) {
+				err(EXIT_FAILURE, "cdbw_put");
+			}
+		} else {
+			npf_table_add_entry(tl, fam.fam_family,
+			    &fam.fam_addr, fam.fam_mask);
+		}
 	}
 	if (buf != NULL) {
 		free(buf);
+	}
+
+	if (type == NPF_TABLE_CDB) {
+		struct stat sb;
+		char sfn[32];
+		void *cdb;
+		int fd;
+
+		strlcpy(sfn, "/tmp/npfcdb.XXXXXX", sizeof(sfn));
+		if ((fd = mkstemp(sfn)) == -1) {
+			err(EXIT_FAILURE, "mkstemp");
+		}
+		unlink(sfn);
+
+		if (cdbw_output(cdbw, fd, "npf-table-cdb", NULL) == -1) {
+			err(EXIT_FAILURE, "cdbw_output");
+		}
+		cdbw_close(cdbw);
+
+		if (fstat(fd, &sb) == -1) {
+			err(EXIT_FAILURE, "fstat");
+		}
+		if ((cdb = mmap(NULL, sb.st_size, PROT_READ,
+		    MAP_FILE | MAP_PRIVATE, fd, 0)) == MAP_FAILED) {
+			err(EXIT_FAILURE, "mmap");
+		}
+		npf_table_setdata(tl, cdb, sb.st_size);
+
+		close(fd);
 	}
 }
 
@@ -673,6 +785,8 @@ npfctl_build_table(const char *tname, u_int type, const char *fname)
 
 	if (fname) {
 		npfctl_fill_table(tl, type, fname);
+	} else if (type == NPF_TABLE_CDB) {
+		errx(EXIT_FAILURE, "tables of cdb type must be static");
 	}
 }
 

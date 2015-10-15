@@ -1,4 +1,4 @@
-# 	$NetBSD: files.wsfont,v 1.19 2012/04/05 02:46:21 macallan Exp $
+# 	$NetBSD: files.wsfont,v 1.21 2015/01/25 20:09:42 christos Exp $
 
 defpseudo wsfont
 
@@ -8,6 +8,8 @@ file	dev/wsfont/wsfont.c	(wsfont_glue & rasops_rotation) |
     rasterconsole | wsdisplay | wsfont		needs-flag
 
 defflag	opt_wsfont.h		FONT_BOLD8x16
+				FONT_GLASS10x19
+				FONT_GLASS10x25
 				FONT_GALLANT12x22
 				FONT_QVSS8x15
 				FONT_LUCIDA16x29
@@ -24,5 +26,6 @@ defflag	opt_wsfont.h		FONT_BOLD8x16
 				FONT_DEJAVU_SANS_MONO12x22
 				FONT_DROID_SANS_MONO12x22
 				FONT_DROID_SANS_MONO9x18
+				FONT_DROID_SANS_MONO19x36
 
 file	dev/wsfont/wsfontdev.c	wsfont needs-flag

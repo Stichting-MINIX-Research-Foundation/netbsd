@@ -1,5 +1,3 @@
-/*	$NetBSD: getnetent.c,v 1.1.1.2 2013/04/06 15:57:51 christos Exp $	*/
-
 /*
  * Copyright (c) 1983 Regents of the University of California.
  * All rights reserved.
@@ -87,7 +85,7 @@ again:
 	net.n_net = inet_network(cp);
 	net.n_addrtype = AF_INET;
 	q = net.n_aliases = net_aliases;
-	if (p != NULL) 
+	if (p != NULL)
 		cp = p;
 	while (cp && *cp) {
 		if (*cp == ' ' || *cp == '\t') {

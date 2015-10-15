@@ -6,12 +6,15 @@
 #  gdb_sim		simulator library for target
 #  gdb_osabi		default OS ABI to use with target
 #  build_gdbserver	set to "yes" if gdbserver supports target
+#  gdb_have_gcore	set to "true"/"false" if this target can run gcore
 
 # NOTE: Every file added to a gdb_target_obs variable for any target here
 #       must also be added to either ALL_TARGET_OBS or ALL_64_TARGET_OBS
 #	in Makefile.in!
 
 case $targ in
+ *-*-irix* | \
+ alpha*-*-osf* | \
  d10v-*-* | \
  hppa*-*-hiux* | \
  i[34567]86-ncr-* | \
@@ -42,6 +45,12 @@ aarch64*-*-linux*)
 			glibc-tdep.o linux-tdep.o solib-svr4.o \
 			symfile-mem.o"
 	build_gdbserver=yes
+	;;
+
+aarch64*-*-netbsd*)
+	# Target: AArch64 NetBSD
+	#gdb_target_obs="aarch64-tdep.o aarch64-netbsd-tdep.o"
+	gdb_target_obs="aarch64-tdep.o"
 	;;
 
 alpha*-*-osf*)
@@ -82,13 +91,13 @@ am33_2.0*-*-linux*)
 
 arm*-wince-pe | arm*-*-mingw32ce*)
 	# Target: ARM based machine running Windows CE (win32)
-	gdb_target_obs="arm-tdep.o arm-wince-tdep.o"
+	gdb_target_obs="arm-tdep.o arm-wince-tdep.o windows-tdep.o"
 	build_gdbserver=yes
 	;;
 arm*-*-linux*)
 	# Target: ARM based machine running GNU/Linux
 	gdb_target_obs="arm-tdep.o arm-linux-tdep.o glibc-tdep.o \
-			solib-svr4.o symfile-mem.o linux-tdep.o"
+			solib-svr4.o symfile-mem.o linux-tdep.o linux-record.o"
 	build_gdbserver=yes
 	;;
 arm*-*-netbsd* | arm*-*-knetbsd*-gnu)
@@ -130,7 +139,7 @@ bfin-*-*)
 
 cris*)
 	# Target: CRIS
-	gdb_target_obs="cris-tdep.o solib-svr4.o"
+	gdb_target_obs="cris-tdep.o cris-linux-tdep.o linux-tdep.o solib-svr4.o"
 	;;
 
 frv-*-*)
@@ -139,7 +148,7 @@ frv-*-*)
 	gdb_sim=../sim/frv/libsim.a
 	;;
 
-moxie-*-elf | moxie-*-rtems*)
+moxie-*-elf | moxie-*-moxiebox | moxie-*-rtems*)
 	gdb_target_obs="moxie-tdep.o"
 	gdb_sim=../sim/moxie/libsim.a
 	;;
@@ -188,7 +197,7 @@ i[34567]86-*-dicos*)
 i[34567]86-*-freebsd* | i[34567]86-*-kfreebsd*-gnu)
 	# Target: FreeBSD/i386
 	gdb_target_obs="i386-tdep.o i387-tdep.o i386bsd-tdep.o i386fbsd-tdep.o \
-			bsd-uthread.o solib-svr4.o"
+			bsd-uthread.o fbsd-tdep.o solib-svr4.o"
 	;;
 i[34567]86-*-netbsd* | i[34567]86-*-knetbsd*-gnu)
 	# Target: NetBSD/i386
@@ -198,7 +207,7 @@ i[34567]86-*-netbsd* | i[34567]86-*-knetbsd*-gnu)
 i[34567]86-*-openbsd*)
 	# Target: OpenBSD/i386
 	gdb_target_obs="i386-tdep.o i387-tdep.o i386bsd-tdep.o i386obsd-tdep.o \
-			bsd-uthread.o solib-svr4.o"
+			obsd-tdep.o bsd-uthread.o solib-svr4.o"
 	;;
 i[34567]86-*-nto*)
 	# Target: Intel 386 running qnx6.
@@ -349,14 +358,6 @@ microblaze*-*-*)
 	gdb_sim=../sim/microblaze/libsim.a
 	;;
 
-mips*-sgi-irix5*)
-	# Target: MIPS SGI running Irix 5
-	gdb_target_obs="mips-tdep.o mips-irix-tdep.o solib-irix.o"
-	;;
-mips*-sgi-irix6*)
-	# Target: MIPS SGI running Irix 6.x
-	gdb_target_obs="mips-tdep.o mips-irix-tdep.o solib-irix.o"
-	;;
 mips*-*-linux*)
 	# Target: Linux/MIPS
 	gdb_target_obs="mips-tdep.o mips-linux-tdep.o glibc-tdep.o \
@@ -371,7 +372,12 @@ mips*-*-netbsd* | mips*-*-knetbsd*-gnu)
 	;;
 mips64*-*-openbsd*)
 	# Target: OpenBSD/mips64
-	gdb_target_obs="mips-tdep.o mips64obsd-tdep.o solib-svr4.o"
+	gdb_target_obs="mips-tdep.o mips64obsd-tdep.o obsd-tdep.o solib-svr4.o"
+	;;
+mips*-sde*-elf*)
+	# Target: MIPS SDE
+	gdb_target_obs="mips-tdep.o mips-sde-tdep.o remote-mips.o"
+	gdb_sim=../sim/mips/libsim.a
 	;;
 mips*-*-elf)
 	# Target: MIPS ELF
@@ -390,23 +396,39 @@ mn10300-*-*)
 	gdb_sim=../sim/mn10300/libsim.a
 	;;
 
+msp430*-*-elf)
+	gdb_target_obs="msp430-tdep.o"
+	gdb_sim=../sim/msp430/libsim.a
+	;;
+
 mt-*-*)
 	# Target: Morpho Technologies ms1 processor
 	gdb_target_obs="mt-tdep.o"
 	;;
 
+nios2*-*-linux*)
+	# Target: Altera Nios II running Linux
+	gdb_target_obs="nios2-tdep.o nios2-linux-tdep.o solib-svr4.o \
+			symfile-mem.o glibc-tdep.o linux-tdep.o"
+	;;
+
+nios2*-*-*)
+	# Target: Altera Nios II bare-metal
+	gdb_target_obs="nios2-tdep.o"
+	;;
+
 powerpc*-*-freebsd*)
 	# Target: FreeBSD/powerpc
 	gdb_target_obs="rs6000-tdep.o ppc-sysv-tdep.o ppc64-tdep.o \
-		        ppcfbsd-tdep.o solib-svr4.o \
+		        ppcfbsd-tdep.o fbsd-tdep.o solib-svr4.o \
 			ravenscar-thread.o ppc-ravenscar-thread.o"
 	;;
 
 powerpc-*-netbsd* | powerpc-*-knetbsd*-gnu | powerpc64-*-netbsd*)
 	# Target: NetBSD/powerpc
 	gdb_target_obs="rs6000-tdep.o ppcnbsd-tdep.o ppc-sysv-tdep.o \
-			solib.o solib-svr4.o solib-spu.o spu-multiarch.o \
-			corelow.o symfile-mem.o nbsd-tdep.o
+			solib-svr4.o solib-spu.o spu-multiarch.o \
+			symfile-mem.o nbsd-tdep.o
 			ravenscar-thread.o ppc-ravenscar-thread.o"
 	gdb_sim=../sim/ppc/libsim.a
 	;;
@@ -416,19 +438,20 @@ powerpc-*-openbsd*)
 			solib-svr4.o \
 			ravenscar-thread.o ppc-ravenscar-thread.o"
 	;;
-powerpc-*-aix* | rs6000-*-*)
+powerpc-*-aix* | rs6000-*-* | powerpc64-*-aix*)
 	# Target: PowerPC running AIX
 	gdb_target_obs="rs6000-tdep.o rs6000-aix-tdep.o xcoffread.o \
-			ppc-sysv-tdep.o solib-svr4.o \
+			ppc-sysv-tdep.o solib-aix.o \
 			ravenscar-thread.o ppc-ravenscar-thread.o"
 	;;
-powerpc-*-linux* | powerpc64-*-linux*)
+powerpc*-*-linux*)
 	# Target: PowerPC running Linux
 	gdb_target_obs="rs6000-tdep.o ppc-linux-tdep.o ppc-sysv-tdep.o \
 			ppc64-tdep.o solib-svr4.o solib-spu.o \
 			spu-multiarch.o \
 			glibc-tdep.o symfile-mem.o linux-tdep.o \
-			ravenscar-thread.o ppc-ravenscar-thread.o"
+			ravenscar-thread.o ppc-ravenscar-thread.o \
+			linux-record.o "
 	gdb_sim=../sim/ppc/libsim.a
 	build_gdbserver=yes
 	;;
@@ -448,9 +471,9 @@ powerpc*-*-*)
 	fi
 	;;
 
-s390*-*-*)
+s390*-*-linux*)
 	# Target: S390 running Linux
-	gdb_target_obs="s390-tdep.o solib-svr4.o linux-tdep.o"
+	gdb_target_obs="s390-linux-tdep.o solib-svr4.o linux-tdep.o"
 	build_gdbserver=yes
 	;;
 
@@ -486,7 +509,7 @@ sh*-*-linux*)
 sh*-*-netbsdelf* | sh*-*-knetbsd*-gnu)
 	# Target: NetBSD/sh
 	gdb_target_obs="sh-tdep.o sh64-tdep.o shnbsd-tdep.o \
-			nbsd-tdep.o corelow.o solib.o solib-svr4.o"
+			nbsd-tdep.o solib-svr4.o"
 	gdb_sim=../sim/sh/libsim.a
 	;;
 sh*-*-openbsd*)
@@ -528,7 +551,7 @@ sparc64-*-linux*)
 sparc*-*-freebsd* | sparc*-*-kfreebsd*-gnu)
 	# Target: FreeBSD/sparc64
 	gdb_target_obs="sparc-tdep.o sparc64-tdep.o sparc64fbsd-tdep.o \
-			solib-svr4.o \
+			fbsd-tdep.o solib-svr4.o \
 			ravenscar-thread.o sparc-ravenscar-thread.o"
 	;;
 sparc-*-netbsd* | sparc-*-knetbsd*-gnu)
@@ -625,7 +648,7 @@ vax-*-openbsd*)
 	gdb_target_obs="vax-tdep.o vaxobsd-tdep.o"
 	;;
 vax-*-*)
-	# Target: VAX running 4.2BSD or Ultrix
+	# Target: VAX
 	gdb_target_obs="vax-tdep.o"
 	;;
 
@@ -652,7 +675,7 @@ x86_64-*-freebsd* | x86_64-*-kfreebsd*-gnu)
 	# Target: FreeBSD/amd64
 	gdb_target_obs="amd64-tdep.o amd64fbsd-tdep.o i386-tdep.o \
 			i387-tdep.o i386bsd-tdep.o i386fbsd-tdep.o \
-			bsd-uthread.o solib-svr4.o"
+			bsd-uthread.o fbsd-tdep.o solib-svr4.o"
 	;;
 x86_64-*-mingw* | x86_64-*-cygwin*)
         # Target: MingW/amd64
@@ -663,14 +686,15 @@ x86_64-*-mingw* | x86_64-*-cygwin*)
         ;;
 x86_64-*-netbsd* | x86_64-*-knetbsd*-gnu)
 	# Target: NetBSD/amd64
-	gdb_target_obs="amd64-tdep.o amd64nbsd-tdep.o i386-tdep.o i387-tdep.o \
-			nbsd-tdep.o solib-svr4.o"
+	gdb_target_obs="amd64-tdep.o amd64nbsd-tdep.o i386-tdep.o \
+			i386bsd-tdep.o i386nbsd-tdep.o \
+			i387-tdep.o nbsd-tdep.o solib-svr4.o"
 	;;
 x86_64-*-openbsd*)
 	# Target: OpenBSD/amd64
 	gdb_target_obs="amd64-tdep.o amd64obsd-tdep.o i386-tdep.o \
 			i387-tdep.o i386bsd-tdep.o i386obsd-tdep.o \
-			bsd-uthread.o solib-svr4.o"
+			obsd-tdep.o bsd-uthread.o solib-svr4.o"
 	;;
 xtensa*-*-linux*)	gdb_target=linux
 	# Target: GNU/Linux Xtensa
@@ -704,4 +728,15 @@ m68*-*-openbsd* | m88*-*-openbsd* | vax-*-openbsd*) ;;
 *-*-dicos*)	gdb_osabi=GDB_OSABI_DICOS ;;
 *-*-symbianelf*)
 		gdb_osabi=GDB_OSABI_SYMBIAN ;;
+powerpc-*-aix* | rs6000-*-* | powerpc64-*-aix*)
+                gdb_osabi=GDB_OSABI_AIX ;;
 esac
+
+# Check whether this target supports gcore.
+# Such target has to call set_gdbarch_find_memory_regions.
+gdb_have_gcore=false
+for t in x ${gdb_target_obs}; do
+  if test "$t" = linux-tdep.o; then
+    gdb_have_gcore=true
+  fi
+done

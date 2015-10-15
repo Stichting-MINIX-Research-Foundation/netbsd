@@ -12,7 +12,9 @@
 
 #include <net/if.h>
 
-void		rumpns_npf_test_init(void);
+void		rumpns_npf_test_init(int (*)(int, const char *, void *),
+		    const char *(*)(int, const void *, char *, socklen_t),
+		    long (*)(void));
 int		rumpns_npf_test_load(const void *);
 ifnet_t *	rumpns_npf_test_addif(const char *, bool, bool);
 ifnet_t *	rumpns_npf_test_getif(const char *);
@@ -23,7 +25,7 @@ void		rumpns_npf_test_conc(bool, unsigned);
 
 bool		rumpns_npf_nbuf_test(bool);
 bool		rumpns_npf_bpf_test(bool);
-bool		rumpns_npf_table_test(bool);
+bool		rumpns_npf_table_test(bool, void *, size_t);
 bool		rumpns_npf_state_test(bool);
 
 bool		rumpns_npf_rule_test(bool);

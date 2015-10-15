@@ -1,4 +1,4 @@
-/*	$NetBSD: rpi_machdep.c,v 1.38 2013/10/15 09:07:48 skrll Exp $	*/
+/*	$NetBSD: rpi_machdep.c,v 1.67 2015/08/01 16:18:47 skrll Exp $	*/
 
 /*-
  * Copyright (c) 2012 The NetBSD Foundation, Inc.
@@ -30,11 +30,16 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: rpi_machdep.c,v 1.38 2013/10/15 09:07:48 skrll Exp $");
+__KERNEL_RCSID(0, "$NetBSD: rpi_machdep.c,v 1.67 2015/08/01 16:18:47 skrll Exp $");
 
-#include "opt_evbarm_boardtype.h"
+#include "opt_arm_debug.h"
+#include "opt_bcm283x.h"
+#include "opt_cpuoptions.h"
 #include "opt_ddb.h"
+#include "opt_evbarm_boardtype.h"
 #include "opt_kgdb.h"
+#include "opt_rpi.h"
+#include "opt_vcprop.h"
 
 #include "sdhc.h"
 #include "bcmdwctwo.h"
@@ -69,12 +74,15 @@ __KERNEL_RCSID(0, "$NetBSD: rpi_machdep.c,v 1.38 2013/10/15 09:07:48 skrll Exp $
 #include <arm/broadcom/bcm2835var.h>
 #include <arm/broadcom/bcm2835_pmvar.h>
 #include <arm/broadcom/bcm2835_mbox.h>
+#include <arm/broadcom/bcm_amba.h>
 
 #include <evbarm/rpi/vcio.h>
 #include <evbarm/rpi/vcpm.h>
 #include <evbarm/rpi/vcprop.h>
 
 #include <evbarm/rpi/rpi.h>
+
+#include <arm/cortex/gtmr_var.h>
 
 #ifdef DDB
 #include <machine/db_machdep.h>
@@ -90,19 +98,18 @@ __KERNEL_RCSID(0, "$NetBSD: rpi_machdep.c,v 1.38 2013/10/15 09:07:48 skrll Exp $
 #if NGENFB > 0
 #include <dev/videomode/videomode.h>
 #include <dev/videomode/edidvar.h>
+#include <dev/wscons/wsconsio.h>
 #endif
 
 #if NUKBD > 0
 #include <dev/usb/ukbdvar.h>
 #endif
 
-#include "ksyms.h"
-
 extern int KERNEL_BASE_phys[];
 extern int KERNEL_BASE_virt[];
 
 BootConfig bootconfig;		/* Boot config storage */
-static char bootargs[MAX_BOOT_STRING];
+static char bootargs[VCPROP_MAXCMDLINE];
 char *boot_args = NULL;
 
 static void rpi_bootparams(void);
@@ -113,9 +120,9 @@ static void rpi_device_register(device_t, void *);
  * kernel address space.  *Not* for general use.
  */
 
-#define	KERN_VTOPDIFF	((vaddr_t)KERNEL_BASE_phys - (vaddr_t)KERNEL_BASE_virt)
-#define KERN_VTOPHYS(va) ((paddr_t)((vaddr_t)va + KERN_VTOPDIFF))
-#define KERN_PHYSTOV(pa) ((vaddr_t)((paddr_t)pa - KERN_VTOPDIFF))
+#define KERN_VTOPDIFF	KERNEL_BASE_VOFFSET
+#define KERN_VTOPHYS(va) ((paddr_t)((vaddr_t)va - KERN_VTOPDIFF))
+#define KERN_PHYSTOV(pa) ((vaddr_t)((paddr_t)pa + KERN_VTOPDIFF))
 
 #ifndef RPI_FB_WIDTH
 #define RPI_FB_WIDTH	1280
@@ -124,7 +131,15 @@ static void rpi_device_register(device_t, void *);
 #define RPI_FB_HEIGHT	720
 #endif
 
+#if 0
+#define	PLCONADDR BCM2835_UART0_BASE
+#endif
+
+#ifdef BCM2836
+#define	PLCONADDR 0x3f201000
+#else
 #define	PLCONADDR 0x20201000
+#endif
 
 #ifndef CONSDEVNAME
 #define CONSDEVNAME "plcom"
@@ -168,7 +183,7 @@ static struct plcom_instance rpi_pi = {
 /* Smallest amount of RAM start.elf could give us. */
 #define RPI_MINIMUM_SPLIT (128U * 1024 * 1024)
 
-static struct {
+static struct __aligned(16) {
 	struct vcprop_buffer_hdr	vb_hdr;
 	struct vcprop_tag_fwrev		vbt_fwrev;
 	struct vcprop_tag_boardmodel	vbt_boardmodel;
@@ -176,11 +191,12 @@ static struct {
 	struct vcprop_tag_macaddr	vbt_macaddr;
 	struct vcprop_tag_memory	vbt_memory;
 	struct vcprop_tag_boardserial	vbt_serial;
+	struct vcprop_tag_dmachan	vbt_dmachan;
 	struct vcprop_tag_cmdline	vbt_cmdline;
 	struct vcprop_tag_clockrate	vbt_emmcclockrate;
 	struct vcprop_tag_clockrate	vbt_armclockrate;
 	struct vcprop_tag end;
-} vb __packed __aligned(16) =
+} vb =
 {
 	.vb_hdr = {
 		.vpb_len = sizeof(vb),
@@ -228,6 +244,13 @@ static struct {
 			.vpt_rcode = VCPROPTAG_REQUEST
 		},
 	},
+	.vbt_dmachan = {
+		.tag = {
+			.vpt_tag = VCPROPTAG_GET_DMACHAN,
+			.vpt_len = VCPROPTAG_LEN(vb.vbt_dmachan),
+			.vpt_rcode = VCPROPTAG_REQUEST
+		},
+	},
 	.vbt_cmdline = {
 		.tag = {
 			.vpt_tag = VCPROPTAG_GET_CMDLINE,
@@ -257,11 +280,11 @@ static struct {
 };
 
 #if NGENFB > 0
-static struct {
+static struct __aligned(16) {
 	struct vcprop_buffer_hdr	vb_hdr;
 	struct vcprop_tag_edidblock	vbt_edid;
 	struct vcprop_tag end;
-} vb_edid __packed __aligned(16) =
+} vb_edid =
 {
 	.vb_hdr = {
 		.vpb_len = sizeof(vb_edid),
@@ -280,18 +303,17 @@ static struct {
 	}
 };
 
-static struct {
+static struct __aligned(16) {
 	struct vcprop_buffer_hdr	vb_hdr;
 	struct vcprop_tag_fbres		vbt_res;
 	struct vcprop_tag_fbres		vbt_vres;
 	struct vcprop_tag_fbdepth	vbt_depth;
-	struct vcprop_tag_fbpixelorder	vbt_pixelorder;
 	struct vcprop_tag_fbalpha	vbt_alpha;
 	struct vcprop_tag_allocbuf	vbt_allocbuf;
 	struct vcprop_tag_blankscreen	vbt_blank;
 	struct vcprop_tag_fbpitch	vbt_pitch;
 	struct vcprop_tag end;
-} vb_setfb __packed __aligned(16) =
+} vb_setfb =
 {
 	.vb_hdr = {
 		.vpb_len = sizeof(vb_setfb),
@@ -322,14 +344,6 @@ static struct {
 			.vpt_rcode = VCPROPTAG_REQUEST,
 		},
 		.bpp = 32,
-	},
-	.vbt_pixelorder = {
-		.tag = {
-			.vpt_tag = VCPROPTAG_SET_FB_PIXEL_ORDER,
-			.vpt_len = VCPROPTAG_LEN(vb_setfb.vbt_pixelorder),
-			.vpt_rcode = VCPROPTAG_REQUEST,
-		},
-		.state = VCPROP_PIXEL_BGR,
 	},
 	.vbt_alpha = {
 		.tag = {
@@ -368,8 +382,24 @@ static struct {
 };
 
 extern void bcmgenfb_set_console_dev(device_t dev);
+void bcmgenfb_set_ioctl(int(*)(void *, void *, u_long, void *, int, struct lwp *));
 extern void bcmgenfb_ddb_trap_callback(int where);
+static int rpi_ioctl(void *, void *, u_long, void *, int, lwp_t *);
+
+static int rpi_video_on = WSDISPLAYIO_VIDEO_ON;
+
+#if defined(RPI_HWCURSOR)
+#define CURSOR_BITMAP_SIZE	(64 * 8)
+#define CURSOR_ARGB_SIZE	(64 * 64 * 4)
+static uint32_t hcursor = 0;
+static bus_addr_t pcursor = 0;
+static uint32_t *cmem = NULL;
+static int cursor_x = 0, cursor_y = 0, hot_x = 0, hot_y = 0, cursor_on = 0;
+static uint32_t cursor_cmap[4];
+static uint8_t cursor_mask[8 * 64], cursor_bitmap[8 * 64];
 #endif
+#endif
+
 
 static void
 rpi_bootparams(void)
@@ -380,20 +410,20 @@ rpi_bootparams(void)
 
 	bcm2835_mbox_write(iot, ioh, BCMMBOX_CHANPM, (
 #if (NSDHC > 0)
-	    (1 << VCPM_POWER_SDCARD) | 
+	    (1 << VCPM_POWER_SDCARD) |
 #endif
 #if (NPLCOM > 0)
 	    (1 << VCPM_POWER_UART0) |
 #endif
 #if (NBCMDWCTWO > 0)
-	    (1 << VCPM_POWER_USB) | 
+	    (1 << VCPM_POWER_USB) |
 #endif
 #if (NBSCIIC > 0)
-	    (1 << VCPM_POWER_I2C0) | (1 << VCPM_POWER_I2C1) | 
+	    (1 << VCPM_POWER_I2C0) | (1 << VCPM_POWER_I2C1) |
 	/*  (1 << VCPM_POWER_I2C2) | */
 #endif
 #if (NBCMSPI > 0)
-	    (1 << VCPM_POWER_SPI) | 
+	    (1 << VCPM_POWER_SPI) |
 #endif
 	    0) << 4);
 
@@ -401,13 +431,7 @@ rpi_bootparams(void)
 
 	bcm2835_mbox_read(iot, ioh, BCMMBOX_CHANARM2VC, &res);
 
-	/*
-	 * No need to invalid the cache as the memory has never been referenced
-	 * by the ARM.
-	 *
-	 * cpu_dcache_inv_range((vaddr_t)&vb, sizeof(vb));
-	 *
-	 */
+	cpu_dcache_inv_range((vaddr_t)&vb, sizeof(vb));
 
 	if (!vcprop_buffer_success_p(&vb.vb_hdr)) {
 		bootconfig.dramblocks = 1;
@@ -450,10 +474,66 @@ rpi_bootparams(void)
 	if (vcprop_tag_success_p(&vb.vbt_serial.tag))
 		printf("%s: board serial %llx\n", __func__,
 		    vb.vbt_serial.sn);
+	if (vcprop_tag_success_p(&vb.vbt_dmachan.tag))
+		printf("%s: DMA channel mask 0x%08x\n", __func__,
+		    vb.vbt_dmachan.mask);
 
 	if (vcprop_tag_success_p(&vb.vbt_cmdline.tag))
 		printf("%s: cmdline      %s\n", __func__,
 		    vb.vbt_cmdline.cmdline);
+#endif
+}
+
+
+static void
+rpi_bootstrap(void)
+{
+#if defined(BCM2836)
+	arm_cpu_max = 4;
+	extern int cortex_mmuinfo;
+
+#ifdef VERBOSE_INIT_ARM
+	printf("%s: %d cpus present\n", __func__, arm_cpu_max);
+#endif
+
+	cortex_mmuinfo = armreg_ttbr_read();
+#ifdef VERBOSE_INIT_ARM
+	printf("%s: cortex_mmuinfo %x\n", __func__, cortex_mmuinfo);
+#endif
+
+	extern void cortex_mpstart(void);
+
+	for (size_t i = 1; i < arm_cpu_max; i++) {
+		bus_space_tag_t iot = &bcm2835_bs_tag;
+		bus_space_handle_t ioh = BCM2836_ARM_LOCAL_VBASE;
+
+		bus_space_write_4(iot, ioh,
+		    BCM2836_LOCAL_MAILBOX3_SETN(i),
+		    (uint32_t)cortex_mpstart);
+
+		int timeout = 20;
+		while (timeout-- > 0) {
+			uint32_t val;
+
+			val = bus_space_read_4(iot, ioh,
+			    BCM2836_LOCAL_MAILBOX3_CLRN(i));
+			if (val == 0)
+				break;
+		}
+	}
+
+	for (int loop = 0; loop < 16; loop++) {
+		if (arm_cpu_hatched == __BITS(arm_cpu_max - 1, 1))
+			break;
+		gtmr_delay(10000);
+	}
+
+	for (size_t i = 1; i < arm_cpu_max; i++) {
+		if ((arm_cpu_hatched & (1 << i)) == 0) {
+			printf("%s: warning: cpu%zu failed to hatch\n",
+			    __func__, i);
+		}
+	}
 #endif
 }
 
@@ -477,12 +557,21 @@ rpi_bootparams(void)
 
 static const struct pmap_devmap rpi_devmap[] = {
 	{
-		_A(RPI_KERNEL_IO_VBASE),	/* 0xf2000000 */
-		_A(RPI_KERNEL_IO_PBASE),	/* 0x20000000 */
+		_A(RPI_KERNEL_IO_VBASE),
+		_A(RPI_KERNEL_IO_PBASE),
 		_S(RPI_KERNEL_IO_VSIZE),	/* 16Mb */
 		VM_PROT_READ|VM_PROT_WRITE,
 		PTE_NOCACHE,
 	},
+#if defined(BCM2836)
+	{
+		_A(RPI_KERNEL_LOCAL_VBASE),
+		_A(RPI_KERNEL_LOCAL_PBASE),
+		_S(RPI_KERNEL_LOCAL_VSIZE),
+		VM_PROT_READ|VM_PROT_WRITE,
+		PTE_NOCACHE,
+	},
+#endif
 	{ 0, 0, 0, 0, 0 }
 };
 
@@ -524,7 +613,13 @@ initarm(void *arg)
 #define _BDSTR(s)	#s
 	printf("\nNetBSD/evbarm (" BDSTR(EVBARM_BOARDTYPE) ") booting ...\n");
 
+#ifdef CORTEX_PMC
+	cortex_pmc_ccnt_init();
+#endif
+
 	rpi_bootparams();
+
+	rpi_bootstrap();
 
 	if (vcprop_tag_success_p(&vb.vbt_armclockrate.tag)) {
 		curcpu()->ci_data.cpu_cc_freq = vb.vbt_armclockrate.rate;
@@ -537,11 +632,41 @@ initarm(void *arg)
 #ifdef VERBOSE_INIT_ARM
 	printf("initarm: Configuring system ...\n");
 #endif
-	arm32_bootmem_init(bootconfig.dram[0].address,
-	    bootconfig.dram[0].pages * PAGE_SIZE, (uintptr_t)KERNEL_BASE_phys);
+
+	psize_t ram_size = bootconfig.dram[0].pages * PAGE_SIZE;
+
+#ifdef __HAVE_MM_MD_DIRECT_MAPPED_PHYS
+	if (ram_size > KERNEL_VM_BASE - KERNEL_BASE) {
+		printf("%s: dropping RAM size from %luMB to %uMB\n",
+		    __func__, (unsigned long) (ram_size >> 20),
+		    (KERNEL_VM_BASE - KERNEL_BASE) >> 20);
+		ram_size = KERNEL_VM_BASE - KERNEL_BASE;
+	}
+#endif
+
+	/*
+	 * If MEMSIZE specified less than what we really have, limit ourselves
+	 * to that.
+	 */
+#ifdef MEMSIZE
+	if (ram_size == 0 || ram_size > (unsigned)MEMSIZE * 1024 * 1024)
+		ram_size = (unsigned)MEMSIZE * 1024 * 1024;
+#else
+	KASSERTMSG(ram_size > 0, "RAM size unknown and MEMSIZE undefined");
+#endif
+
+	arm32_bootmem_init(bootconfig.dram[0].address, ram_size,
+	    (uintptr_t)KERNEL_BASE_phys);
+
+#ifdef __HAVE_MM_MD_DIRECT_MAPPED_PHYS
+	const bool mapallmem_p = true;
+	KASSERT(ram_size <= KERNEL_VM_BASE - KERNEL_BASE);
+#else
+	const bool mapallmem_p = false;
+#endif
 
 	arm32_kernel_vm_init(KERNEL_VM_BASE, ARM_VECTORS_HIGH, 0, rpi_devmap,
-	    false);
+	    mapallmem_p);
 
 	cpu_reset_address = bcm2835_system_reset;
 
@@ -645,7 +770,7 @@ rpi_fb_get_edid_mode(uint32_t *pwidth, uint32_t *pheight)
 	uint8_t edid_data[1024];
 	uint32_t res;
 	int error;
-	
+
 	error = bcmmbox_request(BCMMBOX_CHANARM2VC, &vb_edid,
 	    sizeof(vb_edid), &res);
 	if (error) {
@@ -683,13 +808,14 @@ rpi_fb_get_edid_mode(uint32_t *pwidth, uint32_t *pheight)
  *  - If "console=fb" is present, attach framebuffer to console.
  */
 static bool
-rpi_fb_init(prop_dictionary_t dict)
+rpi_fb_init(prop_dictionary_t dict, void *aux)
 {
 	uint32_t width = 0, height = 0;
 	uint32_t res;
 	char *ptr;
-	int integer; 
+	int integer;
 	int error;
+	bool is_bgr = true;
 
 	if (get_bootconf_option(boot_args, "fb",
 			      BOOTOPT_TYPE_STRING, &ptr)) {
@@ -719,7 +845,6 @@ rpi_fb_init(prop_dictionary_t dict)
 	    !vcprop_tag_success_p(&vb_setfb.vbt_res.tag) ||
 	    !vcprop_tag_success_p(&vb_setfb.vbt_vres.tag) ||
 	    !vcprop_tag_success_p(&vb_setfb.vbt_depth.tag) ||
-	    !vcprop_tag_success_p(&vb_setfb.vbt_pixelorder.tag) ||
 	    !vcprop_tag_success_p(&vb_setfb.vbt_allocbuf.tag) ||
 	    !vcprop_tag_success_p(&vb_setfb.vbt_blank.tag) ||
 	    !vcprop_tag_success_p(&vb_setfb.vbt_pitch.tag)) {
@@ -738,8 +863,6 @@ rpi_fb_init(prop_dictionary_t dict)
 	    vb_setfb.vbt_res.width, vb_setfb.vbt_res.height);
 	printf("%s: vwidth = %d vheight = %d\n", __func__,
 	    vb_setfb.vbt_vres.width, vb_setfb.vbt_vres.height);
-	printf("%s: pixelorder = %d\n", __func__,
-	    vb_setfb.vbt_pixelorder.state);
 #endif
 
 	if (vb_setfb.vbt_allocbuf.address == 0 ||
@@ -761,8 +884,20 @@ rpi_fb_init(prop_dictionary_t dict)
 	    vb_setfb.vbt_pitch.linebytes);
 	prop_dictionary_set_uint32(dict, "address",
 	    vb_setfb.vbt_allocbuf.address);
-	if (vb_setfb.vbt_pixelorder.state == VCPROP_PIXEL_BGR)
-		prop_dictionary_set_bool(dict, "is_bgr", true);
+
+	/*
+	 * Old firmware uses BGR. New firmware uses RGB. The get and set
+	 * pixel order mailbox properties don't seem to work. The firmware
+	 * adds a kernel cmdline option bcm2708_fb.fbswap=<0|1>, so use it
+	 * to determine pixel order. 0 means BGR, 1 means RGB.
+	 *
+	 * See https://github.com/raspberrypi/linux/issues/514
+	 */
+	if (get_bootconf_option(boot_args, "bcm2708_fb.fbswap",
+				BOOTOPT_TYPE_INT, &integer)) {
+		is_bgr = integer == 0;
+	}
+	prop_dictionary_set_bool(dict, "is_bgr", is_bgr);
 
 	/* if "genfb.type=<n>" is passed in cmdline, override wsdisplay type */
 	if (get_bootconf_option(boot_args, "genfb.type",
@@ -770,8 +905,178 @@ rpi_fb_init(prop_dictionary_t dict)
 		prop_dictionary_set_uint32(dict, "wsdisplay_type", integer);
 	}
 
+#if defined(RPI_HWCURSOR)
+	struct amba_attach_args *aaa = aux;
+	bus_space_handle_t hc;
+
+	hcursor = rpi_alloc_mem(CURSOR_ARGB_SIZE, PAGE_SIZE,
+	    MEM_FLAG_L1_NONALLOCATING | MEM_FLAG_HINT_PERMALOCK);
+	pcursor = rpi_lock_mem(hcursor);
+#ifdef RPI_IOCTL_DEBUG
+	printf("hcursor: %08x\n", hcursor);
+	printf("pcursor: %08x\n", (uint32_t)pcursor);
+	printf("fb: %08x\n", (uint32_t)vb_setfb.vbt_allocbuf.address);
+#endif
+	if (bus_space_map(aaa->aaa_iot, pcursor, CURSOR_ARGB_SIZE,
+	    BUS_SPACE_MAP_LINEAR|BUS_SPACE_MAP_PREFETCHABLE, &hc) != 0) {
+		printf("couldn't map cursor memory\n");
+	} else {
+		int i, j, k;
+
+		cmem = bus_space_vaddr(aaa->aaa_iot, hc);
+		k = 0;
+		for (j = 0; j < 64; j++) {
+			for (i = 0; i < 64; i++) {
+				cmem[i + k] =
+				 ((i & 8) ^ (j & 8)) ? 0xa0ff0000 : 0xa000ff00;
+			}
+			k += 64;
+		}
+		cpu_dcache_wb_range((vaddr_t)cmem, CURSOR_ARGB_SIZE);
+		rpi_fb_initcursor(pcursor, 0, 0);
+#ifdef RPI_IOCTL_DEBUG
+		rpi_fb_movecursor(600, 400, 1);
+#else
+		rpi_fb_movecursor(cursor_x, cursor_y, cursor_on);
+#endif
+	}
+#endif
+
 	return true;
 }
+
+
+#if defined(RPI_HWCURSOR)
+static int
+rpi_fb_do_cursor(struct wsdisplay_cursor *cur)
+{
+	int pos = 0;
+	int shape = 0;
+
+	if (cur->which & WSDISPLAY_CURSOR_DOCUR) {
+		if (cursor_on != cur->enable) {
+			cursor_on = cur->enable;
+			pos = 1;
+		}
+	}
+	if (cur->which & WSDISPLAY_CURSOR_DOHOT) {
+
+		hot_x = cur->hot.x;
+		hot_y = cur->hot.y;
+		pos = 1;
+		shape = 1;
+	}
+	if (cur->which & WSDISPLAY_CURSOR_DOPOS) {
+
+		cursor_x = cur->pos.x;
+		cursor_y = cur->pos.y;
+		pos = 1;
+	}
+	if (cur->which & WSDISPLAY_CURSOR_DOCMAP) {
+		int i;
+		uint32_t val;
+
+		for (i = 0; i < min(cur->cmap.count, 3); i++) {
+			val = (cur->cmap.red[i] << 16 ) |
+			      (cur->cmap.green[i] << 8) |
+			      (cur->cmap.blue[i] ) |
+			      0xff000000;
+			cursor_cmap[i + cur->cmap.index + 2] = val;
+		}
+		shape = 1;
+	}
+	if (cur->which & WSDISPLAY_CURSOR_DOSHAPE) {
+		int err;
+
+		err = copyin(cur->mask, cursor_mask, CURSOR_BITMAP_SIZE);
+		err += copyin(cur->image, cursor_bitmap, CURSOR_BITMAP_SIZE);
+		if (err != 0)
+			return EFAULT;
+		shape = 1;
+	}
+	if (shape) {
+		int i, j, idx;
+		uint8_t mask;
+
+		for (i = 0; i < CURSOR_BITMAP_SIZE; i++) {
+			mask = 0x01;
+			for (j = 0; j < 8; j++) {
+				idx = ((cursor_mask[i] & mask) ? 2 : 0) |
+				    ((cursor_bitmap[i] & mask) ? 1 : 0);
+				cmem[i * 8 + j] = cursor_cmap[idx];
+				mask = mask << 1;
+			}
+		}
+		/* just in case */
+		cpu_dcache_wb_range((vaddr_t)cmem, CURSOR_ARGB_SIZE);
+		rpi_fb_initcursor(pcursor, hot_x, hot_y);
+	}
+	if (pos) {
+		rpi_fb_movecursor(cursor_x, cursor_y, cursor_on);
+	}
+	return 0;
+}
+#endif
+
+static int
+rpi_ioctl(void *v, void *vs, u_long cmd, void *data, int flag, lwp_t *l)
+{
+
+	switch (cmd) {
+	case WSDISPLAYIO_SVIDEO:
+		{
+			int d = *(int *)data;
+			if (d == rpi_video_on)
+				return 0;
+			rpi_video_on = d;
+			rpi_fb_set_video(d);
+#if defined(RPI_HWCURSOR)
+			rpi_fb_movecursor(cursor_x, cursor_y,
+			                  d ? cursor_on : 0);
+#endif
+		}
+		return 0;
+	case WSDISPLAYIO_GVIDEO:
+		*(int *)data = rpi_video_on;
+		return 0;
+#if defined(RPI_HWCURSOR)
+	case WSDISPLAYIO_GCURPOS:
+		{
+			struct wsdisplay_curpos *cp = (void *)data;
+
+			cp->x = cursor_x;
+			cp->y = cursor_y;
+		}
+		return 0;
+	case WSDISPLAYIO_SCURPOS:
+		{
+			struct wsdisplay_curpos *cp = (void *)data;
+
+			cursor_x = cp->x;
+			cursor_y = cp->y;
+			rpi_fb_movecursor(cursor_x, cursor_y, cursor_on);
+		}
+		return 0;
+	case WSDISPLAYIO_GCURMAX:
+		{
+			struct wsdisplay_curpos *cp = (void *)data;
+
+			cp->x = 64;
+			cp->y = 64;
+		}
+		return 0;
+	case WSDISPLAYIO_SCURSOR:
+		{
+			struct wsdisplay_cursor *cursor = (void *)data;
+
+			return rpi_fb_do_cursor(cursor);
+		}
+#endif
+	default:
+		return EPASSTHROUGH;
+	}
+}
+
 #endif
 
 static void
@@ -779,6 +1084,22 @@ rpi_device_register(device_t dev, void *aux)
 {
 	prop_dictionary_t dict = device_properties(dev);
 
+#if defined(BCM2836)
+	if (device_is_a(dev, "armgtmr")) {
+		/*
+		 * The frequency of the generic timer is the reference
+		 * frequency.
+		 */
+		prop_dictionary_set_uint32(dict, "frequency", RPI_REF_FREQ);
+		return;
+	}
+#endif
+
+	if (device_is_a(dev, "bcmdmac") &&
+	    vcprop_tag_success_p(&vb.vbt_dmachan.tag)) {
+		prop_dictionary_set_uint32(dict,
+		    "chanmask", vb.vbt_dmachan.mask);
+	}
 #if NSDHC > 0
 	if (device_is_a(dev, "sdhc") &&
 	    vcprop_tag_success_p(&vb.vbt_emmcclockrate.tag) &&
@@ -819,11 +1140,12 @@ rpi_device_register(device_t dev, void *aux)
 		char *ptr;
 
 		bcmgenfb_set_console_dev(dev);
+		bcmgenfb_set_ioctl(&rpi_ioctl);
 #ifdef DDB
 		db_trap_callback = bcmgenfb_ddb_trap_callback;
 #endif
 
-		if (rpi_fb_init(dict) == false)
+		if (rpi_fb_init(dict, aux) == false)
 			return;
 		if (get_bootconf_option(boot_args, "console",
 		    BOOTOPT_TYPE_STRING, &ptr) && strncmp(ptr, "fb", 2) == 0) {
@@ -844,6 +1166,21 @@ SYSCTL_SETUP(sysctl_machdep_rpi, "sysctl machdep subtree setup (rpi)")
 	sysctl_createv(clog, 0, NULL, NULL,
 	    CTLFLAG_PERMANENT, CTLTYPE_NODE, "machdep", NULL,
 	    NULL, 0, NULL, 0, CTL_MACHDEP, CTL_EOL);
+
+	sysctl_createv(clog, 0, NULL, NULL,
+	    CTLFLAG_PERMANENT|CTLFLAG_READONLY,
+	    CTLTYPE_INT, "firmware_revision", NULL, NULL, 0,
+	    &vb.vbt_fwrev.rev, 0, CTL_MACHDEP, CTL_CREATE, CTL_EOL);
+
+	sysctl_createv(clog, 0, NULL, NULL,
+	    CTLFLAG_PERMANENT|CTLFLAG_READONLY,
+	    CTLTYPE_INT, "board_model", NULL, NULL, 0,
+	    &vb.vbt_boardmodel.model, 0, CTL_MACHDEP, CTL_CREATE, CTL_EOL);
+
+	sysctl_createv(clog, 0, NULL, NULL,
+	    CTLFLAG_PERMANENT|CTLFLAG_READONLY,
+	    CTLTYPE_INT, "board_revision", NULL, NULL, 0,
+	    &vb.vbt_boardrev.rev, 0, CTL_MACHDEP, CTL_CREATE, CTL_EOL);
 
 	sysctl_createv(clog, 0, NULL, NULL,
 	    CTLFLAG_PERMANENT|CTLFLAG_READONLY|CTLFLAG_HEX|CTLFLAG_PRIVATE,

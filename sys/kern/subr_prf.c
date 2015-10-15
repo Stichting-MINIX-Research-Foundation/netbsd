@@ -1,4 +1,4 @@
-/*	$NetBSD: subr_prf.c,v 1.150 2013/02/10 11:04:19 apb Exp $	*/
+/*	$NetBSD: subr_prf.c,v 1.159 2015/08/24 22:50:32 pooka Exp $	*/
 
 /*-
  * Copyright (c) 1986, 1988, 1991, 1993
@@ -37,12 +37,15 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: subr_prf.c,v 1.150 2013/02/10 11:04:19 apb Exp $");
+__KERNEL_RCSID(0, "$NetBSD: subr_prf.c,v 1.159 2015/08/24 22:50:32 pooka Exp $");
 
+#ifdef _KERNEL_OPT
 #include "opt_ddb.h"
 #include "opt_ipkdb.h"
 #include "opt_kgdb.h"
 #include "opt_dump.h"
+#include "opt_rnd_printf.h"
+#endif
 
 #include <sys/param.h>
 #include <sys/stdint.h>
@@ -63,6 +66,8 @@ __KERNEL_RCSID(0, "$NetBSD: subr_prf.c,v 1.150 2013/02/10 11:04:19 apb Exp $");
 #include <sys/atomic.h>
 #include <sys/kernel.h>
 #include <sys/cpu.h>
+#include <sys/sha2.h>
+#include <sys/rndsource.h>
 
 #include <dev/cons.h>
 
@@ -103,12 +108,22 @@ static void	 putchar(int, int, struct tty *);
 
 extern	struct tty *constty;	/* pointer to console "window" tty */
 extern	int log_open;	/* subr_log: is /dev/klog open? */
+extern	krndsource_t	rnd_printf_source;
 const	char *panicstr; /* arg to first call to panic (used as a flag
 			   to indicate that panic has already been called). */
 struct cpu_info *paniccpu;	/* cpu that first paniced */
 long	panicstart, panicend;	/* position in the msgbuf of the start and
 				   end of the formatted panicstr. */
 int	doing_shutdown;	/* set to indicate shutdown in progress */
+
+#ifdef RND_PRINTF
+static bool kprintf_inited_callout = false;
+static SHA512_CTX kprnd_sha;
+static uint8_t kprnd_accum[SHA512_DIGEST_LENGTH];
+static int kprnd_added;
+
+static struct callout kprnd_callout;
+#endif
 
 #ifndef	DUMP_ON_PANIC
 #define	DUMP_ON_PANIC	1
@@ -133,6 +148,34 @@ const char HEXDIGITS[] = "0123456789ABCDEF";
  * functions
  */
 
+#ifdef RND_PRINTF
+static void kprintf_rnd_get(size_t bytes, void *priv)
+{
+	if (kprnd_added)  {
+		KASSERT(kprintf_inited);
+		if (mutex_tryenter(&kprintf_mtx)) {
+			SHA512_Final(kprnd_accum, &kprnd_sha);
+			rnd_add_data(&rnd_printf_source,
+				     kprnd_accum, sizeof(kprnd_accum), 0);
+			kprnd_added = 0;
+			/* This, we must do, since we called _Final. */
+			SHA512_Init(&kprnd_sha);
+			/* This is optional but seems useful. */
+			SHA512_Update(&kprnd_sha, kprnd_accum,
+				      sizeof(kprnd_accum));
+			mutex_exit(&kprintf_mtx);
+		}
+	}
+}
+
+static void kprintf_rnd_callout(void *arg)
+{
+	kprintf_rnd_get(0, NULL);
+	callout_schedule(&kprnd_callout, hz);
+}
+
+#endif
+
 /*
  * Locking is inited fairly early in MI bootstrap.  Before that
  * prints are done unlocked.  But that doesn't really matter,
@@ -143,9 +186,24 @@ kprintf_init(void)
 {
 
 	KASSERT(!kprintf_inited && cold); /* not foolproof, but ... */
+#ifdef RND_PRINTF
+	SHA512_Init(&kprnd_sha);
+#endif
 	mutex_init(&kprintf_mtx, MUTEX_DEFAULT, IPL_HIGH);
 	kprintf_inited = true;
 }
+
+#ifdef RND_PRINTF
+void
+kprintf_init_callout(void)
+{
+	KASSERT(!kprintf_inited_callout);
+	callout_init(&kprnd_callout, CALLOUT_MPSAFE);
+	callout_setfunc(&kprnd_callout, kprintf_rnd_callout, NULL);
+	callout_schedule(&kprnd_callout, hz);
+	kprintf_inited_callout = true;
+}
+#endif
 
 void
 kprintf_lock(void)
@@ -405,7 +463,10 @@ addlog(const char *fmt, ...)
 static void
 putchar(int c, int flags, struct tty *tp)
 {
-
+#ifdef RND_PRINTF
+	uint8_t rbuf[SHA512_BLOCK_LENGTH];
+	static int cursor;
+#endif
 	if (panicstr)
 		constty = NULL;
 	if ((flags & TOCONS) && tp == NULL && constty) {
@@ -422,8 +483,23 @@ putchar(int c, int flags, struct tty *tp)
 	if ((flags & TOCONS) && constty == NULL && c != '\0')
 		(*v_putc)(c);
 #ifdef DDB
-	if (flags & TODDB)
+	if (flags & TODDB) {
 		db_putchar(c);
+		return;
+	}
+#endif
+
+#ifdef RND_PRINTF
+	if (__predict_true(kprintf_inited)) {
+		rbuf[cursor] = c;
+		if (cursor == sizeof(rbuf) - 1) {
+			SHA512_Update(&kprnd_sha, rbuf, sizeof(rbuf));
+			kprnd_added++;
+			cursor = 0;
+		} else {
+			cursor++;
+		}
+	}
 #endif
 }
 
@@ -600,7 +676,7 @@ db_printf(const char *fmt, ...)
 		va_start(ap, fmt);
 		kprintf(fmt, TOLOG, NULL, NULL, ap);
 		va_end(ap);
-	};
+	}
 }
 
 void
@@ -773,7 +849,6 @@ aprint_error_ifnet(struct ifnet *ifp, const char *fmt, ...)
 static void
 aprint_naive_internal(const char *prefix, const char *fmt, va_list ap)
 {
-
 	if ((boothowto & (AB_QUIET|AB_SILENT|AB_VERBOSE)) != AB_QUIET)
 		return;
 
@@ -876,7 +951,6 @@ aprint_verbose_ifnet(struct ifnet *ifp, const char *fmt, ...)
 static void
 aprint_debug_internal(const char *prefix, const char *fmt, va_list ap)
 {
-
 	if ((boothowto & AB_DEBUG) == 0)
 		return;
 
@@ -927,7 +1001,7 @@ printf_tolog(const char *fmt, ...)
 	kprintf_lock();
 
 	va_start(ap, fmt);
-	(void)kprintf(fmt, TOLOG, NULL, NULL, ap);
+	kprintf(fmt, TOLOG, NULL, NULL, ap);
 	va_end(ap);
 
 	kprintf_unlock();
@@ -983,7 +1057,6 @@ printf(const char *fmt, ...)
 void
 vprintf(const char *fmt, va_list ap)
 {
-
 	kprintf_lock();
 
 	kprintf(fmt, TOCONS | TOLOG, NULL, NULL, ap);
@@ -992,38 +1065,6 @@ vprintf(const char *fmt, va_list ap)
 
 	if (!panicstr)
 		logwakeup();
-}
-
-/*
- * sprintf: print a message to a buffer
- */
-int
-sprintf(char *bf, const char *fmt, ...)
-{
-	int retval;
-	va_list ap;
-
-	va_start(ap, fmt);
-	retval = kprintf(fmt, TOBUFONLY, NULL, bf, ap);
-	va_end(ap);
-	if (bf)
-		bf[retval] = '\0';	/* nul terminate */
-	return retval;
-}
-
-/*
- * vsprintf: print a message to a buffer [already have va_list]
- */
-
-int
-vsprintf(char *bf, const char *fmt, va_list ap)
-{
-	int retval;
-
-	retval = kprintf(fmt, TOBUFONLY, NULL, bf, ap);
-	if (bf)
-		bf[retval] = '\0';	/* nul terminate */
-	return retval;
 }
 
 /*
@@ -1508,5 +1549,13 @@ done:
 	if ((oflags == TOBUFONLY) && (vp != NULL))
 		*(char **)vp = sbuf;
 	(*v_flush)();
+
+#ifdef RND_PRINTF
+	if (!cold) {
+		struct timespec ts;
+		(void)nanotime(&ts);
+		SHA512_Update(&kprnd_sha, (char *)&ts, sizeof(ts));
+	}
+#endif
 	return ret;
 }

@@ -1,4 +1,4 @@
-/*	$NetBSD: dwc2_hcdqueue.c,v 1.6 2013/11/24 12:25:19 skrll Exp $	*/
+/*	$NetBSD: dwc2_hcdqueue.c,v 1.13 2015/08/31 06:12:55 uebayasi Exp $	*/
 
 /*
  * hcd_queue.c - DesignWare HS OTG Controller host queuing routines
@@ -42,7 +42,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: dwc2_hcdqueue.c,v 1.6 2013/11/24 12:25:19 skrll Exp $");
+__KERNEL_RCSID(0, "$NetBSD: dwc2_hcdqueue.c,v 1.13 2015/08/31 06:12:55 uebayasi Exp $");
 
 #include <sys/types.h>
 #include <sys/kmem.h>
@@ -78,7 +78,6 @@ static void dwc2_qh_init(struct dwc2_hsotg *hsotg, struct dwc2_qh *qh,
 			 struct dwc2_hcd_urb *urb)
 {
 	int dev_speed, hub_addr, hub_port;
-	const char *speed, *type;
 
 	dev_vdbg(hsotg->dev, "%s()\n", __func__);
 
@@ -95,6 +94,7 @@ static void dwc2_qh_init(struct dwc2_hsotg *hsotg, struct dwc2_qh *qh,
 	dev_speed = dwc2_host_get_speed(hsotg, urb->priv);
 
 	dwc2_host_hub_info(hsotg, urb->priv, &hub_addr, &hub_port);
+	qh->nak_frame = 0xffff;
 
 	if ((dev_speed == USB_SPEED_LOW || dev_speed == USB_SPEED_FULL) &&
 	    hub_addr != 0 && hub_addr != 1) {
@@ -149,6 +149,8 @@ static void dwc2_qh_init(struct dwc2_hsotg *hsotg, struct dwc2_qh *qh,
 
 	qh->dev_speed = dev_speed;
 
+#ifdef DWC2_DEBUG
+	const char *speed, *type;
 	switch (dev_speed) {
 	case USB_SPEED_LOW:
 		speed = "low";
@@ -184,6 +186,7 @@ static void dwc2_qh_init(struct dwc2_hsotg *hsotg, struct dwc2_qh *qh,
 	}
 
 	dev_vdbg(hsotg->dev, "DWC OTG HCD QH - Type = %s\n", type);
+#endif
 
 	if (qh->ep_type == USB_ENDPOINT_XFER_INT) {
 		dev_vdbg(hsotg->dev, "DWC OTG HCD QH - usecs = %d\n",
@@ -203,7 +206,7 @@ static void dwc2_qh_init(struct dwc2_hsotg *hsotg, struct dwc2_qh *qh,
  *
  * Return: Pointer to the newly allocated QH, or NULL on error
  */
-static struct dwc2_qh *dwc2_hcd_qh_create(struct dwc2_hsotg *hsotg,
+struct dwc2_qh *dwc2_hcd_qh_create(struct dwc2_hsotg *hsotg,
 					  struct dwc2_hcd_urb *urb,
 					  gfp_t mem_flags)
 {
@@ -248,8 +251,8 @@ void dwc2_hcd_qh_free(struct dwc2_hsotg *hsotg, struct dwc2_qh *qh)
 	if (hsotg->core_params->dma_desc_enable > 0) {
 		dwc2_hcd_qh_free_ddma(hsotg, qh);
 	} else if (qh->dw_align_buf) {
-		/* XXXNH */
-		usb_freemem(&hsotg->hsotg_sc->sc_bus, &qh->dw_align_buf_usbdma);
+		usb_freemem(&sc->sc_bus, &qh->dw_align_buf_usbdma);
+ 		qh->dw_align_buf_dma = (dma_addr_t)0;
 	}
 
 	pool_cache_put(sc->sc_qhpool, qh);
@@ -364,7 +367,7 @@ static int dwc2_find_single_uframe(struct dwc2_hsotg *hsotg, struct dwc2_qh *qh)
 			return i;
 		}
 	}
-	return -1;
+	return -ENOSPC;
 }
 
 /*
@@ -423,7 +426,7 @@ static int dwc2_find_multi_uframe(struct dwc2_hsotg *hsotg, struct dwc2_qh *qh)
 				continue;
 		}
 	}
-	return -1;
+	return -ENOSPC;
 }
 
 static int dwc2_find_uframe(struct dwc2_hsotg *hsotg, struct dwc2_qh *qh)
@@ -497,12 +500,12 @@ static int dwc2_schedule_periodic(struct dwc2_hsotg *hsotg, struct dwc2_qh *qh)
 			frame = status - 1;
 
 		/* Set the new frame up */
-		if (frame > -1) {
+		if (frame >= 0) {
 			qh->sched_frame &= ~0x7;
 			qh->sched_frame |= (frame & 7);
 		}
 
-		if (status != -1)
+		if (status > 0)
 			status = 0;
 	} else {
 		status = dwc2_periodic_channel_available(hsotg);
@@ -589,7 +592,7 @@ static void dwc2_deschedule_periodic(struct dwc2_hsotg *hsotg,
  */
 int dwc2_hcd_qh_add(struct dwc2_hsotg *hsotg, struct dwc2_qh *qh)
 {
-	int status = 0;
+	int status;
 	u32 intr_mask;
 
 	if (dbg_qh(qh))
@@ -597,26 +600,27 @@ int dwc2_hcd_qh_add(struct dwc2_hsotg *hsotg, struct dwc2_qh *qh)
 
 	if (!list_empty(&qh->qh_list_entry))
 		/* QH already in a schedule */
-		return status;
+		return 0;
 
 	/* Add the new QH to the appropriate schedule */
 	if (dwc2_qh_is_non_per(qh)) {
 		/* Always start in inactive schedule */
 		list_add_tail(&qh->qh_list_entry,
 			      &hsotg->non_periodic_sched_inactive);
-	} else {
-		status = dwc2_schedule_periodic(hsotg, qh);
-		if (status == 0) {
-			if (!hsotg->periodic_qh_count) {
-				intr_mask = DWC2_READ_4(hsotg, GINTMSK);
-				intr_mask |= GINTSTS_SOF;
-				DWC2_WRITE_4(hsotg, GINTMSK, intr_mask);
-			}
-			hsotg->periodic_qh_count++;
-		}
+		return 0;
 	}
 
-	return status;
+	status = dwc2_schedule_periodic(hsotg, qh);
+	if (status)
+		return status;
+	if (!hsotg->periodic_qh_count) {
+		intr_mask = DWC2_READ_4(hsotg, GINTMSK);
+		intr_mask |= GINTSTS_SOF;
+		DWC2_WRITE_4(hsotg, GINTMSK, intr_mask);
+	}
+	hsotg->periodic_qh_count++;
+
+	return 0;
 }
 
 /**
@@ -641,14 +645,15 @@ void dwc2_hcd_qh_unlink(struct dwc2_hsotg *hsotg, struct dwc2_qh *qh)
 			hsotg->non_periodic_qh_ptr =
 					hsotg->non_periodic_qh_ptr->next;
 		list_del_init(&qh->qh_list_entry);
-	} else {
-		dwc2_deschedule_periodic(hsotg, qh);
-		hsotg->periodic_qh_count--;
-		if (!hsotg->periodic_qh_count) {
-			intr_mask = DWC2_READ_4(hsotg, GINTMSK);
-			intr_mask &= ~GINTSTS_SOF;
-			DWC2_WRITE_4(hsotg, GINTMSK, intr_mask);
-		}
+		return;
+	}
+
+	dwc2_deschedule_periodic(hsotg, qh);
+	hsotg->periodic_qh_count--;
+	if (!hsotg->periodic_qh_count) {
+		intr_mask = DWC2_READ_4(hsotg, GINTMSK);
+		intr_mask &= ~GINTSTS_SOF;
+		DWC2_WRITE_4(hsotg, GINTMSK, intr_mask);
 	}
 }
 
@@ -703,6 +708,8 @@ static void dwc2_sched_periodic_split(struct dwc2_hsotg *hsotg,
 void dwc2_hcd_qh_deactivate(struct dwc2_hsotg *hsotg, struct dwc2_qh *qh,
 			    int sched_next_periodic_split)
 {
+	u16 frame_number;
+
 	if (dbg_qh(qh))
 		dev_vdbg(hsotg->dev, "%s()\n", __func__);
 
@@ -711,37 +718,36 @@ void dwc2_hcd_qh_deactivate(struct dwc2_hsotg *hsotg, struct dwc2_qh *qh,
 		if (!list_empty(&qh->qtd_list))
 			/* Add back to inactive non-periodic schedule */
 			dwc2_hcd_qh_add(hsotg, qh);
-	} else {
-		u16 frame_number = dwc2_hcd_get_frame_number(hsotg);
-
-		if (qh->do_split) {
-			dwc2_sched_periodic_split(hsotg, qh, frame_number,
-						  sched_next_periodic_split);
-		} else {
-			qh->sched_frame = dwc2_frame_num_inc(qh->sched_frame,
-							     qh->interval);
-			if (dwc2_frame_num_le(qh->sched_frame, frame_number))
-				qh->sched_frame = frame_number;
-		}
-
-		if (list_empty(&qh->qtd_list)) {
-			dwc2_hcd_qh_unlink(hsotg, qh);
-		} else {
-			/*
-			 * Remove from periodic_sched_queued and move to
-			 * appropriate queue
-			 */
-			if ((hsotg->core_params->uframe_sched > 0 &&
-			     dwc2_frame_num_le(qh->sched_frame, frame_number))
-			 || (hsotg->core_params->uframe_sched <= 0 &&
-			     qh->sched_frame == frame_number))
-				list_move(&qh->qh_list_entry,
-					  &hsotg->periodic_sched_ready);
-			else
-				list_move(&qh->qh_list_entry,
-					  &hsotg->periodic_sched_inactive);
-		}
+		return;
 	}
+
+	frame_number = dwc2_hcd_get_frame_number(hsotg);
+
+	if (qh->do_split) {
+		dwc2_sched_periodic_split(hsotg, qh, frame_number,
+					  sched_next_periodic_split);
+	} else {
+		qh->sched_frame = dwc2_frame_num_inc(qh->sched_frame,
+						     qh->interval);
+		if (dwc2_frame_num_le(qh->sched_frame, frame_number))
+			qh->sched_frame = frame_number;
+	}
+
+	if (list_empty(&qh->qtd_list)) {
+		dwc2_hcd_qh_unlink(hsotg, qh);
+		return;
+	}
+	/*
+	 * Remove from periodic_sched_queued and move to
+	 * appropriate queue
+	 */
+	if ((hsotg->core_params->uframe_sched > 0 &&
+	     dwc2_frame_num_le(qh->sched_frame, frame_number)) ||
+	    (hsotg->core_params->uframe_sched <= 0 &&
+	     qh->sched_frame == frame_number))
+		list_move(&qh->qh_list_entry, &hsotg->periodic_sched_ready);
+	else
+		list_move(&qh->qh_list_entry, &hsotg->periodic_sched_inactive);
 }
 
 /**
@@ -776,68 +782,39 @@ void dwc2_hcd_qtd_init(struct dwc2_qtd *qtd, struct dwc2_hcd_urb *urb)
 
 /**
  * dwc2_hcd_qtd_add() - Adds a QTD to the QTD-list of a QH
+ *			Caller must hold driver lock.
  *
- * @hsotg:     The DWC HCD structure
- * @qtd:       The QTD to add
- * @qh:        Out parameter to return queue head
- * @mem_flags: Flag to do atomic alloc if needed
+ * @hsotg:        The DWC HCD structure
+ * @qtd:          The QTD to add
+ * @qh:           Queue head to add qtd to
  *
  * Return: 0 if successful, negative error code otherwise
  *
- * Finds the correct QH to place the QTD into. If it does not find a QH, it
- * will create a new QH. If the QH to which the QTD is added is not currently
- * scheduled, it is placed into the proper schedule based on its EP type.
+ * If the QH to which the QTD is added is not currently scheduled, it is placed
+ * into the proper schedule based on its EP type.
  */
 int dwc2_hcd_qtd_add(struct dwc2_hsotg *hsotg, struct dwc2_qtd *qtd,
-		     struct dwc2_qh **qh, gfp_t mem_flags)
+		     struct dwc2_qh *qh)
 {
-	struct dwc2_hcd_urb *urb = qtd->urb;
-	unsigned long flags;
-	int allocated = 0;
+
+	KASSERT(mutex_owned(&hsotg->lock));
 	int retval;
 
-	/*
-	 * Get the QH which holds the QTD-list to insert to. Create QH if it
-	 * doesn't exist.
-	 */
-	if (*qh == NULL) {
-		*qh = dwc2_hcd_qh_create(hsotg, urb, mem_flags);
-		if (*qh == NULL)
-			return -ENOMEM;
-		allocated = 1;
+	if (unlikely(!qh)) {
+		dev_err(hsotg->dev, "%s: Invalid QH\n", __func__);
+		retval = -EINVAL;
+		goto fail;
 	}
 
-	spin_lock_irqsave(&hsotg->lock, flags);
-
-	retval = dwc2_hcd_qh_add(hsotg, *qh);
+	retval = dwc2_hcd_qh_add(hsotg, qh);
 	if (retval)
 		goto fail;
 
-	qtd->qh = *qh;
-	list_add_tail(&qtd->qtd_list_entry, &(*qh)->qtd_list);
-	spin_unlock_irqrestore(&hsotg->lock, flags);
+	qtd->qh = qh;
+	list_add_tail(&qtd->qtd_list_entry, &qh->qtd_list);
 
 	return 0;
-
 fail:
-	if (allocated) {
-		struct dwc2_qtd *qtd2, *qtd2_tmp;
-		struct dwc2_qh *qh_tmp = *qh;
-
-		*qh = NULL;
-		dwc2_hcd_qh_unlink(hsotg, qh_tmp);
-
-		/* Free each QTD in the QH's QTD list */
-		list_for_each_entry_safe(qtd2, qtd2_tmp, &qh_tmp->qtd_list,
-					 qtd_list_entry)
-			dwc2_hcd_qtd_unlink_and_free(hsotg, qtd2, qh_tmp);
-
-		spin_unlock_irqrestore(&hsotg->lock, flags);
-		dwc2_hcd_qh_free(hsotg, qh_tmp);
-	} else {
-		spin_unlock_irqrestore(&hsotg->lock, flags);
-	}
-
 	return retval;
 }
 
@@ -846,7 +823,7 @@ void dwc2_hcd_qtd_unlink_and_free(struct dwc2_hsotg *hsotg,
 				  struct dwc2_qh *qh)
 {
 	struct dwc2_softc *sc = hsotg->hsotg_sc;
-	
+
 	list_del_init(&qtd->qtd_list_entry);
  	pool_cache_put(sc->sc_qtdpool, qtd);
 }

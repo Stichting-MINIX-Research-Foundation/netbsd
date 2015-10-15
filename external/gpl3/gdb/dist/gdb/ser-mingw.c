@@ -1,6 +1,6 @@
 /* Serial interface for local (hardwired) serial ports on Windows systems
 
-   Copyright (C) 2006-2013 Free Software Foundation, Inc.
+   Copyright (C) 2006-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -28,9 +28,6 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/types.h>
-
-#include "gdb_assert.h"
-#include "gdb_string.h"
 
 #include "command.h"
 
@@ -788,7 +785,7 @@ struct pipe_state
 static struct pipe_state *
 make_pipe_state (void)
 {
-  struct pipe_state *ps = XMALLOC (struct pipe_state);
+  struct pipe_state *ps = XNEW (struct pipe_state);
 
   memset (ps, 0, sizeof (*ps));
   ps->wait.read_event = INVALID_HANDLE_VALUE;
@@ -1046,6 +1043,32 @@ struct net_windows_state
   HANDLE sock_event;
 };
 
+/* Check whether the socket has any pending data to be read.  If so,
+   set the select thread's read event.  On error, set the select
+   thread's except event.  If any event was set, return true,
+   otherwise return false.  */
+
+static int
+net_windows_socket_check_pending (struct serial *scb)
+{
+  struct net_windows_state *state = scb->state;
+  unsigned long available;
+
+  if (ioctlsocket (scb->fd, FIONREAD, &available) != 0)
+    {
+      /* The socket closed, or some other error.  */
+      SetEvent (state->base.except_event);
+      return 1;
+    }
+  else if (available > 0)
+    {
+      SetEvent (state->base.read_event);
+      return 1;
+    }
+
+  return 0;
+}
+
 static DWORD WINAPI
 net_windows_select_thread (void *arg)
 {
@@ -1065,33 +1088,54 @@ net_windows_select_thread (void *arg)
       wait_events[0] = state->base.stop_select;
       wait_events[1] = state->sock_event;
 
-      event_index = WaitForMultipleObjects (2, wait_events, FALSE, INFINITE);
-
-      if (event_index == WAIT_OBJECT_0
-	  || WaitForSingleObject (state->base.stop_select, 0) == WAIT_OBJECT_0)
-	/* We have been requested to stop.  */
-	;
-      else if (event_index != WAIT_OBJECT_0 + 1)
-	/* Some error has occured.  Assume that this is an error
-	   condition.  */
-	SetEvent (state->base.except_event);
-      else
+      /* Wait for something to happen on the socket.  */
+      while (1)
 	{
+	  event_index = WaitForMultipleObjects (2, wait_events, FALSE, INFINITE);
+
+	  if (event_index == WAIT_OBJECT_0
+	      || WaitForSingleObject (state->base.stop_select, 0) == WAIT_OBJECT_0)
+	    {
+	      /* We have been requested to stop.  */
+	      break;
+	    }
+
+	  if (event_index != WAIT_OBJECT_0 + 1)
+	    {
+	      /* Some error has occured.  Assume that this is an error
+		 condition.  */
+	      SetEvent (state->base.except_event);
+	      break;
+	    }
+
 	  /* Enumerate the internal network events, and reset the
 	     object that signalled us to catch the next event.  */
-	  WSAEnumNetworkEvents (scb->fd, state->sock_event, &events);
-	  
-	  gdb_assert (events.lNetworkEvents & (FD_READ | FD_CLOSE));
-	  
+	  if (WSAEnumNetworkEvents (scb->fd, state->sock_event, &events) != 0)
+	    {
+	      /* Something went wrong.  Maybe the socket is gone.  */
+	      SetEvent (state->base.except_event);
+	      break;
+	    }
+
 	  if (events.lNetworkEvents & FD_READ)
-	    SetEvent (state->base.read_event);
-	  
+	    {
+	      if (net_windows_socket_check_pending (scb))
+		break;
+
+	      /* Spurious wakeup.  That is, the socket's event was
+		 signalled before we last called recv.  */
+	    }
+
 	  if (events.lNetworkEvents & FD_CLOSE)
-	    SetEvent (state->base.except_event);
+	    {
+	      SetEvent (state->base.except_event);
+	      break;
+	    }
 	}
 
       SetEvent (state->base.have_stopped);
     }
+  return 0;
 }
 
 static void
@@ -1107,60 +1151,10 @@ net_windows_wait_handle (struct serial *scb, HANDLE *read, HANDLE *except)
   *read = state->base.read_event;
   *except = state->base.except_event;
 
-  /* Check any pending events.  This both avoids starting the thread
-     unnecessarily, and handles stray FD_READ events (see below).  */
-  if (WaitForSingleObject (state->sock_event, 0) == WAIT_OBJECT_0)
-    {
-      WSANETWORKEVENTS events;
-      int any = 0;
-
-      /* Enumerate the internal network events, and reset the object that
-	 signalled us to catch the next event.  */
-      WSAEnumNetworkEvents (scb->fd, state->sock_event, &events);
-
-      /* You'd think that FD_READ or FD_CLOSE would be set here.  But,
-	 sometimes, neither is.  I suspect that the FD_READ is set and
-	 the corresponding event signalled while recv is running, and
-	 the FD_READ is then lowered when recv consumes all the data,
-	 but there's no way to un-signal the event.  This isn't a
-	 problem for the call in net_select_thread, since any new
-	 events after this point will not have been drained by recv.
-	 It just means that we can't have the obvious assert here.  */
-
-      /* If there is a read event, it might be still valid, or it might
-	 not be - it may have been signalled before we last called
-	 recv.  Double-check that there is data.  */
-      if (events.lNetworkEvents & FD_READ)
-	{
-	  unsigned long available;
-
-	  if (ioctlsocket (scb->fd, FIONREAD, &available) == 0
-	      && available > 0)
-	    {
-	      SetEvent (state->base.read_event);
-	      any = 1;
-	    }
-	  else
-	    /* Oops, no data.  This call to recv will cause future
-	       data to retrigger the event, e.g. while we are
-	       in net_select_thread.  */
-	    recv (scb->fd, NULL, 0, 0);
-	}
-
-      /* If there's a close event, then record it - it is obviously
-	 still valid, and it will not be resignalled.  */
-      if (events.lNetworkEvents & FD_CLOSE)
-	{
-	  SetEvent (state->base.except_event);
-	  any = 1;
-	}
-
-      /* If we set either handle, there's no need to wake the thread.  */
-      if (any)
-	return;
-    }
-
-  start_select_thread (&state->base);
+  /* Check any pending events.  Otherwise, start the select
+     thread.  */
+  if (!net_windows_socket_check_pending (scb))
+    start_select_thread (&state->base);
 }
 
 static void
@@ -1210,6 +1204,128 @@ net_windows_close (struct serial *scb)
   net_close (scb);
 }
 
+/* The serial port driver.  */
+
+static const struct serial_ops hardwire_ops =
+{
+  "hardwire",
+  ser_windows_open,
+  ser_windows_close,
+  NULL,
+  ser_base_readchar,
+  ser_base_write,
+  ser_windows_flush_output,
+  ser_windows_flush_input,
+  ser_windows_send_break,
+  ser_windows_raw,
+  /* These are only used for stdin; we do not need them for serial
+     ports, so supply the standard dummies.  */
+  ser_base_get_tty_state,
+  ser_base_copy_tty_state,
+  ser_base_set_tty_state,
+  ser_base_print_tty_state,
+  ser_base_noflush_set_tty_state,
+  ser_windows_setbaudrate,
+  ser_windows_setstopbits,
+  ser_windows_drain_output,
+  ser_base_async,
+  ser_windows_read_prim,
+  ser_windows_write_prim,
+  NULL,
+  ser_windows_wait_handle
+};
+
+/* The dummy serial driver used for terminals.  We only provide the
+   TTY-related methods.  */
+
+static const struct serial_ops tty_ops =
+{
+  "terminal",
+  NULL,
+  ser_console_close,
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  ser_console_get_tty_state,
+  ser_base_copy_tty_state,
+  ser_base_set_tty_state,
+  ser_base_print_tty_state,
+  ser_base_noflush_set_tty_state,
+  NULL,
+  NULL,
+  ser_base_drain_output,
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  ser_console_wait_handle,
+  ser_console_done_wait_handle
+};
+
+/* The pipe interface.  */
+
+static const struct serial_ops pipe_ops =
+{
+  "pipe",
+  pipe_windows_open,
+  pipe_windows_close,
+  pipe_windows_fdopen,
+  ser_base_readchar,
+  ser_base_write,
+  ser_base_flush_output,
+  ser_base_flush_input,
+  ser_base_send_break,
+  ser_base_raw,
+  ser_base_get_tty_state,
+  ser_base_copy_tty_state,
+  ser_base_set_tty_state,
+  ser_base_print_tty_state,
+  ser_base_noflush_set_tty_state,
+  ser_base_setbaudrate,
+  ser_base_setstopbits,
+  ser_base_drain_output,
+  ser_base_async,
+  pipe_windows_read,
+  pipe_windows_write,
+  pipe_avail,
+  pipe_wait_handle,
+  pipe_done_wait_handle
+};
+
+/* The TCP/UDP socket driver.  */
+
+static const struct serial_ops tcp_ops =
+{
+  "tcp",
+  net_windows_open,
+  net_windows_close,
+  NULL,
+  ser_base_readchar,
+  ser_base_write,
+  ser_base_flush_output,
+  ser_base_flush_input,
+  ser_tcp_send_break,
+  ser_base_raw,
+  ser_base_get_tty_state,
+  ser_base_copy_tty_state,
+  ser_base_set_tty_state,
+  ser_base_print_tty_state,
+  ser_base_noflush_set_tty_state,
+  ser_base_setbaudrate,
+  ser_base_setstopbits,
+  ser_base_drain_output,
+  ser_base_async,
+  net_read_prim,
+  net_write_prim,
+  NULL,
+  net_windows_wait_handle,
+  net_windows_done_wait_handle
+};
+
 void
 _initialize_ser_windows (void)
 {
@@ -1228,91 +1344,9 @@ _initialize_ser_windows (void)
   else
     CancelIo = NULL;
 
-  /* Now register the serial port driver.  */
-  ops = XMALLOC (struct serial_ops);
-  memset (ops, 0, sizeof (struct serial_ops));
-  ops->name = "hardwire";
-  ops->next = 0;
-  ops->open = ser_windows_open;
-  ops->close = ser_windows_close;
-
-  ops->flush_output = ser_windows_flush_output;
-  ops->flush_input = ser_windows_flush_input;
-  ops->send_break = ser_windows_send_break;
-
-  /* These are only used for stdin; we do not need them for serial
-     ports, so supply the standard dummies.  */
-  ops->get_tty_state = ser_base_get_tty_state;
-  ops->copy_tty_state = ser_base_copy_tty_state;
-  ops->set_tty_state = ser_base_set_tty_state;
-  ops->print_tty_state = ser_base_print_tty_state;
-  ops->noflush_set_tty_state = ser_base_noflush_set_tty_state;
-
-  ops->go_raw = ser_windows_raw;
-  ops->setbaudrate = ser_windows_setbaudrate;
-  ops->setstopbits = ser_windows_setstopbits;
-  ops->drain_output = ser_windows_drain_output;
-  ops->readchar = ser_base_readchar;
-  ops->write = ser_base_write;
-  ops->async = ser_base_async;
-  ops->read_prim = ser_windows_read_prim;
-  ops->write_prim = ser_windows_write_prim;
-  ops->wait_handle = ser_windows_wait_handle;
-
-  serial_add_interface (ops);
-
-  /* Next create the dummy serial driver used for terminals.  We only
-     provide the TTY-related methods.  */
-
-  ops = XMALLOC (struct serial_ops);
-  memset (ops, 0, sizeof (struct serial_ops));
-
-  ops->name = "terminal";
-  ops->next = 0;
-
-  ops->close = ser_console_close;
-  ops->get_tty_state = ser_console_get_tty_state;
-  ops->copy_tty_state = ser_base_copy_tty_state;
-  ops->set_tty_state = ser_base_set_tty_state;
-  ops->print_tty_state = ser_base_print_tty_state;
-  ops->noflush_set_tty_state = ser_base_noflush_set_tty_state;
-  ops->drain_output = ser_base_drain_output;
-  ops->wait_handle = ser_console_wait_handle;
-  ops->done_wait_handle = ser_console_done_wait_handle;
-
-  serial_add_interface (ops);
-
-  /* The pipe interface.  */
-
-  ops = XMALLOC (struct serial_ops);
-  memset (ops, 0, sizeof (struct serial_ops));
-  ops->name = "pipe";
-  ops->next = 0;
-  ops->open = pipe_windows_open;
-  ops->close = pipe_windows_close;
-  ops->fdopen = pipe_windows_fdopen;
-  ops->readchar = ser_base_readchar;
-  ops->write = ser_base_write;
-  ops->flush_output = ser_base_flush_output;
-  ops->flush_input = ser_base_flush_input;
-  ops->send_break = ser_base_send_break;
-  ops->go_raw = ser_base_raw;
-  ops->get_tty_state = ser_base_get_tty_state;
-  ops->copy_tty_state = ser_base_copy_tty_state;
-  ops->set_tty_state = ser_base_set_tty_state;
-  ops->print_tty_state = ser_base_print_tty_state;
-  ops->noflush_set_tty_state = ser_base_noflush_set_tty_state;
-  ops->setbaudrate = ser_base_setbaudrate;
-  ops->setstopbits = ser_base_setstopbits;
-  ops->drain_output = ser_base_drain_output;
-  ops->async = ser_base_async;
-  ops->read_prim = pipe_windows_read;
-  ops->write_prim = pipe_windows_write;
-  ops->wait_handle = pipe_wait_handle;
-  ops->done_wait_handle = pipe_done_wait_handle;
-  ops->avail = pipe_avail;
-
-  serial_add_interface (ops);
+  serial_add_interface (&hardwire_ops);
+  serial_add_interface (&tty_ops);
+  serial_add_interface (&pipe_ops);
 
   /* If WinSock works, register the TCP/UDP socket driver.  */
 
@@ -1320,30 +1354,5 @@ _initialize_ser_windows (void)
     /* WinSock is unavailable.  */
     return;
 
-  ops = XMALLOC (struct serial_ops);
-  memset (ops, 0, sizeof (struct serial_ops));
-  ops->name = "tcp";
-  ops->next = 0;
-  ops->open = net_windows_open;
-  ops->close = net_windows_close;
-  ops->readchar = ser_base_readchar;
-  ops->write = ser_base_write;
-  ops->flush_output = ser_base_flush_output;
-  ops->flush_input = ser_base_flush_input;
-  ops->send_break = ser_tcp_send_break;
-  ops->go_raw = ser_base_raw;
-  ops->get_tty_state = ser_base_get_tty_state;
-  ops->copy_tty_state = ser_base_copy_tty_state;
-  ops->set_tty_state = ser_base_set_tty_state;
-  ops->print_tty_state = ser_base_print_tty_state;
-  ops->noflush_set_tty_state = ser_base_noflush_set_tty_state;
-  ops->setbaudrate = ser_base_setbaudrate;
-  ops->setstopbits = ser_base_setstopbits;
-  ops->drain_output = ser_base_drain_output;
-  ops->async = ser_base_async;
-  ops->read_prim = net_read_prim;
-  ops->write_prim = net_write_prim;
-  ops->wait_handle = net_windows_wait_handle;
-  ops->done_wait_handle = net_windows_done_wait_handle;
-  serial_add_interface (ops);
+  serial_add_interface (&tcp_ops);
 }

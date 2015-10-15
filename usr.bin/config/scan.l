@@ -1,5 +1,5 @@
 %{
-/*	$NetBSD: scan.l,v 1.17 2012/03/20 20:34:57 matt Exp $	*/
+/*	$NetBSD: scan.l,v 1.25 2015/09/04 10:16:35 uebayasi Exp $	*/
 
 /*
  * Copyright (c) 1992, 1993
@@ -40,6 +40,9 @@
  *
  *	from: @(#)scan.l	8.1 (Berkeley) 6/6/93
  */
+
+#include <sys/cdefs.h>
+__RCSID("$NetBSD: scan.l,v 1.25 2015/09/04 10:16:35 uebayasi Exp $");
 
 #include <sys/param.h>
 #include <errno.h>
@@ -108,12 +111,12 @@ static int getcurifdef(void);
 
 %}
 
-%option  noyywrap
+%option  noyywrap nounput noinput
 
 PATH	[A-Za-z_0-9]*[./][-A-Za-z_0-9./]*
-QCHARS	([^"\n]|\\\")+
+QCHARS	\"(\\.|[^\\"])*\" 
 WORD	[A-Za-z_][-A-Za-z_0-9]*
-FILENAME	({PATH}|\"{QCHARS}\")
+FILENAME	({PATH}|{QCHARS})
 RESTOFLINE	[ \t]*(#[^\n]*)?\n
 
 %x	IGNORED
@@ -161,9 +164,11 @@ obsolete	return OBSOLETE;
 on		return ON;
 options		return OPTIONS;
 prefix		return PREFIX;
+buildprefix	return BUILDPREFIX;
 pseudo-device	return PSEUDO_DEVICE;
 pseudo-root	return PSEUDO_ROOT;
 root		return ROOT;
+select		return SELECT;
 single		return SINGLE;
 source		return SOURCE;
 type		return TYPE;
@@ -319,12 +324,11 @@ package[ \t]+{FILENAME}{RESTOFLINE}	{
 		return EMPTYSTRING;
 	}
 
-\"{QCHARS}	{
-		tok = input();  /* eat closing quote */
-		if (tok != '"') {
-			cfgerror("closing quote missing\n");
-			unput(tok);
-		}
+{QCHARS}	{
+		size_t l = strlen(yytext);
+		if (l > 1 && yytext[l - 1] == '"')
+			yytext[l - 1] = '\0';
+
 		yylval.str = intern(yytext + 1);
 		return QSTRING;
 	}
@@ -335,7 +339,7 @@ package[ \t]+{FILENAME}{RESTOFLINE}	{
 	}
 0[xX][0-9a-fA-F]+ {
 		yylval.num.fmt = 16;
-		yylval.num.val = strtoull(yytext + 2, NULL, 16);
+		yylval.num.val = (long long)strtoull(yytext + 2, NULL, 16);
 		return NUMBER;
 	}
 [1-9][0-9]* {
@@ -359,7 +363,7 @@ package[ \t]+{FILENAME}{RESTOFLINE}	{
 		/* Detect NUL characters in the config file and
 		 * error out.
 		 */
-		cfgerror("NUL character detected at line %i\n", yyline);
+		cfgerror("NUL character detected at line %i", yyline);
 	}
 #.*	{ /* ignored (comment) */; }
 [ \t]+	{ /* ignored (white space) */; }
@@ -397,8 +401,7 @@ curdir_push(const char *fname)
 			free(f);
 			return (-1);
 		}
-		p = emalloc(strlen(cwd) + strlen(d) + 2);
-		sprintf(p, "%s/%s", cwd, d);
+		easprintf(&p, "%s/%s", cwd, d);
 	}
 	free(f);
 	pf = ecalloc(1, sizeof(*pf));
@@ -473,6 +476,8 @@ package(const char *fname)
 	free(fname2);
 }
 
+int includedepth;
+
 /*
  * Open the named file for inclusion at the current point.  Returns 0 on
  * success (file opened and previous state pushed), nonzero on failure
@@ -498,13 +503,12 @@ include(const char *fname, int ateof, int conditional, int direct)
 		s = estrdup(fname);
 	else if (fname[0] == '.' && fname[1] == '/') {
 		struct prefix *pf = SLIST_FIRST(&curdirs);
-		s = emalloc(strlen(pf->pf_prefix) + strlen(fname));
-		sprintf(s, "%s/%s", pf->pf_prefix, fname + 2);
+		easprintf(&s, "%s/%s", pf->pf_prefix, fname + 2);
 	} else
 		s = sourcepath(fname);
 	if ((fp = fopen(s, "r")) == NULL) {
 		if (conditional == 0)
-			cfgerror("cannot open %s for reading: %s\n", s,
+			cfgerror("cannot open %s for reading: %s", s,
 			    strerror(errno));
 		else if (vflag)
 			cfgwarn("cannot open conditional include file %s: %s",
@@ -513,7 +517,7 @@ include(const char *fname, int ateof, int conditional, int direct)
 		return (-1);
 	}
 	if (curdir_push(s) == -1) {
-		cfgerror("cannot record current working directory for %s\n", s);
+		cfgerror("cannot record current working directory for %s", s);
 		fclose(fp);
 		free(s);
 		return (-1);
@@ -530,10 +534,12 @@ include(const char *fname, int ateof, int conditional, int direct)
 	if (interesting)
 		logconfig_include(fp, fname);
 	incl = in;
+	CFGDBG(1, "include `%s' from `%s' line %d", fname, yyfile, yyline);
 	yy_switch_to_buffer(yy_create_buffer(fp, YY_BUF_SIZE));
 	yyfile = intern(s);
 	yyline = 1;
 	free(s);
+	includedepth++;
 	return (0);
 }
 
@@ -596,6 +602,8 @@ endinclude(void)
 	interesting = in->in_interesting;
 	free(in);
 
+	includedepth--;
+
 	return (ateof);
 }
 
@@ -604,12 +612,12 @@ endinclude(void)
  * us to consume a newline, we have to subtract one.  yychar is yacc's
  * token lookahead, so we can tell.
  */
-int
+u_short
 currentline(void)
 {
 	extern int yychar;
 
-	return (yyline - (yychar == '\n'));
+	return (u_short)(yyline - (yychar == '\n'));
 }
 
 static int

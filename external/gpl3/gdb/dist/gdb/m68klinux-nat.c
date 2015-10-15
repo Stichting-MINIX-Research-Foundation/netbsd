@@ -1,6 +1,6 @@
 /* Motorola m68k native support for GNU/Linux.
 
-   Copyright (C) 1996-2013 Free Software Foundation, Inc.
+   Copyright (C) 1996-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -22,14 +22,12 @@
 #include "inferior.h"
 #include "language.h"
 #include "gdbcore.h"
-#include "gdb_string.h"
 #include "regcache.h"
 #include "target.h"
 #include "linux-nat.h"
 
 #include "m68k-tdep.h"
 
-#include <sys/param.h>
 #include <sys/dir.h>
 #include <signal.h>
 #include <sys/ptrace.h>
@@ -43,11 +41,9 @@
 #endif
 
 #include <sys/file.h>
-#include "gdb_stat.h"
+#include <sys/stat.h>
 
 #include "floatformat.h"
-
-#include "target.h"
 
 /* Prototypes for supply_gregset etc.  */
 #include "gregset.h"
@@ -113,9 +109,9 @@ fetch_register (struct regcache *regcache, int regno)
   int tid;
 
   /* Overload thread id onto process id.  */
-  tid = TIDGET (inferior_ptid);
+  tid = ptid_get_lwp (inferior_ptid);
   if (tid == 0)
-    tid = PIDGET (inferior_ptid);	/* no thread id, just use
+    tid = ptid_get_pid (inferior_ptid);	/* no thread id, just use
 					   process id.  */
 
   regaddr = 4 * regmap[regno];
@@ -167,9 +163,9 @@ store_register (const struct regcache *regcache, int regno)
   gdb_byte buf[MAX_REGISTER_SIZE];
 
   /* Overload thread id onto process id.  */
-  tid = TIDGET (inferior_ptid);
+  tid = ptid_get_lwp (inferior_ptid);
   if (tid == 0)
-    tid = PIDGET (inferior_ptid);	/* no thread id, just use
+    tid = ptid_get_pid (inferior_ptid);	/* no thread id, just use
 					   process id.  */
 
   regaddr = 4 * regmap[regno];
@@ -421,9 +417,9 @@ m68k_linux_fetch_inferior_registers (struct target_ops *ops,
     }
 
   /* GNU/Linux LWP ID's are process ID's.  */
-  tid = TIDGET (inferior_ptid);
+  tid = ptid_get_lwp (inferior_ptid);
   if (tid == 0)
-    tid = PIDGET (inferior_ptid);	/* Not a threaded program.  */
+    tid = ptid_get_pid (inferior_ptid);	/* Not a threaded program.  */
 
   /* Use the PTRACE_GETFPXREGS request whenever possible, since it
      transfers more registers in one system call, and we'll cache the
@@ -478,9 +474,9 @@ m68k_linux_store_inferior_registers (struct target_ops *ops,
     }
 
   /* GNU/Linux LWP ID's are process ID's.  */
-  tid = TIDGET (inferior_ptid);
+  tid = ptid_get_lwp (inferior_ptid);
   if (tid == 0)
-    tid = PIDGET (inferior_ptid);	/* Not a threaded program.  */
+    tid = ptid_get_pid (inferior_ptid);	/* Not a threaded program.  */
 
   /* Use the PTRACE_SETFPREGS requests whenever possible, since it
      transfers more registers in one system call.  But remember that
@@ -508,62 +504,6 @@ m68k_linux_store_inferior_registers (struct target_ops *ops,
 		  _("Got request to store bad register number %d."), regno);
 }
 
-/* Interpreting register set info found in core files.  */
-
-/* Provide registers to GDB from a core file.
-
-   (We can't use the generic version of this function in
-   core-regset.c, because we need to use elf_gregset_t instead of
-   gregset_t.)
-
-   CORE_REG_SECT points to an array of bytes, which are the contents
-   of a `note' from a core file which BFD thinks might contain
-   register contents.  CORE_REG_SIZE is its size.
-
-   WHICH says which register set corelow suspects this is:
-     0 --- the general-purpose register set, in elf_gregset_t format
-     2 --- the floating-point register set, in elf_fpregset_t format
-
-   REG_ADDR isn't used on GNU/Linux.  */
-
-static void
-fetch_core_registers (struct regcache *regcache,
-		      char *core_reg_sect, unsigned core_reg_size,
-		      int which, CORE_ADDR reg_addr)
-{
-  elf_gregset_t gregset;
-  elf_fpregset_t fpregset;
-
-  switch (which)
-    {
-    case 0:
-      if (core_reg_size != sizeof (gregset))
-	warning (_("Wrong size gregset in core file."));
-      else
-	{
-	  memcpy (&gregset, core_reg_sect, sizeof (gregset));
-	  supply_gregset (regcache, (const elf_gregset_t *) &gregset);
-	}
-      break;
-
-    case 2:
-      if (core_reg_size != sizeof (fpregset))
-	warning (_("Wrong size fpregset in core file."));
-      else
-	{
-	  memcpy (&fpregset, core_reg_sect, sizeof (fpregset));
-	  supply_fpregset (regcache, (const elf_fpregset_t *) &fpregset);
-	}
-      break;
-
-    default:
-      /* We've covered all the kinds of registers we know about here,
-         so this must be something we wouldn't know what to do with
-         anyway.  Just ignore it.  */
-      break;
-    }
-}
-
 
 /* Fetch the thread-local storage pointer for libthread_db.  */
 
@@ -583,18 +523,6 @@ ps_get_thread_area (const struct ps_prochandle *ph,
 }
 
 
-/* Register that we are able to handle GNU/Linux ELF core file
-   formats.  */
-
-static struct core_fns linux_elf_core_fns =
-{
-  bfd_target_elf_flavour,		/* core_flavour */
-  default_check_format,			/* check_format */
-  default_core_sniffer,			/* core_sniffer */
-  fetch_core_registers,			/* core_read_registers */
-  NULL					/* next */
-};
-
 void _initialize_m68k_linux_nat (void);
 
 void
@@ -611,6 +539,4 @@ _initialize_m68k_linux_nat (void)
 
   /* Register the target.  */
   linux_nat_add_target (t);
-
-  deprecated_add_core_fns (&linux_elf_core_fns);
 }

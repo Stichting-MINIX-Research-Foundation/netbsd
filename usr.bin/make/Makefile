@@ -1,9 +1,9 @@
-#	$NetBSD: Makefile,v 1.56 2012/05/30 21:54:23 sjg Exp $
+#	$NetBSD: Makefile,v 1.58 2015/06/17 17:43:23 christos Exp $
 #	@(#)Makefile	5.2 (Berkeley) 12/28/90
 
 PROG=	make
 SRCS=	arch.c buf.c compat.c cond.c dir.c for.c hash.c job.c main.c \
-	make.c parse.c str.c suff.c targ.c trace.c var.c util.c 
+	make.c metachar.c parse.c str.c suff.c targ.c trace.c var.c util.c 
 SRCS+=  strlist.c
 SRCS+=  make_malloc.c
 SRCS+=	lstAppend.c lstAtEnd.c lstAtFront.c lstClose.c lstConcat.c \
@@ -25,9 +25,7 @@ COPTS.meta.c += -DHAVE_FILEMON_H -I${FILEMON_H:H}
 .endif
 
 .PATH:	${.CURDIR}/lst.lib
-.if make(install)
 SUBDIR=	PSD.doc
-.endif
 .if make(obj) || make(clean)
 SUBDIR+= unit-tests
 .endif

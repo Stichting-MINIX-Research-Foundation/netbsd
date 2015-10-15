@@ -1,4 +1,4 @@
-/*	$NetBSD: subr_copy.c,v 1.1 2009/11/04 16:54:00 pooka Exp $	*/
+/*	$NetBSD: subr_copy.c,v 1.6 2015/04/21 13:17:25 riastradh Exp $	*/
 
 /*-
  * Copyright (c) 1997, 1998, 1999, 2002, 2007, 2008 The NetBSD Foundation, Inc.
@@ -79,7 +79,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: subr_copy.c,v 1.1 2009/11/04 16:54:00 pooka Exp $");
+__KERNEL_RCSID(0, "$NetBSD: subr_copy.c,v 1.6 2015/04/21 13:17:25 riastradh Exp $");
 
 #include <sys/param.h>
 #include <sys/fcntl.h>
@@ -106,10 +106,7 @@ uiomove(void *buf, size_t n, struct uio *uio)
 
 	ASSERT_SLEEPABLE();
 
-#ifdef DIAGNOSTIC
-	if (uio->uio_rw != UIO_READ && uio->uio_rw != UIO_WRITE)
-		panic("uiomove: mode");
-#endif
+	KASSERT(uio->uio_rw == UIO_READ || uio->uio_rw == UIO_WRITE);
 	while (n > 0 && uio->uio_resid) {
 		iov = uio->uio_iov;
 		cnt = iov->iov_len;

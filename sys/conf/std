@@ -1,9 +1,17 @@
-# $NetBSD: std,v 1.14 2011/11/22 21:25:42 tls Exp $
+# $NetBSD: std,v 1.20 2014/10/31 07:38:36 uebayasi Exp $
 #
 # standard MI 'options'
 #
 # this file is for options which can't be off-by-default for some reasons.
 # "it's commonly used" is NOT a good reason to enable options here.
+
+#
+# Always include "kern" attribute (module).  Other attributes don't need to
+# depend on "kern".
+#
+select	kern
+
+select	net		# XXX Clean up dependency
 
 # the following options are on-by-default to keep
 # kernel config file compatibility.

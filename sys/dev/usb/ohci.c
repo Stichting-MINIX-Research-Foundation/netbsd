@@ -1,4 +1,4 @@
-/*	$NetBSD: ohci.c,v 1.245 2013/12/01 07:28:47 skrll Exp $	*/
+/*	$NetBSD: ohci.c,v 1.256 2015/08/19 06:23:35 skrll Exp $	*/
 
 /*
  * Copyright (c) 1998, 2004, 2005, 2012 The NetBSD Foundation, Inc.
@@ -41,7 +41,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ohci.c,v 1.245 2013/12/01 07:28:47 skrll Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ohci.c,v 1.256 2015/08/19 06:23:35 skrll Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -350,7 +350,7 @@ ohci_detach(struct ohci_softc *sc, int flags)
 	if (rv != 0)
 		return (rv);
 
-	callout_stop(&sc->sc_tmo_rhsc);
+	callout_halt(&sc->sc_tmo_rhsc, &sc->sc_lock);
 
 	usb_delay_ms(&sc->sc_bus, 300); /* XXX let stray task complete */
 	callout_destroy(&sc->sc_tmo_rhsc);
@@ -645,7 +645,7 @@ ohci_init(ohci_softc_t *sc)
 	callout_init(&sc->sc_tmo_rhsc, CALLOUT_MPSAFE);
 
 	mutex_init(&sc->sc_lock, MUTEX_DEFAULT, IPL_SOFTUSB);
-	mutex_init(&sc->sc_intr_lock, MUTEX_DEFAULT, IPL_SCHED);
+	mutex_init(&sc->sc_intr_lock, MUTEX_DEFAULT, IPL_USB);
 	cv_init(&sc->sc_softwake_cv, "ohciab");
 
 	sc->sc_rhsc_si = softint_establish(SOFTINT_NET | SOFTINT_MPSAFE,
@@ -858,6 +858,18 @@ ohci_init(ohci_softc_t *sc)
 	OWRITE4(sc, OHCI_FM_INTERVAL, fm);
 	per = OHCI_PERIODIC(ival); /* 90% periodic */
 	OWRITE4(sc, OHCI_PERIODIC_START, per);
+
+	if (sc->sc_flags & OHCIF_SUPERIO) {
+		/* no overcurrent protection */
+		desca |= OHCI_NOCP;
+		/*
+		 * Clear NoPowerSwitching and PowerOnToPowerGoodTime meaning
+		 * that
+		 *  - ports are always power switched
+		 *  - don't wait for powered root hub port
+		 */
+		desca &= ~(__SHIFTIN(0xff, OHCI_POTPGT_MASK) | OHCI_NPS);
+	}
 
 	/* Fiddle the No OverCurrent Protection bit to avoid chip bug. */
 	OWRITE4(sc, OHCI_RH_DESCRIPTOR_A, desca | OHCI_NOCP);
@@ -1683,7 +1695,6 @@ ohci_device_request(usbd_xfer_handle xfer)
 	usb_device_request_t *req = &xfer->request;
 	usbd_device_handle dev = opipe->pipe.device;
 	ohci_softc_t *sc = dev->bus->hci_private;
-	int addr = dev->address;
 	ohci_soft_td_t *setup, *stat, *next, *tail;
 	ohci_soft_ed_t *sed;
 	int isread;
@@ -1698,7 +1709,7 @@ ohci_device_request(usbd_xfer_handle xfer)
 	DPRINTFN(3,("ohci_device_control type=0x%02x, request=0x%02x, "
 		    "wValue=0x%04x, wIndex=0x%04x len=%d, addr=%d, endpt=%d\n",
 		    req->bmRequestType, req->bRequest, UGETW(req->wValue),
-		    UGETW(req->wIndex), len, addr,
+		    UGETW(req->wIndex), len, dev->address,
 		    opipe->pipe.endpoint->edesc->bEndpointAddress));
 
 	setup = opipe->tail.td;
@@ -1717,21 +1728,14 @@ ohci_device_request(usbd_xfer_handle xfer)
 	sed = opipe->sed;
 	opipe->u.ctl.length = len;
 
-	/* Update device address and length since they may have changed
-	   during the setup of the control pipe in usbd_new_device(). */
-	/* XXX This only needs to be done once, but it's too early in open. */
-	/* XXXX Should not touch ED here! */
-
-	usb_syncmem(&sed->dma, sed->offs + offsetof(ohci_ed_t, ed_flags),
-	    sizeof(sed->ed.ed_flags),
-	    BUS_DMASYNC_POSTWRITE | BUS_DMASYNC_POSTREAD);
-	sed->ed.ed_flags = HTOO32(
-	 (O32TOH(sed->ed.ed_flags) & ~(OHCI_ED_ADDRMASK | OHCI_ED_MAXPMASK)) |
-	 OHCI_ED_SET_FA(addr) |
-	 OHCI_ED_SET_MAXP(UGETW(opipe->pipe.endpoint->edesc->wMaxPacketSize)));
-	usb_syncmem(&sed->dma, sed->offs + offsetof(ohci_ed_t, ed_flags),
-	    sizeof(sed->ed.ed_flags),
-	    BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD);
+        KASSERTMSG(OHCI_ED_GET_FA(O32TOH(sed->ed.ed_flags)) == dev->address,
+	    "address ED %d pipe %d\n",
+	    OHCI_ED_GET_FA(O32TOH(sed->ed.ed_flags)), dev->address);
+        KASSERTMSG(OHCI_ED_GET_MAXP(O32TOH(sed->ed.ed_flags)) ==
+            UGETW(opipe->pipe.endpoint->edesc->wMaxPacketSize),
+	    "MPL ED %d pipe %d\n",
+	    OHCI_ED_GET_MAXP(O32TOH(sed->ed.ed_flags)),
+	    UGETW(opipe->pipe.endpoint->edesc->wMaxPacketSize));
 
 	next = stat;
 
@@ -1868,8 +1872,8 @@ ohci_rem_ed(ohci_softc_t *sc, ohci_soft_ed_t *sed, ohci_soft_ed_t *head)
 	/* XXX */
 	for (p = head; p != NULL && p->next != sed; p = p->next)
 		;
-	if (p == NULL)
-		panic("ohci_rem_ed: ED not found");
+	KASSERT(p != NULL);
+
 	usb_syncmem(&sed->dma, sed->offs + offsetof(ohci_ed_t, ed_nexted),
 	    sizeof(sed->ed.ed_nexted),
 	    BUS_DMASYNC_POSTWRITE | BUS_DMASYNC_POSTREAD);
@@ -2861,16 +2865,13 @@ ohci_root_intr_start(usbd_xfer_handle xfer)
 Static void
 ohci_root_intr_abort(usbd_xfer_handle xfer)
 {
-#ifdef DIAGNOSTIC
 	ohci_softc_t *sc = xfer->pipe->device->bus->hci_private;
-#endif
 
 	KASSERT(mutex_owned(&sc->sc_lock));
+	KASSERT(xfer->pipe->intrxfer == xfer);
 
-	if (xfer->pipe->intrxfer == xfer) {
-		DPRINTF(("ohci_root_intr_abort: remove\n"));
-		xfer->pipe->intrxfer = NULL;
-	}
+	sc->sc_intrxfer = NULL;
+
 	xfer->status = USBD_CANCELLED;
 	usb_transfer_complete(xfer);
 }
@@ -3252,11 +3253,8 @@ ohci_device_intr_abort(usbd_xfer_handle xfer)
 #endif
 
 	KASSERT(mutex_owned(&sc->sc_lock));
+	KASSERT(xfer->pipe->intrxfer == xfer);
 
-	if (xfer->pipe->intrxfer == xfer) {
-		DPRINTF(("ohci_device_intr_abort: remove\n"));
-		xfer->pipe->intrxfer = NULL;
-	}
 	ohci_abort_xfer(xfer, USBD_CANCELLED);
 }
 

@@ -1,4 +1,3 @@
-
 /******************************************************************************
  *
  * Module Name: aslopcode - AML opcode generation
@@ -6,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -42,7 +41,6 @@
  * POSSIBILITY OF SUCH DAMAGES.
  */
 
-
 #include "aslcompiler.h"
 #include "aslcompiler.y.h"
 #include "amlcode.h"
@@ -58,6 +56,10 @@ OpcDoAccessAs (
     ACPI_PARSE_OBJECT       *Op);
 
 static void
+OpcDoConnection (
+    ACPI_PARSE_OBJECT       *Op);
+
+static void
 OpcDoUnicode (
     ACPI_PARSE_OBJECT       *Op);
 
@@ -66,8 +68,61 @@ OpcDoEisaId (
     ACPI_PARSE_OBJECT       *Op);
 
 static void
+OpcDoPld (
+    ACPI_PARSE_OBJECT       *Op);
+
+static void
 OpcDoUuId (
     ACPI_PARSE_OBJECT       *Op);
+
+static UINT8 *
+OpcEncodePldBuffer (
+    ACPI_PLD_INFO           *PldInfo);
+
+
+/* ToPld strings */
+
+static char *AslPldPanelList[] =
+{
+    "TOP",
+    "BOTTOM",
+    "LEFT",
+    "RIGHT",
+    "FRONT",
+    "BACK",
+    "UNKNOWN",
+    NULL
+};
+
+static char *AslPldVerticalPositionList[] =
+{
+    "UPPER",
+    "CENTER",
+    "LOWER",
+    NULL
+};
+
+static char *AslPldHorizontalPositionList[] =
+{
+    "LEFT",
+    "CENTER",
+    "RIGHT",
+    NULL
+};
+
+static char *AslPldShapeList[] =
+{
+    "ROUND",
+    "OVAL",
+    "SQUARE",
+    "VERTICALRECTANGLE",
+    "HORIZONTALRECTANGLE",
+    "VERTICALTRAPEZOID",
+    "HORIZONTALTRAPEZOID",
+    "UNKNOWN",
+    "CHAMFERED",
+    NULL
+};
 
 
 /*******************************************************************************
@@ -184,10 +239,10 @@ OpcGetIntegerWidth (
  *
  * PARAMETERS:  Op        - A parse tree node
  *
- * RETURN:      Integer width, in bytes.  Also sets the node AML opcode to the
+ * RETURN:      Integer width, in bytes. Also sets the node AML opcode to the
  *              optimal integer AML prefix opcode.
  *
- * DESCRIPTION: Determine the optimal AML encoding of an integer.  All leading
+ * DESCRIPTION: Determine the optimal AML encoding of an integer. All leading
  *              zeros can be truncated to squeeze the integer into the
  *              minimal number of AML bytes.
  *
@@ -207,7 +262,7 @@ OpcSetOptimalIntegerSize (
         Op->Asl.Parent->Asl.Parent &&
        (Op->Asl.Parent->Asl.Parent->Asl.ParseOpcode == PARSEOP_DEFINITIONBLOCK))
     {
-        return 0;
+        return (0);
     }
 #endif
 
@@ -227,14 +282,14 @@ OpcSetOptimalIntegerSize (
             Op->Asl.AmlOpcode = AML_ZERO_OP;
             AslError (ASL_OPTIMIZATION, ASL_MSG_INTEGER_OPTIMIZATION,
                 Op, "Zero");
-            return 1;
+            return (1);
 
         case 1:
 
             Op->Asl.AmlOpcode = AML_ONE_OP;
             AslError (ASL_OPTIMIZATION, ASL_MSG_INTEGER_OPTIMIZATION,
                 Op, "One");
-            return 1;
+            return (1);
 
         case ACPI_UINT32_MAX:
 
@@ -245,7 +300,7 @@ OpcSetOptimalIntegerSize (
                 Op->Asl.AmlOpcode = AML_ONES_OP;
                 AslError (ASL_OPTIMIZATION, ASL_MSG_INTEGER_OPTIMIZATION,
                     Op, "Ones");
-                return 1;
+                return (1);
             }
             break;
 
@@ -258,11 +313,12 @@ OpcSetOptimalIntegerSize (
                 Op->Asl.AmlOpcode = AML_ONES_OP;
                 AslError (ASL_OPTIMIZATION, ASL_MSG_INTEGER_OPTIMIZATION,
                     Op, "Ones");
-                return 1;
+                return (1);
             }
             break;
 
         default:
+
             break;
         }
     }
@@ -272,17 +328,17 @@ OpcSetOptimalIntegerSize (
     if (Op->Asl.Value.Integer <= ACPI_UINT8_MAX)
     {
         Op->Asl.AmlOpcode = AML_BYTE_OP;
-        return 1;
+        return (1);
     }
     if (Op->Asl.Value.Integer <= ACPI_UINT16_MAX)
     {
         Op->Asl.AmlOpcode = AML_WORD_OP;
-        return 2;
+        return (2);
     }
     if (Op->Asl.Value.Integer <= ACPI_UINT32_MAX)
     {
         Op->Asl.AmlOpcode = AML_DWORD_OP;
-        return 4;
+        return (4);
     }
     else
     {
@@ -295,12 +351,12 @@ OpcSetOptimalIntegerSize (
             {
                 /* Truncate the integer to 32-bit */
                 Op->Asl.AmlOpcode = AML_DWORD_OP;
-                return 4;
+                return (4);
             }
         }
 
         Op->Asl.AmlOpcode = AML_QWORD_OP;
-        return 8;
+        return (8);
     }
 }
 
@@ -321,26 +377,131 @@ static void
 OpcDoAccessAs (
     ACPI_PARSE_OBJECT       *Op)
 {
-    ACPI_PARSE_OBJECT       *Next;
+    ACPI_PARSE_OBJECT       *TypeOp;
+    ACPI_PARSE_OBJECT       *AttribOp;
+    ACPI_PARSE_OBJECT       *LengthOp;
+    UINT8                   Attribute;
 
 
     Op->Asl.AmlOpcodeLength = 1;
-    Next = Op->Asl.Child;
+    TypeOp = Op->Asl.Child;
 
     /* First child is the access type */
 
-    Next->Asl.AmlOpcode = AML_RAW_DATA_BYTE;
-    Next->Asl.ParseOpcode = PARSEOP_RAW_DATA;
+    TypeOp->Asl.AmlOpcode = AML_RAW_DATA_BYTE;
+    TypeOp->Asl.ParseOpcode = PARSEOP_RAW_DATA;
 
     /* Second child is the optional access attribute */
 
-    Next = Next->Asl.Next;
-    if (Next->Asl.ParseOpcode == PARSEOP_DEFAULT_ARG)
+    AttribOp = TypeOp->Asl.Next;
+    if (AttribOp->Asl.ParseOpcode == PARSEOP_DEFAULT_ARG)
     {
-        Next->Asl.Value.Integer = 0;
+        AttribOp->Asl.Value.Integer = 0;
     }
-    Next->Asl.AmlOpcode = AML_RAW_DATA_BYTE;
-    Next->Asl.ParseOpcode = PARSEOP_RAW_DATA;
+    AttribOp->Asl.AmlOpcode = AML_RAW_DATA_BYTE;
+    AttribOp->Asl.ParseOpcode = PARSEOP_RAW_DATA;
+
+    /* Only a few AccessAttributes support AccessLength */
+
+    Attribute = (UINT8) AttribOp->Asl.Value.Integer;
+    if ((Attribute != AML_FIELD_ATTRIB_MULTIBYTE) &&
+        (Attribute != AML_FIELD_ATTRIB_RAW_BYTES) &&
+        (Attribute != AML_FIELD_ATTRIB_RAW_PROCESS))
+    {
+        return;
+    }
+
+    Op->Asl.AmlOpcode = AML_FIELD_EXT_ACCESS_OP;
+
+    /*
+     * Child of Attributes is the AccessLength (required for Multibyte,
+     * RawBytes, RawProcess.)
+     */
+    LengthOp = AttribOp->Asl.Child;
+    if (!LengthOp)
+    {
+        return;
+    }
+
+    /* TBD: probably can remove */
+
+    if (LengthOp->Asl.ParseOpcode == PARSEOP_DEFAULT_ARG)
+    {
+        LengthOp->Asl.Value.Integer = 16;
+    }
+
+    LengthOp->Asl.AmlOpcode = AML_RAW_DATA_BYTE;
+    LengthOp->Asl.ParseOpcode = PARSEOP_RAW_DATA;
+}
+
+
+/*******************************************************************************
+ *
+ * FUNCTION:    OpcDoConnection
+ *
+ * PARAMETERS:  Op        - Parse node
+ *
+ * RETURN:      None
+ *
+ * DESCRIPTION: Implement the Connection ASL keyword.
+ *
+ ******************************************************************************/
+
+static void
+OpcDoConnection (
+    ACPI_PARSE_OBJECT       *Op)
+{
+    ASL_RESOURCE_NODE       *Rnode;
+    ACPI_PARSE_OBJECT       *BufferOp;
+    ACPI_PARSE_OBJECT       *BufferLengthOp;
+    ACPI_PARSE_OBJECT       *BufferDataOp;
+    ASL_RESOURCE_INFO       Info;
+    UINT8                   State;
+
+
+    Op->Asl.AmlOpcodeLength = 1;
+
+    if (Op->Asl.Child->Asl.AmlOpcode == AML_INT_NAMEPATH_OP)
+    {
+        return;
+    }
+
+    BufferOp = Op->Asl.Child;
+    BufferLengthOp = BufferOp->Asl.Child;
+    BufferDataOp = BufferLengthOp->Asl.Next;
+
+    Info.DescriptorTypeOp = BufferDataOp->Asl.Next;
+    Info.CurrentByteOffset = 0;
+    State = ACPI_RSTATE_NORMAL;
+    Rnode = RsDoOneResourceDescriptor (&Info, &State);
+    if (!Rnode)
+    {
+        return; /* error */
+    }
+
+    /*
+     * Transform the nodes into the following
+     *
+     * Op           -> AML_BUFFER_OP
+     * First Child  -> BufferLength
+     * Second Child -> Descriptor Buffer (raw byte data)
+     */
+    BufferOp->Asl.ParseOpcode         = PARSEOP_BUFFER;
+    BufferOp->Asl.AmlOpcode           = AML_BUFFER_OP;
+    BufferOp->Asl.CompileFlags        = NODE_AML_PACKAGE | NODE_IS_RESOURCE_DESC;
+    UtSetParseOpName (BufferOp);
+
+    BufferLengthOp->Asl.ParseOpcode   = PARSEOP_INTEGER;
+    BufferLengthOp->Asl.Value.Integer = Rnode->BufferLength;
+    (void) OpcSetOptimalIntegerSize (BufferLengthOp);
+    UtSetParseOpName (BufferLengthOp);
+
+    BufferDataOp->Asl.ParseOpcode         = PARSEOP_RAW_DATA;
+    BufferDataOp->Asl.AmlOpcode           = AML_RAW_DATA_CHAIN;
+    BufferDataOp->Asl.AmlOpcodeLength     = 0;
+    BufferDataOp->Asl.AmlLength           = Rnode->BufferLength;
+    BufferDataOp->Asl.Value.Buffer        = (UINT8 *) Rnode;
+    UtSetParseOpName (BufferDataOp);
 }
 
 
@@ -353,7 +514,7 @@ OpcDoAccessAs (
  * RETURN:      None
  *
  * DESCRIPTION: Implement the UNICODE ASL "macro".  Convert the input string
- *              to a unicode buffer.  There is no Unicode AML opcode.
+ *              to a unicode buffer. There is no Unicode AML opcode.
  *
  * Note:  The Unicode string is 16 bits per character, no leading signature,
  *        with a 16-bit terminating NULL.
@@ -429,19 +590,19 @@ OpcDoUnicode (
  *
  * RETURN:      None
  *
- * DESCRIPTION: Convert a string EISA ID to numeric representation.  See the
- *              Pnp BIOS Specification for details.  Here is an excerpt:
+ * DESCRIPTION: Convert a string EISA ID to numeric representation. See the
+ *              Pnp BIOS Specification for details. Here is an excerpt:
  *
  *              A seven character ASCII representation of the product
- *              identifier compressed into a 32-bit identifier.  The seven
+ *              identifier compressed into a 32-bit identifier. The seven
  *              character ID consists of a three character manufacturer code,
  *              a three character hexadecimal product identifier, and a one
- *              character hexadecimal revision number.  The manufacturer code
+ *              character hexadecimal revision number. The manufacturer code
  *              is a 3 uppercase character code that is compressed into 3 5-bit
  *              values as follows:
  *                  1) Find hex ASCII value for each letter
  *                  2) Subtract 40h from each ASCII value
- *                  3) Retain 5 least signficant bits for each letter by
+ *                  3) Retain 5 least significant bits for each letter by
  *                     discarding upper 3 bits because they are always 0.
  *                  4) Compressed code = concatenate 0 and the 3 5-bit values
  *
@@ -475,7 +636,7 @@ OpcDoEisaId (
      * The EISAID string must be exactly 7 characters and of the form
      * "UUUXXXX" -- 3 uppercase letters and 4 hex digits (e.g., "PNP0001")
      */
-    if (ACPI_STRLEN (InString) != 7)
+    if (strlen (InString) != 7)
     {
         Status = AE_BAD_PARAMETER;
     }
@@ -517,10 +678,10 @@ OpcDoEisaId (
             (UINT32) ((UINT8) (InString[1] - 0x40)) << 21 |
             (UINT32) ((UINT8) (InString[2] - 0x40)) << 16 |
 
-            (UtHexCharToValue (InString[3])) << 12 |
-            (UtHexCharToValue (InString[4])) << 8  |
-            (UtHexCharToValue (InString[5])) << 4  |
-             UtHexCharToValue (InString[6]);
+            (AcpiUtAsciiCharToHex (InString[3])) << 12 |
+            (AcpiUtAsciiCharToHex (InString[4])) << 8  |
+            (AcpiUtAsciiCharToHex (InString[5])) << 4  |
+             AcpiUtAsciiCharToHex (InString[6]);
 
         /* Swap to little-endian to get final ID (see function header) */
 
@@ -545,9 +706,654 @@ OpcDoEisaId (
 
 /*******************************************************************************
  *
- * FUNCTION:    OpcDoUiId
+ * FUNCTION:    OpcEncodePldBuffer
  *
- * PARAMETERS:  Op        - Parse node
+ * PARAMETERS:  PldInfo             - _PLD buffer struct (Using local struct)
+ *
+ * RETURN:      Encode _PLD buffer suitable for return value from _PLD
+ *
+ * DESCRIPTION: Bit-packs a _PLD buffer struct.
+ *
+ ******************************************************************************/
+
+static UINT8 *
+OpcEncodePldBuffer (
+    ACPI_PLD_INFO           *PldInfo)
+{
+    UINT32                  *Buffer;
+    UINT32                  Dword;
+
+
+    Buffer = ACPI_ALLOCATE_ZEROED (ACPI_PLD_BUFFER_SIZE);
+    if (!Buffer)
+    {
+        return (NULL);
+    }
+
+    /* First 32 bits */
+
+    Dword = 0;
+    ACPI_PLD_SET_REVISION       (&Dword, PldInfo->Revision);
+    ACPI_PLD_SET_IGNORE_COLOR   (&Dword, PldInfo->IgnoreColor);
+    ACPI_PLD_SET_RED            (&Dword, PldInfo->Red);
+    ACPI_PLD_SET_GREEN          (&Dword, PldInfo->Green);
+    ACPI_PLD_SET_BLUE           (&Dword, PldInfo->Blue);
+    ACPI_MOVE_32_TO_32          (&Buffer[0], &Dword);
+
+    /* Second 32 bits */
+
+    Dword = 0;
+    ACPI_PLD_SET_WIDTH          (&Dword, PldInfo->Width);
+    ACPI_PLD_SET_HEIGHT         (&Dword, PldInfo->Height);
+    ACPI_MOVE_32_TO_32          (&Buffer[1], &Dword);
+
+    /* Third 32 bits */
+
+    Dword = 0;
+    ACPI_PLD_SET_USER_VISIBLE   (&Dword, PldInfo->UserVisible);
+    ACPI_PLD_SET_DOCK           (&Dword, PldInfo->Dock);
+    ACPI_PLD_SET_LID            (&Dword, PldInfo->Lid);
+    ACPI_PLD_SET_PANEL          (&Dword, PldInfo->Panel);
+    ACPI_PLD_SET_VERTICAL       (&Dword, PldInfo->VerticalPosition);
+    ACPI_PLD_SET_HORIZONTAL     (&Dword, PldInfo->HorizontalPosition);
+    ACPI_PLD_SET_SHAPE          (&Dword, PldInfo->Shape);
+    ACPI_PLD_SET_ORIENTATION    (&Dword, PldInfo->GroupOrientation);
+    ACPI_PLD_SET_TOKEN          (&Dword, PldInfo->GroupToken);
+    ACPI_PLD_SET_POSITION       (&Dword, PldInfo->GroupPosition);
+    ACPI_PLD_SET_BAY            (&Dword, PldInfo->Bay);
+    ACPI_MOVE_32_TO_32          (&Buffer[2], &Dword);
+
+    /* Fourth 32 bits */
+
+    Dword = 0;
+    ACPI_PLD_SET_EJECTABLE      (&Dword, PldInfo->Ejectable);
+    ACPI_PLD_SET_OSPM_EJECT     (&Dword, PldInfo->OspmEjectRequired);
+    ACPI_PLD_SET_CABINET        (&Dword, PldInfo->CabinetNumber);
+    ACPI_PLD_SET_CARD_CAGE      (&Dword, PldInfo->CardCageNumber);
+    ACPI_PLD_SET_REFERENCE      (&Dword, PldInfo->Reference);
+    ACPI_PLD_SET_ROTATION       (&Dword, PldInfo->Rotation);
+    ACPI_PLD_SET_ORDER          (&Dword, PldInfo->Order);
+    ACPI_MOVE_32_TO_32          (&Buffer[3], &Dword);
+
+    if (PldInfo->Revision >= 2)
+    {
+        /* Fifth 32 bits */
+
+        Dword = 0;
+        ACPI_PLD_SET_VERT_OFFSET    (&Dword, PldInfo->VerticalOffset);
+        ACPI_PLD_SET_HORIZ_OFFSET   (&Dword, PldInfo->HorizontalOffset);
+        ACPI_MOVE_32_TO_32          (&Buffer[4], &Dword);
+    }
+
+    return (ACPI_CAST_PTR (UINT8, Buffer));
+}
+
+
+/*******************************************************************************
+ *
+ * FUNCTION:    OpcFindName
+ *
+ * PARAMETERS:  List                - Array of char strings to be searched
+ *              Name                - Char string to string for
+ *              Index               - Index value to set if found
+ *
+ * RETURN:      TRUE if any names matched, FALSE otherwise
+ *
+ * DESCRIPTION: Match PLD name to value in lookup table. Sets Value to
+ *              equivalent parameter value.
+ *
+ ******************************************************************************/
+
+static BOOLEAN
+OpcFindName (
+    char                    **List,
+    char                    *Name,
+    UINT64                  *Index)
+{
+    char                     *Str;
+    UINT32                   i;
+
+
+    AcpiUtStrupr (Name);
+
+    for (i = 0, Str = List[0]; Str; i++, Str = List[i])
+    {
+        if (!(strncmp (Str, Name, strlen (Name))))
+        {
+            *Index = i;
+            return (TRUE);
+        }
+    }
+
+    return (FALSE);
+}
+
+
+/*******************************************************************************
+ *
+ * FUNCTION:    OpcDoPld
+ *
+ * PARAMETERS:  Op                  - Parse node
+ *
+ * RETURN:      None
+ *
+ * DESCRIPTION: Convert ToPLD macro to 20-byte buffer
+ *
+ ******************************************************************************/
+
+static void
+OpcDoPld (
+    ACPI_PARSE_OBJECT       *Op)
+{
+    UINT8                   *Buffer;
+    ACPI_PARSE_OBJECT       *Node;
+    ACPI_PLD_INFO           PldInfo;
+    ACPI_PARSE_OBJECT       *NewOp;
+
+
+    if (!Op)
+    {
+        AslError(ASL_ERROR, ASL_MSG_NOT_EXIST, Op, NULL);
+        return;
+    }
+
+    if (Op->Asl.ParseOpcode != PARSEOP_TOPLD)
+    {
+        AslError(ASL_ERROR, ASL_MSG_INVALID_TYPE, Op, NULL);
+        return;
+    }
+
+    memset (&PldInfo, 0, sizeof (ACPI_PLD_INFO));
+
+    Node = Op->Asl.Child;
+    while (Node)
+    {
+        switch (Node->Asl.ParseOpcode)
+        {
+        case PARSEOP_PLD_REVISION:
+
+            if (Node->Asl.Child->Asl.ParseOpcode != PARSEOP_INTEGER)
+            {
+                AslError(ASL_ERROR, ASL_MSG_INVALID_TYPE, Node, NULL);
+                break;
+            }
+
+            if (Node->Asl.Child->Asl.Value.Integer > 127)
+            {
+                AslError(ASL_ERROR, ASL_MSG_RANGE, Node, NULL);
+                break;
+            }
+
+            PldInfo.Revision = (UINT8) Node->Asl.Child->Asl.Value.Integer;
+            break;
+
+        case PARSEOP_PLD_IGNORECOLOR:
+
+            if (Node->Asl.Child->Asl.ParseOpcode != PARSEOP_INTEGER)
+            {
+                AslError(ASL_ERROR, ASL_MSG_INVALID_TYPE, Node, NULL);
+                break;
+            }
+
+            if (Node->Asl.Child->Asl.Value.Integer > 1)
+            {
+                AslError(ASL_ERROR, ASL_MSG_RANGE, Node, NULL);
+                break;
+            }
+
+            PldInfo.IgnoreColor = (UINT8) Node->Asl.Child->Asl.Value.Integer;
+            break;
+
+        case PARSEOP_PLD_RED:
+        case PARSEOP_PLD_GREEN:
+        case PARSEOP_PLD_BLUE:
+
+            if (Node->Asl.Child->Asl.ParseOpcode != PARSEOP_INTEGER)
+            {
+                AslError(ASL_ERROR, ASL_MSG_RANGE, Node, NULL);
+                break;
+            }
+
+            if (Node->Asl.Child->Asl.Value.Integer > 255)
+            {
+                AslError(ASL_ERROR, ASL_MSG_RANGE, Node, NULL);
+                break;
+            }
+
+            if (Node->Asl.ParseOpcode == PARSEOP_PLD_RED)
+            {
+                PldInfo.Red = (UINT8) Node->Asl.Child->Asl.Value.Integer;
+            }
+            else if (Node->Asl.ParseOpcode == PARSEOP_PLD_GREEN)
+            {
+                PldInfo.Green = (UINT8) Node->Asl.Child->Asl.Value.Integer;
+            }
+            else /* PARSEOP_PLD_BLUE */
+            {
+                PldInfo.Blue = (UINT8) Node->Asl.Child->Asl.Value.Integer;
+            }
+            break;
+
+        case PARSEOP_PLD_WIDTH:
+        case PARSEOP_PLD_HEIGHT:
+
+            if (Node->Asl.Child->Asl.ParseOpcode != PARSEOP_INTEGER)
+            {
+                AslError(ASL_ERROR, ASL_MSG_INVALID_TYPE, Node, NULL);
+                break;
+            }
+
+            if (Node->Asl.Child->Asl.Value.Integer > 65535)
+            {
+                AslError(ASL_ERROR, ASL_MSG_RANGE, Node, NULL);
+                break;
+            }
+
+            if (Node->Asl.ParseOpcode == PARSEOP_PLD_WIDTH)
+            {
+                PldInfo.Width = (UINT16) Node->Asl.Child->Asl.Value.Integer;
+            }
+            else /* PARSEOP_PLD_HEIGHT */
+            {
+                PldInfo.Height = (UINT16) Node->Asl.Child->Asl.Value.Integer;
+            }
+
+            break;
+
+        case PARSEOP_PLD_USERVISIBLE:
+        case PARSEOP_PLD_DOCK:
+        case PARSEOP_PLD_LID:
+
+            if (Node->Asl.Child->Asl.ParseOpcode != PARSEOP_INTEGER)
+            {
+                AslError(ASL_ERROR, ASL_MSG_INVALID_TYPE, Node, NULL);
+                break;
+            }
+
+            if (Node->Asl.Child->Asl.Value.Integer > 1)
+            {
+                AslError(ASL_ERROR, ASL_MSG_RANGE, Node, NULL);
+                break;
+            }
+
+            if (Node->Asl.ParseOpcode == PARSEOP_PLD_USERVISIBLE)
+            {
+                PldInfo.UserVisible = (UINT8) Node->Asl.Child->Asl.Value.Integer;
+            }
+            else if (Node->Asl.ParseOpcode == PARSEOP_PLD_DOCK)
+            {
+                PldInfo.Dock = (UINT8) Node->Asl.Child->Asl.Value.Integer;
+            }
+            else
+            {
+                PldInfo.Lid = (UINT8) Node->Asl.Child->Asl.Value.Integer;
+            }
+
+            break;
+
+        case PARSEOP_PLD_PANEL:
+
+            if (Node->Asl.Child->Asl.ParseOpcode == PARSEOP_INTEGER)
+            {
+                if (Node->Asl.Child->Asl.Value.Integer > 6)
+                {
+                    AslError(ASL_ERROR, ASL_MSG_RANGE, Node, NULL);
+                    break;
+                }
+            }
+            else /* PARSEOP_STRING */
+            {
+                if (!OpcFindName(AslPldPanelList,
+                    Node->Asl.Child->Asl.Value.String,
+                    &Node->Asl.Child->Asl.Value.Integer))
+                {
+                    AslError(ASL_ERROR, ASL_MSG_INVALID_OPERAND, Node, NULL);
+                    break;
+                }
+            }
+
+            PldInfo.Panel = (UINT8) Node->Asl.Child->Asl.Value.Integer;
+            break;
+
+        case PARSEOP_PLD_VERTICALPOSITION:
+
+            if (Node->Asl.Child->Asl.ParseOpcode == PARSEOP_INTEGER)
+            {
+                if (Node->Asl.Child->Asl.Value.Integer > 2)
+                {
+                    AslError(ASL_ERROR, ASL_MSG_RANGE, Node, NULL);
+                    break;
+                }
+            }
+            else /* PARSEOP_STRING */
+            {
+                if (!OpcFindName(AslPldVerticalPositionList,
+                    Node->Asl.Child->Asl.Value.String,
+                    &Node->Asl.Child->Asl.Value.Integer))
+                {
+                    AslError(ASL_ERROR, ASL_MSG_INVALID_OPERAND, Node, NULL);
+                    break;
+                }
+            }
+
+            PldInfo.VerticalPosition = (UINT8) Node->Asl.Child->Asl.Value.Integer;
+            break;
+
+        case PARSEOP_PLD_HORIZONTALPOSITION:
+
+            if (Node->Asl.Child->Asl.ParseOpcode == PARSEOP_INTEGER)
+            {
+                if (Node->Asl.Child->Asl.Value.Integer > 2)
+                {
+                    AslError(ASL_ERROR, ASL_MSG_RANGE, Node, NULL);
+                    break;
+                }
+            }
+            else /* PARSEOP_STRING */
+            {
+                if (!OpcFindName(AslPldHorizontalPositionList,
+                    Node->Asl.Child->Asl.Value.String,
+                    &Node->Asl.Child->Asl.Value.Integer))
+                {
+                    AslError(ASL_ERROR, ASL_MSG_INVALID_OPERAND, Node, NULL);
+                    break;
+                }
+            }
+
+            PldInfo.HorizontalPosition = (UINT8) Node->Asl.Child->Asl.Value.Integer;
+            break;
+
+        case PARSEOP_PLD_SHAPE:
+
+            if (Node->Asl.Child->Asl.ParseOpcode == PARSEOP_INTEGER)
+            {
+                if (Node->Asl.Child->Asl.Value.Integer > 8)
+                {
+                    AslError(ASL_ERROR, ASL_MSG_RANGE, Node, NULL);
+                    break;
+                }
+            }
+            else /* PARSEOP_STRING */
+            {
+                if (!OpcFindName(AslPldShapeList,
+                    Node->Asl.Child->Asl.Value.String,
+                    &Node->Asl.Child->Asl.Value.Integer))
+                {
+                    AslError(ASL_ERROR, ASL_MSG_INVALID_OPERAND, Node, NULL);
+                    break;
+                }
+            }
+
+            PldInfo.Shape = (UINT8) Node->Asl.Child->Asl.Value.Integer;
+            break;
+
+        case PARSEOP_PLD_GROUPORIENTATION:
+
+            if (Node->Asl.Child->Asl.ParseOpcode != PARSEOP_INTEGER)
+            {
+                AslError(ASL_ERROR, ASL_MSG_INVALID_TYPE, Node, NULL);
+                break;
+            }
+
+            if (Node->Asl.Child->Asl.Value.Integer > 1)
+            {
+                AslError(ASL_ERROR, ASL_MSG_RANGE, Node, NULL);
+                break;
+            }
+
+            PldInfo.GroupOrientation = (UINT8) Node->Asl.Child->Asl.Value.Integer;
+            break;
+
+        case PARSEOP_PLD_GROUPTOKEN:
+        case PARSEOP_PLD_GROUPPOSITION:
+
+            if (Node->Asl.Child->Asl.ParseOpcode != PARSEOP_INTEGER)
+            {
+                AslError(ASL_ERROR, ASL_MSG_INVALID_TYPE, Node, NULL);
+                break;
+            }
+
+            if (Node->Asl.Child->Asl.Value.Integer > 255)
+            {
+                AslError(ASL_ERROR, ASL_MSG_RANGE, Node, NULL);
+                break;
+            }
+
+
+            if (Node->Asl.ParseOpcode == PARSEOP_PLD_GROUPTOKEN)
+            {
+                PldInfo.GroupToken = (UINT8) Node->Asl.Child->Asl.Value.Integer;
+            }
+            else /* PARSEOP_PLD_GROUPPOSITION */
+            {
+                PldInfo.GroupPosition = (UINT8) Node->Asl.Child->Asl.Value.Integer;
+            }
+
+            break;
+
+        case PARSEOP_PLD_BAY:
+        case PARSEOP_PLD_EJECTABLE:
+        case PARSEOP_PLD_EJECTREQUIRED:
+
+            if (Node->Asl.Child->Asl.ParseOpcode != PARSEOP_INTEGER)
+            {
+                AslError(ASL_ERROR, ASL_MSG_INVALID_TYPE, Node, NULL);
+                break;
+            }
+
+            if (Node->Asl.Child->Asl.Value.Integer > 1)
+            {
+                AslError(ASL_ERROR, ASL_MSG_RANGE, Node, NULL);
+                break;
+            }
+
+            if (Node->Asl.ParseOpcode == PARSEOP_PLD_BAY)
+            {
+                PldInfo.Bay = (UINT8) Node->Asl.Child->Asl.Value.Integer;
+            }
+            else if (Node->Asl.ParseOpcode == PARSEOP_PLD_EJECTABLE)
+            {
+                PldInfo.Ejectable = (UINT8) Node->Asl.Child->Asl.Value.Integer;
+            }
+            else /* PARSEOP_PLD_EJECTREQUIRED */
+            {
+                PldInfo.OspmEjectRequired = (UINT8) Node->Asl.Child->Asl.Value.Integer;
+            }
+
+            break;
+
+        case PARSEOP_PLD_CABINETNUMBER:
+        case PARSEOP_PLD_CARDCAGENUMBER:
+
+            if (Node->Asl.Child->Asl.ParseOpcode != PARSEOP_INTEGER)
+            {
+                AslError(ASL_ERROR, ASL_MSG_INVALID_TYPE, Node, NULL);
+                break;
+            }
+
+            if (Node->Asl.Child->Asl.Value.Integer > 255)
+            {
+                AslError(ASL_ERROR, ASL_MSG_RANGE, Node, NULL);
+                break;
+            }
+
+            if (Node->Asl.ParseOpcode == PARSEOP_PLD_CABINETNUMBER)
+            {
+                PldInfo.CabinetNumber = (UINT8) Node->Asl.Child->Asl.Value.Integer;
+            }
+            else /* PARSEOP_PLD_CARDCAGENUMBER */
+            {
+                PldInfo.CardCageNumber = (UINT8) Node->Asl.Child->Asl.Value.Integer;
+            }
+
+            break;
+
+        case PARSEOP_PLD_REFERENCE:
+
+            if (Node->Asl.Child->Asl.ParseOpcode != PARSEOP_INTEGER)
+            {
+                AslError(ASL_ERROR, ASL_MSG_INVALID_TYPE, Node, NULL);
+                break;
+            }
+
+            if (Node->Asl.Child->Asl.Value.Integer > 1)
+            {
+                AslError(ASL_ERROR, ASL_MSG_RANGE, Node, NULL);
+                break;
+            }
+
+            PldInfo.Reference = (UINT8) Node->Asl.Child->Asl.Value.Integer;
+            break;
+
+        case PARSEOP_PLD_ROTATION:
+
+            if (Node->Asl.Child->Asl.ParseOpcode != PARSEOP_INTEGER)
+            {
+                AslError(ASL_ERROR, ASL_MSG_INVALID_TYPE, Node, NULL);
+                break;
+            }
+
+            if (Node->Asl.Child->Asl.Value.Integer > 7)
+            {
+                switch (Node->Asl.Child->Asl.Value.Integer)
+                {
+                case 45:
+
+                    Node->Asl.Child->Asl.Value.Integer = 1;
+                    break;
+
+                case 90:
+
+                    Node->Asl.Child->Asl.Value.Integer = 2;
+                    break;
+
+                case 135:
+
+                    Node->Asl.Child->Asl.Value.Integer = 3;
+                    break;
+
+                case 180:
+
+                    Node->Asl.Child->Asl.Value.Integer = 4;
+                    break;
+
+                case 225:
+
+                    Node->Asl.Child->Asl.Value.Integer = 5;
+                    break;
+
+                case 270:
+
+                    Node->Asl.Child->Asl.Value.Integer = 6;
+                    break;
+
+                case 315:
+
+                    Node->Asl.Child->Asl.Value.Integer = 7;
+                    break;
+
+                default:
+
+                    AslError(ASL_ERROR, ASL_MSG_RANGE, Node, NULL);
+                    break;
+                }
+            }
+
+            PldInfo.Rotation = (UINT8) Node->Asl.Child->Asl.Value.Integer;
+            break;
+
+        case PARSEOP_PLD_ORDER:
+
+            if (Node->Asl.Child->Asl.ParseOpcode != PARSEOP_INTEGER)
+            {
+                AslError(ASL_ERROR, ASL_MSG_INVALID_TYPE, Node, NULL);
+                break;
+            }
+
+            if (Node->Asl.Child->Asl.Value.Integer > 31)
+            {
+                AslError(ASL_ERROR, ASL_MSG_RANGE, Node, NULL);
+                break;
+            }
+
+            PldInfo.Order = (UINT8) Node->Asl.Child->Asl.Value.Integer;
+            break;
+
+        case PARSEOP_PLD_VERTICALOFFSET:
+        case PARSEOP_PLD_HORIZONTALOFFSET:
+
+            if (Node->Asl.Child->Asl.ParseOpcode != PARSEOP_INTEGER)
+            {
+                AslError(ASL_ERROR, ASL_MSG_INVALID_TYPE, Node, NULL);
+                break;
+            }
+
+            if (Node->Asl.Child->Asl.Value.Integer > 65535)
+            {
+                AslError(ASL_ERROR, ASL_MSG_RANGE, Node, NULL);
+                break;
+            }
+
+            if (Node->Asl.ParseOpcode == PARSEOP_PLD_VERTICALOFFSET)
+            {
+                PldInfo.VerticalOffset = (UINT16) Node->Asl.Child->Asl.Value.Integer;
+            }
+            else /* PARSEOP_PLD_HORIZONTALOFFSET */
+            {
+                PldInfo.HorizontalOffset = (UINT16) Node->Asl.Child->Asl.Value.Integer;
+            }
+
+            break;
+
+        default:
+
+            AslError(ASL_ERROR, ASL_MSG_INVALID_TYPE, Node, NULL);
+            break;
+        }
+
+        Node = Node->Asl.Next;
+    }
+
+    Buffer = OpcEncodePldBuffer(&PldInfo);
+
+    /* Change Op to a Buffer */
+
+    Op->Asl.ParseOpcode = PARSEOP_BUFFER;
+    Op->Common.AmlOpcode = AML_BUFFER_OP;
+
+    /* Disable further optimization */
+
+    Op->Asl.CompileFlags &= ~NODE_COMPILE_TIME_CONST;
+    UtSetParseOpName (Op);
+
+    /* Child node is the buffer length */
+
+    NewOp = TrAllocateNode (PARSEOP_INTEGER);
+
+    NewOp->Asl.AmlOpcode     = AML_BYTE_OP;
+    NewOp->Asl.Value.Integer = 20;
+    NewOp->Asl.Parent        = Op;
+
+    Op->Asl.Child = NewOp;
+    Op = NewOp;
+
+    /* Peer to the child is the raw buffer data */
+
+    NewOp = TrAllocateNode (PARSEOP_RAW_DATA);
+    NewOp->Asl.AmlOpcode     = AML_RAW_DATA_BUFFER;
+    NewOp->Asl.AmlLength     = 20;
+    NewOp->Asl.Value.String  = ACPI_CAST_PTR (char, Buffer);
+    NewOp->Asl.Parent        = Op->Asl.Parent;
+
+    Op->Asl.Next = NewOp;
+}
+
+
+/*******************************************************************************
+ *
+ * FUNCTION:    OpcDoUuId
+ *
+ * PARAMETERS:  Op                  - Parse node
  *
  * RETURN:      None
  *
@@ -560,12 +1366,12 @@ OpcDoUuId (
     ACPI_PARSE_OBJECT       *Op)
 {
     char                    *InString;
-    char                    *Buffer;
+    UINT8                   *Buffer;
     ACPI_STATUS             Status = AE_OK;
     ACPI_PARSE_OBJECT       *NewOp;
 
 
-    InString = (char *) Op->Asl.Value.String;
+    InString = ACPI_CAST_PTR (char, Op->Asl.Value.String);
     Buffer = UtLocalCalloc (16);
 
     Status = AuValidateUuid (InString);
@@ -575,7 +1381,7 @@ OpcDoUuId (
     }
     else
     {
-        (void) AuConvertStringToUuid (InString, Buffer);
+        AcpiUtConvertStringToUuid (InString, Buffer);
     }
 
     /* Change Op to a Buffer */
@@ -604,7 +1410,7 @@ OpcDoUuId (
     NewOp = TrAllocateNode (PARSEOP_RAW_DATA);
     NewOp->Asl.AmlOpcode     = AML_RAW_DATA_BUFFER;
     NewOp->Asl.AmlLength     = 16;
-    NewOp->Asl.Value.String  = (char *) Buffer;
+    NewOp->Asl.Value.String  = ACPI_CAST_PTR (char, Buffer);
     NewOp->Asl.Parent        = Op->Asl.Parent;
 
     Op->Asl.Next = NewOp;
@@ -615,12 +1421,12 @@ OpcDoUuId (
  *
  * FUNCTION:    OpcGenerateAmlOpcode
  *
- * PARAMETERS:  Op        - Parse node
+ * PARAMETERS:  Op                  - Parse node
  *
  * RETURN:      None
  *
  * DESCRIPTION: Generate the AML opcode associated with the node and its
- *              parse (lex/flex) keyword opcode.  Essentially implements
+ *              parse (lex/flex) keyword opcode. Essentially implements
  *              a mapping between the parse opcodes and the actual AML opcodes.
  *
  ******************************************************************************/
@@ -629,7 +1435,6 @@ void
 OpcGenerateAmlOpcode (
     ACPI_PARSE_OBJECT       *Op)
 {
-
     UINT16                  Index;
 
 
@@ -665,9 +1470,29 @@ OpcGenerateAmlOpcode (
         OpcDoAccessAs (Op);
         break;
 
+    case PARSEOP_CONNECTION:
+
+        OpcDoConnection (Op);
+        break;
+
     case PARSEOP_EISAID:
 
         OpcDoEisaId (Op);
+        break;
+
+    case PARSEOP_PRINTF:
+
+        OpcDoPrintf (Op);
+        break;
+
+    case PARSEOP_FPRINTF:
+
+        OpcDoFprintf (Op);
+        break;
+
+    case PARSEOP_TOPLD:
+
+        OpcDoPld (Op);
         break;
 
     case PARSEOP_TOUUID:
@@ -692,12 +1517,20 @@ OpcGenerateAmlOpcode (
         Op->Asl.Child->Asl.Next->Asl.ParseOpcode = PARSEOP_DEFAULT_ARG;
         break;
 
+    case PARSEOP_TIMER:
+
+        if (AcpiGbl_IntegerBitWidth == 32)
+        {
+            AslError (ASL_REMARK, ASL_MSG_TRUNCATION, Op, NULL);
+        }
+        break;
+
     default:
+
         /* Nothing to do for other opcodes */
+
         break;
     }
 
     return;
 }
-
-

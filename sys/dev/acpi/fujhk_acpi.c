@@ -1,4 +1,4 @@
-/*	$NetBSD: fujhk_acpi.c,v 1.2 2012/06/02 21:36:43 dsl Exp $ */
+/*	$NetBSD: fujhk_acpi.c,v 1.4 2015/04/23 23:23:00 pgoyette Exp $ */
 
 /*-
  * Copyright (c) 2010, 2011 The NetBSD Foundation, Inc.
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: fujhk_acpi.c,v 1.2 2012/06/02 21:36:43 dsl Exp $");
+__KERNEL_RCSID(0, "$NetBSD: fujhk_acpi.c,v 1.4 2015/04/23 23:23:00 pgoyette Exp $");
 
 #include <sys/param.h>
 #include <sys/device.h>
@@ -279,15 +279,9 @@ fujitsu_hk_sysctl_setup(struct fujitsu_hk_softc *sc)
 
 	if (fujitsu_hk_get_backlight(sc, &dummy_state) == 0) {
 		if ((sysctl_createv(&sc->sc_log, 0, NULL, &rnode,
-		    0, CTLTYPE_NODE, "hw", NULL,
-		    NULL, 0, NULL, 0,
-		    CTL_HW, CTL_EOL)) != 0)
-			goto fail;
-
-		if ((sysctl_createv(&sc->sc_log, 0, &rnode, &rnode,
 		    0, CTLTYPE_NODE, "acpi", NULL,
 		    NULL, 0, NULL, 0,
-		    CTL_CREATE, CTL_EOL)) != 0)
+		    CTL_HW, CTL_CREATE, CTL_EOL)) != 0)
 			goto fail;
 
 		if ((sysctl_createv(&sc->sc_log, 0, &rnode, &rnode,
@@ -521,7 +515,7 @@ fujitsu_hk_eval_nary_integer(ACPI_HANDLE handle, const char *path, const
 	return AE_OK;
 }
 
-MODULE(MODULE_CLASS_DRIVER, fujhk, NULL);
+MODULE(MODULE_CLASS_DRIVER, fujhk, "sysmon_power");
 
 #ifdef _MODULE
 #include "ioconf.c"

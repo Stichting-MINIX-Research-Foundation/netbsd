@@ -5,7 +5,7 @@
  ******************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -41,8 +41,6 @@
  * POSSIBILITY OF SUCH DAMAGES.
  */
 
-#define __RSCREATE_C__
-
 #include "acpi.h"
 #include "accommon.h"
 #include "acresrc.h"
@@ -50,6 +48,85 @@
 
 #define _COMPONENT          ACPI_RESOURCES
         ACPI_MODULE_NAME    ("rscreate")
+
+
+/*******************************************************************************
+ *
+ * FUNCTION:    AcpiBufferToResource
+ *
+ * PARAMETERS:  AmlBuffer           - Pointer to the resource byte stream
+ *              AmlBufferLength     - Length of the AmlBuffer
+ *              ResourcePtr         - Where the converted resource is returned
+ *
+ * RETURN:      Status
+ *
+ * DESCRIPTION: Convert a raw AML buffer to a resource list
+ *
+ ******************************************************************************/
+
+ACPI_STATUS
+AcpiBufferToResource (
+    UINT8                   *AmlBuffer,
+    UINT16                  AmlBufferLength,
+    ACPI_RESOURCE           **ResourcePtr)
+{
+    ACPI_STATUS             Status;
+    ACPI_SIZE               ListSizeNeeded;
+    void                    *Resource;
+    void                    *CurrentResourcePtr;
+
+
+    ACPI_FUNCTION_TRACE (AcpiBufferToResource);
+
+
+    /*
+     * Note: we allow AE_AML_NO_RESOURCE_END_TAG, since an end tag
+     * is not required here.
+     */
+
+    /* Get the required length for the converted resource */
+
+    Status = AcpiRsGetListLength (AmlBuffer, AmlBufferLength,
+                &ListSizeNeeded);
+    if (Status == AE_AML_NO_RESOURCE_END_TAG)
+    {
+        Status = AE_OK;
+    }
+    if (ACPI_FAILURE (Status))
+    {
+        return_ACPI_STATUS (Status);
+    }
+
+    /* Allocate a buffer for the converted resource */
+
+    Resource = ACPI_ALLOCATE_ZEROED (ListSizeNeeded);
+    CurrentResourcePtr = Resource;
+    if (!Resource)
+    {
+        return_ACPI_STATUS (AE_NO_MEMORY);
+    }
+
+    /* Perform the AML-to-Resource conversion */
+
+    Status = AcpiUtWalkAmlResources (NULL, AmlBuffer, AmlBufferLength,
+                AcpiRsConvertAmlToResources, &CurrentResourcePtr);
+    if (Status == AE_AML_NO_RESOURCE_END_TAG)
+    {
+        Status = AE_OK;
+    }
+    if (ACPI_FAILURE (Status))
+    {
+        ACPI_FREE (Resource);
+    }
+    else
+    {
+        *ResourcePtr = Resource;
+    }
+
+    return_ACPI_STATUS (Status);
+}
+
+ACPI_EXPORT_SYMBOL (AcpiBufferToResource)
 
 
 /*******************************************************************************
@@ -119,7 +196,7 @@ AcpiRsCreateResourceList (
     /* Do the conversion */
 
     Resource = OutputBuffer->Pointer;
-    Status = AcpiUtWalkAmlResources (AmlStart, AmlBufferLength,
+    Status = AcpiUtWalkAmlResources (NULL, AmlStart, AmlBufferLength,
                 AcpiRsConvertAmlToResources, &Resource);
     if (ACPI_FAILURE (Status))
     {
@@ -136,8 +213,8 @@ AcpiRsCreateResourceList (
  *
  * FUNCTION:    AcpiRsCreatePciRoutingTable
  *
- * PARAMETERS:  PackageObject           - Pointer to an ACPI_OPERAND_OBJECT
- *                                        package
+ * PARAMETERS:  PackageObject           - Pointer to a package containing one
+ *                                        of more ACPI_OPERAND_OBJECTs
  *              OutputBuffer            - Pointer to the user's buffer
  *
  * RETURN:      Status  AE_OK if okay, else a valid ACPI_STATUS code.
@@ -145,7 +222,7 @@ AcpiRsCreateResourceList (
  *              AE_BUFFER_OVERFLOW and OutputBuffer->Length will point
  *              to the size buffer needed.
  *
- * DESCRIPTION: Takes the ACPI_OPERAND_OBJECT  package and creates a
+ * DESCRIPTION: Takes the ACPI_OPERAND_OBJECT package and creates a
  *              linked list of PCI interrupt descriptions
  *
  * NOTE: It is the caller's responsibility to ensure that the start of the
@@ -224,17 +301,7 @@ AcpiRsCreatePciRoutingTable (
          */
         UserPrt->Length = (sizeof (ACPI_PCI_ROUTING_TABLE) - 4);
 
-        /* Each element of the top-level package must also be a package */
-
-        if ((*TopObjectList)->Common.Type != ACPI_TYPE_PACKAGE)
-        {
-            ACPI_ERROR ((AE_INFO,
-                "(PRT[%u]) Need sub-package, found %s",
-                Index, AcpiUtGetObjectTypeName (*TopObjectList)));
-            return_ACPI_STATUS (AE_AML_OPERAND_TYPE);
-        }
-
-        /* Each sub-package must be of length 4 */
+        /* Each subpackage must be of length 4 */
 
         if ((*TopObjectList)->Package.Count != 4)
         {
@@ -245,7 +312,7 @@ AcpiRsCreatePciRoutingTable (
         }
 
         /*
-         * Dereference the sub-package.
+         * Dereference the subpackage.
          * The SubObjectList will now point to an array of the four IRQ
          * elements: [Address, Pin, Source, SourceIndex]
          */
@@ -254,7 +321,7 @@ AcpiRsCreatePciRoutingTable (
         /* 1) First subobject: Dereference the PRT.Address */
 
         ObjDesc = SubObjectList[0];
-        if (ObjDesc->Common.Type != ACPI_TYPE_INTEGER)
+        if (!ObjDesc || ObjDesc->Common.Type != ACPI_TYPE_INTEGER)
         {
             ACPI_ERROR ((AE_INFO, "(PRT[%u].Address) Need Integer, found %s",
                 Index, AcpiUtGetObjectTypeName (ObjDesc)));
@@ -266,7 +333,7 @@ AcpiRsCreatePciRoutingTable (
         /* 2) Second subobject: Dereference the PRT.Pin */
 
         ObjDesc = SubObjectList[1];
-        if (ObjDesc->Common.Type != ACPI_TYPE_INTEGER)
+        if (!ObjDesc || ObjDesc->Common.Type != ACPI_TYPE_INTEGER)
         {
             ACPI_ERROR ((AE_INFO, "(PRT[%u].Pin) Need Integer, found %s",
                 Index, AcpiUtGetObjectTypeName (ObjDesc)));
@@ -274,23 +341,6 @@ AcpiRsCreatePciRoutingTable (
         }
 
         UserPrt->Pin = (UINT32) ObjDesc->Integer.Value;
-
-        /*
-         * If the BIOS has erroneously reversed the _PRT SourceName (index 2)
-         * and the SourceIndex (index 3), fix it. _PRT is important enough to
-         * workaround this BIOS error. This also provides compatibility with
-         * other ACPI implementations.
-         */
-        ObjDesc = SubObjectList[3];
-        if (!ObjDesc || (ObjDesc->Common.Type != ACPI_TYPE_INTEGER))
-        {
-            SubObjectList[3] = SubObjectList[2];
-            SubObjectList[2] = ObjDesc;
-
-            ACPI_WARNING ((AE_INFO,
-                "(PRT[%X].Source) SourceName and SourceIndex are reversed, fixed",
-                Index));
-        }
 
         /*
          * 3) Third subobject: Dereference the PRT.SourceName
@@ -320,17 +370,17 @@ AcpiRsCreatePciRoutingTable (
                                     (UINT8 *) OutputBuffer->Pointer);
                 PathBuffer.Pointer = UserPrt->Source;
 
-                Status = AcpiNsHandleToPathname ((ACPI_HANDLE) Node, &PathBuffer);
+                Status = AcpiNsHandleToPathname ((ACPI_HANDLE) Node,
+                            &PathBuffer, FALSE);
 
                 /* +1 to include null terminator */
 
-                UserPrt->Length += (UINT32) ACPI_STRLEN (UserPrt->Source) + 1;
+                UserPrt->Length += (UINT32) strlen (UserPrt->Source) + 1;
                 break;
-
 
             case ACPI_TYPE_STRING:
 
-                ACPI_STRCPY (UserPrt->Source, ObjDesc->String.Pointer);
+                strcpy (UserPrt->Source, ObjDesc->String.Pointer);
 
                 /*
                  * Add to the Length field the length of the string
@@ -338,7 +388,6 @@ AcpiRsCreatePciRoutingTable (
                  */
                 UserPrt->Length += ObjDesc->String.Length + 1;
                 break;
-
 
             case ACPI_TYPE_INTEGER:
                 /*
@@ -349,7 +398,6 @@ AcpiRsCreatePciRoutingTable (
                  */
                 UserPrt->Length += sizeof (UINT32);
                 break;
-
 
             default:
 
@@ -367,7 +415,7 @@ AcpiRsCreatePciRoutingTable (
         /* 4) Fourth subobject: Dereference the PRT.SourceIndex */
 
         ObjDesc = SubObjectList[3];
-        if (ObjDesc->Common.Type != ACPI_TYPE_INTEGER)
+        if (!ObjDesc || ObjDesc->Common.Type != ACPI_TYPE_INTEGER)
         {
             ACPI_ERROR ((AE_INFO,
                 "(PRT[%u].SourceIndex) Need Integer, found %s",
@@ -392,23 +440,22 @@ AcpiRsCreatePciRoutingTable (
  *
  * FUNCTION:    AcpiRsCreateAmlResources
  *
- * PARAMETERS:  LinkedListBuffer        - Pointer to the resource linked list
- *              OutputBuffer            - Pointer to the user's buffer
+ * PARAMETERS:  ResourceList            - Pointer to the resource list buffer
+ *              OutputBuffer            - Where the AML buffer is returned
  *
  * RETURN:      Status  AE_OK if okay, else a valid ACPI_STATUS code.
  *              If the OutputBuffer is too small, the error will be
  *              AE_BUFFER_OVERFLOW and OutputBuffer->Length will point
  *              to the size buffer needed.
  *
- * DESCRIPTION: Takes the linked list of device resources and
- *              creates a bytestream to be used as input for the
- *              _SRS control method.
+ * DESCRIPTION: Converts a list of device resources to an AML bytestream
+ *              to be used as input for the _SRS control method.
  *
  ******************************************************************************/
 
 ACPI_STATUS
 AcpiRsCreateAmlResources (
-    ACPI_RESOURCE           *LinkedListBuffer,
+    ACPI_BUFFER             *ResourceList,
     ACPI_BUFFER             *OutputBuffer)
 {
     ACPI_STATUS             Status;
@@ -418,17 +465,15 @@ AcpiRsCreateAmlResources (
     ACPI_FUNCTION_TRACE (RsCreateAmlResources);
 
 
-    ACPI_DEBUG_PRINT ((ACPI_DB_INFO, "LinkedListBuffer = %p\n",
-        LinkedListBuffer));
+    /* Params already validated, no need to re-validate here */
 
-    /*
-     * Params already validated, so we don't re-validate here
-     *
-     * Pass the LinkedListBuffer into a module that calculates
-     * the buffer size needed for the byte stream.
-     */
-    Status = AcpiRsGetAmlLength (LinkedListBuffer,
-                &AmlSizeNeeded);
+    ACPI_DEBUG_PRINT ((ACPI_DB_INFO, "ResourceList Buffer = %p\n",
+        ResourceList->Pointer));
+
+    /* Get the buffer size needed for the AML byte stream */
+
+    Status = AcpiRsGetAmlLength (ResourceList->Pointer,
+                ResourceList->Length, &AmlSizeNeeded);
 
     ACPI_DEBUG_PRINT ((ACPI_DB_INFO, "AmlSizeNeeded=%X, %s\n",
         (UINT32) AmlSizeNeeded, AcpiFormatException (Status)));
@@ -447,15 +492,14 @@ AcpiRsCreateAmlResources (
 
     /* Do the conversion */
 
-    Status = AcpiRsConvertResourcesToAml (LinkedListBuffer, AmlSizeNeeded,
-                    OutputBuffer->Pointer);
+    Status = AcpiRsConvertResourcesToAml (ResourceList->Pointer,
+                AmlSizeNeeded, OutputBuffer->Pointer);
     if (ACPI_FAILURE (Status))
     {
         return_ACPI_STATUS (Status);
     }
 
     ACPI_DEBUG_PRINT ((ACPI_DB_INFO, "OutputBuffer %p Length %X\n",
-            OutputBuffer->Pointer, (UINT32) OutputBuffer->Length));
+        OutputBuffer->Pointer, (UINT32) OutputBuffer->Length));
     return_ACPI_STATUS (AE_OK);
 }
-

@@ -1,4 +1,4 @@
-/* $NetBSD: aupci.c,v 1.13 2012/01/27 18:52:58 para Exp $ */
+/* $NetBSD: aupci.c,v 1.17 2015/10/02 05:22:51 msaitoh Exp $ */
 
 /*-
  * Copyright (c) 2006 Itronix Inc.
@@ -35,7 +35,7 @@
 #include "pci.h"
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: aupci.c,v 1.13 2012/01/27 18:52:58 para Exp $");
+__KERNEL_RCSID(0, "$NetBSD: aupci.c,v 1.17 2015/10/02 05:22:51 msaitoh Exp $");
 
 #include <sys/types.h>
 #include <sys/param.h>
@@ -45,12 +45,12 @@ __KERNEL_RCSID(0, "$NetBSD: aupci.c,v 1.13 2012/01/27 18:52:58 para Exp $");
 #include <sys/device.h>
 #include <sys/malloc.h>
 #include <sys/extent.h>
+#include <sys/bus.h>
 
 #include <uvm/uvm_extern.h>
 
-#include <sys/bus.h>
-#include <machine/cpu.h>
-#include <machine/pte.h>
+#include <mips/locore.h>
+#include <mips/pte.h>
 
 #include <dev/pci/pcivar.h>
 #include <dev/pci/pcireg.h>
@@ -99,7 +99,7 @@ static pcitag_t aupci_make_tag(void *, int, int, int);
 static void aupci_decompose_tag(void *, pcitag_t, int *, int *, int *);
 static pcireg_t aupci_conf_read(void *, pcitag_t, int);
 static void aupci_conf_write(void *, pcitag_t, int, pcireg_t);
-static const char *aupci_intr_string(void *, pci_intr_handle_t);
+static const char *aupci_intr_string(void *, pci_intr_handle_t, char *, size_t);
 static void aupci_conf_interrupt(void *, int, int, int, int, int *);
 static void *aupci_intr_establish(void *, pci_intr_handle_t, int,
     int (*)(void *), void *);
@@ -334,6 +334,9 @@ aupci_conf_access(void *v, int dir, pcitag_t tag, int reg, pcireg_t *datap)
 	int			b, d, f;
 	bus_space_handle_t	h;
 
+	if ((unsigned int)reg >= PCI_CONF_SIZE)
+		return false;
+
 	aupci_decompose_tag(v, tag, &b, &d, &f);
 	if (b) {
 		/* configuration type 1 */
@@ -396,12 +399,10 @@ aupci_conf_write(void *v, pcitag_t tag, int reg, pcireg_t data)
 }
 
 const char *
-aupci_intr_string(void *v, pci_intr_handle_t ih)
+aupci_intr_string(void *v, pci_intr_handle_t ih, char *buf, size_t len)
 {
-	static char	name[16];
-
-	sprintf(name, "irq %u", (unsigned)ih);
-	return (name);
+	snprintf(buf, len, "irq %u", (unsigned)ih);
+	return buf;
 }
 
 void *

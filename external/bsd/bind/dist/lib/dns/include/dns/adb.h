@@ -1,7 +1,7 @@
-/*	$NetBSD: adb.h,v 1.4 2013/07/27 19:23:12 christos Exp $	*/
+/*	$NetBSD: adb.h,v 1.6 2014/12/10 04:37:58 christos Exp $	*/
 
 /*
- * Copyright (C) 2004-2008, 2011, 2013  Internet Systems Consortium, Inc. ("ISC")
+ * Copyright (C) 2004-2008, 2011, 2013, 2014  Internet Systems Consortium, Inc. ("ISC")
  * Copyright (C) 1999-2003  Internet Software Consortium.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
@@ -216,7 +216,9 @@ struct dns_adbaddrinfo {
 	unsigned int			magic;		/*%< private */
 
 	isc_sockaddr_t			sockaddr;	/*%< [rw] */
-	unsigned int			srtt;		/*%< [rw] microseconds */
+	unsigned int			srtt;		/*%< [rw] microsecs */
+	isc_dscp_t			dscp;
+
 	unsigned int			flags;		/*%< [rw] */
 	dns_adbentry_t		       *entry;		/*%< private */
 	ISC_LINK(dns_adbaddrinfo_t)	publink;
@@ -336,6 +338,13 @@ dns_adb_createfind(dns_adb_t *adb, isc_task_t *task, isc_taskaction_t action,
 		   dns_rdatatype_t qtype, unsigned int options,
 		   isc_stdtime_t now, dns_name_t *target,
 		   in_port_t port, dns_adbfind_t **find);
+isc_result_t
+dns_adb_createfind2(dns_adb_t *adb, isc_task_t *task, isc_taskaction_t action,
+		    void *arg, dns_name_t *name, dns_name_t *qname,
+		    dns_rdatatype_t qtype, unsigned int options,
+		    isc_stdtime_t now, dns_name_t *target, in_port_t port,
+		    unsigned int depth, isc_counter_t *qc,
+		    dns_adbfind_t **find);
 /*%<
  * Main interface for clients. The adb will look up the name given in
  * "name" and will build up a list of found addresses, and perhaps start
@@ -512,7 +521,12 @@ dns_adb_marklame(dns_adb_t *adb, dns_adbaddrinfo_t *addr, dns_name_t *qname,
  */
 
 /*
- * A reasonable default for RTT adjustments
+ * Reasonable defaults for RTT adjustments
+ *
+ * (Note: these values function both as scaling factors and as
+ * indicators of the type of RTT adjustment operation taking place.
+ * Adjusting the scaling factors is fine, as long as they all remain
+ * unique values.)
  */
 #define DNS_ADB_RTTADJDEFAULT		7	/*%< default scale */
 #define DNS_ADB_RTTADJREPLACE		0	/*%< replace with our rtt */
@@ -523,18 +537,6 @@ dns_adb_adjustsrtt(dns_adb_t *adb, dns_adbaddrinfo_t *addr,
 		   unsigned int rtt, unsigned int factor);
 /*%<
  * Mix the round trip time into the existing smoothed rtt.
-
- * The formula used
- * (where srtt is the existing rtt value, and rtt and factor are arguments to
- * this function):
- *
- *\code
- *	new_srtt = (old_srtt / 10 * factor) + (rtt / 10 * (10 - factor));
- *\endcode
- *
- * XXXRTH  Do we want to publish the formula?  What if we want to change how
- *         this works later on?  Recommend/require that the units are
- *	   microseconds?
  *
  * Requires:
  *
@@ -543,6 +545,24 @@ dns_adb_adjustsrtt(dns_adb_t *adb, dns_adbaddrinfo_t *addr,
  *\li	addr be valid.
  *
  *\li	0 <= factor <= 10
+ *
+ * Note:
+ *
+ *\li	The srtt in addr will be updated to reflect the new global
+ *	srtt value.  This may include changes made by others.
+ */
+
+void
+dns_adb_agesrtt(dns_adb_t *adb, dns_adbaddrinfo_t *addr, isc_stdtime_t now);
+/*
+ * dns_adb_agesrtt is equivalent to dns_adb_adjustsrtt with factor
+ * equal to DNS_ADB_RTTADJAGE and the current time passed in.
+ *
+ * Requires:
+ *
+ *\li	adb be valid.
+ *
+ *\li	addr be valid.
  *
  * Note:
  *
@@ -566,6 +586,96 @@ dns_adb_changeflags(dns_adb_t *adb, dns_adbaddrinfo_t *addr,
  *
  *\li	addr be valid.
  */
+
+void
+dns_adb_setudpsize(dns_adb_t *adb, dns_adbaddrinfo_t *addr, unsigned int size);
+/*%
+ * Update seen UDP response size.  The largest seen will be returned by
+ * dns_adb_getudpsize().
+ *
+ * Requires:
+ *
+ *\li	adb be valid.
+ *
+ *\li	addr be valid.
+ */
+
+unsigned int
+dns_adb_getudpsize(dns_adb_t *adb, dns_adbaddrinfo_t *addr);
+/*%
+ * Return the largest seen UDP response size.
+ *
+ * Requires:
+ *
+ *\li	adb be valid.
+ *
+ *\li	addr be valid.
+ */
+
+unsigned int
+dns_adb_probesize(dns_adb_t *adb, dns_adbaddrinfo_t *addr);
+unsigned int
+dns_adb_probesize2(dns_adb_t *adb, dns_adbaddrinfo_t *addr, int lookups);
+/*%
+ * Return suggested EDNS UDP size based on observed responses / failures.
+ * 'lookups' is the number of times the current lookup has been attempted.
+ *
+ * Requires:
+ *
+ *\li	adb be valid.
+ *
+ *\li	addr be valid.
+ */
+
+void
+dns_adb_plainresponse(dns_adb_t *adb, dns_adbaddrinfo_t *addr);
+/*%
+ * Record a successful plain DNS response.
+ *
+ * Requires:
+ *
+ *\li	adb be valid.
+ *
+ *\li	addr be valid.
+ */
+
+void
+dns_adb_timeout(dns_adb_t *adb, dns_adbaddrinfo_t *addr);
+/*%
+ * Record a plain DNS UDP query failed.
+ *
+ * Requires:
+ *
+ *\li	adb be valid.
+ *
+ *\li	addr be valid.
+ */
+
+void
+dns_adb_ednsto(dns_adb_t *adb, dns_adbaddrinfo_t *addr, unsigned int size);
+/*%
+ * Record a failed EDNS UDP response and the advertised EDNS UDP buffer size
+ * used.
+ *
+ * Requires:
+ *
+ *\li	adb be valid.
+ *
+ *\li	addr be valid.
+ */
+
+isc_boolean_t
+dns_adb_noedns(dns_adb_t *adb, dns_adbaddrinfo_t *addr);
+/*%
+ * Return whether EDNS should be disabled for this server.
+ *
+ * Requires:
+ *
+ *\li	adb be valid.
+ *
+ *\li	addr be valid.
+ */
+
 
 isc_result_t
 dns_adb_findaddrinfo(dns_adb_t *adb, isc_sockaddr_t *sa,
@@ -629,6 +739,43 @@ dns_adb_flushname(dns_adb_t *adb, dns_name_t *name);
  * Requires:
  *\li	'adb' is valid.
  *\li	'name' is valid.
+ */
+
+void
+dns_adb_flushnames(dns_adb_t *adb, dns_name_t *name);
+/*%<
+ * Flush 'name' and all subdomains from the adb cache.
+ *
+ * Requires:
+ *\li	'adb' is valid.
+ *\li	'name' is valid.
+ */
+
+void
+dns_adb_setsit(dns_adb_t *adb, dns_adbaddrinfo_t *addr,
+	       const unsigned char *sit, size_t len);
+/*%<
+ * Record the Source Identity Token (SIT) associated with this addresss.  If
+ * sit is NULL or len is zero. The recorded SIT is cleared.
+ *
+ * Requires:
+ *\li	'adb' is valid.
+ *\li	'addr' is valid.
+ */
+
+size_t
+dns_adb_getsit(dns_adb_t *adb, dns_adbaddrinfo_t *addr,
+	       unsigned char *sit, size_t len);
+/*
+ * Retieve the saved SIT value and store it in 'sit' which has size 'len'.
+ *
+ * Requires:
+ *\li	'adb' is valid.
+ *\li	'addr' is valid.
+ *
+ * Returns:
+ *	The size of the sit token or zero if it doesn't fit in the buffer
+ *	or it doesn't exist.
  */
 
 ISC_LANG_ENDDECLS

@@ -1,6 +1,6 @@
 /* Support for printing Modula 2 values for GDB, the GNU debugger.
 
-   Copyright (C) 1986-2013 Free Software Foundation, Inc.
+   Copyright (C) 1986-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -272,7 +272,7 @@ m2_print_array_contents (struct type *type, const gdb_byte *valaddr,
 
   if (TYPE_LENGTH (type) > 0)
     {
-      if (options->prettyprint_arrays)
+      if (options->prettyformat_arrays)
 	print_spaces_filtered (2 + 2 * recurse, stream);
       /* For an array of chars, print with string syntax.  */
       if (TYPE_LENGTH (type) == 1 &&
@@ -327,7 +327,7 @@ m2_val_print (struct type *type, const gdb_byte *valaddr, int embedded_offset,
 	{
 	  elttype = check_typedef (TYPE_TARGET_TYPE (type));
 	  len = TYPE_LENGTH (type) / TYPE_LENGTH (elttype);
-	  if (options->prettyprint_arrays)
+	  if (options->prettyformat_arrays)
 	    print_spaces_filtered (2 + 2 * recurse, stream);
 	  /* For an array of chars, print with string syntax.  */
 	  if (TYPE_LENGTH (elttype) == 1 &&
@@ -475,7 +475,7 @@ m2_val_print (struct type *type, const gdb_byte *valaddr, int embedded_offset,
 			address, stream, recurse, original_value, options);
 	  break;
 	}
-      /* FIXME: create_range_type does not set the unsigned bit in a
+      /* FIXME: create_static_range_type does not set the unsigned bit in a
          range type (I think it probably should copy it from the target
          type), so we won't print values which are too large to
          fit in a signed integer correctly.  */

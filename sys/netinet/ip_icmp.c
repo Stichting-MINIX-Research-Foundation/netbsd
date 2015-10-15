@@ -1,4 +1,4 @@
-/*	$NetBSD: ip_icmp.c,v 1.131 2013/06/05 19:01:26 christos Exp $	*/
+/*	$NetBSD: ip_icmp.c,v 1.142 2015/08/31 06:25:15 ozaki-r Exp $	*/
 
 /*
  * Copyright (C) 1995, 1996, 1997, and 1998 WIDE Project.
@@ -94,16 +94,18 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ip_icmp.c,v 1.131 2013/06/05 19:01:26 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ip_icmp.c,v 1.142 2015/08/31 06:25:15 ozaki-r Exp $");
 
+#ifdef _KERNEL_OPT
 #include "opt_ipsec.h"
+#endif
 
 #include <sys/param.h>
 #include <sys/systm.h>
-#include <sys/malloc.h>
 #include <sys/mbuf.h>
 #include <sys/protosw.h>
 #include <sys/socket.h>
+#include <sys/kmem.h>
 #include <sys/time.h>
 #include <sys/kernel.h>
 #include <sys/syslog.h>
@@ -204,10 +206,7 @@ icmp_mtudisc_callback_register(void (*func)(struct in_addr))
 			return;
 	}
 
-	mc = malloc(sizeof(*mc), M_PCB, M_NOWAIT);
-	if (mc == NULL)
-		panic("icmp_mtudisc_callback_register");
-
+	mc = kmem_alloc(sizeof(*mc), KM_SLEEP);
 	mc->mc_func = func;
 	LIST_INSERT_HEAD(&icmp_mtudisc_callbacks, mc, mc_list);
 }
@@ -411,8 +410,10 @@ icmp_input(struct mbuf *m, ...)
 	icmplen = ntohs(ip->ip_len) - hlen;
 #ifdef ICMPPRINTFS
 	if (icmpprintfs) {
-		printf("icmp_input from `%s' to ", inet_ntoa(ip->ip_src));
-		printf("`%s', len %d\n", inet_ntoa(ip->ip_dst), icmplen);
+		char sbuf[INET_ADDRSTRLEN], dbuf[INET_ADDRSTRLEN];
+		printf("icmp_input from `%s' to `%s', len %d\n",
+		    IN_PRINT(sbuf, &ip->ip_src), IN_PRINT(dbuf, &ip->ip_dst),
+		    icmplen);
 	}
 #endif
 	if (icmplen < ICMP_MINLEN) {
@@ -618,9 +619,10 @@ reflect:
 		icmpdst.sin_addr = icp->icmp_gwaddr;
 #ifdef	ICMPPRINTFS
 		if (icmpprintfs) {
+			char gbuf[INET_ADDRSTRLEN], dbuf[INET_ADDRSTRLEN];
 			printf("redirect dst `%s' to `%s'\n",
-			    inet_ntoa(icp->icmp_ip.ip_dst),
-			    inet_ntoa(icp->icmp_gwaddr));
+			    IN_PRINT(dbuf, &icp->icmp_ip.ip_dst),
+			    IN_PRINT(gbuf, &icp->icmp_gwaddr));
 		}
 #endif
 		icmpsrc.sin_addr = icp->icmp_ip.ip_dst;
@@ -630,18 +632,21 @@ reflect:
 		if (rt != NULL && icmp_redirtimeout != 0) {
 			i = rt_timer_add(rt, icmp_redirect_timeout,
 					 icmp_redirect_timeout_q);
-			if (i)
+			if (i) {
+				char buf[INET_ADDRSTRLEN];
 				log(LOG_ERR, "ICMP:  redirect failed to "
-				    "register timeout for route to %x, "
+				    "register timeout for route to %s, "
 				    "code %d\n",
-				    icp->icmp_ip.ip_dst.s_addr, i);
+				    IN_PRINT(buf, &icp->icmp_ip.ip_dst), i);
+			}
 		}
 		if (rt != NULL)
 			rtfree(rt);
 
 		pfctlinput(PRC_REDIRECT_HOST, sintosa(&icmpsrc));
 #if defined(IPSEC)
-		key_sa_routechange((struct sockaddr *)&icmpsrc);
+		if (ipsec_used)
+			key_sa_routechange((struct sockaddr *)&icmpsrc);
 #endif
 		break;
 
@@ -677,9 +682,9 @@ icmp_reflect(struct mbuf *m)
 	struct ip *ip = mtod(m, struct ip *);
 	struct in_ifaddr *ia;
 	struct ifaddr *ifa;
-	struct sockaddr_in *sin = 0;
+	struct sockaddr_in *sin;
 	struct in_addr t;
-	struct mbuf *opts = 0;
+	struct mbuf *opts = NULL;
 	int optlen = (ip->ip_hl << 2) - sizeof(struct ip);
 
 	if (!in_canforward(ip->ip_src) &&
@@ -700,6 +705,8 @@ icmp_reflect(struct mbuf *m)
 
 	/* Look for packet addressed to us */
 	INADDR_TO_IA(t, ia);
+	if (ia && (ia->ia4_flags & IN_IFF_NOTREADY))
+		ia = NULL;
 
 	/* look for packet sent to broadcast address */
 	if (ia == NULL && m->m_pkthdr.rcvif &&
@@ -709,13 +716,14 @@ icmp_reflect(struct mbuf *m)
 				continue;
 			if (in_hosteq(t,ifatoia(ifa)->ia_broadaddr.sin_addr)) {
 				ia = ifatoia(ifa);
-				break;
+				if ((ia->ia4_flags & IN_IFF_NOTREADY) == 0)
+					break;
+				ia = NULL;
 			}
 		}
 	}
 
-	if (ia)
-		sin = &ia->ia_addr;
+	sin = ia ? &ia->ia_addr : NULL;
 
 	icmpdst.sin_addr = t;
 
@@ -802,7 +810,7 @@ icmp_reflect(struct mbuf *m)
 		 * add on any record-route or timestamp options.
 		 */
 		cp = (u_char *) (ip + 1);
-		if ((opts = ip_srcroute()) == 0 &&
+		if ((opts = ip_srcroute()) == NULL &&
 		    (opts = m_gethdr(M_DONTWAIT, MT_HEADER))) {
 			MCLAIM(opts, m->m_owner);
 			opts->m_len = sizeof(struct in_addr);
@@ -900,8 +908,9 @@ icmp_send(struct mbuf *m, struct mbuf *opts)
 	m->m_len += hlen;
 #ifdef ICMPPRINTFS
 	if (icmpprintfs) {
+		char sbuf[INET_ADDRSTRLEN], dbuf[INET_ADDRSTRLEN];
 		printf("icmp_send to destination `%s' from `%s'\n",
-		    inet_ntoa(ip->ip_dst), inet_ntoa(ip->ip_src));
+		    IN_PRINT(dbuf, &ip->ip_dst), IN_PRINT(sbuf, &ip->ip_src));
 	}
 #endif
 	(void)ip_output(m, opts, NULL, 0, NULL, NULL);
@@ -997,11 +1006,6 @@ sysctl_netinet_icmp_setup(struct sysctllog **clog)
 
 	sysctl_createv(clog, 0, NULL, NULL,
 		       CTLFLAG_PERMANENT,
-		       CTLTYPE_NODE, "net", NULL,
-		       NULL, 0, NULL, 0,
-		       CTL_NET, CTL_EOL);
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
 		       CTLTYPE_NODE, "inet", NULL,
 		       NULL, 0, NULL, 0,
 		       CTL_NET, PF_INET, CTL_EOL);
@@ -1094,7 +1098,7 @@ icmp_mtudisc(struct icmp *icp, struct in_addr faddr)
 	int    error;
 
 	rt = rtalloc1(dst, 1);
-	if (rt == 0)
+	if (rt == NULL)
 		return;
 
 	/* If we didn't get a host route, allocate one */
@@ -1210,8 +1214,10 @@ ip_next_mtu(u_int mtu, int dir)	/* XXX */
 static void
 icmp_mtudisc_timeout(struct rtentry *rt, struct rttimer *r)
 {
-	if (rt == NULL)
-		panic("icmp_mtudisc_timeout:  bad route to timeout");
+
+	KASSERT(rt != NULL);
+	rt_assert_referenced(rt);
+
 	if ((rt->rt_flags & (RTF_DYNAMIC | RTF_HOST)) ==
 	    (RTF_DYNAMIC | RTF_HOST)) {
 		rtrequest((int) RTM_DELETE, rt_getkey(rt),
@@ -1226,8 +1232,10 @@ icmp_mtudisc_timeout(struct rtentry *rt, struct rttimer *r)
 static void
 icmp_redirect_timeout(struct rtentry *rt, struct rttimer *r)
 {
-	if (rt == NULL)
-		panic("icmp_redirect_timeout:  bad route to timeout");
+
+	KASSERT(rt != NULL);
+	rt_assert_referenced(rt);
+
 	if ((rt->rt_flags & (RTF_DYNAMIC | RTF_HOST)) ==
 	    (RTF_DYNAMIC | RTF_HOST)) {
 		rtrequest((int) RTM_DELETE, rt_getkey(rt),

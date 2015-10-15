@@ -1,4 +1,4 @@
-/*	$NetBSD: ser.c,v 1.52 2011/04/24 16:26:55 rmind Exp $	*/
+/*	$NetBSD: ser.c,v 1.56 2014/11/15 19:20:01 christos Exp $	*/
 
 /*-
  * Copyright (c) 1997 The NetBSD Foundation, Inc.
@@ -93,7 +93,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ser.c,v 1.52 2011/04/24 16:26:55 rmind Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ser.c,v 1.56 2014/11/15 19:20:01 christos Exp $");
 
 #include "opt_ddb.h"
 #include "opt_mbtype.h"
@@ -144,8 +144,8 @@ __KERNEL_RCSID(0, "$NetBSD: ser.c,v 1.52 2011/04/24 16:26:55 rmind Exp $");
 
 /* #define SER_DEBUG */
 
-#define	SERUNIT(x)	(minor(x) & 0x7ffff)
-#define	SERDIALOUT(x)	(minor(x) & 0x80000)
+#define	SERUNIT(x)	TTUNIT(x)
+#define	SERDIALOUT(x)	TTDIALOUT(x)
 
 /* XXX */
 #define	CONSBAUD	9600
@@ -259,8 +259,18 @@ dev_type_tty(sertty);
 dev_type_poll(serpoll);
 
 const struct cdevsw ser_cdevsw = {
-	seropen, serclose, serread, serwrite, serioctl,
-	serstop, sertty, serpoll, nommap, ttykqfilter, D_TTY
+	.d_open = seropen,
+	.d_close = serclose,
+	.d_read = serread,
+	.d_write = serwrite,
+	.d_ioctl = serioctl,
+	.d_stop = serstop,
+	.d_tty = sertty,
+	.d_poll = serpoll,
+	.d_mmap = nommap,
+	.d_kqfilter = ttykqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_TTY
 };
 
 #ifndef SERCONSOLE
@@ -811,6 +821,7 @@ ser_iflush(struct ser_softc *sc)
 	/* flush any pending I/O */
 	while (ISSET(MFP->mf_rsr, RSR_CIP|RSR_BFULL))
 		tmp = MFP->mf_udr;
+	__USE(tmp);
 }
 
 void

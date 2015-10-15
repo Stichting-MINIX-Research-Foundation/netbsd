@@ -1,5 +1,5 @@
 /* Target signal translation functions for GDB.
-   Copyright (C) 1990-2013 Free Software Foundation, Inc.
+   Copyright (C) 1990-2015 Free Software Foundation, Inc.
    Contributed by Cygnus Support.
 
    This file is part of GDB.
@@ -17,12 +17,7 @@
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
-#ifdef GDBSERVER
-#include "server.h"
-#else
-#include "defs.h"
-#include "gdb_string.h"
-#endif
+#include "common-defs.h"
 
 #ifdef HAVE_SIGNAL_H
 #include <signal.h>
@@ -50,15 +45,23 @@ struct gdbarch;
    gdb_signal.  */
 
 static const struct {
+  const char *symbol;
   const char *name;
   const char *string;
   } signals [] =
 {
-#define SET(symbol, constant, name, string) { name, string },
+#define SET(symbol, constant, name, string) { #symbol, name, string },
 #include "gdb/signals.def"
 #undef SET
 };
 
+const char *
+gdb_signal_to_symbol_string (enum gdb_signal sig)
+{
+  gdb_assert ((int) sig >= GDB_SIGNAL_FIRST && (int) sig <= GDB_SIGNAL_LAST);
+
+  return signals[sig].symbol;
+}
 
 /* Return the string for a signal.  */
 const char *
@@ -112,43 +115,46 @@ gdb_signal_from_name (const char *name)
 enum gdb_signal
 gdb_signal_from_host (int hostsig)
 {
-  /* A switch statement would make sense but would require special kludges
-     to deal with the cases where more than one signal has the same number.  */
+  /* A switch statement would make sense but would require special
+     kludges to deal with the cases where more than one signal has the
+     same number.  Signals are ordered ANSI-standard signals first,
+     other signals second, with signals in each block ordered by their
+     numerical values on a typical POSIX platform.  */
 
   if (hostsig == 0)
     return GDB_SIGNAL_0;
 
+  /* SIGINT, SIGILL, SIGABRT, SIGFPE, SIGSEGV and SIGTERM
+     are ANSI-standard signals and are always available.  */
+  if (hostsig == SIGINT)
+    return GDB_SIGNAL_INT;
+  if (hostsig == SIGILL)
+    return GDB_SIGNAL_ILL;
+  if (hostsig == SIGABRT)
+    return GDB_SIGNAL_ABRT;
+  if (hostsig == SIGFPE)
+    return GDB_SIGNAL_FPE;
+  if (hostsig == SIGSEGV)
+    return GDB_SIGNAL_SEGV;
+  if (hostsig == SIGTERM)
+    return GDB_SIGNAL_TERM;
+
+  /* All other signals need preprocessor conditionals.  */
 #if defined (SIGHUP)
   if (hostsig == SIGHUP)
     return GDB_SIGNAL_HUP;
-#endif
-#if defined (SIGINT)
-  if (hostsig == SIGINT)
-    return GDB_SIGNAL_INT;
 #endif
 #if defined (SIGQUIT)
   if (hostsig == SIGQUIT)
     return GDB_SIGNAL_QUIT;
 #endif
-#if defined (SIGILL)
-  if (hostsig == SIGILL)
-    return GDB_SIGNAL_ILL;
-#endif
 #if defined (SIGTRAP)
   if (hostsig == SIGTRAP)
     return GDB_SIGNAL_TRAP;
 #endif
-#if defined (SIGABRT)
-  if (hostsig == SIGABRT)
-    return GDB_SIGNAL_ABRT;
-#endif
 #if defined (SIGEMT)
   if (hostsig == SIGEMT)
     return GDB_SIGNAL_EMT;
-#endif
-#if defined (SIGFPE)
-  if (hostsig == SIGFPE)
-    return GDB_SIGNAL_FPE;
 #endif
 #if defined (SIGKILL)
   if (hostsig == SIGKILL)
@@ -157,10 +163,6 @@ gdb_signal_from_host (int hostsig)
 #if defined (SIGBUS)
   if (hostsig == SIGBUS)
     return GDB_SIGNAL_BUS;
-#endif
-#if defined (SIGSEGV)
-  if (hostsig == SIGSEGV)
-    return GDB_SIGNAL_SEGV;
 #endif
 #if defined (SIGSYS)
   if (hostsig == SIGSYS)
@@ -173,10 +175,6 @@ gdb_signal_from_host (int hostsig)
 #if defined (SIGALRM)
   if (hostsig == SIGALRM)
     return GDB_SIGNAL_ALRM;
-#endif
-#if defined (SIGTERM)
-  if (hostsig == SIGTERM)
-    return GDB_SIGNAL_TERM;
 #endif
 #if defined (SIGUSR1)
   if (hostsig == SIGUSR1)
@@ -306,27 +304,27 @@ gdb_signal_from_host (int hostsig)
   /* Mach exceptions.  Assumes that the values for EXC_ are positive! */
 #if defined (EXC_BAD_ACCESS) && defined (_NSIG)
   if (hostsig == _NSIG + EXC_BAD_ACCESS)
-    return TARGET_EXC_BAD_ACCESS;
+    return GDB_EXC_BAD_ACCESS;
 #endif
 #if defined (EXC_BAD_INSTRUCTION) && defined (_NSIG)
   if (hostsig == _NSIG + EXC_BAD_INSTRUCTION)
-    return TARGET_EXC_BAD_INSTRUCTION;
+    return GDB_EXC_BAD_INSTRUCTION;
 #endif
 #if defined (EXC_ARITHMETIC) && defined (_NSIG)
   if (hostsig == _NSIG + EXC_ARITHMETIC)
-    return TARGET_EXC_ARITHMETIC;
+    return GDB_EXC_ARITHMETIC;
 #endif
 #if defined (EXC_EMULATION) && defined (_NSIG)
   if (hostsig == _NSIG + EXC_EMULATION)
-    return TARGET_EXC_EMULATION;
+    return GDB_EXC_EMULATION;
 #endif
 #if defined (EXC_SOFTWARE) && defined (_NSIG)
   if (hostsig == _NSIG + EXC_SOFTWARE)
-    return TARGET_EXC_SOFTWARE;
+    return GDB_EXC_SOFTWARE;
 #endif
 #if defined (EXC_BREAKPOINT) && defined (_NSIG)
   if (hostsig == _NSIG + EXC_BREAKPOINT)
-    return TARGET_EXC_BREAKPOINT;
+    return GDB_EXC_BREAKPOINT;
 #endif
 
 #if defined (SIGINFO)
@@ -369,43 +367,47 @@ do_gdb_signal_to_host (enum gdb_signal oursig,
      do not support signals.  */
   (void) retsig;
 
+  /* Signals are ordered ANSI-standard signals first, other signals
+     second, with signals in each block ordered by their numerical
+     values on a typical POSIX platform.  */
+
   *oursig_ok = 1;
   switch (oursig)
     {
     case GDB_SIGNAL_0:
       return 0;
 
+      /* SIGINT, SIGILL, SIGABRT, SIGFPE, SIGSEGV and SIGTERM
+	 are ANSI-standard signals and are always available.  */
+    case GDB_SIGNAL_INT:
+      return SIGINT;
+    case GDB_SIGNAL_ILL:
+      return SIGILL;
+    case GDB_SIGNAL_ABRT:
+      return SIGABRT;
+    case GDB_SIGNAL_FPE:
+      return SIGFPE;
+    case GDB_SIGNAL_SEGV:
+      return SIGSEGV;
+    case GDB_SIGNAL_TERM:
+      return SIGTERM;
+
+      /* All other signals need preprocessor conditionals.  */
 #if defined (SIGHUP)
     case GDB_SIGNAL_HUP:
       return SIGHUP;
-#endif
-#if defined (SIGINT)
-    case GDB_SIGNAL_INT:
-      return SIGINT;
 #endif
 #if defined (SIGQUIT)
     case GDB_SIGNAL_QUIT:
       return SIGQUIT;
 #endif
-#if defined (SIGILL)
-    case GDB_SIGNAL_ILL:
-      return SIGILL;
-#endif
 #if defined (SIGTRAP)
     case GDB_SIGNAL_TRAP:
       return SIGTRAP;
 #endif
-#if defined (SIGABRT)
-    case GDB_SIGNAL_ABRT:
-      return SIGABRT;
-#endif
 #if defined (SIGEMT)
     case GDB_SIGNAL_EMT:
       return SIGEMT;
-#endif
-#if defined (SIGFPE)
-    case GDB_SIGNAL_FPE:
-      return SIGFPE;
 #endif
 #if defined (SIGKILL)
     case GDB_SIGNAL_KILL:
@@ -414,10 +416,6 @@ do_gdb_signal_to_host (enum gdb_signal oursig,
 #if defined (SIGBUS)
     case GDB_SIGNAL_BUS:
       return SIGBUS;
-#endif
-#if defined (SIGSEGV)
-    case GDB_SIGNAL_SEGV:
-      return SIGSEGV;
 #endif
 #if defined (SIGSYS)
     case GDB_SIGNAL_SYS:
@@ -430,10 +428,6 @@ do_gdb_signal_to_host (enum gdb_signal oursig,
 #if defined (SIGALRM)
     case GDB_SIGNAL_ALRM:
       return SIGALRM;
-#endif
-#if defined (SIGTERM)
-    case GDB_SIGNAL_TERM:
-      return SIGTERM;
 #endif
 #if defined (SIGUSR1)
     case GDB_SIGNAL_USR1:
@@ -562,27 +556,27 @@ do_gdb_signal_to_host (enum gdb_signal oursig,
 
       /* Mach exceptions.  Assumes that the values for EXC_ are positive! */
 #if defined (EXC_BAD_ACCESS) && defined (_NSIG)
-    case TARGET_EXC_BAD_ACCESS:
+    case GDB_EXC_BAD_ACCESS:
       return _NSIG + EXC_BAD_ACCESS;
 #endif
 #if defined (EXC_BAD_INSTRUCTION) && defined (_NSIG)
-    case TARGET_EXC_BAD_INSTRUCTION:
+    case GDB_EXC_BAD_INSTRUCTION:
       return _NSIG + EXC_BAD_INSTRUCTION;
 #endif
 #if defined (EXC_ARITHMETIC) && defined (_NSIG)
-    case TARGET_EXC_ARITHMETIC:
+    case GDB_EXC_ARITHMETIC:
       return _NSIG + EXC_ARITHMETIC;
 #endif
 #if defined (EXC_EMULATION) && defined (_NSIG)
-    case TARGET_EXC_EMULATION:
+    case GDB_EXC_EMULATION:
       return _NSIG + EXC_EMULATION;
 #endif
 #if defined (EXC_SOFTWARE) && defined (_NSIG)
-    case TARGET_EXC_SOFTWARE:
+    case GDB_EXC_SOFTWARE:
       return _NSIG + EXC_SOFTWARE;
 #endif
 #if defined (EXC_BREAKPOINT) && defined (_NSIG)
-    case TARGET_EXC_BREAKPOINT:
+    case GDB_EXC_BREAKPOINT:
       return _NSIG + EXC_BREAKPOINT;
 #endif
 

@@ -1,4 +1,4 @@
-/*	$NetBSD: kbd.c,v 1.1 2013/01/05 17:44:24 tsutsui Exp $	*/
+/*	$NetBSD: kbd.c,v 1.4 2015/02/14 13:06:28 tsutsui Exp $	*/
 
 /*
  * Copyright (c) 1992 OMRON Corporation.
@@ -79,7 +79,7 @@
 #include <luna68k/stand/boot/samachdep.h>
 #include <luna68k/stand/boot/kbdreg.h>
 
-struct kbd_keymap kbd_keymap[] = {
+static const struct kbd_keymap kbd_keymap[] = {
 	{ KC_IGNORE,	{ 0,	    0        } },	/*   0 [0x00]	      */
 	{ KC_IGNORE,	{ 0,	    0        } },	/*   1 [0x01]	      */
 	{ KC_IGNORE,	{ 0,	    0        } },	/*   2 [0x02]	      */
@@ -215,7 +215,7 @@ int	ctrl_flag  = 0;
 int	meta_flag  = 0;
 
 int
-kbd_decode(u_char code)
+kbd_decode(uint8_t code)
 {
 	unsigned int c, updown = 0;
 
@@ -227,13 +227,13 @@ kbd_decode(u_char code)
 	c = kbd_keymap[code].km_type;
 
 	if (c == KC_IGNORE)
-		return(KC_IGNORE);
+		return KC_IGNORE;
 
 	if ((c == KC_CODE) && updown)
-		return(KC_IGNORE);
+		return KC_IGNORE;
 
 	if (c == KC_SHIFT) {
-		switch(kbd_keymap[code].km_code[0]) {
+		switch (kbd_keymap[code].km_code[0]) {
 
 		case KS_SHIFT:
 			shift_flag = 1 - updown;
@@ -248,7 +248,7 @@ kbd_decode(u_char code)
 			break;
 		}
 
-		return(KC_IGNORE);
+		return KC_IGNORE;
 	}
 
 	if (shift_flag)
@@ -262,5 +262,5 @@ kbd_decode(u_char code)
 	if (ctrl_flag)
 		c &= 0x1F;
 
-	return(c);
+	return c;
 }

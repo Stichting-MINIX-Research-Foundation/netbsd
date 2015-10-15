@@ -2,14 +2,8 @@
  * EAP peer method: EAP-PAX (RFC 4746)
  * Copyright (c) 2005-2008, Jouni Malinen <j@w1.fi>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #include "includes.h"
@@ -44,6 +38,7 @@ struct eap_pax_data {
 	u8 mk[EAP_PAX_MK_LEN];
 	u8 ck[EAP_PAX_CK_LEN];
 	u8 ick[EAP_PAX_ICK_LEN];
+	u8 mid[EAP_PAX_MID_LEN];
 };
 
 
@@ -92,7 +87,7 @@ static void eap_pax_deinit(struct eap_sm *sm, void *priv)
 {
 	struct eap_pax_data *data = priv;
 	os_free(data->cid);
-	os_free(data);
+	bin_clear_free(data, sizeof(*data));
 }
 
 
@@ -184,8 +179,8 @@ static struct wpabuf * eap_pax_process_std_1(struct eap_pax_data *data,
 		    data->rand.r.y, EAP_PAX_RAND_LEN);
 
 	if (eap_pax_initial_key_derivation(req->mac_id, data->ak, data->rand.e,
-					   data->mk, data->ck, data->ick) < 0)
-	{
+					   data->mk, data->ck, data->ick,
+					   data->mid) < 0) {
 		ret->ignore = TRUE;
 		return NULL;
 	}
@@ -284,7 +279,7 @@ static struct wpabuf * eap_pax_process_std_3(struct eap_pax_data *data,
 	eap_pax_mac(data->mac_id, data->ck, EAP_PAX_CK_LEN,
 		    data->rand.r.y, EAP_PAX_RAND_LEN,
 		    (u8 *) data->cid, data->cid_len, NULL, 0, mac);
-	if (os_memcmp(pos, mac, EAP_PAX_MAC_LEN) != 0) {
+	if (os_memcmp_const(pos, mac, EAP_PAX_MAC_LEN) != 0) {
 		wpa_printf(MSG_INFO, "EAP-PAX: Invalid MAC_CK(B, CID) "
 			   "received");
 		wpa_hexdump(MSG_MSGDUMP, "EAP-PAX: expected MAC_CK(B, CID)",
@@ -421,7 +416,7 @@ static struct wpabuf * eap_pax_process(struct eap_sm *sm, void *priv,
 			    wpabuf_head(reqData), mlen, NULL, 0, NULL, 0,
 			    icvbuf);
 	}
-	if (os_memcmp(icv, icvbuf, EAP_PAX_ICV_LEN) != 0) {
+	if (os_memcmp_const(icv, icvbuf, EAP_PAX_ICV_LEN) != 0) {
 		wpa_printf(MSG_DEBUG, "EAP-PAX: invalid ICV - ignoring the "
 			   "message");
 		wpa_hexdump(MSG_MSGDUMP, "EAP-PAX: expected ICV",
@@ -507,6 +502,26 @@ static u8 * eap_pax_get_emsk(struct eap_sm *sm, void *priv, size_t *len)
 }
 
 
+static u8 * eap_pax_get_session_id(struct eap_sm *sm, void *priv, size_t *len)
+{
+	struct eap_pax_data *data = priv;
+	u8 *sid;
+
+	if (data->state != PAX_DONE)
+		return NULL;
+
+	sid = os_malloc(1 + EAP_PAX_MID_LEN);
+	if (sid == NULL)
+		return NULL;
+
+	*len = 1 + EAP_PAX_MID_LEN;
+	sid[0] = EAP_TYPE_PAX;
+	os_memcpy(sid + 1, data->mid, EAP_PAX_MID_LEN);
+
+	return sid;
+}
+
+
 int eap_peer_pax_register(void)
 {
 	struct eap_method *eap;
@@ -523,6 +538,7 @@ int eap_peer_pax_register(void)
 	eap->isKeyAvailable = eap_pax_isKeyAvailable;
 	eap->getKey = eap_pax_getKey;
 	eap->get_emsk = eap_pax_get_emsk;
+	eap->getSessionId = eap_pax_get_session_id;
 
 	ret = eap_peer_method_register(eap);
 	if (ret)

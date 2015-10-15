@@ -2,14 +2,8 @@
  * TLS interface functions and an internal TLS implementation
  * Copyright (c) 2004-2011, Jouni Malinen <j@w1.fi>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  *
  * This file interface functions for hostapd/wpa_supplicant to use the
  * integrated TLSv1 implementation.
@@ -34,6 +28,7 @@ struct tls_global {
 struct tls_connection {
 	struct tlsv1_client *client;
 	struct tlsv1_server *server;
+	struct tls_global *global;
 };
 
 
@@ -91,6 +86,7 @@ struct tls_connection * tls_connection_init(void *tls_ctx)
 	conn = os_zalloc(sizeof(*conn));
 	if (conn == NULL)
 		return NULL;
+	conn->global = global;
 
 #ifdef CONFIG_TLS_INTERNAL_CLIENT
 	if (!global->server) {
@@ -112,6 +108,28 @@ struct tls_connection * tls_connection_init(void *tls_ctx)
 #endif /* CONFIG_TLS_INTERNAL_SERVER */
 
 	return conn;
+}
+
+
+#ifdef CONFIG_TESTING_OPTIONS
+#ifdef CONFIG_TLS_INTERNAL_SERVER
+void tls_connection_set_test_flags(struct tls_connection *conn, u32 flags)
+{
+	if (conn->server)
+		tlsv1_server_set_test_flags(conn->server, flags);
+}
+#endif /* CONFIG_TLS_INTERNAL_SERVER */
+#endif /* CONFIG_TESTING_OPTIONS */
+
+
+void tls_connection_set_log_cb(struct tls_connection *conn,
+			       void (*log_cb)(void *ctx, const char *msg),
+			       void *ctx)
+{
+#ifdef CONFIG_TLS_INTERNAL_SERVER
+	if (conn->server)
+		tlsv1_server_set_log_cb(conn->server, log_cb, ctx);
+#endif /* CONFIG_TLS_INTERNAL_SERVER */
 }
 
 
@@ -171,6 +189,31 @@ int tls_connection_set_params(void *tls_ctx, struct tls_connection *conn,
 	cred = tlsv1_cred_alloc();
 	if (cred == NULL)
 		return -1;
+
+	if (params->subject_match) {
+		wpa_printf(MSG_INFO, "TLS: subject_match not supported");
+		return -1;
+	}
+
+	if (params->altsubject_match) {
+		wpa_printf(MSG_INFO, "TLS: altsubject_match not supported");
+		return -1;
+	}
+
+	if (params->suffix_match) {
+		wpa_printf(MSG_INFO, "TLS: suffix_match not supported");
+		return -1;
+	}
+
+	if (params->domain_match) {
+		wpa_printf(MSG_INFO, "TLS: domain_match not supported");
+		return -1;
+	}
+
+	if (params->openssl_ciphers) {
+		wpa_printf(MSG_INFO, "GnuTLS: openssl_ciphers not supported");
+		return -1;
+	}
 
 	if (tlsv1_set_ca_cert(cred, params->ca_cert,
 			      params->ca_cert_blob, params->ca_cert_blob_len,
@@ -332,6 +375,17 @@ struct wpabuf * tls_connection_handshake(void *tls_ctx,
 					 const struct wpabuf *in_data,
 					 struct wpabuf **appl_data)
 {
+	return tls_connection_handshake2(tls_ctx, conn, in_data, appl_data,
+					 NULL);
+}
+
+
+struct wpabuf * tls_connection_handshake2(void *tls_ctx,
+					  struct tls_connection *conn,
+					  const struct wpabuf *in_data,
+					  struct wpabuf **appl_data,
+					  int *need_more_data)
+{
 #ifdef CONFIG_TLS_INTERNAL_CLIENT
 	u8 *res, *ad;
 	size_t res_len, ad_len;
@@ -344,7 +398,7 @@ struct wpabuf * tls_connection_handshake(void *tls_ctx,
 	res = tlsv1_client_handshake(conn->client,
 				     in_data ? wpabuf_head(in_data) : NULL,
 				     in_data ? wpabuf_len(in_data) : 0,
-				     &res_len, &ad, &ad_len);
+				     &res_len, &ad, &ad_len, need_more_data);
 	if (res == NULL)
 		return NULL;
 	out = wpabuf_alloc_ext_data(res, res_len);
@@ -455,23 +509,23 @@ struct wpabuf * tls_connection_decrypt(void *tls_ctx,
 				       struct tls_connection *conn,
 				       const struct wpabuf *in_data)
 {
+	return tls_connection_decrypt2(tls_ctx, conn, in_data, NULL);
+}
+
+
+struct wpabuf * tls_connection_decrypt2(void *tls_ctx,
+					struct tls_connection *conn,
+					const struct wpabuf *in_data,
+					int *need_more_data)
+{
+	if (need_more_data)
+		*need_more_data = 0;
+
 #ifdef CONFIG_TLS_INTERNAL_CLIENT
 	if (conn->client) {
-		struct wpabuf *buf;
-		int res;
-		buf = wpabuf_alloc((wpabuf_len(in_data) + 500) * 3);
-		if (buf == NULL)
-			return NULL;
-		res = tlsv1_client_decrypt(conn->client, wpabuf_head(in_data),
-					   wpabuf_len(in_data),
-					   wpabuf_mhead(buf),
-					   wpabuf_size(buf));
-		if (res < 0) {
-			wpabuf_free(buf);
-			return NULL;
-		}
-		wpabuf_put(buf, res);
-		return buf;
+		return tlsv1_client_decrypt(conn->client, wpabuf_head(in_data),
+					    wpabuf_len(in_data),
+					    need_more_data);
 	}
 #endif /* CONFIG_TLS_INTERNAL_CLIENT */
 #ifdef CONFIG_TLS_INTERNAL_SERVER
@@ -622,4 +676,10 @@ int tls_connection_set_session_ticket_cb(void *tls_ctx,
 	}
 #endif /* CONFIG_TLS_INTERNAL_SERVER */
 	return -1;
+}
+
+
+int tls_get_library_version(char *buf, size_t buf_len)
+{
+	return os_snprintf(buf, buf_len, "internal");
 }

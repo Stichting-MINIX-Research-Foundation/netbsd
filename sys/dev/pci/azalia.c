@@ -1,4 +1,4 @@
-/*	$NetBSD: azalia.c,v 1.80 2013/10/20 21:06:09 christos Exp $	*/
+/*	$NetBSD: azalia.c,v 1.83 2014/11/09 19:57:53 nonaka Exp $	*/
 
 /*-
  * Copyright (c) 2005, 2008 The NetBSD Foundation, Inc.
@@ -41,7 +41,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: azalia.c,v 1.80 2013/10/20 21:06:09 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: azalia.c,v 1.83 2014/11/09 19:57:53 nonaka Exp $");
 
 #include <sys/param.h>
 #include <sys/device.h>
@@ -303,8 +303,9 @@ azalia_pci_attach(device_t parent, device_t self, void *aux)
 	pcireg_t v;
 	pci_intr_handle_t ih;
 	const char *intrrupt_str;
-	const char *name;
-	const char *vendor;
+	char vendor[PCI_VENDORSTR_LEN];
+	char product[PCI_PRODUCTSTR_LEN];
+	char intrbuf[PCI_INTRSTR_LEN];
 
 	sc->dev = self;
 	sc->dmat = pa->pa_dmat;
@@ -335,7 +336,7 @@ azalia_pci_attach(device_t parent, device_t self, void *aux)
 
 	sc->pc = pa->pa_pc;
 	sc->tag = pa->pa_tag;
-	intrrupt_str = pci_intr_string(pa->pa_pc, ih);
+	intrrupt_str = pci_intr_string(pa->pa_pc, ih, intrbuf, sizeof(intrbuf));
 	sc->ih = pci_intr_establish(pa->pa_pc, ih, IPL_AUDIO, azalia_intr, sc);
 	if (sc->ih == NULL) {
 		aprint_error_dev(self, "can't establish interrupt");
@@ -352,16 +353,11 @@ azalia_pci_attach(device_t parent, device_t self, void *aux)
 		aprint_error_dev(self, "couldn't establish power handler\n");
 
 	sc->pciid = pa->pa_id;
-	vendor = pci_findvendor(pa->pa_id);
-	name = pci_findproduct(pa->pa_id);
-	if (vendor != NULL && name != NULL) {
-		aprint_normal_dev(self, "host: %s %s (rev. %d)",
-		    vendor, name, PCI_REVISION(pa->pa_class));
-	} else {
-		aprint_normal_dev(self, "host: 0x%4.4x/0x%4.4x (rev. %d)",
-		    PCI_VENDOR(pa->pa_id), PCI_PRODUCT(pa->pa_id),
-		    PCI_REVISION(pa->pa_class));
-	}
+	pci_findvendor(vendor, sizeof(vendor), PCI_VENDOR(pa->pa_id));
+	pci_findproduct(product, sizeof(product), PCI_VENDOR(pa->pa_id),
+	    PCI_PRODUCT(pa->pa_id));
+	aprint_normal_dev(self, "host: %s %s (rev. %d)",
+	    vendor, product, PCI_REVISION(pa->pa_class));
 
 	if (azalia_attach(sc)) {
 		aprint_error_dev(self, "initialization failure\n");
@@ -820,6 +816,17 @@ azalia_init_rirb(azalia_t *az, int reinit)
 	/* Run! */
 	rirbctl = AZ_READ_1(az, RIRBCTL);
 	AZ_WRITE_1(az, RIRBCTL, rirbctl | HDA_RIRBCTL_RIRBDMAEN | HDA_RIRBCTL_RINTCTL);
+	for (i = 5000; i >= 0; i--) {
+		DELAY(10);
+		rirbctl = AZ_READ_1(az, RIRBCTL);
+		if (rirbctl & HDA_RIRBCTL_RIRBDMAEN)
+			break;
+	}
+	if (i <= 0) {
+		aprint_error_dev(az->dev, "RIRB is not running\n");
+		return EBUSY;
+	}
+
 	return 0;
 }
 

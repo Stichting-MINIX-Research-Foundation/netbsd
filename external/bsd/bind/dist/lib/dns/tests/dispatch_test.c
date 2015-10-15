@@ -1,7 +1,7 @@
-/*	$NetBSD: dispatch_test.c,v 1.1.1.1 2013/07/27 15:23:17 christos Exp $	*/
+/*	$NetBSD: dispatch_test.c,v 1.1.1.4 2014/12/10 03:34:42 christos Exp $	*/
 
 /*
- * Copyright (C) 2012  Internet Systems Consortium, Inc. ("ISC")
+ * Copyright (C) 2012, 2014  Internet Systems Consortium, Inc. ("ISC")
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -67,7 +67,7 @@ make_dispatchset(unsigned int ndisps) {
 }
 
 static void
-teardown() {
+teardown(void) {
 	if (dset != NULL)
 		dns_dispatchset_destroy(&dset);
 	if (dispatchmgr != NULL)

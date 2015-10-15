@@ -1,4 +1,4 @@
-/*	$NetBSD: sd.c,v 1.3 2012/12/19 13:53:47 kiyohara Exp $	*/
+/*	$NetBSD: sd.c,v 1.5 2015/01/02 19:42:05 christos Exp $	*/
 /*
  * Copyright (c) 2010 KIYOHARA Takashi
  * All rights reserved.
@@ -474,7 +474,7 @@ sdgetdefaultlabel(struct sd_softc *sd, struct disklabel *lp)
 	lp->d_ncylinders = sd->sc_params.cyls;
 	lp->d_secpercyl = lp->d_ntracks * lp->d_nsectors;
 
-	lp->d_type = DTYPE_SCSI;
+	lp->d_type = DKTYPE_SCSI;
 
 	strncpy(lp->d_packname, "fictitious", 16);
 	lp->d_secperunit = sd->sc_params.disksize;
@@ -713,7 +713,7 @@ sdstrategy(void *f, int rw, daddr_t dblk, size_t size, void *p, size_t *rsize)
 		} else if ((blkno & 0xffffffff) == blkno) {
 			/* 10-byte CDB */
 			memset(&cmd_big, 0, sizeof(cmd_big));
-			cmd_small.opcode = READ_10;
+			cmd_big.opcode = READ_10;
 			_lto4b(blkno, cmd_big.addr);
 			_lto2b(1, cmd_big.length);
 			cmdlen = sizeof(cmd_big);
@@ -721,7 +721,7 @@ sdstrategy(void *f, int rw, daddr_t dblk, size_t size, void *p, size_t *rsize)
 		} else {
 			/* 16-byte CDB */
 			memset(&cmd16, 0, sizeof(cmd16));
-			cmd_small.opcode = READ_16;
+			cmd16.opcode = READ_16;
 			_lto8b(blkno, cmd16.addr);
 			_lto4b(1, cmd16.length);
 			cmdlen = sizeof(cmd16);

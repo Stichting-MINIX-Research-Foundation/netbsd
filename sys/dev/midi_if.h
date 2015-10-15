@@ -1,4 +1,4 @@
-/*	$NetBSD: midi_if.h,v 1.25 2012/04/09 10:18:16 plunky Exp $	*/
+/*	$NetBSD: midi_if.h,v 1.27 2015/03/01 00:34:14 mrg Exp $	*/
 
 /*
  * Copyright (c) 1998 The NetBSD Foundation, Inc.

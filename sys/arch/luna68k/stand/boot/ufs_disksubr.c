@@ -1,4 +1,4 @@
-/*	$NetBSD: ufs_disksubr.c,v 1.2 2013/01/14 01:37:57 tsutsui Exp $	*/
+/*	$NetBSD: ufs_disksubr.c,v 1.5 2015/02/14 05:03:09 tsutsui Exp $	*/
 
 /*
  * Copyright (c) 1992 OMRON Corporation.
@@ -91,10 +91,10 @@
 char *
 readdisklabel(int ctlr, int id, struct disklabel *lp)
 {
-	u_char *bp = lbl_buff;
+	uint8_t *bp = lbl_buff;
 	struct disklabel *dlp;
 	char *msg = NULL;
-	static struct scsi_fmt_cdb cdb = {
+	static struct scsi_generic_cdb cdb = {
 		6,
 		{ CMD_READ, 0, 0, 0, 1, 0 }
 	};
@@ -112,7 +112,8 @@ readdisklabel(int ctlr, int id, struct disklabel *lp)
 		for (dlp = (struct disklabel *)bp;
 		     dlp <= (struct disklabel *)(bp + DEV_BSIZE - sizeof(*dlp));
 		     dlp = (struct disklabel *)((char *)dlp + sizeof(long))) {
-			if (dlp->d_magic != DISKMAGIC || dlp->d_magic2 != DISKMAGIC) {
+			if (dlp->d_magic != DISKMAGIC ||
+			    dlp->d_magic2 != DISKMAGIC) {
 				if (msg == NULL)
 					msg = "no disk label";
 			} else if (dlp->d_npartitions > MAXPARTITIONS ||
@@ -126,5 +127,5 @@ readdisklabel(int ctlr, int id, struct disklabel *lp)
 		}
 	}
 
-	return (msg);
+	return msg;
 }

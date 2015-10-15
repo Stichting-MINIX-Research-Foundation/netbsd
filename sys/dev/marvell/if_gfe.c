@@ -1,4 +1,4 @@
-/*	$NetBSD: if_gfe.c,v 1.41 2012/07/22 14:32:59 matt Exp $	*/
+/*	$NetBSD: if_gfe.c,v 1.45 2015/04/13 16:33:24 riastradh Exp $	*/
 
 /*
  * Copyright (c) 2002 Allegro Networks, Inc., Wasabi Systems, Inc.
@@ -42,7 +42,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_gfe.c,v 1.41 2012/07/22 14:32:59 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_gfe.c,v 1.45 2015/04/13 16:33:24 riastradh Exp $");
 
 #include "opt_inet.h"
 
@@ -67,7 +67,7 @@ __KERNEL_RCSID(0, "$NetBSD: if_gfe.c,v 1.41 2012/07/22 14:32:59 matt Exp $");
 #include <netinet/if_inarp.h>
 #endif
 #include <net/bpf.h>
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 
 #include <dev/mii/mii.h>
 #include <dev/mii/miivar.h>
@@ -537,7 +537,7 @@ gfe_attach(device_t parent, device_t self, void *aux)
 	ether_ifattach(ifp, enaddr);
 	bpf_attach(ifp, DLT_EN10MB, sizeof(struct ether_header));
 	rnd_attach_source(&sc->sc_rnd_source, device_xname(self), RND_TYPE_NET,
-	    0);
+	    RND_FLAG_DEFAULT);
 	marvell_intr_establish(mva->mva_irq, IPL_NET, gfe_intr, sc);
 }
 
@@ -816,7 +816,7 @@ gfe_rx_rxqinit(struct gfe_softc *sc, enum gfe_rxprio rxprio)
 	ds = rxq->rxq_buf_mem.gdm_map->dm_segs;
 	nxtaddr = rxq->rxq_desc_busaddr + sizeof(*rxd);
 	for (idx = 0, rxd = rxq->rxq_descs; idx < GE_RXDESC_MAX;
-	    idx++, nxtaddr += sizeof(*(++rxd))) {
+	    idx++, rxd++, nxtaddr += sizeof(*rxd)) {
 		rxd->ed_lencnt = htogt32(GE_RXBUF_SIZE << 16);
 		rxd->ed_cmdsts = htogt32(RX_CMD_F|RX_CMD_L|RX_CMD_O|RX_CMD_EI);
 		rxd->ed_bufptr = htogt32(ds->ds_addr + boff);
@@ -2018,9 +2018,10 @@ gfe_hash_fill(struct gfe_softc *sc)
 
 	error = gfe_hash_entry_op(sc, GE_HASH_ADD, GE_RXPRIO_HI,
 	    CLLADDR(sc->sc_ec.ec_if.if_sadl));
-	if (error)
+	if (error) {
 		GE_FUNC_EXIT(sc, "!");
 		return error;
+	}
 
 	sc->sc_flags &= ~GE_ALLMULTI;
 	if ((sc->sc_ec.ec_if.if_flags & IFF_PROMISC) == 0)

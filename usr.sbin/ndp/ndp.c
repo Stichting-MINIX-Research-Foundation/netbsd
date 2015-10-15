@@ -1,4 +1,4 @@
-/*	$NetBSD: ndp.c,v 1.41 2013/10/19 17:16:25 christos Exp $	*/
+/*	$NetBSD: ndp.c,v 1.45 2015/08/03 09:51:40 ozaki-r Exp $	*/
 /*	$KAME: ndp.c,v 1.121 2005/07/13 11:30:13 keiichi Exp $	*/
 
 /*
@@ -104,7 +104,9 @@
 #include <stdlib.h>
 #include <fcntl.h>
 #include <unistd.h>
+
 #include "gmt2local.h"
+#include "prog_ops.h"
 
 static pid_t pid;
 static int nflag;
@@ -159,8 +161,6 @@ main(int argc, char **argv)
 {
 	int ch;
 
-	pid = getpid();
-	thiszone = gmt2local(0L);
 	while ((ch = getopt(argc, argv, "acd:f:Ii:nprstA:HPR")) != -1)
 		switch (ch) {
 		case 'a':
@@ -209,6 +209,12 @@ main(int argc, char **argv)
 
 	argc -= optind;
 	argv += optind;
+
+	if (prog_init && prog_init() == -1)
+		err(1, "init failed");
+
+	pid = prog_getpid();
+	thiszone = gmt2local(0L);
 
 	switch (mode) {
 	case 'a':
@@ -301,7 +307,7 @@ static void
 getsocket(void)
 {
 	if (my_s < 0) {
-		my_s = socket(PF_ROUTE, SOCK_RAW, 0);
+		my_s = prog_socket(PF_ROUTE, SOCK_RAW, 0);
 		if (my_s < 0)
 			err(1, "socket");
 	}
@@ -353,7 +359,7 @@ set(int argc, char **argv)
 	hints.ai_family = AF_INET6;
 	gai_error = getaddrinfo(host, NULL, &hints, &res);
 	if (gai_error) {
-		warnx("%s: %s\n", host, gai_strerror(gai_error));
+		warnx("%s: %s", host, gai_strerror(gai_error));
 		return 1;
 	}
 	mysin->sin6_addr = ((struct sockaddr_in6 *)(void *)res->ai_addr)->sin6_addr;
@@ -420,7 +426,7 @@ get(char *host)
 	hints.ai_family = AF_INET6;
 	gai_error = getaddrinfo(host, NULL, &hints, &res);
 	if (gai_error) {
-		warnx("%s: %s\n", host, gai_strerror(gai_error));
+		warnx("%s: %s", host, gai_strerror(gai_error));
 		return;
 	}
 	mysin->sin6_addr = ((struct sockaddr_in6 *)(void *)res->ai_addr)->sin6_addr;
@@ -454,7 +460,7 @@ delete(char *host)
 	hints.ai_family = AF_INET6;
 	gai_error = getaddrinfo(host, NULL, &hints, &res);
 	if (gai_error) {
-		warnx("%s: %s\n", host, gai_strerror(gai_error));
+		warnx("%s: %s", host, gai_strerror(gai_error));
 		return 1;
 	}
 	mysin->sin6_addr = ((struct sockaddr_in6 *)(void *)res->ai_addr)->sin6_addr;
@@ -534,12 +540,12 @@ again:;
 	mib[3] = AF_INET6;
 	mib[4] = NET_RT_FLAGS;
 	mib[5] = RTF_LLINFO;
-	if (sysctl(mib, 6, NULL, &needed, NULL, 0) < 0)
+	if (prog_sysctl(mib, 6, NULL, &needed, NULL, 0) < 0)
 		err(1, "sysctl(PF_ROUTE estimate)");
 	if (needed > 0) {
 		if ((buf = malloc(needed)) == NULL)
 			err(1, "malloc");
-		if (sysctl(mib, 6, buf, &needed, NULL, 0) < 0)
+		if (prog_sysctl(mib, 6, buf, &needed, NULL, 0) < 0)
 			err(1, "sysctl(PF_ROUTE, NET_RT_FLAGS)");
 		lim = buf + needed;
 	} else
@@ -716,20 +722,20 @@ getnbrinfo(struct in6_addr *addr, unsigned int ifindex, int warning)
 	static struct in6_nbrinfo nbi;
 	int s;
 
-	if ((s = socket(AF_INET6, SOCK_DGRAM, 0)) < 0)
+	if ((s = prog_socket(AF_INET6, SOCK_DGRAM, 0)) < 0)
 		err(1, "socket");
 
 	(void)memset(&nbi, 0, sizeof(nbi));
 	(void)if_indextoname(ifindex, nbi.ifname);
 	nbi.addr = *addr;
-	if (ioctl(s, SIOCGNBRINFO_IN6, &nbi) < 0) {
+	if (prog_ioctl(s, SIOCGNBRINFO_IN6, &nbi) < 0) {
 		if (warning)
 			warn("ioctl(SIOCGNBRINFO_IN6)");
-		(void)close(s);
+		(void)prog_close(s);
 		return(NULL);
 	}
 
-	(void)close(s);
+	(void)prog_close(s);
 	return(&nbi);
 }
 
@@ -839,12 +845,12 @@ doit:
 	l = rtm->rtm_msglen;
 	rtm->rtm_seq = ++seq;
 	rtm->rtm_type = cmd;
-	if (write(my_s, &m_rtmsg, (size_t)l) == -1) {
+	if (prog_write(my_s, &m_rtmsg, (size_t)l) == -1) {
 		if (errno != ESRCH || cmd != RTM_DELETE)
 			err(1, "writing to routing socket");
 	}
 	do {
-		l = read(my_s, &m_rtmsg, sizeof(m_rtmsg));
+		l = prog_read(my_s, &m_rtmsg, sizeof(m_rtmsg));
 	} while (l > 0 && (rtm->rtm_seq != seq || rtm->rtm_pid != pid));
 	if (l < 0)
 		warn("read from routing socket");
@@ -861,11 +867,11 @@ ifinfo(char *ifname, int argc, char **argv)
 	u_int8_t nullbuf[8];
 #endif
 
-	if ((s = socket(AF_INET6, SOCK_DGRAM, 0)) < 0)
+	if ((s = prog_socket(AF_INET6, SOCK_DGRAM, 0)) < 0)
 		err(1, "socket");
 	(void)memset(&nd, 0, sizeof(nd));
 	(void)strlcpy(nd.ifname, ifname, sizeof(nd.ifname));
-	if (ioctl(s, SIOCGIFINFO_IN6, &nd) < 0)
+	if (prog_ioctl(s, SIOCGIFINFO_IN6, &nd) < 0)
 		err(1, "ioctl(SIOCGIFINFO_IN6)");
 #define ND nd.ndi
 	newflags = ND.flags;
@@ -918,6 +924,9 @@ ifinfo(char *ifname, int argc, char **argv)
 #ifdef ND6_IFF_OVERRIDE_RTADV
 		SETFLAG("override_rtadv", ND6_IFF_OVERRIDE_RTADV);
 #endif
+#ifdef ND6_IFF_AUTO_LINKLOCAL
+		SETFLAG("auto_linklocal", ND6_IFF_AUTO_LINKLOCAL);
+#endif
 #ifdef ND6_IFF_PREFER_SOURCE
 		SETFLAG("prefer_source", ND6_IFF_PREFER_SOURCE);
 #endif
@@ -930,10 +939,10 @@ ifinfo(char *ifname, int argc, char **argv)
 
 		ND.flags = newflags;
 #ifdef SIOCSIFINFO_IN6
-		if (ioctl(s, SIOCSIFINFO_IN6, &nd) < 0)
+		if (prog_ioctl(s, SIOCSIFINFO_IN6, &nd) < 0)
 			err(1, "ioctl(SIOCSIFINFO_IN6)");
 #else
-		if (ioctl(s, SIOCSIFINFO_FLAGS, &nd) < 0)
+		if (prog_ioctl(s, SIOCSIFINFO_FLAGS, &nd) < 0)
 			err(1, "ioctl(SIOCSIFINFO_FLAGS)");
 #endif
 #undef SETFLAG
@@ -943,7 +952,7 @@ ifinfo(char *ifname, int argc, char **argv)
 	if (!ND.initialized)
 		errx(1, "%s: not initialized yet", ifname);
 
-	if (ioctl(s, SIOCGIFINFO_IN6, &nd) < 0)
+	if (prog_ioctl(s, SIOCGIFINFO_IN6, &nd) < 0)
 		err(1, "ioctl(SIOCGIFINFO_IN6)");
 	(void)printf("linkmtu=%d", ND.linkmtu);
 	(void)printf(", maxmtu=%d", ND.maxmtu);
@@ -996,6 +1005,10 @@ ifinfo(char *ifname, int argc, char **argv)
 		if ((ND.flags & ND6_IFF_OVERRIDE_RTADV))
 			(void)printf("override_rtadv ");
 #endif
+#ifdef ND6_IFF_AUTO_LINKLOCAL
+		if ((ND.flags & ND6_IFF_AUTO_LINKLOCAL))
+			(void)printf("auto_linklocal ");
+#endif
 #ifdef ND6_IFF_PREFER_SOURCE
 		if ((ND.flags & ND6_IFF_PREFER_SOURCE))
 			(void)printf("prefer_source ");
@@ -1004,7 +1017,7 @@ ifinfo(char *ifname, int argc, char **argv)
 	(void)putc('\n', stdout);
 #undef ND
 
-	(void)close(s);
+	(void)prog_close(s);
 }
 
 #ifndef ND_RA_FLAG_RTPREF_MASK	/* XXX: just for compilation on *BSD release */
@@ -1021,7 +1034,7 @@ rtrlist(void)
 	size_t l;
 	struct timeval tim;
 
-	if (sysctl(mib, sizeof(mib) / sizeof(mib[0]), NULL, &l, NULL, 0) < 0) {
+	if (prog_sysctl(mib, sizeof(mib) / sizeof(mib[0]), NULL, &l, NULL, 0) < 0) {
 		err(1, "sysctl(ICMPV6CTL_ND6_DRLIST)");
 		/*NOTREACHED*/
 	}
@@ -1032,7 +1045,7 @@ rtrlist(void)
 		err(1, "malloc");
 		/*NOTREACHED*/
 	}
-	if (sysctl(mib, sizeof(mib) / sizeof(mib[0]), buf, &l, NULL, 0) < 0) {
+	if (prog_sysctl(mib, sizeof(mib) / sizeof(mib[0]), buf, &l, NULL, 0) < 0) {
 		err(1, "sysctl(ICMPV6CTL_ND6_DRLIST)");
 		/*NOTREACHED*/
 	}
@@ -1067,13 +1080,13 @@ rtrlist(void)
 	int s, i;
 	struct timeval time;
 
-	if ((s = socket(AF_INET6, SOCK_DGRAM, 0)) < 0) {
+	if ((s = prog_socket(AF_INET6, SOCK_DGRAM, 0)) < 0) {
 		err(1, "socket");
 		/* NOTREACHED */
 	}
 	(void)memset(&dr, 0, sizeof(dr));
 	(void)strlcpy(dr.ifname, "lo0", sizeof(dr.ifname)); /* dummy */
-	if (ioctl(s, SIOCGDRLST_IN6, (caddr_t)&dr) < 0) {
+	if (prog_ioctl(s, SIOCGDRLST_IN6, (caddr_t)&dr) < 0) {
 		err(1, "ioctl(SIOCGDRLST_IN6)");
 		/* NOTREACHED */
 	}
@@ -1102,7 +1115,7 @@ rtrlist(void)
 			    sec2str(DR.expire - time.tv_sec));
 	}
 #undef DR
-	(void)close(s);
+	(void)prog_close(s);
 #endif
 }
 
@@ -1111,16 +1124,15 @@ plist(void)
 {
 #ifdef ICMPV6CTL_ND6_PRLIST
 	int mib[] = { CTL_NET, PF_INET6, IPPROTO_ICMPV6, ICMPV6CTL_ND6_PRLIST };
-	char *buf;
-	struct in6_prefix *p, *ep, *n;
-	struct sockaddr_in6 *advrtr;
+	char *buf, *p, *ep;
+	struct in6_prefix pfx;
 	size_t l;
 	struct timeval tim;
 	const int niflags = NI_NUMERICHOST;
 	int ninflags = nflag ? NI_NUMERICHOST : 0;
 	char namebuf[NI_MAXHOST];
 
-	if (sysctl(mib, sizeof(mib) / sizeof(mib[0]), NULL, &l, NULL, 0) < 0) {
+	if (prog_sysctl(mib, sizeof(mib) / sizeof(mib[0]), NULL, &l, NULL, 0) < 0) {
 		err(1, "sysctl(ICMPV6CTL_ND6_PRLIST)");
 		/*NOTREACHED*/
 	}
@@ -1129,22 +1141,22 @@ plist(void)
 		err(1, "malloc");
 		/*NOTREACHED*/
 	}
-	if (sysctl(mib, sizeof(mib) / sizeof(mib[0]), buf, &l, NULL, 0) < 0) {
+	if (prog_sysctl(mib, sizeof(mib) / sizeof(mib[0]), buf, &l, NULL, 0) < 0) {
 		err(1, "sysctl(ICMPV6CTL_ND6_PRLIST)");
 		/*NOTREACHED*/
 	}
 
-	ep = (struct in6_prefix *)(void *)(buf + l);
-	for (p = (struct in6_prefix *)(void *)buf; p < ep; p = n) {
-		advrtr = (struct sockaddr_in6 *)(void *)(p + 1);
-		n = (struct in6_prefix *)(void *)&advrtr[p->advrtrs];
+	ep = buf + l;
+	for (p = buf; p < ep; ) {
+		memcpy(&pfx, p, sizeof(pfx));
+		p += sizeof(pfx);
 
-		if (getnameinfo((struct sockaddr *)(void *)&p->prefix,
-		    (socklen_t)p->prefix.sin6_len, namebuf, sizeof(namebuf),
+		if (getnameinfo((struct sockaddr*)&pfx.prefix,
+		    (socklen_t)pfx.prefix.sin6_len, namebuf, sizeof(namebuf),
 		    NULL, 0, niflags) != 0)
 			(void)strlcpy(namebuf, "?", sizeof(namebuf));
-		(void)printf("%s/%d if=%s\n", namebuf, p->prefixlen,
-		    if_indextoname((unsigned int)p->if_index, ifix_buf));
+		(void)printf("%s/%d if=%s\n", namebuf, pfx.prefixlen,
+		    if_indextoname((unsigned int)pfx.if_index, ifix_buf));
 
 		(void)gettimeofday(&tim, 0);
 		/*
@@ -1152,54 +1164,56 @@ plist(void)
 		 * by origin.  notify the difference to the users.
 		 */
 		(void)printf("flags=%s%s%s%s%s",
-		    p->raflags.onlink ? "L" : "",
-		    p->raflags.autonomous ? "A" : "",
-		    (p->flags & NDPRF_ONLINK) != 0 ? "O" : "",
-		    (p->flags & NDPRF_DETACHED) != 0 ? "D" : "",
+		    pfx.raflags.onlink ? "L" : "",
+		    pfx.raflags.autonomous ? "A" : "",
+		    (pfx.flags & NDPRF_ONLINK) != 0 ? "O" : "",
+		    (pfx.flags & NDPRF_DETACHED) != 0 ? "D" : "",
 #ifdef NDPRF_HOME
-		    (p->flags & NDPRF_HOME) != 0 ? "H" : ""
+		    (pfx.flags & NDPRF_HOME) != 0 ? "H" : ""
 #else
 		    ""
 #endif
 		    );
-		if (p->vltime == ND6_INFINITE_LIFETIME)
+		if (pfx.vltime == ND6_INFINITE_LIFETIME)
 			(void)printf(" vltime=infinity");
 		else
-			(void)printf(" vltime=%lu", (unsigned long)p->vltime);
-		if (p->pltime == ND6_INFINITE_LIFETIME)
+			(void)printf(" vltime=%lu", (unsigned long)pfx.vltime);
+		if (pfx.pltime == ND6_INFINITE_LIFETIME)
 			(void)printf(", pltime=infinity");
 		else
-			(void)printf(", pltime=%lu", (unsigned long)p->pltime);
-		if (p->expire == 0)
+			(void)printf(", pltime=%lu", (unsigned long)pfx.pltime);
+		if (pfx.expire == 0)
 			(void)printf(", expire=Never");
-		else if (p->expire >= tim.tv_sec)
+		else if (pfx.expire >= tim.tv_sec)
 			(void)printf(", expire=%s",
-			    sec2str(p->expire - tim.tv_sec));
+			    sec2str(pfx.expire - tim.tv_sec));
 		else
 			(void)printf(", expired");
-		(void)printf(", ref=%d", p->refcnt);
+		(void)printf(", ref=%d", pfx.refcnt);
 		(void)printf("\n");
 		/*
 		 * "advertising router" list is meaningful only if the prefix
 		 * information is from RA.
 		 */
-		if (p->advrtrs) {
+		if (pfx.advrtrs) {
 			int j;
-			struct sockaddr_in6 *sin6;
+			struct sockaddr_in6 sin6;
 
-			sin6 = advrtr;
 			(void)printf("  advertised by\n");
-			for (j = 0; j < p->advrtrs; j++) {
+			for (j = 0; j < pfx.advrtrs && p <= ep; j++) {
 				struct in6_nbrinfo *nbi;
 
-				if (getnameinfo((struct sockaddr *)(void *)sin6,
-				    (socklen_t)sin6->sin6_len, namebuf,
+				memcpy(&sin6, p, sizeof(sin6));
+				p += sizeof(sin6);
+
+				if (getnameinfo((struct sockaddr *)&sin6,
+				    (socklen_t)sin6.sin6_len, namebuf,
 				    sizeof(namebuf), NULL, 0, ninflags) != 0)
 					(void)strlcpy(namebuf, "?", sizeof(namebuf));
 				(void)printf("    %s", namebuf);
 
-				nbi = getnbrinfo(&sin6->sin6_addr,
-				    (unsigned int)p->if_index, 0);
+				nbi = getnbrinfo(&sin6.sin6_addr,
+				    (unsigned int)pfx.if_index, 0);
 				if (nbi) {
 					switch (nbi->state) {
 					case ND6_LLINFO_REACHABLE:
@@ -1213,7 +1227,6 @@ plist(void)
 					}
 				} else
 					(void)printf(" (no neighbor state)\n");
-				sin6++;
 			}
 		} else
 			(void)printf("  No advertising router\n");
@@ -1226,13 +1239,13 @@ plist(void)
 
 	(void)gettimeofday(&time, 0);
 
-	if ((s = socket(AF_INET6, SOCK_DGRAM, 0)) < 0) {
+	if ((s = prog_socket(AF_INET6, SOCK_DGRAM, 0)) < 0) {
 		err(1, "socket");
 		/* NOTREACHED */
 	}
 	(void)memset(&pr, 0, sizeof(pr));
 	(void)strlcpy(pr.ifname, "lo0", sizeof(pr.ifname)); /* dummy */
-	if (ioctl(s, SIOCGPRLST_IN6, (caddr_t)&pr) < 0) {
+	if (prog_ioctl(s, SIOCGPRLST_IN6, (caddr_t)&pr) < 0) {
 		err(1, "ioctl(SIOCGPRLST_IN6)");
 		/* NOTREACHED */
 	}
@@ -1373,7 +1386,7 @@ plist(void)
 			(void)printf("  No advertising router\n");
 	}
 #undef PR
-	(void)close(s);
+	(void)prog_close(s);
 #endif
 }
 
@@ -1383,12 +1396,12 @@ pfx_flush(void)
 	char dummyif[IFNAMSIZ+8];
 	int s;
 
-	if ((s = socket(AF_INET6, SOCK_DGRAM, 0)) < 0)
+	if ((s = prog_socket(AF_INET6, SOCK_DGRAM, 0)) < 0)
 		err(1, "socket");
 	(void)strlcpy(dummyif, "lo0", sizeof(dummyif)); /* dummy */
-	if (ioctl(s, SIOCSPFXFLUSH_IN6, (caddr_t)&dummyif) < 0)
+	if (prog_ioctl(s, SIOCSPFXFLUSH_IN6, (caddr_t)&dummyif) < 0)
 		err(1, "ioctl(SIOCSPFXFLUSH_IN6)");
-	(void)close(s);
+	(void)prog_close(s);
 }
 
 static void
@@ -1397,13 +1410,13 @@ rtr_flush(void)
 	char dummyif[IFNAMSIZ+8];
 	int s;
 
-	if ((s = socket(AF_INET6, SOCK_DGRAM, 0)) < 0)
+	if ((s = prog_socket(AF_INET6, SOCK_DGRAM, 0)) < 0)
 		err(1, "socket");
 	(void)strlcpy(dummyif, "lo0", sizeof(dummyif)); /* dummy */
-	if (ioctl(s, SIOCSRTRFLUSH_IN6, (caddr_t)&dummyif) < 0)
+	if (prog_ioctl(s, SIOCSRTRFLUSH_IN6, (caddr_t)&dummyif) < 0)
 		err(1, "ioctl(SIOCSRTRFLUSH_IN6)");
 
-	(void)close(s);
+	(void)prog_close(s);
 }
 
 static void
@@ -1412,13 +1425,13 @@ harmonize_rtr(void)
 	char dummyif[IFNAMSIZ+8];
 	int s;
 
-	if ((s = socket(AF_INET6, SOCK_DGRAM, 0)) < 0)
+	if ((s = prog_socket(AF_INET6, SOCK_DGRAM, 0)) < 0)
 		err(1, "socket");
 	(void)strlcpy(dummyif, "lo0", sizeof(dummyif)); /* dummy */
-	if (ioctl(s, SIOCSNDFLUSH_IN6, (caddr_t)&dummyif) < 0)
+	if (prog_ioctl(s, SIOCSNDFLUSH_IN6, (caddr_t)&dummyif) < 0)
 		err(1, "ioctl(SIOCSNDFLUSH_IN6)");
 
-	(void)close(s);
+	(void)prog_close(s);
 }
 
 #ifdef SIOCSDEFIFACE_IN6	/* XXX: check SIOCGDEFIFACE_IN6 as well? */
@@ -1436,16 +1449,16 @@ setdefif(char *ifname)
 			err(1, "failed to resolve i/f index for %s", ifname);
 	}
 
-	if ((s = socket(AF_INET6, SOCK_DGRAM, 0)) < 0)
+	if ((s = prog_socket(AF_INET6, SOCK_DGRAM, 0)) < 0)
 		err(1, "socket");
 
 	(void)strlcpy(ndifreq.ifname, "lo0", sizeof(ndifreq.ifname)); /* dummy */
 	ndifreq.ifindex = ifindex;
 
-	if (ioctl(s, SIOCSDEFIFACE_IN6, &ndifreq) < 0)
+	if (prog_ioctl(s, SIOCSDEFIFACE_IN6, &ndifreq) < 0)
 		err(1, "ioctl(SIOCSDEFIFACE_IN6)");
 
-	(void)close(s);
+	(void)prog_close(s);
 }
 
 static void
@@ -1455,13 +1468,13 @@ getdefif(void)
 	char ifname[IFNAMSIZ+8];
 	int s;
 
-	if ((s = socket(AF_INET6, SOCK_DGRAM, 0)) < 0)
+	if ((s = prog_socket(AF_INET6, SOCK_DGRAM, 0)) < 0)
 		err(1, "socket");
 
 	(void)memset(&ndifreq, 0, sizeof(ndifreq));
 	(void)strlcpy(ndifreq.ifname, "lo0", sizeof(ndifreq.ifname)); /* dummy */
 
-	if (ioctl(s, SIOCGDEFIFACE_IN6, &ndifreq) < 0)
+	if (prog_ioctl(s, SIOCGDEFIFACE_IN6, &ndifreq) < 0)
 		err(1, "ioctl(SIOCGDEFIFACE_IN6)");
 
 	if (ndifreq.ifindex == 0)
@@ -1473,7 +1486,7 @@ getdefif(void)
 		(void)printf("ND default interface = %s\n", ifname);
 	}
 
-	(void)close(s);
+	(void)prog_close(s);
 }
 #endif
 

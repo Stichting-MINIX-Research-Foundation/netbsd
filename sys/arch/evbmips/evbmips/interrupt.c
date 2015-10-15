@@ -1,4 +1,4 @@
-/*	$NetBSD: interrupt.c,v 1.19 2013/05/14 09:16:59 macallan Exp $	*/
+/*	$NetBSD: interrupt.c,v 1.22 2015/06/06 22:22:03 matt Exp $	*/
 
 /*-
  * Copyright (c) 2001 The NetBSD Foundation, Inc.
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: interrupt.c,v 1.19 2013/05/14 09:16:59 macallan Exp $");
+__KERNEL_RCSID(0, "$NetBSD: interrupt.c,v 1.22 2015/06/06 22:22:03 matt Exp $");
 
 #include <sys/param.h>
 #include <sys/cpu.h>
@@ -61,11 +61,14 @@ cpu_intr(int ppl, vaddr_t pc, uint32_t status)
 	const u_int blcnt = curlwp->l_blcnt;
 #endif
 	KASSERT(ci->ci_cpl == IPL_HIGH);
+	KDASSERT(mips_cp0_status_read() & MIPS_SR_INT_IE);
 
 	ci->ci_data.cpu_nintr++;
 
 	while (ppl < (ipl = splintr(&pending))) {
+		KDASSERT(mips_cp0_status_read() & MIPS_SR_INT_IE);
 		splx(ipl);	/* lower to interrupt level */
+		KDASSERT(mips_cp0_status_read() & MIPS_SR_INT_IE);
 
 		KASSERTMSG(ci->ci_cpl == ipl,
 		    "%s: cpl (%d) != ipl (%d)", __func__, ci->ci_cpl, ipl);
@@ -75,6 +78,7 @@ cpu_intr(int ppl, vaddr_t pc, uint32_t status)
 		cf.sr = status;
 		cf.intr = (ci->ci_idepth > 1);
 
+#ifdef MIPS3_ENABLE_CLOCK_INTR
 		if (pending & MIPS_INT_MASK_5) {
 			KASSERTMSG(ipl == IPL_SCHED,
 			    "%s: ipl (%d) != IPL_SCHED (%d)",
@@ -83,6 +87,7 @@ cpu_intr(int ppl, vaddr_t pc, uint32_t status)
 			mips3_clockintr(&cf);
 			pending ^= MIPS_INT_MASK_5;
 		}
+#endif
 
 		if (pending != 0) {
 			/* Process I/O and error interrupts. */
@@ -102,4 +107,5 @@ cpu_intr(int ppl, vaddr_t pc, uint32_t status)
 	}
 
 	KASSERT(ci->ci_cpl == IPL_HIGH);
+	KDASSERT(mips_cp0_status_read() & MIPS_SR_INT_IE);
 }

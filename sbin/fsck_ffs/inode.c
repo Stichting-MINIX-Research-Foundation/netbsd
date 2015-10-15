@@ -1,4 +1,4 @@
-/*	$NetBSD: inode.c,v 1.69 2013/06/23 22:03:34 dholland Exp $	*/
+/*	$NetBSD: inode.c,v 1.71 2014/04/05 12:32:27 justin Exp $	*/
 
 /*
  * Copyright (c) 1980, 1986, 1993
@@ -34,7 +34,7 @@
 #if 0
 static char sccsid[] = "@(#)inode.c	8.8 (Berkeley) 4/28/95";
 #else
-__RCSID("$NetBSD: inode.c,v 1.69 2013/06/23 22:03:34 dholland Exp $");
+__RCSID("$NetBSD: inode.c,v 1.71 2014/04/05 12:32:27 justin Exp $");
 #endif
 #endif /* not lint */
 
@@ -358,8 +358,10 @@ swap_dinode1(union dinode *dp, int n)
 		    doinglevel2 ||
 		    (maxsymlinklen < 0) ||
 		    (iswap64(dp1->di_size) > (uint64_t)maxsymlinklen)) {
-			for (j = 0; j < (UFS_NDADDR + UFS_NIADDR); j++)
+			for (j = 0; j < UFS_NDADDR; j++)
 			    dp1->di_db[j] = bswap32(dp1->di_db[j]);
+			for (j = 0; j < UFS_NIADDR; j++)
+			    dp1->di_ib[j] = bswap32(dp1->di_ib[j]);
 		}
 	}
 }
@@ -374,8 +376,12 @@ swap_dinode2(union dinode *dp, int n)
 	for (i = 0; i < n; i++, dp2++) {
 		ffs_dinode2_swap(dp2, dp2);
 		if ((iswap16(dp2->di_mode) & IFMT) != IFLNK) {
-			for (j = 0; j < (UFS_NDADDR + UFS_NIADDR + UFS_NXADDR); j++)
+			for (j = 0; j < UFS_NXADDR; j++)
 				dp2->di_extb[j] = bswap64(dp2->di_extb[j]);
+			for (j = 0; j < UFS_NDADDR; j++)
+				dp2->di_db[j] = bswap64(dp2->di_db[j]);
+			for (j = 0; j < UFS_NIADDR; j++)
+				dp2->di_ib[j] = bswap64(dp2->di_ib[j]);
 		}
 	}
 }
@@ -993,7 +999,7 @@ expandfile(union dinode *dp)
 			dp->dp1.di_ib[ilevel - 1] = iswap32(newblk);
 	} else {
 		ibp = getdatablk(is_ufs2 ? iswap64(dp->dp2.di_ib[ilevel - 1]) :
-		    iswap32(dp->dp2.di_ib[ilevel - 1]), sblock->fs_bsize);
+		    iswap32(dp->dp1.di_ib[ilevel - 1]), sblock->fs_bsize);
 	}
 	/* walk indirect blocks up to the data block */
 	for (; ilevel >0 ; ilevel--) {

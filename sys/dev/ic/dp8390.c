@@ -1,4 +1,4 @@
-/*	$NetBSD: dp8390.c,v 1.80 2012/02/02 19:43:03 tls Exp $	*/
+/*	$NetBSD: dp8390.c,v 1.82 2015/04/13 16:33:24 riastradh Exp $	*/
 
 /*
  * Device driver for National Semiconductor DS8390/WD83C690 based ethernet
@@ -14,7 +14,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: dp8390.c,v 1.80 2012/02/02 19:43:03 tls Exp $");
+__KERNEL_RCSID(0, "$NetBSD: dp8390.c,v 1.82 2015/04/13 16:33:24 riastradh Exp $");
 
 #include "opt_ipkdb.h"
 #include "opt_inet.h"
@@ -28,7 +28,7 @@ __KERNEL_RCSID(0, "$NetBSD: dp8390.c,v 1.80 2012/02/02 19:43:03 tls Exp $");
 #include <sys/socket.h>
 #include <sys/syslog.h>
 
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 
 #include <net/if.h>
 #include <net/if_dl.h>
@@ -154,7 +154,7 @@ dp8390_config(struct dp8390_softc *sc)
 	ether_ifattach(ifp, sc->sc_enaddr);
 
 	rnd_attach_source(&sc->rnd_source, device_xname(sc->sc_dev),
-	    RND_TYPE_NET, 0);
+	    RND_TYPE_NET, RND_FLAG_DEFAULT);
 
 	/* The attach is successful. */
 	sc->sc_flags |= DP8390_ATTACHED;

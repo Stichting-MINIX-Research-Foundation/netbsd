@@ -1,4 +1,4 @@
-/*	$NetBSD: cpu_subr.c,v 1.80 2013/11/03 22:27:27 mrg Exp $	*/
+/*	$NetBSD: cpu_subr.c,v 1.82 2014/03/24 19:29:59 christos Exp $	*/
 
 /*-
  * Copyright (c) 2001 Matt Thomas.
@@ -34,7 +34,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: cpu_subr.c,v 1.80 2013/11/03 22:27:27 mrg Exp $");
+__KERNEL_RCSID(0, "$NetBSD: cpu_subr.c,v 1.82 2014/03/24 19:29:59 christos Exp $");
 
 #include "opt_ppcparam.h"
 #include "opt_ppccache.h"
@@ -73,7 +73,7 @@ static void cpu_tau_setup(struct cpu_info *);
 static void cpu_tau_refresh(struct sysmon_envsys *, envsys_data_t *);
 #endif
 
-int cpu;
+int cpu = -1;
 int ncpus;
 
 struct fmttab {
@@ -255,7 +255,6 @@ int cpu_altivec;
 register_t cpu_psluserset;
 register_t cpu_pslusermod;
 register_t cpu_pslusermask = 0xffff;
-char cpu_model[80];
 
 /* This is to be called from locore.S, and nowhere else. */
 
@@ -772,11 +771,8 @@ cpu_identify(char *str, size_t len)
 			break;
 	}
 
-	if (str == NULL) {
-		str = cpu_model;
-		len = sizeof(cpu_model);
+	if (cpu == -1)
 		cpu = vers;
-	}
 
 	revfmt = cp->revfmt;
 	if (rev == MPC750 && pvr == 15) {
@@ -1218,11 +1214,9 @@ cpu_spinup(device_t self, struct cpu_info *ci)
 {
 	volatile struct cpu_hatch_data hatch_data, *h = &hatch_data;
 	struct pglist mlist;
-	int i, error, pvr, vers;
+	int i, error;
 	char *hp;
 
-	pvr = mfpvr();
-	vers = pvr >> 16;
 	KASSERT(ci != curcpu());
 
 	/* Now allocate a hatch stack */

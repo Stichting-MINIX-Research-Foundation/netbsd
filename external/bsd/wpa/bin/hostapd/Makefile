@@ -1,4 +1,4 @@
-# $NetBSD: Makefile,v 1.3 2012/10/08 00:03:20 christos Exp $
+# $NetBSD: Makefile,v 1.8 2015/04/01 19:45:14 christos Exp $
 
 .include "${.CURDIR}/../Makefile.inc"
 
@@ -13,8 +13,10 @@ ap_drv_ops.c \
 ap_mlme.c \
 authsrv.c \
 beacon.c \
+bss_load.c \
 ctrl_iface_ap.c \
 drv_callbacks.c \
+eap_user_db.c \
 hostapd.c \
 ieee802_11_auth.c \
 ieee802_11_shared.c \
@@ -32,6 +34,7 @@ wpa_auth_ie.c
 
 # common
 SRCS+= \
+hw_features_common.c \
 ieee802_11_common.c \
 wpa_common.c \
 wpa_ctrl.c
@@ -39,11 +42,13 @@ wpa_ctrl.c
 # drivers
 SRCS+= \
 driver_bsd.c \
+driver_common.c \
 drivers.c
 
 # radius
 SRCS+= \
 radius.c \
+radius_das.c \
 radius_client.c \
 radius_server.c
 
@@ -62,7 +67,6 @@ SRCS+= \
 main.c \
 config_file.c \
 ctrl_iface.c \
-dump_state.c \
 eap_register.c
 
 # l2_packet
@@ -82,10 +86,14 @@ eap_server_methods.c
 
 # crypto
 SRCS+= \
-md5.c \
+crypto_openssl.c \
 random.c \
-sha1.c \
-sha1-pbkdf2.c
+sha1-prf.c
+
+# crypto for non-openssl
+NO_SRCS+= \
+aes-wrap.c \
+md5.c
 
 .PATH.c: \
 	${HOSTAPD_DISTDIR} \
@@ -142,8 +150,6 @@ aes-ctr.c \
 aes-eax.c \
 aes-encblock.c \
 aes-omac1.c \
-aes-wrap.c \
-crypto_openssl.c \
 dh_groups.c \
 fips_prf_openssl.c \
 ms_funcs.c \

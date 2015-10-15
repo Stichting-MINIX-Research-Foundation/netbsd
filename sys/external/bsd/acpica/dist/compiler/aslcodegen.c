@@ -1,4 +1,3 @@
-
 /******************************************************************************
  *
  * Module Name: aslcodegen - AML code generation
@@ -6,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -41,7 +40,6 @@
  * IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGES.
  */
-
 
 #include "aslcompiler.h"
 #include "aslcompiler.y.h"
@@ -89,7 +87,7 @@ CgWriteNode (
  *
  * RETURN:      None
  *
- * DESCRIPTION: Generate AML code.  Currently generates the listing file
+ * DESCRIPTION: Generate AML code. Currently generates the listing file
  *              simultaneously.
  *
  ******************************************************************************/
@@ -109,6 +107,12 @@ CgGenerateAmlOutput (
 
     TrWalkParseTree (RootNode, ASL_WALK_VISIT_DOWNWARD,
         CgAmlWriteWalk, NULL, NULL);
+
+    DbgPrint (ASL_TREE_OUTPUT,
+        "%*s Value    P_Op A_Op OpLen PByts Len  SubLen PSubLen OpPtr"
+        "    Parent   Child    Next     Flags    AcTyp    Final Col L#  EL#  LL#  ELL#\n",
+        76, " ");
+
     CgCloseTable ();
 }
 
@@ -140,7 +144,8 @@ CgAmlWriteWalk (
         DbgPrint (ASL_TREE_OUTPUT,
             "Final parse tree used for AML output:\n");
         DbgPrint (ASL_TREE_OUTPUT,
-            "%*s Value    P_Op A_Op OpLen PByts Len  SubLen PSubLen OpPtr    Child    Parent   Flags    AcTyp    Final Col L\n",
+            "%*s Value    P_Op A_Op OpLen PByts Len  SubLen PSubLen OpPtr"
+            "    Parent   Child    Next     Flags    AcTyp    Final Col L#  EL#  LL#  ELL#\n",
             76, " ");
     }
 
@@ -163,7 +168,8 @@ CgAmlWriteWalk (
     }
 
     DbgPrint (ASL_TREE_OUTPUT,
-    "%08X %04X %04X %01X     %04X  %04X %04X   %04X    %08X %08X %08X %08X %08X %04X  %02d  %02d\n",
+    "%08X %04X %04X %01X     %04X  %04X %04X   %04X    "
+    "%08X %08X %08X %08X %08X %08X %04X  %02d  %02d   %02d   %02d   %02d\n",
             /* 1  */ (UINT32) Op->Asl.Value.Integer,
             /* 2  */ Op->Asl.ParseOpcode,
             /* 3  */ Op->Asl.AmlOpcode,
@@ -173,13 +179,17 @@ CgAmlWriteWalk (
             /* 7  */ Op->Asl.AmlSubtreeLength,
             /* 8  */ Op->Asl.Parent ? Op->Asl.Parent->Asl.AmlSubtreeLength : 0,
             /* 9  */ Op,
-            /* 10 */ Op->Asl.Child,
-            /* 11 */ Op->Asl.Parent,
-            /* 12 */ Op->Asl.CompileFlags,
-            /* 13 */ Op->Asl.AcpiBtype,
-            /* 14 */ Op->Asl.FinalAmlLength,
-            /* 15 */ Op->Asl.Column,
-            /* 16 */ Op->Asl.LineNumber);
+            /* 10 */ Op->Asl.Parent,
+            /* 11 */ Op->Asl.Child,
+            /* 12 */ Op->Asl.Next,
+            /* 13 */ Op->Asl.CompileFlags,
+            /* 14 */ Op->Asl.AcpiBtype,
+            /* 15 */ Op->Asl.FinalAmlLength,
+            /* 16 */ Op->Asl.Column,
+            /* 17 */ Op->Asl.LineNumber,
+            /* 18 */ Op->Asl.EndLine,
+            /* 19 */ Op->Asl.LogicalLineNumber,
+            /* 20 */ Op->Asl.EndLogicalLine);
 
     /* Generate the AML for this node */
 
@@ -264,22 +274,28 @@ CgWriteAmlOpcode (
         /* These opcodes should not get here */
 
         printf ("Found a node with an unassigned AML opcode\n");
-        fprintf (stderr, "Found a node with an unassigned AML opcode\n");
+        FlPrintFile (ASL_FILE_STDERR, "Found a node with an unassigned AML opcode\n");
         return;
 
     case AML_INT_RESERVEDFIELD_OP:
 
         /* Special opcodes for within a field definition */
 
-        Aml.Opcode = 0x00;
+        Aml.Opcode = AML_FIELD_OFFSET_OP;
         break;
 
     case AML_INT_ACCESSFIELD_OP:
 
-        Aml.Opcode = 0x01;
+        Aml.Opcode = AML_FIELD_ACCESS_OP;
+        break;
+
+    case AML_INT_CONNECTION_OP:
+
+        Aml.Opcode = AML_FIELD_CONNECTION_OP;
         break;
 
     default:
+
         Aml.Opcode = Op->Asl.AmlOpcode;
         break;
     }
@@ -378,7 +394,9 @@ CgWriteAmlOpcode (
         break;
 
     default:
+
         /* All data opcodes must appear above */
+
         break;
     }
 }
@@ -441,11 +459,11 @@ CgWriteTableHeader (
 
     /* Compiler ID */
 
-    strncpy (TableHeader.AslCompilerId, ASL_CREATOR_ID, 4);
+    ACPI_MOVE_NAME (TableHeader.AslCompilerId, ASL_CREATOR_ID);
 
     /* Compiler version */
 
-    TableHeader.AslCompilerRevision = ASL_REVISION;
+    TableHeader.AslCompilerRevision = ACPI_CA_VERSION;
 
     /* Table length. Checksum zero for now, will rewrite later */
 
@@ -556,7 +574,9 @@ CgWriteNode (
         return;
 
     default:
+
         /* Internal data opcodes must all appear above */
+
         break;
     }
 
@@ -584,5 +604,3 @@ CgWriteNode (
         break;
     }
 }
-
-

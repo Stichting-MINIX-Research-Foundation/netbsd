@@ -1,4 +1,4 @@
-/*	$NetBSD: if_es.c,v 1.51 2012/10/27 17:17:29 chs Exp $ */
+/*	$NetBSD: if_es.c,v 1.53 2015/05/20 09:17:17 ozaki-r Exp $ */
 
 /*
  * Copyright (c) 1995 Michael L. Hitch
@@ -33,7 +33,7 @@
 #include "opt_ns.h"
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_es.c,v 1.51 2012/10/27 17:17:29 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_es.c,v 1.53 2015/05/20 09:17:17 ozaki-r Exp $");
 
 
 #include <sys/param.h>
@@ -58,11 +58,6 @@ __KERNEL_RCSID(0, "$NetBSD: if_es.c,v 1.51 2012/10/27 17:17:29 chs Exp $");
 #include <netinet/in_var.h>
 #include <netinet/ip.h>
 #include <netinet/if_inarp.h>
-#endif
-
-#ifdef NS
-#include <netns/ns.h>
-#include <netns/ns_if.h>
 #endif
 
 #include <machine/cpu.h>
@@ -448,6 +443,7 @@ zzzz:
 #endif
 		smc->b0.bsr = BSR_BANK0;
 		ephsr = smc->b0.ephsr;		/* get EPHSR */
+		__USE(ephsr);
 		tcr = smc->b0.tcr;		/* and TCR */
 		smc->b2.bsr = BSR_BANK2;
 		save_ptr = smc->b2.ptr;
@@ -967,22 +963,6 @@ esioctl(struct ifnet *ifp, u_long cmd, void *data)
 			esinit(sc);
 			arp_ifinit(ifp, ifa);
 			break;
-#endif
-#ifdef NS
-		case AF_NS:
-		    {
-			register struct ns_addr *ina = &IA_SNS(ifa)->sns_addr;
-
-			if (ns_nullhost(*ina))
-				ina->x_host =
-				    *(union ns_host *)LLADDR(ifp->if_sadl);
-			else
-				bcopy(ina->x_host.c_host,
-				    LLADDR(ifp->if_sadl), ETHER_ADDR_LEN);
-			/* Set new address. */
-			esinit(sc);
-			break;
-		    }
 #endif
 		default:
 			esinit(sc);

@@ -1,26 +1,23 @@
-#	$NetBSD: Makefile,v 1.12 2012/08/09 14:40:52 joerg Exp $
-
-#NOGCCERROR=yes
+#	$NetBSD: Makefile,v 1.19 2015/07/10 14:20:28 christos Exp $
 
 .include <bsd.own.mk>
 
-
 PROG=	ntpd
-MAN=	ntpd.8
+MAN=	ntpd.8 ntp.conf.5 ntp.keys.5
 BINDIR=	/usr/sbin
 
 SRCS=	cmd_args.c				\
 	ntp_config.c				\
 	ntp_control.c				\
 	ntp_crypto.c				\
-	ntp_data_structures.c			\
 	ntp_filegen.c				\
-	ntp_intres.c				\
 	ntp_io.c				\
+	ntp_leapsec.c				\
 	ntp_loopfilter.c			\
 	ntp_monitor.c				\
-	ntp_parser.c				\
+	ntp_parser.y				\
 	ntp_peer.c				\
+	ntp_prio_q.c				\
 	ntp_proto.c				\
 	ntp_refclock.c				\
 	ntp_request.c				\
@@ -32,6 +29,7 @@ SRCS=	cmd_args.c				\
 	ntpd-opts.c				\
 	ntpd.c					\
 	ntpsim.c				\
+	rc_cmdlength.c				\
 	refclock_acts.c				\
 	refclock_arbiter.c			\
 	refclock_arc.c				\
@@ -44,6 +42,7 @@ SRCS=	cmd_args.c				\
 	refclock_datum.c			\
 	refclock_dumbclock.c			\
 	refclock_fg.c				\
+	refclock_gpsdjson.c			\
 	refclock_gpsvme.c			\
 	refclock_heath.c			\
 	refclock_hopfpci.c			\
@@ -66,7 +65,6 @@ SRCS=	cmd_args.c				\
 	refclock_ripencc.c			\
 	refclock_shm.c				\
 	refclock_tpro.c				\
-	refclock_trak.c				\
 	refclock_true.c				\
 	refclock_tt560.c			\
 	refclock_ulink.c			\
@@ -77,25 +75,15 @@ SRCS=	cmd_args.c				\
 LDADD+=		-L${LIBPARSE} -lparse -L${LIBISC} -liscntp -lm -lutil
 DPADD+=		${LIBPARSE}/libparse.a ${LIBISC}/libiscntp.a ${LIBOPTS}/libopts.a  ${LIBNTP}/libntp.a ${LIBM} ${LIBUTIL}
 
-CWARNFLAGS.clang+=	-Wno-strncat-size
+COPTS.ntp_control.c+=	${${ACTIVE_CC} == "gcc":? -Wno-format-nonliteral :}
 
 .include "${.CURDIR}/../Makefile.inc"
 
 DIST=${IDIST}/ntpd
 
-CPPFLAGS+=-I${IDIST}/include -I${IDIST}/sntp/libopts
+CPPFLAGS+=-I${IDIST}/include -I${IDIST}/sntp/libopts -I${IDIST}/ntpd -I.
 
 .PATH: ${DIST}
-
-ntpd.8: ntpd.1
-	${_MKTARGET_BUILD}
-	${TOOL_SED} -e "s,NTPD 1,NTPD 8," $? > $@
-
-CLEANFILES+=ntpd.8
-COPTS.ntp_control.c+= -Wno-format-nonliteral
+YHEADER=1
 
 .include <bsd.prog.mk>
-
-# kill default .y.c rule - to rebuild ntp_parser.c we need bison which is not part of the toolchain
-.y.c:
-

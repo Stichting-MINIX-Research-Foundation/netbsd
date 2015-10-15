@@ -1,4 +1,4 @@
-/*	$NetBSD: yeeloong_machdep.c,v 1.5 2013/02/28 13:22:36 macallan Exp $	*/
+/*	$NetBSD: yeeloong_machdep.c,v 1.7 2015/06/09 16:29:01 macallan Exp $	*/
 /*	$OpenBSD: yeeloong_machdep.c,v 1.16 2011/04/15 20:40:06 deraadt Exp $	*/
 
 /*
@@ -23,13 +23,14 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: yeeloong_machdep.c,v 1.5 2013/02/28 13:22:36 macallan Exp $");
+__KERNEL_RCSID(0, "$NetBSD: yeeloong_machdep.c,v 1.7 2015/06/09 16:29:01 macallan Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/device.h>
 #include <sys/types.h>
 
+#include <mips/cpuregs.h>
 #include <evbmips/loongson/autoconf.h>
 #include <mips/pmon/pmon.h>
 #include <evbmips/loongson/loongson_intr.h>
@@ -84,7 +85,7 @@ void	*lemote_isa_intr_establish(void *, int, int, int,
 	    int (*)(void *), void *);
 void	 lemote_isa_intr_disestablish(void *, void *);
 const struct evcnt * lemote_isa_intr_evcnt(void *, int);
-const char * lemote_isa_intr_string(void *, int);
+const char * lemote_isa_intr_string(void *, int, char *, size_t);
 
 uint	 lemote_get_isa_imr(void);
 uint	 lemote_get_isa_isr(void);
@@ -401,12 +402,13 @@ lemote_isa_intr_evcnt(void *v, int irq)
 }
 
 const char *
-lemote_isa_intr_string(void *v, int irq)
+lemote_isa_intr_string(void *v, int irq, char *buf, size_t len)
 {
 	if (irq == 0 || irq >= BONITO_NISA || irq == 2)
 		panic("lemote_isa_intr_string: bogus isa irq 0x%x", irq);
 
-	return loongson_intr_string(&lemote_bonito, BONITO_ISA_IRQ(irq));
+	return loongson_intr_string(&lemote_bonito, BONITO_ISA_IRQ(irq), buf,
+	    len);
 }
 #endif
 /*

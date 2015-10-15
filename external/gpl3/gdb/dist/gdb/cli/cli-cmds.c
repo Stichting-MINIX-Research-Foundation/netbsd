@@ -1,6 +1,6 @@
 /* GDB CLI commands.
 
-   Copyright (C) 2000-2013 Free Software Foundation, Inc.
+   Copyright (C) 2000-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -18,7 +18,6 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
 #include "defs.h"
-#include "exceptions.h"
 #include "arch-utils.h"
 #include "dyn-string.h"
 #include "readline/readline.h"
@@ -27,7 +26,6 @@
 #include "target.h"	/* For baud_rate, remote_debug and remote_timeout.  */
 #include "gdb_wait.h"	/* For shell escape implementation.  */
 #include "gdb_regex.h"	/* Used by apropos_command.  */
-#include "gdb_string.h"
 #include "gdb_vfork.h"
 #include "linespec.h"
 #include "expression.h"
@@ -39,6 +37,7 @@
 #include "source.h"
 #include "disasm.h"
 #include "tracepoint.h"
+#include "filestuff.h"
 
 #include "ui-out.h"
 
@@ -49,7 +48,7 @@
 #include "cli/cli-cmds.h"
 #include "cli/cli-utils.h"
 
-#include "python/python.h"
+#include "extension.h"
 
 #ifdef TUI
 #include "tui/tui.h"	/* For tui_active et.al.  */
@@ -114,10 +113,6 @@ struct cmd_list_element *enablelist;
 /* Chain containing all defined disable subcommands.  */
 
 struct cmd_list_element *disablelist;
-
-/* Chain containing all defined toggle subcommands.  */
-
-struct cmd_list_element *togglelist;
 
 /* Chain containing all defined stop subcommands.  */
 
@@ -207,7 +202,7 @@ static const char *script_ext_mode = script_ext_soft;
    none is supplied.  */
 
 void
-error_no_arg (char *why)
+error_no_arg (const char *why)
 {
   error (_("Argument required (%s)."), why);
 }
@@ -221,7 +216,7 @@ info_command (char *arg, int from_tty)
 {
   printf_unfiltered (_("\"info\" must be followed by "
 		       "the name of an info command.\n"));
-  help_list (infolist, "info ", -1, gdb_stdout);
+  help_list (infolist, "info ", all_commands, gdb_stdout);
 }
 
 /* The "show" command with no arguments shows all the settings.  */
@@ -314,6 +309,12 @@ show_version (char *args, int from_tty)
   printf_filtered ("\n");
 }
 
+static void
+show_configuration (char *args, int from_tty)
+{
+  print_gdb_configuration (gdb_stdout);
+}
+
 /* Handle the quit command.  */
 
 void
@@ -322,7 +323,7 @@ quit_command (char *args, int from_tty)
   if (!quit_confirm ())
     error (_("Not confirmed."));
 
-  disconnect_tracing (from_tty);
+  query_if_trace_running (from_tty);
 
   quit_force (args, from_tty);
 }
@@ -350,6 +351,7 @@ cd_command (char *dir, int from_tty)
   /* Found something other than leading repetitions of "/..".  */
   int found_real_path;
   char *p;
+  struct cleanup *cleanup;
 
   /* If the new directory is absolute, repeat is a no-op; if relative,
      repeat might be useful but is more likely to be a mistake.  */
@@ -359,7 +361,7 @@ cd_command (char *dir, int from_tty)
     dir = "~";
 
   dir = tilde_expand (dir);
-  make_cleanup (xfree, dir);
+  cleanup = make_cleanup (xfree, dir);
 
   if (chdir (dir) < 0)
     perror_with_name (dir);
@@ -443,6 +445,8 @@ cd_command (char *dir, int from_tty)
 
   if (from_tty)
     pwd_command ((char *) 0, 1);
+
+  do_cleanups (cleanup);
 }
 
 /* Show the current value of the 'script-extension' option.  */
@@ -473,7 +477,7 @@ find_and_open_script (const char *script_file, int search_path,
   char *file;
   int fd;
   struct cleanup *old_cleanups;
-  int search_flags = OPF_TRY_CWD_FIRST;
+  int search_flags = OPF_TRY_CWD_FIRST | OPF_RETURN_REALPATH;
 
   file = tilde_expand (script_file);
   old_cleanups = make_cleanup (xfree, file);
@@ -516,33 +520,33 @@ find_and_open_script (const char *script_file, int search_path,
 static void
 source_script_from_stream (FILE *stream, const char *file)
 {
-  if (script_ext_mode != script_ext_off
-      && strlen (file) > 3 && !strcmp (&file[strlen (file) - 3], ".py"))
+  if (script_ext_mode != script_ext_off)
     {
-      volatile struct gdb_exception e;
+      const struct extension_language_defn *extlang
+	= get_ext_lang_of_file (file);
 
-      TRY_CATCH (e, RETURN_MASK_ERROR)
+      if (extlang != NULL)
 	{
-	  source_python_script (stream, file);
-	}
-      if (e.reason < 0)
-	{
-	  /* Should we fallback to ye olde GDB script mode?  */
-	  if (script_ext_mode == script_ext_soft
-	      && e.reason == RETURN_ERROR && e.error == UNSUPPORTED_ERROR)
+	  if (ext_lang_present_p (extlang))
 	    {
-	      fseek (stream, 0, SEEK_SET);
-	      script_from_file (stream, (char*) file);
+	      script_sourcer_func *sourcer
+		= ext_lang_script_sourcer (extlang);
+
+	      gdb_assert (sourcer != NULL);
+	      sourcer (extlang, stream, file);
+	      return;
+	    }
+	  else if (script_ext_mode == script_ext_soft)
+	    {
+	      /* Assume the file is a gdb script.
+		 This is handled below.  */
 	    }
 	  else
-	    {
-	      /* Nope, just punt.  */
-	      throw_exception (e);
-	    }
+	    throw_ext_lang_unsupported (extlang);
 	}
     }
-  else
-    script_from_file (stream, file);
+
+  script_from_file (stream, file);
 }
 
 /* Worker to perform the "source" command.
@@ -565,11 +569,14 @@ source_script_with_search (const char *file, int from_tty, int search_path)
       /* The script wasn't found, or was otherwise inaccessible.
          If the source command was invoked interactively, throw an
 	 error.  Otherwise (e.g. if it was invoked by a script),
-	 silently ignore the error.  */
+	 just emit a warning, rather than cause an error.  */
       if (from_tty)
 	perror_with_name (file);
       else
-	return;
+	{
+	  perror_warning_with_name (file);
+	  return;
+	}
     }
 
   old_cleanups = make_cleanup (xfree, full_path);
@@ -587,7 +594,7 @@ source_script_with_search (const char *file, int from_tty, int search_path)
    for use in loading .gdbinit scripts.  */
 
 void
-source_script (char *file, int from_tty)
+source_script (const char *file, int from_tty)
 {
   source_script_with_search (file, from_tty, 0);
 }
@@ -660,7 +667,7 @@ source_command (char *args, int from_tty)
 static void
 echo_command (char *text, int from_tty)
 {
-  char *p = text;
+  const char *p = text;
   int c;
 
   if (text)
@@ -720,6 +727,8 @@ shell_escape (char *arg, int from_tty)
   if ((pid = vfork ()) == 0)
     {
       const char *p, *user_shell;
+
+      close_most_fds ();
 
       if ((user_shell = (char *) getenv ("SHELL")) == NULL)
 	user_shell = "/bin/sh";
@@ -806,11 +815,10 @@ edit_command (char *arg, int from_tty)
 	  struct gdbarch *gdbarch;
 
           if (sal.symtab == 0)
-	    /* FIXME-32x64--assumes sal.pc fits in long.  */
 	    error (_("No source file for address %s."),
-		   hex_string ((unsigned long) sal.pc));
+		   paddress (get_current_arch (), sal.pc));
 
-	  gdbarch = get_objfile_arch (sal.symtab->objfile);
+	  gdbarch = get_objfile_arch (SYMTAB_OBJFILE (sal.symtab));
           sym = find_pc_function (sal.pc);
           if (sym)
 	    printf_filtered ("%s is in %s (%s:%d).\n",
@@ -864,6 +872,27 @@ list_command (char *arg, int from_tty)
     {
       set_default_source_symtab_and_line ();
       cursal = get_current_source_symtab_and_line ();
+
+      /* If this is the first "list" since we've set the current
+	 source line, center the listing around that line.  */
+      if (get_first_line_listed () == 0)
+	{
+	  int first;
+
+	  first = max (cursal.line - get_lines_to_list () / 2, 1);
+
+	  /* A small special case --- if listing backwards, and we
+	     should list only one line, list the preceding line,
+	     instead of the exact line we've just shown after e.g.,
+	     stopping for a breakpoint.  */
+	  if (arg != NULL && arg[0] == '-'
+	      && get_lines_to_list () == 1 && first > 1)
+	    first -= 1;
+
+	  print_source_lines (cursal.symtab, first,
+			      first + get_lines_to_list (), 0);
+	  return;
+	}
     }
 
   /* "l" or "l +" lists next ten lines.  */
@@ -971,11 +1000,10 @@ list_command (char *arg, int from_tty)
       struct gdbarch *gdbarch;
 
       if (sal.symtab == 0)
-	/* FIXME-32x64--assumes sal.pc fits in long.  */
 	error (_("No source file for address %s."),
-	       hex_string ((unsigned long) sal.pc));
+	       paddress (get_current_arch (), sal.pc));
 
-      gdbarch = get_objfile_arch (sal.symtab->objfile);
+      gdbarch = get_objfile_arch (SYMTAB_OBJFILE (sal.symtab));
       sym = find_pc_function (sal.pc);
       if (sym)
 	printf_filtered ("%s is in %s (%s:%d).\n",
@@ -1213,11 +1241,10 @@ show_user (char *args, int from_tty)
 
   if (args)
     {
-      char *comname = args;
+      const char *comname = args;
 
       c = lookup_cmd (&comname, cmdlist, "", 0, 1);
-      /* c->user_commands would be NULL if it's a python command.  */
-      if (c->class != class_user || !c->user_commands)
+      if (!cli_user_command_p (c))
 	error (_("Not a user command."));
       show_user_1 (c, "", args, gdb_stdout);
     }
@@ -1225,7 +1252,7 @@ show_user (char *args, int from_tty)
     {
       for (c = cmdlist; c; c = c->next)
 	{
-	  if (c->class == class_user || c->prefixlist != NULL)
+	  if (cli_user_command_p (c) || c->prefixlist != NULL)
 	    show_user_1 (c, "", c->name, gdb_stdout);
 	}
     }
@@ -1291,7 +1318,7 @@ argv_to_dyn_string (char **argv, int n)
    Return TRUE if COMMAND exists, unambiguously.  Otherwise FALSE.  */
 
 static int
-valid_command_p (char *command)
+valid_command_p (const char *command)
 {
   struct cmd_list_element *c;
 
@@ -1318,13 +1345,14 @@ alias_command (char *args, int from_tty)
   char *args2, *equals, *alias, *command;
   char **alias_argv, **command_argv;
   dyn_string_t alias_dyn_string, command_dyn_string;
+  struct cleanup *cleanup;
   static const char usage[] = N_("Usage: alias [-a] [--] ALIAS = COMMAND");
 
   if (args == NULL || strchr (args, '=') == NULL)
     error (_(usage));
 
   args2 = xstrdup (args);
-  make_cleanup (xfree, args2);
+  cleanup = make_cleanup (xfree, args2);
   equals = strchr (args2, '=');
   *equals = '\0';
   alias_argv = gdb_buildargv (args2);
@@ -1400,7 +1428,7 @@ alias_command (char *args, int from_tty)
   else
     {
       dyn_string_t alias_prefix_dyn_string, command_prefix_dyn_string;
-      char *alias_prefix, *command_prefix;
+      const char *alias_prefix, *command_prefix;
       struct cmd_list_element *c_alias, *c_command;
 
       if (alias_argc != command_argc)
@@ -1431,6 +1459,8 @@ alias_command (char *args, int from_tty)
 		     command_argv[command_argc - 1],
 		     class_alias, abbrev_flag, c_command->prefixlist);
     }
+
+  do_cleanups (cleanup);
 }
 
 /* Print a list of files and line numbers which a user may choose from
@@ -1456,21 +1486,23 @@ compare_symtabs (const void *a, const void *b)
 {
   const struct symtab_and_line *sala = a;
   const struct symtab_and_line *salb = b;
+  const char *dira = SYMTAB_DIRNAME (sala->symtab);
+  const char *dirb = SYMTAB_DIRNAME (salb->symtab);
   int r;
 
-  if (!sala->symtab->dirname)
+  if (dira == NULL)
     {
-      if (salb->symtab->dirname)
+      if (dirb != NULL)
 	return -1;
     }
-  else if (!salb->symtab->dirname)
+  else if (dirb == NULL)
     {
-      if (sala->symtab->dirname)
+      if (dira != NULL)
 	return 1;
     }
   else
     {
-      r = filename_cmp (sala->symtab->dirname, salb->symtab->dirname);
+      r = filename_cmp (dira, dirb);
       if (r)
 	return r;
     }
@@ -1534,7 +1566,7 @@ set_debug (char *arg, int from_tty)
 {
   printf_unfiltered (_("\"set debug\" must be followed by "
 		       "the name of a debug subcommand.\n"));
-  help_list (setdebuglist, "set debug ", -1, gdb_stdout);
+  help_list (setdebuglist, "set debug ", all_commands, gdb_stdout);
 }
 
 static void
@@ -1547,28 +1579,6 @@ void
 init_cmd_lists (void)
 {
   max_user_call_depth = 1024;
-
-  cmdlist = NULL;
-  infolist = NULL;
-  enablelist = NULL;
-  disablelist = NULL;
-  togglelist = NULL;
-  stoplist = NULL;
-  deletelist = NULL;
-  detachlist = NULL;
-  setlist = NULL;
-  unsetlist = NULL;
-  showlist = NULL;
-  sethistlist = NULL;
-  showhistlist = NULL;
-  unsethistlist = NULL;
-  maintenancelist = NULL;
-  maintenanceinfolist = NULL;
-  maintenanceprintlist = NULL;
-  setprintlist = NULL;
-  showprintlist = NULL;
-  setchecklist = NULL;
-  showchecklist = NULL;
 }
 
 static void
@@ -1589,14 +1599,6 @@ show_history_expansion_p (struct ui_file *file, int from_tty,
 			  struct cmd_list_element *c, const char *value)
 {
   fprintf_filtered (file, _("History expansion on command input is %s.\n"),
-		    value);
-}
-
-static void
-show_baud_rate (struct ui_file *file, int from_tty,
-		struct cmd_list_element *c, const char *value)
-{
-  fprintf_filtered (file, _("Baud rate for remote serial I/O is %s.\n"),
 		    value);
 }
 
@@ -1703,7 +1705,11 @@ strict == evaluate script according to filename extension, error if not supporte
 			show_script_ext_mode,
 			&setlist, &showlist);
 
-  add_com ("quit", class_support, quit_command, _("Exit gdb."));
+  add_com ("quit", class_support, quit_command, _("\
+Exit gdb.\n\
+Usage: quit [EXPR]\n\
+The optional expression EXPR, if present, is evaluated and the result\n\
+used as GDB's exit code.  The default is zero."));
   c = add_com ("help", class_support, help_command,
 	       _("Print list of commands."));
   set_cmd_completer (c, command_completer);
@@ -1756,16 +1762,8 @@ the previous command number shown."),
   add_cmd ("version", no_set_class, show_version,
 	   _("Show what version of GDB this is."), &showlist);
 
-  /* If target is open when baud changes, it doesn't take effect until
-     the next open (I think, not sure).  */
-  add_setshow_zinteger_cmd ("remotebaud", no_class, &baud_rate, _("\
-Set baud rate for remote serial I/O."), _("\
-Show baud rate for remote serial I/O."), _("\
-This value is used to set the speed of the serial port when debugging\n\
-using remote targets."),
-			    NULL,
-			    show_baud_rate,
-			    &setlist, &showlist);
+  add_cmd ("configuration", no_set_class, show_configuration,
+	   _("Show how GDB was configured at build time."), &showlist);
 
   add_setshow_zinteger_cmd ("remote", no_class, &remote_debug, _("\
 Set debugging of remote protocol."), _("\
@@ -1857,7 +1855,7 @@ you must type \"disassemble 'foo.c'::bar\" and not \"disassemble foo.c:bar\"."))
 Run the ``make'' program using the rest of the line as arguments."));
   set_cmd_completer (c, filename_completer);
   add_cmd ("user", no_class, show_user, _("\
-Show definitions of non-python user defined commands.\n\
+Show definitions of non-python/scheme user defined commands.\n\
 Argument is the name of the user defined command.\n\
 With no argument, show definitions of all user defined commands."), &showlist);
   add_com ("apropos", class_support, apropos_command,
@@ -1865,8 +1863,8 @@ With no argument, show definitions of all user defined commands."), &showlist);
 
   add_setshow_uinteger_cmd ("max-user-call-depth", no_class,
 			   &max_user_call_depth, _("\
-Set the max call depth for non-python user-defined commands."), _("\
-Show the max call depth for non-python user-defined commands."), NULL,
+Set the max call depth for non-python/scheme user-defined commands."), _("\
+Show the max call depth for non-python/scheme user-defined commands."), NULL,
 			    NULL,
 			    show_max_user_call_depth,
 			    &setlist, &showlist);

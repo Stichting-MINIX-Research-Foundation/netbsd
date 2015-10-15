@@ -1,10 +1,10 @@
-#	$NetBSD: RB153,v 1.14 2013/06/30 21:38:56 rmind Exp $
+#	$NetBSD: RB153,v 1.17 2015/08/07 07:29:33 maxv Exp $
 #
 # Example kernel config for the RouterBOARD 153.
 
 include 	"arch/evbmips/conf/std.adm5120"
 
-#ident 		"RB153-$Revision: 1.14 $"
+#ident 		"RB153-$Revision: 1.17 $"
 
 maxusers	32
 
@@ -28,12 +28,11 @@ options 	TCP_OUTPUT_COUNTERS
 # Debugging options
 options 	DIAGNOSTIC	# extra kernel sanity checking
 options 	DEBUG		# extra kernel debugging support
-options 	KMEMSTATS	# kernel memory statistics (vmstat -m)
 options 	DDB		# kernel dynamic debugger
 options 	DDB_HISTORY_SIZE=100 # enable history editing in DDB
 makeoptions 	DEBUG="-g"	# compile full symbol table
 makeoptions 	CPUFLAGS="-march=4kc"
-options 	SYMTAB_SPACE=440000	# size for embedded symbol table
+makeoptions	COPY_SYMTAB=1	# size for embedded symbol table
 
 #options 	MEMORY_DISK_HOOKS
 #options 	MEMORY_DISK_IS_ROOT	# Force root on ram-disk
@@ -76,6 +75,10 @@ options 	INET6		# IPV6
 #options 	PPP_DEFLATE	# Deflate compression support for PPP
 #options 	PPP_FILTER	# Active filter support for PPP (requires bpf)
 #options 	IPFILTER_LOG	# ipmon(8) log support
+
+# JIT compiler for bpfilter
+#options	SLJIT
+#options	BPFJIT
 
 # These options enable verbose messages for several subsystems.
 # Warning, these may compile large string tables into the kernel!

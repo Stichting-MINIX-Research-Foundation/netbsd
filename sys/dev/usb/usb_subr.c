@@ -1,4 +1,4 @@
-/*	$NetBSD: usb_subr.c,v 1.195 2013/10/03 07:35:37 skrll Exp $	*/
+/*	$NetBSD: usb_subr.c,v 1.202 2015/07/09 07:20:57 skrll Exp $	*/
 /*	$FreeBSD: src/sys/dev/usb/usb_subr.c,v 1.18 1999/11/17 22:33:47 n_hibma Exp $	*/
 
 /*
@@ -32,10 +32,11 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: usb_subr.c,v 1.195 2013/10/03 07:35:37 skrll Exp $");
+__KERNEL_RCSID(0, "$NetBSD: usb_subr.c,v 1.202 2015/07/09 07:20:57 skrll Exp $");
 
 #ifdef _KERNEL_OPT
 #include "opt_compat_netbsd.h"
+#include "opt_usb.h"
 #include "opt_usbverbose.h"
 #endif
 
@@ -108,40 +109,7 @@ Static const char * const usbd_error_strs[] = {
 	"XXX",
 };
 
-void usb_load_verbose(void);
-
-void get_usb_vendor_stub(char *, size_t, usb_vendor_id_t);
-void get_usb_product_stub(char *, size_t, usb_vendor_id_t, usb_product_id_t);
-
-void (*get_usb_vendor)(char *, size_t, usb_vendor_id_t) = get_usb_vendor_stub;
-void (*get_usb_product)(char *, size_t, usb_vendor_id_t, usb_product_id_t) =
-	get_usb_product_stub;
-
-int usb_verbose_loaded = 0;
-
-/*
- * Load the usbverbose module
- */
-void usb_load_verbose(void)
-{
-	if (usb_verbose_loaded == 0)
-		module_autoload("usbverbose", MODULE_CLASS_MISC);
-}
-
-void get_usb_vendor_stub(char *v, size_t l, usb_vendor_id_t v_id)
-{
-	usb_load_verbose();
-	if (usb_verbose_loaded)
-		get_usb_vendor(v, l, v_id);
-}
-
-void get_usb_product_stub(char *p, size_t l, usb_vendor_id_t v_id,
-    usb_product_id_t p_id)
-{
-	usb_load_verbose();
-	if (usb_verbose_loaded)
-		get_usb_product(p, l, v_id, p_id);
-}
+DEV_VERBOSE_DEFINE(usb);
 
 const char *
 usbd_errstr(usbd_status err)
@@ -225,15 +193,10 @@ usbd_devinfo_vp(usbd_device_handle dev, char *v, size_t vl, char *p,
 			usbd_trim_spaces(p);
 	}
 	if (v[0] == '\0')
-		get_usb_vendor(v, vl, UGETW(udd->idVendor));
+		usb_findvendor(v, vl, UGETW(udd->idVendor));
 	if (p[0] == '\0')
-		get_usb_product(p, pl, UGETW(udd->idVendor),
+		usb_findproduct(p, pl, UGETW(udd->idVendor),
 		    UGETW(udd->idProduct));
-
-	if (v[0] == '\0')
-		snprintf(v, vl, "vendor 0x%04x", UGETW(udd->idVendor));
-	if (p[0] == '\0')
-		snprintf(p, pl, "product 0x%04x", UGETW(udd->idProduct));
 }
 
 int
@@ -884,9 +847,12 @@ usbd_attachinterfaces(device_t parent, usbd_device_handle dev,
 	ifaces = malloc(nifaces * sizeof(*ifaces), M_USB, M_NOWAIT|M_ZERO);
 	if (!ifaces)
 		return (USBD_NOMEM);
-	for (i = 0; i < nifaces; i++)
-		if (!dev->subdevs[i])
+	for (i = 0; i < nifaces; i++) {
+		if (!dev->subdevs[i]) {
 			ifaces[i] = &dev->ifaces[i];
+		}
+		DPRINTF(("%s: interface %d %p\n", __func__, i, ifaces[i]));
+	}
 
 	uiaa.device = dev;
 	uiaa.port = port;
@@ -903,13 +869,19 @@ usbd_attachinterfaces(device_t parent, usbd_device_handle dev,
 	ilocs[USBIFIFCF_CONFIGURATION] = uiaa.configno;
 
 	for (i = 0; i < nifaces; i++) {
-		if (!ifaces[i])
+		if (!ifaces[i]) {
+			DPRINTF(("%s: interface %d claimed\n", __func__, i));
 			continue; /* interface already claimed */
+		}
 		uiaa.iface = ifaces[i];
 		uiaa.class = ifaces[i]->idesc->bInterfaceClass;
 		uiaa.subclass = ifaces[i]->idesc->bInterfaceSubClass;
 		uiaa.proto = ifaces[i]->idesc->bInterfaceProtocol;
 		uiaa.ifaceno = ifaces[i]->idesc->bInterfaceNumber;
+
+		DPRINTF(("%s: searching for interface %d "
+		    "class %x subclass %x proto %x ifaceno %d\n", __func__, i,
+		    uiaa.class, uiaa.subclass, uiaa.proto, uiaa.ifaceno));
 		ilocs[USBIFIFCF_INTERFACE] = uiaa.ifaceno;
 		if (locators != NULL) {
 			loc = locators[USBIFIFCF_CONFIGURATION];
@@ -917,17 +889,21 @@ usbd_attachinterfaces(device_t parent, usbd_device_handle dev,
 			    loc != uiaa.configno)
 				continue;
 			loc = locators[USBIFIFCF_INTERFACE];
-			if (loc != USBIFIFCF_INTERFACE && loc != uiaa.ifaceno)
+			if (loc != USBIFIFCF_INTERFACE_DEFAULT &&
+			    loc != uiaa.ifaceno)
 				continue;
 		}
 		dv = config_found_sm_loc(parent, "usbifif", ilocs, &uiaa,
 					 usbd_ifprint, config_stdsubmatch);
 		if (!dv)
 			continue;
-		ifaces[i] = 0; /* claim */
+		/* claim */
+		ifaces[i] = NULL;
 		/* account for ifaces claimed by the driver behind our back */
 		for (j = 0; j < nifaces; j++) {
 			if (!ifaces[j] && !dev->subdevs[j]) {
+				DPRINTF(("%s: interface %d claimed "
+				    "behind our back\n", __func__, j));
 				dev->subdevs[j] = dv;
 				dev->nifaces_claimed++;
 			}
@@ -1163,7 +1139,7 @@ usbd_new_device(device_t parent, usbd_bus_handle bus, int depth,
 				goto found;
 			}
 		}
-		panic("usbd_new_device: cannot find HS port\n");
+		panic("usbd_new_device: cannot find HS port");
 	found:
 		DPRINTFN(1,("usbd_new_device: high speed port %d\n", p));
 	} else {
@@ -1236,6 +1212,16 @@ usbd_new_device(device_t parent, usbd_bus_handle bus, int depth,
 	}
 
 	USETW(dev->def_ep_desc.wMaxPacketSize, dd->bMaxPacketSize);
+
+	/* Re-establish the default pipe with the new MPS. */
+	usbd_kill_pipe(dev->default_pipe);
+	err = usbd_setup_pipe_flags(dev, 0, &dev->def_ep, USBD_DEFAULT_INTERVAL,
+	    &dev->default_pipe, USBD_MPSAFE);
+	if (err) {
+		DPRINTFN(-1, ("usbd_new_device: setup default pipe failed\n"));
+		usbd_remove_device(dev, up);
+		return err;
+	}
 
 	/* Set the address */
 	DPRINTFN(5, ("usbd_new_device: setting device address=%d\n", addr));

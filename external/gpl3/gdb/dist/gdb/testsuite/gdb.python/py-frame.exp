@@ -1,4 +1,4 @@
-# Copyright (C) 2009-2013 Free Software Foundation, Inc.
+# Copyright (C) 2009-2015 Free Software Foundation, Inc.
 
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -40,7 +40,7 @@ gdb_py_test_silent_cmd "python bf1 = gdb.selected_frame ()" "get frame" 0
 
 # Test Frame.architecture() method.
 gdb_py_test_silent_cmd "python show_arch_str = gdb.execute(\"show architecture\", to_string=True)" "show arch" 0
-gdb_test "python print bf1.architecture().name() in show_arch_str" "True" "test Frame.architecture()"
+gdb_test "python print (bf1.architecture().name() in show_arch_str)" "True" "test Frame.architecture()"
 
 # First test that read_var is unaffected by PR 11036 changes.
 gdb_test "python print (bf1.read_var(\"i\"))" "\"stuff\"" "test i"
@@ -94,3 +94,26 @@ gdb_test "python print ('result = %s' % f0.read_var ('variable_which_surely_does
 gdb_test "python print ('result = %s' % f0.read_var ('a'))" " = 1" "test Frame.read_var - success"
 
 gdb_test "python print ('result = %s' % (gdb.selected_frame () == f1))" " = True" "test gdb.selected_frame"
+
+# Can read SP register.
+gdb_test "python print ('result = %s' % (gdb.selected_frame ().read_register ('sp') == gdb.parse_and_eval ('\$sp')))" \
+  " = True" \
+  "test Frame.read_register(sp)"
+
+# PC value obtained via read_register is as expected.
+gdb_test "python print ('result = %s' % (f0.read_register('pc') == f0.pc()))" \
+  " = True" \
+  "test Frame.read_register(pc)"
+
+# Test arch-specific register name.
+set pc ""
+if {[is_amd64_regs_target]} {
+    set pc "rip"
+} elseif {[is_x86_like_target]} {
+    set pc "eip"
+}
+if { $pc != "" } {
+    gdb_test "python print ('result = %s' % (f0.read_register('pc') == f0.read_register('$pc')))" \
+	" = True" \
+	"test Frame.read_register($pc)"
+}

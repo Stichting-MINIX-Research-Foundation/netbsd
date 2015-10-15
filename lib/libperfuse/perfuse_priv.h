@@ -1,4 +1,4 @@
-/*  $NetBSD: perfuse_priv.h,v 1.31 2012/07/21 05:49:42 manu Exp $ */
+/*  $NetBSD: perfuse_priv.h,v 1.36 2014/10/31 15:12:15 manu Exp $ */
 
 /*-
  *  Copyright (c) 2010-2011 Emmanuel Dreyfus. All rights reserved.
@@ -67,6 +67,7 @@ struct perfuse_state {
 #define PS_NO_ACCESS	0x0001	/* access is unimplemented; */
 #define PS_NO_CREAT	0x0004	/* create is unimplemented */
 #define PS_INLOOP	0x0008	/* puffs mainloop started */
+#define PS_NO_FALLOCATE	0x0010	/* fallocate is unimplemented */
 	uint64_t ps_fsid;
 	uint32_t ps_max_readahead;
 	uint32_t ps_max_write;
@@ -186,6 +187,7 @@ uint64_t perfuse_get_fh(puffs_cookie_t, int);
 uint64_t perfuse_next_unique(struct puffs_usermount *);
 char *perfuse_node_path(struct perfuse_state *, puffs_cookie_t);
 int perfuse_node_close_common(struct puffs_usermount *, puffs_cookie_t, int);
+int perfuse_ns_match(const int, const char *);
 const char *perfuse_native_ns(const int, const char *, char *);
 
 char *perfuse_fs_mount(int, ssize_t);
@@ -222,12 +224,8 @@ int perfuse_node_getattr(struct puffs_usermount *,
 int perfuse_node_setattr(struct puffs_usermount *,
     puffs_cookie_t, const struct vattr *, const struct puffs_cred *);
 int perfuse_node_poll(struct puffs_usermount *, puffs_cookie_t, int *);
-int perfuse_node_mmap(struct puffs_usermount *,
-    puffs_cookie_t, vm_prot_t, const struct puffs_cred *);
 int perfuse_node_fsync(struct puffs_usermount *,
     puffs_cookie_t, const struct puffs_cred *, int, off_t, off_t);
-int perfuse_node_seek(struct puffs_usermount *,
-    puffs_cookie_t, off_t, off_t, const struct puffs_cred *);
 int perfuse_node_remove(struct puffs_usermount *,
     puffs_cookie_t, puffs_cookie_t, const struct puffs_cn *);
 int perfuse_node_link(struct puffs_usermount *,
@@ -252,7 +250,7 @@ int perfuse_node_reclaim(struct puffs_usermount *, puffs_cookie_t);
 int perfuse_node_inactive(struct puffs_usermount *, puffs_cookie_t);
 int perfuse_node_print(struct puffs_usermount *, puffs_cookie_t);
 int perfuse_node_pathconf(struct puffs_usermount *,
-    puffs_cookie_t, int, int *);
+    puffs_cookie_t, int, register_t *);
 int perfuse_node_advlock(struct puffs_usermount *,
     puffs_cookie_t, void *, int, struct flock *, int);
 int perfuse_node_read(struct puffs_usermount *, puffs_cookie_t,
@@ -261,6 +259,8 @@ int perfuse_node_write(struct puffs_usermount *, puffs_cookie_t,
     uint8_t *, off_t, size_t *, const struct puffs_cred *, int);
 int perfuse_node_write2(struct puffs_usermount *, puffs_cookie_t,
     uint8_t *, off_t, size_t *, const struct puffs_cred *, int, int);
+int perfuse_node_open2(struct puffs_usermount *,
+    puffs_cookie_t, int, const struct puffs_cred *, int *);
 void perfuse_cache_write(struct puffs_usermount *,
     puffs_cookie_t, size_t, struct puffs_cacherun *);
 int perfuse_node_getextattr(struct puffs_usermount *, puffs_cookie_t,
@@ -278,6 +278,8 @@ int perfuse_node_getattr_ttl(struct puffs_usermount *,
 int perfuse_node_setattr_ttl(struct puffs_usermount *,
     puffs_cookie_t, struct vattr *, const struct puffs_cred *,
     struct timespec *, int);
+int perfuse_node_fallocate(struct puffs_usermount *,
+    puffs_cookie_t, off_t, off_t);
 
 struct perfuse_trace *perfuse_trace_begin(struct perfuse_state *, 
     puffs_cookie_t, perfuse_msg_t *);

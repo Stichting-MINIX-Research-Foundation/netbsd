@@ -1,6 +1,6 @@
 /* Native-dependent code for OpenBSD/mips64.
 
-   Copyright (C) 2004-2013 Free Software Foundation, Inc.
+   Copyright (C) 2004-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -28,6 +28,7 @@
 
 #include "mips-tdep.h"
 #include "inf-ptrace.h"
+#include "obsd-nat.h"
 
 /* Shorthand for some register numbers used below.  */
 #define MIPS_PC_REGNUM	MIPS_EMBED_PC_REGNUM
@@ -82,7 +83,7 @@ mips64obsd_fetch_inferior_registers (struct target_ops *ops,
 {
   struct reg regs;
 
-  if (ptrace (PT_GETREGS, PIDGET (inferior_ptid),
+  if (ptrace (PT_GETREGS, ptid_get_pid (inferior_ptid),
 	      (PTRACE_TYPE_ARG3) &regs, 0) == -1)
     perror_with_name (_("Couldn't get registers"));
 
@@ -98,13 +99,13 @@ mips64obsd_store_inferior_registers (struct target_ops *ops,
 {
   struct reg regs;
 
-  if (ptrace (PT_GETREGS, PIDGET (inferior_ptid),
+  if (ptrace (PT_GETREGS, ptid_get_pid (inferior_ptid),
 	      (PTRACE_TYPE_ARG3) &regs, 0) == -1)
     perror_with_name (_("Couldn't get registers"));
 
   mips64obsd_collect_gregset (regcache, &regs, regnum);
 
-  if (ptrace (PT_SETREGS, PIDGET (inferior_ptid),
+  if (ptrace (PT_SETREGS, ptid_get_pid (inferior_ptid),
 	      (PTRACE_TYPE_ARG3) &regs, 0) == -1)
     perror_with_name (_("Couldn't write registers"));
 }
@@ -121,5 +122,5 @@ _initialize_mips64obsd_nat (void)
   t = inf_ptrace_target ();
   t->to_fetch_registers = mips64obsd_fetch_inferior_registers;
   t->to_store_registers = mips64obsd_store_inferior_registers;
-  add_target (t);
+  obsd_add_target (t);
 }

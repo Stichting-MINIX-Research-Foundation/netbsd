@@ -1,4 +1,4 @@
-/*	$NetBSD: btuart.c,v 1.26 2011/07/31 13:51:53 uebayasi Exp $	*/
+/*	$NetBSD: btuart.c,v 1.28 2015/08/20 14:40:17 christos Exp $	*/
 
 /*-
  * Copyright (c) 2006, 2007 KIYOHARA Takashi
@@ -27,7 +27,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: btuart.c,v 1.26 2011/07/31 13:51:53 uebayasi Exp $");
+__KERNEL_RCSID(0, "$NetBSD: btuart.c,v 1.28 2015/08/20 14:40:17 christos Exp $");
 
 #include <sys/param.h>
 #include <sys/conf.h>
@@ -81,7 +81,6 @@ struct btuart_softc {
 #define BTUART_RECV_SCO_DATA	5	/* sco packet data */
 #define BTUART_RECV_EVENT_DATA	6	/* event packet data */
 
-void btuartattach(int);
 static int btuart_match(device_t, cfdata_t, void *);
 static void btuart_attach(device_t, device_t, void *);
 static int btuart_detach(device_t, int);
@@ -188,7 +187,7 @@ btuart_attach(device_t parent __unused, device_t self, void *aux __unused)
 	MBUFQ_INIT(&sc->sc_scoq);
 
 	/* Attach Bluetooth unit */
-	sc->sc_unit = hci_attach(&btuart_hci, self, 0);
+	sc->sc_unit = hci_attach_pcb(&btuart_hci, self, 0);
 	if (sc->sc_unit == NULL)
 		aprint_error_dev(self, "HCI attach failed\n");
 }
@@ -205,7 +204,7 @@ btuart_detach(device_t self, int flags __unused)
 	btuart_disable(self);
 
 	if (sc->sc_unit) {
-		hci_detach(sc->sc_unit);
+		hci_detach_pcb(sc->sc_unit);
 		sc->sc_unit = NULL;
 	}
 

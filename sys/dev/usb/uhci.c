@@ -1,4 +1,4 @@
-/*	$NetBSD: uhci.c,v 1.263 2013/12/01 07:28:48 skrll Exp $	*/
+/*	$NetBSD: uhci.c,v 1.266 2015/08/19 06:23:35 skrll Exp $	*/
 
 /*
  * Copyright (c) 1998, 2004, 2011, 2012 The NetBSD Foundation, Inc.
@@ -42,7 +42,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: uhci.c,v 1.263 2013/12/01 07:28:48 skrll Exp $");
+__KERNEL_RCSID(0, "$NetBSD: uhci.c,v 1.266 2015/08/19 06:23:35 skrll Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -70,7 +70,6 @@ __KERNEL_RCSID(0, "$NetBSD: uhci.c,v 1.263 2013/12/01 07:28:48 skrll Exp $");
 
 /* Use bandwidth reclamation for control transfers. Some devices choke on it. */
 /*#define UHCI_CTL_LOOP */
-
 
 
 #ifdef UHCI_DEBUG
@@ -530,7 +529,7 @@ uhci_init(uhci_softc_t *sc)
 	callout_init(&sc->sc_poll_handle, CALLOUT_MPSAFE);
 
 	mutex_init(&sc->sc_lock, MUTEX_DEFAULT, IPL_SOFTUSB);
-	mutex_init(&sc->sc_intr_lock, MUTEX_DEFAULT, IPL_SCHED);
+	mutex_init(&sc->sc_intr_lock, MUTEX_DEFAULT, IPL_USB);
 	cv_init(&sc->sc_softwake_cv, "uhciab");
 
 	/* Set up the bus struct. */
@@ -2451,12 +2450,10 @@ uhci_device_intr_abort(usbd_xfer_handle xfer)
 #endif
 
 	KASSERT(mutex_owned(&sc->sc_lock));
+	KASSERT(xfer->pipe->intrxfer == xfer);
 
 	DPRINTFN(1,("uhci_device_intr_abort: xfer=%p\n", xfer));
-	if (xfer->pipe->intrxfer == xfer) {
-		DPRINTFN(1,("uhci_device_intr_abort: remove\n"));
-		xfer->pipe->intrxfer = NULL;
-	}
+
 	uhci_abort_xfer(xfer, USBD_CANCELLED);
 }
 
@@ -3920,14 +3917,11 @@ uhci_root_intr_abort(usbd_xfer_handle xfer)
 	uhci_softc_t *sc = xfer->pipe->device->bus->hci_private;
 
 	KASSERT(mutex_owned(&sc->sc_lock));
+	KASSERT(xfer->pipe->intrxfer == xfer);
 
 	callout_stop(&sc->sc_poll_handle);
 	sc->sc_intr_xfer = NULL;
 
-	if (xfer->pipe->intrxfer == xfer) {
-		DPRINTF(("uhci_root_intr_abort: remove\n"));
-		xfer->pipe->intrxfer = 0;
-	}
 	xfer->status = USBD_CANCELLED;
 #ifdef DIAGNOSTIC
 	UXFER(xfer)->iinfo.isdone = 1;

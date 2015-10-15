@@ -1,7 +1,7 @@
-/*	$NetBSD: radix.c,v 1.5 2013/07/27 19:23:13 christos Exp $	*/
+/*	$NetBSD: radix.c,v 1.8 2015/07/08 17:28:59 christos Exp $	*/
 
 /*
- * Copyright (C) 2007-2009, 2011-2013  Internet Systems Consortium, Inc. ("ISC")
+ * Copyright (C) 2007-2009, 2011-2014  Internet Systems Consortium, Inc. ("ISC")
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -64,11 +64,11 @@ _new_prefix(isc_mem_t *mctx, isc_prefix_t **target, int family, void *dest,
 
 	if (family == AF_INET6) {
 		prefix->bitlen = (bitlen >= 0) ? bitlen : 128;
-		memcpy(&prefix->add.sin6, dest, 16);
+		memmove(&prefix->add.sin6, dest, 16);
 	} else {
 		/* AF_UNSPEC is "any" or "none"--treat it as AF_INET */
 		prefix->bitlen = (bitlen >= 0) ? bitlen : 32;
-		memcpy(&prefix->add.sin, dest, 4);
+		memmove(&prefix->add.sin, dest, 4);
 	}
 
 	prefix->family = family;
@@ -280,6 +280,9 @@ isc_radix_search(isc_radix_tree_t *radix, isc_radix_node_t **target,
 
 	while (cnt-- > 0) {
 		node = stack[cnt];
+
+		if (prefix->bitlen < node->bit)
+			continue;
 
 		if (_comp_with_mask(isc_prefix_tochar(node->prefix),
 				    isc_prefix_tochar(prefix),
@@ -636,12 +639,12 @@ isc_radix_remove(isc_radix_tree_t *radix, isc_radix_node_t *node) {
 	if (node->r == NULL && node->l == NULL) {
 		parent = node->parent;
 		_deref_prefix(node->prefix);
-		isc_mem_put(radix->mctx, node, sizeof(*node));
-		radix->num_active_node--;
 
 		if (parent == NULL) {
 			INSIST(radix->head == node);
 			radix->head = NULL;
+			isc_mem_put(radix->mctx, node, sizeof(*node));
+			radix->num_active_node--;
 			return;
 		}
 
@@ -654,11 +657,13 @@ isc_radix_remove(isc_radix_tree_t *radix, isc_radix_node_t *node) {
 			child = parent->r;
 		}
 
+		isc_mem_put(radix->mctx, node, sizeof(*node));
+		radix->num_active_node--;
+
 		if (parent->prefix)
 			return;
 
 		/* We need to remove parent too. */
-
 		if (parent->parent == NULL) {
 			INSIST(radix->head == parent);
 			radix->head = child;
@@ -668,6 +673,7 @@ isc_radix_remove(isc_radix_tree_t *radix, isc_radix_node_t *node) {
 			INSIST(parent->parent->l == parent);
 			parent->parent->l = child;
 		}
+
 		child->parent = parent->parent;
 		isc_mem_put(radix->mctx, parent, sizeof(*parent));
 		radix->num_active_node--;
@@ -680,18 +686,22 @@ isc_radix_remove(isc_radix_tree_t *radix, isc_radix_node_t *node) {
 		INSIST(node->l != NULL);
 		child = node->l;
 	}
+
 	parent = node->parent;
 	child->parent = parent;
 
 	_deref_prefix(node->prefix);
-	isc_mem_put(radix->mctx, node, sizeof(*node));
-	radix->num_active_node--;
 
 	if (parent == NULL) {
 		INSIST(radix->head == node);
 		radix->head = child;
+		isc_mem_put(radix->mctx, node, sizeof(*node));
+		radix->num_active_node--;
 		return;
 	}
+
+	isc_mem_put(radix->mctx, node, sizeof(*node));
+	radix->num_active_node--;
 
 	if (parent->r == node) {
 		parent->r = child;

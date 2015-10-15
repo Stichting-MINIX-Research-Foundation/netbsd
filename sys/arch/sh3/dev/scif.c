@@ -1,4 +1,4 @@
-/*	$NetBSD: scif.c,v 1.62 2013/11/09 21:31:45 christos Exp $ */
+/*	$NetBSD: scif.c,v 1.65 2014/11/15 19:20:01 christos Exp $ */
 
 /*-
  * Copyright (C) 1999 T.Horiuchi and SAITOH Masanobu.  All rights reserved.
@@ -93,7 +93,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: scif.c,v 1.62 2013/11/09 21:31:45 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: scif.c,v 1.65 2014/11/15 19:20:01 christos Exp $");
 
 #include "opt_kgdb.h"
 #include "opt_scif.h"
@@ -187,11 +187,8 @@ static int scif_attached = 0;	/* XXX: FIXME: don't limit to just one! */
 
 extern struct cfdriver scif_cd;
 
-#define	SCIFUNIT_MASK		0x7ffff
-#define	SCIFDIALOUT_MASK	0x80000
-
-#define	SCIFUNIT(x)	(minor(x) & SCIFUNIT_MASK)
-#define	SCIFDIALOUT(x)	(minor(x) & SCIFDIALOUT_MASK)
+#define	SCIFUNIT(x)	TTUNIT(x)
+#define	SCIFDIALOUT(x)	TTDIALOUT(x)
 
 
 /* console */
@@ -212,8 +209,18 @@ dev_type_tty(sciftty);
 dev_type_poll(scifpoll);
 
 const struct cdevsw scif_cdevsw = {
-	scifopen, scifclose, scifread, scifwrite, scifioctl,
-	scifstop, sciftty, scifpoll, nommap, ttykqfilter, D_TTY
+	.d_open = scifopen,
+	.d_close = scifclose,
+	.d_read = scifread,
+	.d_write = scifwrite,
+	.d_ioctl = scifioctl,
+	.d_stop = scifstop,
+	.d_tty = sciftty,
+	.d_poll = scifpoll,
+	.d_mmap = nommap,
+	.d_kqfilter = ttykqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_TTY
 };
 
 

@@ -1,4 +1,4 @@
-/*	$NetBSD: em4k.c,v 1.2 2013/01/29 21:02:50 rkujawa Exp $ */
+/*	$NetBSD: em4k.c,v 1.4 2015/10/02 05:22:49 msaitoh Exp $ */
 
 /*-
  * Copyright (c) 2013 The NetBSD Foundation, Inc.
@@ -314,9 +314,9 @@ em4k_pci_conf_read(pci_chipset_tag_t pc, pcitag_t tag, int reg)
 {
 	uint32_t data;
 	uint32_t bus, dev, func;
-	struct em4k_softc *sc;
 
-	sc = pc->cookie;
+	if ((unsigned int)reg >= PCI_CONF_SIZE)
+		return (pcireg_t) -1;
 	
 	pci_decompose_tag(pc, tag, &bus, &dev, &func);
 
@@ -335,10 +335,10 @@ void
 em4k_pci_conf_write(pci_chipset_tag_t pc, pcitag_t tag, int reg, pcireg_t val)
 {
 	uint32_t bus, dev, func;
-	struct em4k_softc *sc;
 
-	sc = pc->cookie;
-	
+	if ((unsigned int)reg >= PCI_CONF_SIZE)
+		return;
+
 	pci_decompose_tag(pc, tag, &bus, &dev, &func);
 	
 	bus_space_write_4(pc->pci_conf_datat, pc->pci_conf_datah,

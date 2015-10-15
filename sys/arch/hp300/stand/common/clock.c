@@ -1,4 +1,4 @@
-/*	$NetBSD: clock.c,v 1.11 2011/02/08 20:20:14 rmind Exp $	*/
+/*	$NetBSD: clock.c,v 1.13 2014/11/17 02:15:48 christos Exp $	*/
 
 /*
  * Copyright (c) 1988 University of Utah.
@@ -46,71 +46,91 @@
 
 #include <hp300/stand/common/hilreg.h>
 
+#include <hp300/dev/frodoreg.h>		/* for APCI offsets */
+#include <hp300/dev/intioreg.h>		/* for frodo offsets */
+#include <dev/ic/mc146818reg.h>
+#include <dev/clock_subr.h>
+
 #include <lib/libsa/stand.h>
 #include <lib/libsa/net.h>
 #include <hp300/stand/common/samachdep.h>
 
 #define FEBRUARY        2
-#define STARTOFTIME     1970
-#define SECDAY          (60L * 60L * 24L)
-#define SECYR           (SECDAY * 365)
 
 #define BBC_SET_REG     0xe0
 #define BBC_WRITE_REG   0xc2
 #define BBC_READ_REG    0xc3
 #define NUM_BBC_REGS    12
 
-#define leapyear(year)		((year) % 4 == 0)
-#define range_test(n, l, h)	if ((n) < (l) || (n) > (h)) return 0
-#define days_in_year(a)		(leapyear(a) ? 366 : 365)
-#define days_in_month(a)	(month_days[(a) - 1])
+#define range_test(n, l, h)	if ((n) < (l) || (n) > (h)) return false
 #define bbc_to_decimal(a,b)	(bbc_registers[a] * 10 + bbc_registers[b])
 
-static const int month_days[12] = {
-	31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
-};
+static uint8_t bbc_registers[13];
+static struct hil_dev *bbcaddr = BBCADDR;
 
-u_char bbc_registers[13];
-struct hil_dev *bbcaddr = BBCADDR;
+static volatile uint8_t *mcclock =
+    (volatile uint8_t *)(INTIOBASE + FRODO_BASE + FRODO_CALENDAR);
 
-static int bbc_to_gmt(satime_t *);
+static bool clock_to_gmt(satime_t *);
+
+static void read_bbc(void);
+static uint8_t read_bbc_reg(int);
+static uint8_t mc_read(u_int);
 
 satime_t
 getsecs(void)
 {
-	static int bbcinited = 0;
+	static bool clockinited = false;
 	satime_t timbuf = 0;
 
-	if (!bbc_to_gmt(&timbuf) && !bbcinited)
+	if (!clock_to_gmt(&timbuf) && !clockinited)
 		printf("WARNING: bad date in battery clock\n");
-	bbcinited = 1;
+	clockinited = true;
 
 	/* Battery clock does not store usec's, so forget about it. */
 	return timbuf;
 }
 
-
-static int
-bbc_to_gmt(satime_t *timbuf)
+static bool
+clock_to_gmt(satime_t *timbuf)
 {
 	int i;
-	u_long tmp;
+	satime_t tmp;
 	int year, month, day, hour, min, sec;
 
-	read_bbc();
+	if (machineid == HP_425 && mmuid == MMUID_425_E) {
+		/* 425e uses mcclock on the frodo utility chip */
+		while ((mc_read(MC_REGA) & MC_REGA_UIP) != 0)
+			continue;
+		sec   = mc_read(MC_SEC);
+		min   = mc_read(MC_MIN);
+		hour  = mc_read(MC_HOUR);
+		day   = mc_read(MC_DOM);
+		month = mc_read(MC_MONTH);
+		year  = mc_read(MC_YEAR) + 1900;
+	} else {
+		/* Use the traditional HIL bbc for all other models */
+		read_bbc();
 
-	sec = bbc_to_decimal(1, 0);
-	min = bbc_to_decimal(3, 2);
+		sec = bbc_to_decimal(1, 0);
+		min = bbc_to_decimal(3, 2);
 
-	/*
-	 * Hours are different for some reason. Makes no sense really.
-	 */
-	hour  = ((bbc_registers[5] & 0x03) * 10) + bbc_registers[4];
-	day   = bbc_to_decimal(8, 7);
-	month = bbc_to_decimal(10, 9);
-	year  = bbc_to_decimal(12, 11) + 1900;
-	if (year < STARTOFTIME)
+		/*
+		 * Hours are different for some reason. Makes no sense really.
+		 */
+		hour  = ((bbc_registers[5] & 0x03) * 10) + bbc_registers[4];
+		day   = bbc_to_decimal(8, 7);
+		month = bbc_to_decimal(10, 9);
+		year  = bbc_to_decimal(12, 11) + 1900;
+	}
+
+	if (year < POSIX_BASE_YEAR)
 		year += 100;
+
+#ifdef CLOCK_DEBUG
+	printf("clock todr: %u/%u/%u %u:%u:%u\n",
+	    year, month, day, hour, min, sec);
+#endif
 
 	range_test(hour, 0, 23);
 	range_test(day, 1, 31);
@@ -118,9 +138,9 @@ bbc_to_gmt(satime_t *timbuf)
 
 	tmp = 0;
 
-	for (i = STARTOFTIME; i < year; i++)
-		tmp += days_in_year(i);
-	if (leapyear(year) && month > FEBRUARY)
+	for (i = POSIX_BASE_YEAR; i < year; i++)
+		tmp += days_per_year(i);
+	if (is_leap_year(year) && month > FEBRUARY)
 		tmp++;
 
 	for (i = 1; i < month; i++)
@@ -130,31 +150,32 @@ bbc_to_gmt(satime_t *timbuf)
 	tmp = ((tmp * 24 + hour) * 60 + min) * 60 + sec;
 
 	*timbuf = tmp;
-	return 1;
+	return true;
 }
 
-void
+static void
 read_bbc(void)
 {
-  	int i, read_okay;
+  	int i;
+	bool read_okay;
 
-	read_okay = 0;
+	read_okay = false;
 	while (!read_okay) {
-		read_okay = 1;
+		read_okay = true;
 		for (i = 0; i <= NUM_BBC_REGS; i++)
 			bbc_registers[i] = read_bbc_reg(i);
 		for (i = 0; i <= NUM_BBC_REGS; i++)
 			if (bbc_registers[i] != read_bbc_reg(i))
-				read_okay = 0;
+				read_okay = false;
 	}
 }
 
-u_char
+static uint8_t
 read_bbc_reg(int reg)
 {
-	u_char data = reg;
+	uint8_t data = reg;
 
-	if (bbcaddr) {
+	if (bbcaddr != NULL) {
 #if 0
 		send_hil_cmd(bbcaddr, BBC_SET_REG, &data, 1, NULL);
 		send_hil_cmd(bbcaddr, BBC_READ_REG, NULL, 0, &data);
@@ -170,4 +191,15 @@ read_bbc_reg(int reg)
 #endif
 	}
 	return data;
+}
+
+uint8_t
+mc_read(u_int reg)
+{
+	uint8_t datum;
+
+	mcclock[0] = (uint8_t)reg;
+	datum = mcclock[1 << 2];	/* frodo chip has 4 byte stride */
+
+	return datum;
 }

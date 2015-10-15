@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Copyright (C) 2006-2008, 2011, 2012  Internet Systems Consortium, Inc. ("ISC")
+# Copyright (C) 2006-2008, 2011, 2012, 2014  Internet Systems Consortium, Inc. ("ISC")
 #
 # Permission to use, copy, modify, and/or distribute this software for any
 # purpose with or without fee is hereby granted, provided that the above
@@ -13,8 +13,6 @@
 # LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE
 # OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
 # PERFORMANCE OF THIS SOFTWARE.
-
-# Id: tests.sh,v 1.13 2012/01/04 23:46:49 tbox Exp 
 
 SYSTEMTESTTOP=..
 . $SYSTEMTESTTOP/conf.sh
@@ -40,6 +38,30 @@ if $test_fixed; then
 	    -p 5300 @10.53.0.1 fixed.example > dig.out.fixed || ret=1
     cmp -s dig.out.fixed dig.out.fixed.good || ret=1
     done
+    if [ $ret != 0 ]; then echo "I:failed"; fi
+    status=`expr $status + $ret`
+else
+    echo "I: Checking order fixed behaves as cyclic when disabled (master)"
+    ret=0
+    matches=0
+    for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20
+    do
+        j=`expr $i % 4`
+        $DIG +nosea +nocomm +nocmd +noquest +noadd +noauth +nocomm +nostat +short \
+                -p 5300 @10.53.0.1 fixed.example > dig.out.fixed  || ret=1
+        if [ $i -le 4 ]; then
+            cp dig.out.fixed dig.out.$j
+        else
+            cmp -s dig.out.fixed dig.out.$j && matches=`expr $matches + 1`
+        fi
+    done
+    cmp -s dig.out.0 dig.out.1 && ret=1
+    cmp -s dig.out.0 dig.out.2 && ret=1
+    cmp -s dig.out.0 dig.out.3 && ret=1
+    cmp -s dig.out.1 dig.out.2 && ret=1
+    cmp -s dig.out.1 dig.out.3 && ret=1
+    cmp -s dig.out.2 dig.out.3 && ret=1
+    if [ $matches -ne 16 ]; then ret=1; fi
     if [ $ret != 0 ]; then echo "I:failed"; fi
     status=`expr $status + $ret`
 fi
@@ -225,7 +247,7 @@ status=`expr $status + $ret`
 
 echo "I: Shutting down slave"
 
-(cd ..; sh stop.sh rrsetorder ns2 )
+(cd ..; $SHELL stop.sh rrsetorder ns2 )
 
 echo "I: Checking for slave's on disk copy of zone"
 
@@ -237,7 +259,7 @@ fi
 
 echo "I: Re-starting slave"
 
-(cd ..; sh start.sh --noclean rrsetorder ns2 )
+(cd ..; $SHELL start.sh --noclean rrsetorder ns2 )
 
 #
 #

@@ -1,6 +1,6 @@
 #! /bin/sh
 #
-#	$NetBSD: dwctwo2netbsd,v 1.2 2013/10/05 07:00:41 skrll Exp $
+#	$NetBSD: dwctwo2netbsd,v 1.4 2015/08/30 13:03:00 skrll Exp $
 #
 # Copyright (c) 2013 The NetBSD Foundation, Inc.
 # All rights reserved.
@@ -34,8 +34,8 @@
 #
 #	$ DATE=$(date +%F)
 #	$ cd /some/where/temporary
-#	$ git clone -b staging.next git://git.kernel.org/pub/scm/linux/kernel/git/gregkh/staging.git
-#	$ DWC2SRCS=$(pwd)/drivers/staging/dwc2
+#	$ git clone git://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git
+#	$ DWC2SRCS=$(pwd)/drivers/usb/dwc2
 #	$ WRKDIR=/an/other/temporary
 #	$ sh /usr/src/sys/external/bsd/dwc2/dwctwo2netbsd $DWC2SRCS $WRKDIR
 #	$ cd $WRKDIR

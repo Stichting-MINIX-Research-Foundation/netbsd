@@ -1,4 +1,4 @@
-.\"	$NetBSD: malloc.9,v 1.47 2009/08/03 19:57:40 rmind Exp $
+.\"	$NetBSD: malloc.9,v 1.53 2015/08/07 13:56:48 maxv Exp $
 .\"
 .\" Copyright (c) 1996, 2003 The NetBSD Foundation, Inc.
 .\" All rights reserved.
@@ -27,20 +27,15 @@
 .\" ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 .\" POSSIBILITY OF SUCH DAMAGE.
 .\"
-.Dd December 29, 2008
+.Dd August 7, 2015
 .Dt MALLOC 9
 .Os
 .Sh NAME
 .Nm malloc ,
-.Nm MALLOC ,
 .Nm realloc ,
 .Nm free ,
-.Nm FREE ,
-.Nm malloc_roundup ,
 .Nm malloc_type_attach ,
 .Nm malloc_type_detach ,
-.Nm malloc_type_setlimit ,
-.Nm MALLOC_DEFINE_LIMIT ,
 .Nm MALLOC_DEFINE ,
 .Nm MALLOC_DECLARE
 .Nd general-purpose kernel memory allocator
@@ -53,17 +48,11 @@
     "int flags"
 .Ft void
 .Fn free "void *addr" "struct malloc_type *type"
-.Ft unsigned long
-.Fn malloc_roundup "unsigned long size"
 .Ft void
 .Fn malloc_type_attach "struct malloc_type *type"
 .Ft void
 .Fn malloc_type_detach "struct malloc_type *type"
-.Ft void
-.Fn malloc_type_setlimit "struct malloc_type *type" "unsigned long limit"
 .In sys/mallocvar.h
-.Fn MALLOC_DEFINE_LIMIT "type" "shortdesc" "longdesc" "limit"
-.Fn MALLOC_JUSTDEFINE_LIMIT "type" "shortdesc" "longdesc" "limit"
 .Fn MALLOC_DEFINE "type" "shortdesc" "longdesc"
 .Fn MALLOC_JUSTDEFINE "type" "shortdesc" "longdesc"
 .Fn MALLOC_DECLARE "type"
@@ -72,9 +61,9 @@
 These interfaces are being obsoleted and their new use is discouraged.
 For new code, use
 .Xr kmem 9
-or
+for variable-sized or one-time allocations and
 .Xr pool_cache 9
-instead.
+for frequent fixed-size allocations instead.
 .Ef
 .Pp
 The
@@ -82,8 +71,6 @@ The
 function allocates uninitialized memory in kernel address space for an
 object whose size is specified by
 .Fa size .
-.Fn malloc_roundup
-returns the actual size of the allocation unit for the given value.
 .Fn free
 releases memory at address
 .Fa addr
@@ -195,7 +182,7 @@ In addition to some built-in generic types defined by the kernel
 memory allocator, subsystems may define their own types.
 .Pp
 The
-.Fn MALLOC_DEFINE_LIMIT
+.Fn MALLOC_DEFINE
 macro defines a malloc type named
 .Fa type
 with the short description
@@ -207,20 +194,9 @@ The
 argument, also a constant string, is intended as way to place a
 comment in the actual type definition, and is not currently stored
 in the type structure.
-The
-.Fa limit
-argument specifies the maximum amount of memory, in bytes, that this
-malloc type can consume.
-.Pp
-The
-.Fn MALLOC_DEFINE
-macro is equivalent to the
-.Fn MALLOC_DEFINE_LIMIT
-macro with a
-.Fa limit
-argument of 0.
-If kernel memory statistics are being gathered, the system will
-choose a reasonable default limit for the malloc type.
+If kernel memory statistics are being
+gathered, the system will choose a reasonable default limit for
+the malloc type.
 .Pp
 The
 .Fn MALLOC_DECLARE
@@ -252,15 +228,6 @@ function detaches the malloc type
 previously attached with
 .Fn malloc_type_attach .
 .Pp
-The
-.Fn malloc_type_setlimit
-function sets the memory limit of the malloc type
-.Fa type
-to
-.Fa limit
-bytes.
-The type must already be registered with the kernel memory allocator.
-.Pp
 The following generic malloc types are currently defined:
 .Pp
 .Bl -tag -offset indent -width XXXXXXXXXXXXXX -compact
@@ -282,67 +249,10 @@ Misc temporary data buffers.
 Other malloc types are defined by the corresponding subsystem; see the
 documentation for that subsystem for information its available malloc
 types.
-.Pp
-Statistics based on the
-.Fa type
-argument are maintained only if the kernel option
-.Dv KMEMSTATS
-is used when compiling the kernel
-.Po
-the default in current
-.Nx
-kernels
-.Pc
-and can be examined by using
-.Sq vmstat -m .
 .Sh RETURN VALUES
 .Fn malloc
 returns a kernel virtual address that is suitably aligned for storage of
 any type of object.
-.Sh DIAGNOSTICS
-A kernel compiled with the
-.Dv DIAGNOSTIC
-configuration option attempts to detect memory corruption caused by
-such things as writing outside the allocated area and imbalanced calls to the
-.Fn malloc
-and
-.Fn free
-functions.
-Failing consistency checks will cause a panic or a system console message:
-.Pp
-.Bl -bullet -offset indent -compact
-.It
-panic:
-.Dq malloc - bogus type
-.It
-panic:
-.Dq malloc: out of space in kmem_map
-.It
-panic:
-.Dq malloc: allocation too large
-.It
-panic:
-.Dq malloc: wrong bucket
-.It
-panic:
-.Dq malloc: lost data
-.It
-panic:
-.Dq free: unaligned addr
-.It
-panic:
-.Dq free: duplicated free
-.It
-panic:
-.Dq free: multiple frees
-.It
-panic:
-.Dq init: minbucket too small/struct freelist too big
-.It
-.Dq multiply freed item Aq addr
-.It
-.Dq Data modified on freelist: Aq data object description
-.El
 .Sh SEE ALSO
 .Xr vmstat 1 ,
 .Xr memoryallocators 9

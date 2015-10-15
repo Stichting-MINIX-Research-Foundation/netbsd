@@ -1,6 +1,6 @@
 /* GNU/Linux/x86-64 specific low level interface, for the remote server
    for GDB.
-   Copyright (C) 2002-2013 Free Software Foundation, Inc.
+   Copyright (C) 2002-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -17,34 +17,83 @@
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
-#include <stddef.h>
+#include "server.h"
 #include <signal.h>
 #include <limits.h>
 #include <inttypes.h>
-#include "server.h"
 #include "linux-low.h"
 #include "i387-fp.h"
-#include "i386-low.h"
-#include "i386-xstate.h"
-#include "elf/common.h"
+#include "x86-low.h"
+#include "x86-xstate.h"
 
 #include "gdb_proc_service.h"
+/* Don't include elf/common.h if linux/elf.h got included by
+   gdb_proc_service.h.  */
+#ifndef ELFMAG0
+#include "elf/common.h"
+#endif
+
 #include "agent.h"
+#include "tdesc.h"
+#include "tracepoint.h"
+#include "ax.h"
+
+#ifdef __x86_64__
+/* Defined in auto-generated file amd64-linux.c.  */
+void init_registers_amd64_linux (void);
+extern const struct target_desc *tdesc_amd64_linux;
+
+/* Defined in auto-generated file amd64-avx-linux.c.  */
+void init_registers_amd64_avx_linux (void);
+extern const struct target_desc *tdesc_amd64_avx_linux;
+
+/* Defined in auto-generated file amd64-avx512-linux.c.  */
+void init_registers_amd64_avx512_linux (void);
+extern const struct target_desc *tdesc_amd64_avx512_linux;
+
+/* Defined in auto-generated file amd64-mpx-linux.c.  */
+void init_registers_amd64_mpx_linux (void);
+extern const struct target_desc *tdesc_amd64_mpx_linux;
+
+/* Defined in auto-generated file x32-linux.c.  */
+void init_registers_x32_linux (void);
+extern const struct target_desc *tdesc_x32_linux;
+
+/* Defined in auto-generated file x32-avx-linux.c.  */
+void init_registers_x32_avx_linux (void);
+extern const struct target_desc *tdesc_x32_avx_linux;
+
+/* Defined in auto-generated file x32-avx512-linux.c.  */
+void init_registers_x32_avx512_linux (void);
+extern const struct target_desc *tdesc_x32_avx512_linux;
+
+#endif
 
 /* Defined in auto-generated file i386-linux.c.  */
 void init_registers_i386_linux (void);
-/* Defined in auto-generated file amd64-linux.c.  */
-void init_registers_amd64_linux (void);
-/* Defined in auto-generated file i386-avx-linux.c.  */
-void init_registers_i386_avx_linux (void);
-/* Defined in auto-generated file amd64-avx-linux.c.  */
-void init_registers_amd64_avx_linux (void);
+extern const struct target_desc *tdesc_i386_linux;
+
 /* Defined in auto-generated file i386-mmx-linux.c.  */
 void init_registers_i386_mmx_linux (void);
-/* Defined in auto-generated file x32-linux.c.  */
-void init_registers_x32_linux (void);
-/* Defined in auto-generated file x32-avx-linux.c.  */
-void init_registers_x32_avx_linux (void);
+extern const struct target_desc *tdesc_i386_mmx_linux;
+
+/* Defined in auto-generated file i386-avx-linux.c.  */
+void init_registers_i386_avx_linux (void);
+extern const struct target_desc *tdesc_i386_avx_linux;
+
+/* Defined in auto-generated file i386-avx512-linux.c.  */
+void init_registers_i386_avx512_linux (void);
+extern const struct target_desc *tdesc_i386_avx512_linux;
+
+/* Defined in auto-generated file i386-mpx-linux.c.  */
+void init_registers_i386_mpx_linux (void);
+extern const struct target_desc *tdesc_i386_mpx_linux;
+
+#ifdef __x86_64__
+static struct target_desc *tdesc_amd64_linux_no_xml;
+#endif
+static struct target_desc *tdesc_i386_linux_no_xml;
+
 
 static unsigned char jump_insn[] = { 0xe9, 0, 0, 0, 0 };
 static unsigned char small_jump_insn[] = { 0x66, 0xe9, 0, 0 };
@@ -99,7 +148,7 @@ static const char *xmltarget_amd64_linux_no_xml = "@<target>\
 
 struct arch_process_info
 {
-  struct i386_debug_reg_state debug_reg_state;
+  struct x86_debug_reg_state debug_reg_state;
 };
 
 /* Per-thread arch-specific data we want to keep.  */
@@ -139,11 +188,24 @@ static const int x86_64_regmap[] =
   -1, -1, -1, -1, -1, -1, -1, -1,
   -1, -1, -1, -1, -1, -1, -1, -1,
   -1, -1, -1, -1, -1, -1, -1, -1,
-  -1, -1, -1, -1, -1, -1, -1, -1, -1,
-  ORIG_RAX * 8
+  -1,
+  -1, -1, -1, -1, -1, -1, -1, -1,
+  ORIG_RAX * 8,
+  -1, -1, -1, -1,			/* MPX registers BND0 ... BND3.  */
+  -1, -1,				/* MPX registers BNDCFGU, BNDSTATUS.  */
+  -1, -1, -1, -1, -1, -1, -1, -1,       /* xmm16 ... xmm31 (AVX512)  */
+  -1, -1, -1, -1, -1, -1, -1, -1,
+  -1, -1, -1, -1, -1, -1, -1, -1,       /* ymm16 ... ymm31 (AVX512)  */
+  -1, -1, -1, -1, -1, -1, -1, -1,
+  -1, -1, -1, -1, -1, -1, -1, -1,       /* k0 ... k7 (AVX512)  */
+  -1, -1, -1, -1, -1, -1, -1, -1,       /* zmm0 ... zmm31 (AVX512)  */
+  -1, -1, -1, -1, -1, -1, -1, -1,
+  -1, -1, -1, -1, -1, -1, -1, -1,
+  -1, -1, -1, -1, -1, -1, -1, -1
 };
 
 #define X86_64_NUM_REGS (sizeof (x86_64_regmap) / sizeof (x86_64_regmap[0]))
+#define X86_64_USER_REGS (GS + 1)
 
 #else /* ! __x86_64__ */
 
@@ -160,6 +222,22 @@ static /*const*/ int i386_regmap[] =
 #define I386_NUM_REGS (sizeof (i386_regmap) / sizeof (i386_regmap[0]))
 
 #endif
+
+#ifdef __x86_64__
+
+/* Returns true if the current inferior belongs to a x86-64 process,
+   per the tdesc.  */
+
+static int
+is_64bit_tdesc (void)
+{
+  struct regcache *regcache = get_thread_regcache (current_thread, 0);
+
+  return register_size (regcache->tdesc, 0) == 8;
+}
+
+#endif
+
 
 /* Called by libthread_db.  */
 
@@ -168,7 +246,7 @@ ps_get_thread_area (const struct ps_prochandle *ph,
 		    lwpid_t lwpid, int idx, void **base)
 {
 #ifdef __x86_64__
-  int use_64bit = register_size (0) == 8;
+  int use_64bit = is_64bit_tdesc ();
 
   if (use_64bit)
     {
@@ -211,7 +289,7 @@ static int
 x86_get_thread_area (int lwpid, CORE_ADDR *addr)
 {
 #ifdef __x86_64__
-  int use_64bit = register_size (0) == 8;
+  int use_64bit = is_64bit_tdesc ();
 
   if (use_64bit)
     {
@@ -228,7 +306,8 @@ x86_get_thread_area (int lwpid, CORE_ADDR *addr)
 
   {
     struct lwp_info *lwp = find_lwp_pid (pid_to_ptid (lwpid));
-    struct regcache *regcache = get_thread_regcache (get_lwp_thread (lwp), 1);
+    struct thread_info *thr = get_lwp_thread (lwp);
+    struct regcache *regcache = get_thread_regcache (thr, 1);
     unsigned int desc[4];
     ULONGEST gs = 0;
     const int reg_thread_area = 3; /* bits to scale down register value.  */
@@ -239,7 +318,7 @@ x86_get_thread_area (int lwpid, CORE_ADDR *addr)
     idx = gs >> reg_thread_area;
 
     if (ptrace (PTRACE_GET_THREAD_AREA,
-		lwpid_of (lwp),
+		lwpid_of (thr),
 		(void *) (long) idx, (unsigned long) &desc) < 0)
       return -1;
 
@@ -251,14 +330,24 @@ x86_get_thread_area (int lwpid, CORE_ADDR *addr)
 
 
 static int
-i386_cannot_store_register (int regno)
+x86_cannot_store_register (int regno)
 {
+#ifdef __x86_64__
+  if (is_64bit_tdesc ())
+    return 0;
+#endif
+
   return regno >= I386_NUM_REGS;
 }
 
 static int
-i386_cannot_fetch_register (int regno)
+x86_cannot_fetch_register (int regno)
 {
+#ifdef __x86_64__
+  if (is_64bit_tdesc ())
+    return 0;
+#endif
+
   return regno >= I386_NUM_REGS;
 }
 
@@ -268,13 +357,17 @@ x86_fill_gregset (struct regcache *regcache, void *buf)
   int i;
 
 #ifdef __x86_64__
-  if (register_size (0) == 8)
+  if (register_size (regcache->tdesc, 0) == 8)
     {
       for (i = 0; i < X86_64_NUM_REGS; i++)
 	if (x86_64_regmap[i] != -1)
 	  collect_register (regcache, i, ((char *) buf) + x86_64_regmap[i]);
       return;
     }
+
+  /* 32-bit inferior registers need to be zero-extended.
+     Callers would read uninitialized memory otherwise.  */
+  memset (buf, 0x00, X86_64_USER_REGS * 8);
 #endif
 
   for (i = 0; i < I386_NUM_REGS; i++)
@@ -290,7 +383,7 @@ x86_store_gregset (struct regcache *regcache, const void *buf)
   int i;
 
 #ifdef __x86_64__
-  if (register_size (0) == 8)
+  if (register_size (regcache->tdesc, 0) == 8)
     {
       for (i = 0; i < X86_64_NUM_REGS; i++)
 	if (x86_64_regmap[i] != -1)
@@ -359,11 +452,9 @@ x86_store_xstateregset (struct regcache *regcache, const void *buf)
    This is, presumably, to handle the case where PTRACE_[GS]ETFPXREGS
    doesn't work.  IWBN to avoid the duplication in the case where it
    does work.  Maybe the arch_setup routine could check whether it works
-   and update target_regsets accordingly, maybe by moving target_regsets
-   to linux_target_ops and set the right one there, rather than having to
-   modify the target_regsets global.  */
+   and update the supported regsets accordingly.  */
 
-struct regset_info target_regsets[] =
+static struct regset_info x86_regsets[] =
 {
 #ifdef HAVE_PTRACE_GETREGS
   { PTRACE_GETREGS, PTRACE_SETREGS, 0, sizeof (elf_gregset_t),
@@ -388,7 +479,7 @@ struct regset_info target_regsets[] =
 static CORE_ADDR
 x86_get_pc (struct regcache *regcache)
 {
-  int use_64bit = register_size (0) == 8;
+  int use_64bit = register_size (regcache->tdesc, 0) == 8;
 
   if (use_64bit)
     {
@@ -407,7 +498,7 @@ x86_get_pc (struct regcache *regcache)
 static void
 x86_set_pc (struct regcache *regcache, CORE_ADDR pc)
 {
-  int use_64bit = register_size (0) == 8;
+  int use_64bit = register_size (regcache->tdesc, 0) == 8;
 
   if (use_64bit)
     {
@@ -473,11 +564,12 @@ static int
 update_debug_registers_callback (struct inferior_list_entry *entry,
 				 void *pid_p)
 {
-  struct lwp_info *lwp = (struct lwp_info *) entry;
+  struct thread_info *thr = (struct thread_info *) entry;
+  struct lwp_info *lwp = get_thread_lwp (thr);
   int pid = *(int *) pid_p;
 
   /* Only update the threads of this process.  */
-  if (pid_of (lwp) == pid)
+  if (pid_of (thr) == pid)
     {
       /* The actual update is done later just before resuming the lwp,
 	 we just mark that the registers need updating.  */
@@ -494,27 +586,24 @@ update_debug_registers_callback (struct inferior_list_entry *entry,
 
 /* Update the inferior's debug register REGNUM from STATE.  */
 
-void
-i386_dr_low_set_addr (const struct i386_debug_reg_state *state, int regnum)
+static void
+x86_dr_low_set_addr (int regnum, CORE_ADDR addr)
 {
   /* Only update the threads of this process.  */
-  int pid = pid_of (get_thread_lwp (current_inferior));
+  int pid = pid_of (current_thread);
 
-  if (! (regnum >= 0 && regnum <= DR_LASTADDR - DR_FIRSTADDR))
-    fatal ("Invalid debug register %d", regnum);
+  gdb_assert (DR_FIRSTADDR <= regnum && regnum <= DR_LASTADDR);
 
-  find_inferior (&all_lwps, update_debug_registers_callback, &pid);
+  find_inferior (&all_threads, update_debug_registers_callback, &pid);
 }
 
 /* Return the inferior's debug register REGNUM.  */
 
-CORE_ADDR
-i386_dr_low_get_addr (int regnum)
+static CORE_ADDR
+x86_dr_low_get_addr (int regnum)
 {
-  struct lwp_info *lwp = get_thread_lwp (current_inferior);
-  ptid_t ptid = ptid_of (lwp);
+  ptid_t ptid = ptid_of (current_thread);
 
-  /* DR6 and DR7 are retrieved with some other way.  */
   gdb_assert (DR_FIRSTADDR <= regnum && regnum <= DR_LASTADDR);
 
   return x86_linux_dr_get (ptid, regnum);
@@ -522,22 +611,21 @@ i386_dr_low_get_addr (int regnum)
 
 /* Update the inferior's DR7 debug control register from STATE.  */
 
-void
-i386_dr_low_set_control (const struct i386_debug_reg_state *state)
+static void
+x86_dr_low_set_control (unsigned long control)
 {
   /* Only update the threads of this process.  */
-  int pid = pid_of (get_thread_lwp (current_inferior));
+  int pid = pid_of (current_thread);
 
-  find_inferior (&all_lwps, update_debug_registers_callback, &pid);
+  find_inferior (&all_threads, update_debug_registers_callback, &pid);
 }
 
 /* Return the inferior's DR7 debug control register.  */
 
-unsigned
-i386_dr_low_get_control (void)
+static unsigned long
+x86_dr_low_get_control (void)
 {
-  struct lwp_info *lwp = get_thread_lwp (current_inferior);
-  ptid_t ptid = ptid_of (lwp);
+  ptid_t ptid = ptid_of (current_thread);
 
   return x86_linux_dr_get (ptid, DR_CONTROL);
 }
@@ -545,40 +633,64 @@ i386_dr_low_get_control (void)
 /* Get the value of the DR6 debug status register from the inferior
    and record it in STATE.  */
 
-unsigned
-i386_dr_low_get_status (void)
+static unsigned long
+x86_dr_low_get_status (void)
 {
-  struct lwp_info *lwp = get_thread_lwp (current_inferior);
-  ptid_t ptid = ptid_of (lwp);
+  ptid_t ptid = ptid_of (current_thread);
 
   return x86_linux_dr_get (ptid, DR_STATUS);
 }
+
+/* Low-level function vector.  */
+struct x86_dr_low_type x86_dr_low =
+  {
+    x86_dr_low_set_control,
+    x86_dr_low_set_addr,
+    x86_dr_low_get_addr,
+    x86_dr_low_get_status,
+    x86_dr_low_get_control,
+    sizeof (void *),
+  };
 
 /* Breakpoint/Watchpoint support.  */
 
 static int
-x86_insert_point (char type, CORE_ADDR addr, int len)
+x86_supports_z_point_type (char z_type)
+{
+  switch (z_type)
+    {
+    case Z_PACKET_SW_BP:
+    case Z_PACKET_HW_BP:
+    case Z_PACKET_WRITE_WP:
+    case Z_PACKET_ACCESS_WP:
+      return 1;
+    default:
+      return 0;
+    }
+}
+
+static int
+x86_insert_point (enum raw_bkpt_type type, CORE_ADDR addr,
+		  int size, struct raw_breakpoint *bp)
 {
   struct process_info *proc = current_process ();
+
   switch (type)
     {
-    case '0': /* software-breakpoint */
-      {
-	int ret;
+    case raw_bkpt_type_sw:
+      return insert_memory_breakpoint (bp);
 
-	ret = prepare_to_access_memory ();
-	if (ret)
-	  return -1;
-	ret = set_gdb_breakpoint_at (addr);
-	done_accessing_memory ();
-	return ret;
+    case raw_bkpt_type_hw:
+    case raw_bkpt_type_write_wp:
+    case raw_bkpt_type_access_wp:
+      {
+	enum target_hw_bp_type hw_type
+	  = raw_bkpt_type_to_target_hw_bp_type (type);
+	struct x86_debug_reg_state *state
+	  = &proc->private->arch_private->debug_reg_state;
+
+	return x86_dr_insert_watchpoint (state, hw_type, addr, size);
       }
-    case '1': /* hardware-breakpoint */
-    case '2': /* write watchpoint */
-    case '3': /* read watchpoint */
-    case '4': /* access watchpoint */
-      return i386_low_insert_watchpoint (&proc->private->arch_private->debug_reg_state,
-					 type, addr, len);
 
     default:
       /* Unsupported.  */
@@ -587,28 +699,27 @@ x86_insert_point (char type, CORE_ADDR addr, int len)
 }
 
 static int
-x86_remove_point (char type, CORE_ADDR addr, int len)
+x86_remove_point (enum raw_bkpt_type type, CORE_ADDR addr,
+		  int size, struct raw_breakpoint *bp)
 {
   struct process_info *proc = current_process ();
+
   switch (type)
     {
-    case '0': /* software-breakpoint */
-      {
-	int ret;
+    case raw_bkpt_type_sw:
+      return remove_memory_breakpoint (bp);
 
-	ret = prepare_to_access_memory ();
-	if (ret)
-	  return -1;
-	ret = delete_gdb_breakpoint_at (addr);
-	done_accessing_memory ();
-	return ret;
+    case raw_bkpt_type_hw:
+    case raw_bkpt_type_write_wp:
+    case raw_bkpt_type_access_wp:
+      {
+	enum target_hw_bp_type hw_type
+	  = raw_bkpt_type_to_target_hw_bp_type (type);
+	struct x86_debug_reg_state *state
+	  = &proc->private->arch_private->debug_reg_state;
+
+	return x86_dr_remove_watchpoint (state, hw_type, addr, size);
       }
-    case '1': /* hardware-breakpoint */
-    case '2': /* write watchpoint */
-    case '3': /* read watchpoint */
-    case '4': /* access watchpoint */
-      return i386_low_remove_watchpoint (&proc->private->arch_private->debug_reg_state,
-					 type, addr, len);
     default:
       /* Unsupported.  */
       return 1;
@@ -619,7 +730,7 @@ static int
 x86_stopped_by_watchpoint (void)
 {
   struct process_info *proc = current_process ();
-  return i386_low_stopped_by_watchpoint (&proc->private->arch_private->debug_reg_state);
+  return x86_dr_stopped_by_watchpoint (&proc->private->arch_private->debug_reg_state);
 }
 
 static CORE_ADDR
@@ -627,8 +738,8 @@ x86_stopped_data_address (void)
 {
   struct process_info *proc = current_process ();
   CORE_ADDR addr;
-  if (i386_low_stopped_data_address (&proc->private->arch_private->debug_reg_state,
-				     &addr))
+  if (x86_dr_stopped_data_address (&proc->private->arch_private->debug_reg_state,
+				   &addr))
     return addr;
   return 0;
 }
@@ -638,9 +749,9 @@ x86_stopped_data_address (void)
 static struct arch_process_info *
 x86_linux_new_process (void)
 {
-  struct arch_process_info *info = xcalloc (1, sizeof (*info));
+  struct arch_process_info *info = XCNEW (struct arch_process_info);
 
-  i386_low_init_dregs (&info->debug_reg_state);
+  x86_low_init_dregs (&info->debug_reg_state);
 
   return info;
 }
@@ -650,7 +761,7 @@ x86_linux_new_process (void)
 static struct arch_lwp_info *
 x86_linux_new_thread (void)
 {
-  struct arch_lwp_info *info = xcalloc (1, sizeof (*info));
+  struct arch_lwp_info *info = XCNEW (struct arch_lwp_info);
 
   info->debug_registers_changed = 1;
 
@@ -663,7 +774,7 @@ x86_linux_new_thread (void)
 static void
 x86_linux_prepare_to_resume (struct lwp_info *lwp)
 {
-  ptid_t ptid = ptid_of (lwp);
+  ptid_t ptid = ptid_of (get_lwp_thread (lwp));
   int clear_status = 0;
 
   if (lwp->arch_private->debug_registers_changed)
@@ -671,27 +782,30 @@ x86_linux_prepare_to_resume (struct lwp_info *lwp)
       int i;
       int pid = ptid_get_pid (ptid);
       struct process_info *proc = find_process_pid (pid);
-      struct i386_debug_reg_state *state
+      struct x86_debug_reg_state *state
 	= &proc->private->arch_private->debug_reg_state;
 
-      for (i = DR_FIRSTADDR; i <= DR_LASTADDR; i++)
+      x86_linux_dr_set (ptid, DR_CONTROL, 0);
+
+      ALL_DEBUG_ADDRESS_REGISTERS (i)
 	if (state->dr_ref_count[i] > 0)
 	  {
 	    x86_linux_dr_set (ptid, i, state->dr_mirror[i]);
 
 	    /* If we're setting a watchpoint, any change the inferior
 	       had done itself to the debug registers needs to be
-	       discarded, otherwise, i386_low_stopped_data_address can
+	       discarded, otherwise, x86_dr_stopped_data_address can
 	       get confused.  */
 	    clear_status = 1;
 	  }
 
-      x86_linux_dr_set (ptid, DR_CONTROL, state->dr_control_mirror);
+      if (state->dr_control_mirror != 0)
+	x86_linux_dr_set (ptid, DR_CONTROL, state->dr_control_mirror);
 
       lwp->arch_private->debug_registers_changed = 0;
     }
 
-  if (clear_status || lwp->stopped_by_watchpoint)
+  if (clear_status || lwp->stop_reason == LWP_STOPPED_BY_WATCHPOINT)
     x86_linux_dr_set (ptid, DR_STATUS, 0);
 }
 
@@ -1092,8 +1206,6 @@ siginfo_from_compat_x32_siginfo (siginfo_t *to,
     }
 }
 
-/* Is this process 64-bit?  */
-static int linux_is_elf64;
 #endif /* __x86_64__ */
 
 /* Convert a native/host siginfo object, into/from the siginfo in the
@@ -1106,11 +1218,14 @@ static int
 x86_siginfo_fixup (siginfo_t *native, void *inf, int direction)
 {
 #ifdef __x86_64__
+  unsigned int machine;
+  int tid = lwpid_of (current_thread);
+  int is_elf64 = linux_pid_exe_is_elf_64_file (tid, &machine);
+
   /* Is the inferior 32-bit?  If so, then fixup the siginfo object.  */
-  if (register_size (0) == 4)
+  if (!is_64bit_tdesc ())
     {
-      if (sizeof (siginfo_t) != sizeof (compat_siginfo_t))
-	fatal ("unexpected difference in siginfo");
+      gdb_assert (sizeof (siginfo_t) == sizeof (compat_siginfo_t));
 
       if (direction == 0)
 	compat_siginfo_from_siginfo ((struct compat_siginfo *) inf, native);
@@ -1120,10 +1235,9 @@ x86_siginfo_fixup (siginfo_t *native, void *inf, int direction)
       return 1;
     }
   /* No fixup for native x32 GDB.  */
-  else if (!linux_is_elf64 && sizeof (void *) == 8)
+  else if (!is_elf64 && sizeof (void *) == 8)
     {
-      if (sizeof (siginfo_t) != sizeof (compat_x32_siginfo_t))
-	fatal ("unexpected difference in siginfo");
+      gdb_assert (sizeof (siginfo_t) == sizeof (compat_x32_siginfo_t));
 
       if (direction == 0)
 	compat_x32_siginfo_from_siginfo ((struct compat_x32_siginfo *) inf,
@@ -1141,138 +1255,249 @@ x86_siginfo_fixup (siginfo_t *native, void *inf, int direction)
 
 static int use_xml;
 
-/* Update gdbserver_xmltarget.  */
+/* Format of XSAVE extended state is:
+	struct
+	{
+	  fxsave_bytes[0..463]
+	  sw_usable_bytes[464..511]
+	  xstate_hdr_bytes[512..575]
+	  avx_bytes[576..831]
+	  future_state etc
+	};
 
-static void
-x86_linux_update_xmltarget (void)
-{
-  int pid;
-  struct regset_info *regset;
-  static unsigned long long xcr0;
-  static int have_ptrace_getregset = -1;
-#if !defined(__x86_64__) && defined(HAVE_PTRACE_GETFPXREGS)
-  static int have_ptrace_getfpxregs = -1;
-#endif
+  Same memory layout will be used for the coredump NT_X86_XSTATE
+  representing the XSAVE extended state registers.
 
-  if (!current_inferior)
-    return;
+  The first 8 bytes of the sw_usable_bytes[464..467] is the OS enabled
+  extended state mask, which is the same as the extended control register
+  0 (the XFEATURE_ENABLED_MASK register), XCR0.  We can use this mask
+  together with the mask saved in the xstate_hdr_bytes to determine what
+  states the processor/OS supports and what state, used or initialized,
+  the process/thread is in.  */
+#define I386_LINUX_XSAVE_XCR0_OFFSET 464
 
-  /* Before changing the register cache internal layout or the target
-     regsets, flush the contents of the current valid caches back to
-     the threads.  */
-  regcache_invalidate ();
-
-  pid = pid_of (get_thread_lwp (current_inferior));
-#ifdef __x86_64__
-  if (num_xmm_registers == 8)
-    init_registers_i386_linux ();
-  else if (linux_is_elf64)
-    init_registers_amd64_linux ();
-  else
-    init_registers_x32_linux ();
+/* Does the current host support the GETFPXREGS request?  The header
+   file may or may not define it, and even if it is defined, the
+   kernel will return EIO if it's running on a pre-SSE processor.  */
+int have_ptrace_getfpxregs =
+#ifdef HAVE_PTRACE_GETFPXREGS
+  -1
 #else
+  0
+#endif
+;
+
+/* Does the current host support PTRACE_GETREGSET?  */
+static int have_ptrace_getregset = -1;
+
+/* Get Linux/x86 target description from running target.  */
+
+static const struct target_desc *
+x86_linux_read_description (void)
+{
+  unsigned int machine;
+  int is_elf64;
+  int xcr0_features;
+  int tid;
+  static uint64_t xcr0;
+  struct regset_info *regset;
+
+  tid = lwpid_of (current_thread);
+
+  is_elf64 = linux_pid_exe_is_elf_64_file (tid, &machine);
+
+  if (sizeof (void *) == 4)
     {
-# ifdef HAVE_PTRACE_GETFPXREGS
-      if (have_ptrace_getfpxregs == -1)
+      if (is_elf64 > 0)
+       error (_("Can't debug 64-bit process with 32-bit GDBserver"));
+#ifndef __x86_64__
+      else if (machine == EM_X86_64)
+       error (_("Can't debug x86-64 process with 32-bit GDBserver"));
+#endif
+    }
+
+#if !defined __x86_64__ && defined HAVE_PTRACE_GETFPXREGS
+  if (machine == EM_386 && have_ptrace_getfpxregs == -1)
+    {
+      elf_fpxregset_t fpxregs;
+
+      if (ptrace (PTRACE_GETFPXREGS, tid, 0, (long) &fpxregs) < 0)
 	{
-	  elf_fpxregset_t fpxregs;
-
-	  if (ptrace (PTRACE_GETFPXREGS, pid, 0, (int) &fpxregs) < 0)
-	    {
-	      have_ptrace_getfpxregs = 0;
-	      x86_xcr0 = I386_XSTATE_X87_MASK;
-
-	      /* Disable PTRACE_GETFPXREGS.  */
-	      for (regset = target_regsets;
-		   regset->fill_function != NULL; regset++)
-		if (regset->get_request == PTRACE_GETFPXREGS)
-		  {
-		    regset->size = 0;
-		    break;
-		  }
-	    }
-	  else
-	    have_ptrace_getfpxregs = 1;
+	  have_ptrace_getfpxregs = 0;
+	  have_ptrace_getregset = 0;
+	  return tdesc_i386_mmx_linux;
 	}
-
-      if (!have_ptrace_getfpxregs)
-	{
-	  init_registers_i386_mmx_linux ();
-	  return;
-	}
-# endif
-      init_registers_i386_linux ();
+      else
+	have_ptrace_getfpxregs = 1;
     }
 #endif
 
   if (!use_xml)
     {
+      x86_xcr0 = X86_XSTATE_SSE_MASK;
+
       /* Don't use XML.  */
 #ifdef __x86_64__
-      if (num_xmm_registers == 8)
-	gdbserver_xmltarget = xmltarget_i386_linux_no_xml;
+      if (machine == EM_X86_64)
+	return tdesc_amd64_linux_no_xml;
       else
-	gdbserver_xmltarget = xmltarget_amd64_linux_no_xml;
-#else
-      gdbserver_xmltarget = xmltarget_i386_linux_no_xml;
 #endif
-
-      x86_xcr0 = I386_XSTATE_SSE_MASK;
-
-      return;
+	return tdesc_i386_linux_no_xml;
     }
 
-  /* Check if XSAVE extended state is supported.  */
   if (have_ptrace_getregset == -1)
     {
-      unsigned long long xstateregs[I386_XSTATE_SSE_SIZE / sizeof (long long)];
+      uint64_t xstateregs[(X86_XSTATE_SSE_SIZE / sizeof (uint64_t))];
       struct iovec iov;
 
       iov.iov_base = xstateregs;
       iov.iov_len = sizeof (xstateregs);
 
       /* Check if PTRACE_GETREGSET works.  */
-      if (ptrace (PTRACE_GETREGSET, pid, (unsigned int) NT_X86_XSTATE,
-		  &iov) < 0)
+      if (ptrace (PTRACE_GETREGSET, tid,
+		  (unsigned int) NT_X86_XSTATE, (long) &iov) < 0)
+	have_ptrace_getregset = 0;
+      else
 	{
-	  have_ptrace_getregset = 0;
-	  return;
+	  have_ptrace_getregset = 1;
+
+	  /* Get XCR0 from XSAVE extended state.  */
+	  xcr0 = xstateregs[(I386_LINUX_XSAVE_XCR0_OFFSET
+			     / sizeof (uint64_t))];
+
+	  /* Use PTRACE_GETREGSET if it is available.  */
+	  for (regset = x86_regsets;
+	       regset->fill_function != NULL; regset++)
+	    if (regset->get_request == PTRACE_GETREGSET)
+	      regset->size = X86_XSTATE_SIZE (xcr0);
+	    else if (regset->type != GENERAL_REGS)
+	      regset->size = 0;
+	}
+    }
+
+  /* Check the native XCR0 only if PTRACE_GETREGSET is available.  */
+  xcr0_features = (have_ptrace_getregset
+         && (xcr0 & X86_XSTATE_ALL_MASK));
+
+  if (xcr0_features)
+    x86_xcr0 = xcr0;
+
+  if (machine == EM_X86_64)
+    {
+#ifdef __x86_64__
+      if (is_elf64)
+	{
+	  if (xcr0_features)
+	    {
+	      switch (xcr0 & X86_XSTATE_ALL_MASK)
+	        {
+		case X86_XSTATE_AVX512_MASK:
+		  return tdesc_amd64_avx512_linux;
+
+		case X86_XSTATE_MPX_MASK:
+		  return tdesc_amd64_mpx_linux;
+
+		case X86_XSTATE_AVX_MASK:
+		  return tdesc_amd64_avx_linux;
+
+		default:
+		  return tdesc_amd64_linux;
+		}
+	    }
+	  else
+	    return tdesc_amd64_linux;
 	}
       else
-	have_ptrace_getregset = 1;
-
-      /* Get XCR0 from XSAVE extended state at byte 464.  */
-      xcr0 = xstateregs[464 / sizeof (long long)];
-
-      /* Use PTRACE_GETREGSET if it is available.  */
-      for (regset = target_regsets;
-	   regset->fill_function != NULL; regset++)
-	if (regset->get_request == PTRACE_GETREGSET)
-	  regset->size = I386_XSTATE_SIZE (xcr0);
-	else if (regset->type != GENERAL_REGS)
-	  regset->size = 0;
-    }
-
-  if (have_ptrace_getregset)
-    {
-      /* AVX is the highest feature we support.  */
-      if ((xcr0 & I386_XSTATE_AVX_MASK) == I386_XSTATE_AVX_MASK)
 	{
-	  x86_xcr0 = xcr0;
+	  if (xcr0_features)
+	    {
+	      switch (xcr0 & X86_XSTATE_ALL_MASK)
+	        {
+		case X86_XSTATE_AVX512_MASK:
+		  return tdesc_x32_avx512_linux;
 
-#ifdef __x86_64__
-	  /* I386 has 8 xmm regs.  */
-	  if (num_xmm_registers == 8)
-	    init_registers_i386_avx_linux ();
-	  else if (linux_is_elf64)
-	    init_registers_amd64_avx_linux ();
+		case X86_XSTATE_MPX_MASK: /* No MPX on x32.  */
+		case X86_XSTATE_AVX_MASK:
+		  return tdesc_x32_avx_linux;
+
+		default:
+		  return tdesc_x32_linux;
+		}
+	    }
 	  else
-	    init_registers_x32_avx_linux ();
-#else
-	  init_registers_i386_avx_linux ();
-#endif
+	    return tdesc_x32_linux;
 	}
+#endif
     }
+  else
+    {
+      if (xcr0_features)
+	{
+	  switch (xcr0 & X86_XSTATE_ALL_MASK)
+	    {
+	    case (X86_XSTATE_AVX512_MASK):
+	      return tdesc_i386_avx512_linux;
+
+	    case (X86_XSTATE_MPX_MASK):
+	      return tdesc_i386_mpx_linux;
+
+	    case (X86_XSTATE_AVX_MASK):
+	      return tdesc_i386_avx_linux;
+
+	    default:
+	      return tdesc_i386_linux;
+	    }
+	}
+      else
+	return tdesc_i386_linux;
+    }
+
+  gdb_assert_not_reached ("failed to return tdesc");
+}
+
+/* Callback for find_inferior.  Stops iteration when a thread with a
+   given PID is found.  */
+
+static int
+same_process_callback (struct inferior_list_entry *entry, void *data)
+{
+  int pid = *(int *) data;
+
+  return (ptid_get_pid (entry->id) == pid);
+}
+
+/* Callback for for_each_inferior.  Calls the arch_setup routine for
+   each process.  */
+
+static void
+x86_arch_setup_process_callback (struct inferior_list_entry *entry)
+{
+  int pid = ptid_get_pid (entry->id);
+
+  /* Look up any thread of this processes.  */
+  current_thread
+    = (struct thread_info *) find_inferior (&all_threads,
+					    same_process_callback, &pid);
+
+  the_low_target.arch_setup ();
+}
+
+/* Update all the target description of all processes; a new GDB
+   connected, and it may or not support xml target descriptions.  */
+
+static void
+x86_linux_update_xmltarget (void)
+{
+  struct thread_info *saved_thread = current_thread;
+
+  /* Before changing the register cache's internal layout, flush the
+     contents of the current valid caches back to the threads, and
+     release the current regcache objects.  */
+  regcache_release ();
+
+  for_each_inferior (&all_processes, x86_arch_setup_process_callback);
+
+  current_thread = saved_thread;
 }
 
 /* Process qSupported query, "xmlRegisters=".  Update the buffer size for
@@ -1305,62 +1530,54 @@ x86_linux_process_qsupported (const char *query)
   x86_linux_update_xmltarget ();
 }
 
-/* Initialize gdbserver for the architecture of the inferior.  */
+/* Common for x86/x86-64.  */
+
+static struct regsets_info x86_regsets_info =
+  {
+    x86_regsets, /* regsets */
+    0, /* num_regsets */
+    NULL, /* disabled_regsets */
+  };
+
+#ifdef __x86_64__
+static struct regs_info amd64_linux_regs_info =
+  {
+    NULL, /* regset_bitmap */
+    NULL, /* usrregs_info */
+    &x86_regsets_info
+  };
+#endif
+static struct usrregs_info i386_linux_usrregs_info =
+  {
+    I386_NUM_REGS,
+    i386_regmap,
+  };
+
+static struct regs_info i386_linux_regs_info =
+  {
+    NULL, /* regset_bitmap */
+    &i386_linux_usrregs_info,
+    &x86_regsets_info
+  };
+
+const struct regs_info *
+x86_linux_regs_info (void)
+{
+#ifdef __x86_64__
+  if (is_64bit_tdesc ())
+    return &amd64_linux_regs_info;
+  else
+#endif
+    return &i386_linux_regs_info;
+}
+
+/* Initialize the target description for the architecture of the
+   inferior.  */
 
 static void
 x86_arch_setup (void)
 {
-  int pid = pid_of (get_thread_lwp (current_inferior));
-  unsigned int machine;
-  int is_elf64 = linux_pid_exe_is_elf_64_file (pid, &machine);
-
-  if (sizeof (void *) == 4)
-    {
-      if (is_elf64 > 0)
-	error (_("Can't debug 64-bit process with 32-bit GDBserver"));
-#ifndef __x86_64__
-      else if (machine == EM_X86_64)
-	error (_("Can't debug x86-64 process with 32-bit GDBserver"));
-#endif
-    }
-
-#ifdef __x86_64__
-  if (is_elf64 < 0)
-    {
-      /* This can only happen if /proc/<pid>/exe is unreadable,
-	 but "that can't happen" if we've gotten this far.
-	 Fall through and assume this is a 32-bit program.  */
-    }
-  else if (machine == EM_X86_64)
-    {
-      /* Amd64 doesn't have HAVE_LINUX_USRREGS.  */
-      the_low_target.num_regs = -1;
-      the_low_target.regmap = NULL;
-      the_low_target.cannot_fetch_register = NULL;
-      the_low_target.cannot_store_register = NULL;
-
-      /* Amd64 has 16 xmm regs.  */
-      num_xmm_registers = 16;
-
-      linux_is_elf64 = is_elf64;
-      x86_linux_update_xmltarget ();
-      return;
-    }
-
-  linux_is_elf64 = 0;
-#endif
-
-  /* Ok we have a 32-bit inferior.  */
-
-  the_low_target.num_regs = I386_NUM_REGS;
-  the_low_target.regmap = i386_regmap;
-  the_low_target.cannot_fetch_register = i386_cannot_fetch_register;
-  the_low_target.cannot_store_register = i386_cannot_store_register;
-
-  /* I386 has 8 xmm regs.  */
-  num_xmm_registers = 8;
-
-  x86_linux_update_xmltarget ();
+  current_process ()->tdesc = x86_linux_read_description ();
 }
 
 static int
@@ -1790,7 +2007,7 @@ x86_install_fast_tracepoint_jump_pad (CORE_ADDR tpoint, CORE_ADDR tpaddr,
 				      char *err)
 {
 #ifdef __x86_64__
-  if (register_size (0) == 8)
+  if (is_64bit_tdesc ())
     return amd64_install_fast_tracepoint_jump_pad (tpoint, tpaddr,
 						   collector, lockaddr,
 						   orig_size, jump_entry,
@@ -1824,7 +2041,7 @@ x86_get_min_fast_tracepoint_insn_len (void)
 #ifdef __x86_64__
   /*  On x86-64, 5-byte jump instructions with a 4-byte offset are always
       used for fast tracepoints.  */
-  if (register_size (0) == 8)
+  if (is_64bit_tdesc ())
     return 5;
 #endif
 
@@ -1866,8 +2083,8 @@ add_insns (unsigned char *start, int len)
   CORE_ADDR buildaddr = current_insn_ptr;
 
   if (debug_threads)
-    fprintf (stderr, "Adding %d bytes of insn at %s\n",
-	     len, paddress (buildaddr));
+    debug_printf ("Adding %d bytes of insn at %s\n",
+		  len, paddress (buildaddr));
 
   append_insns (&buildaddr, len, start);
   current_insn_ptr = buildaddr;
@@ -3167,13 +3384,17 @@ static struct emit_ops *
 x86_emit_ops (void)
 {
 #ifdef __x86_64__
-  int use_64bit = register_size (0) == 8;
-
-  if (use_64bit)
+  if (is_64bit_tdesc ())
     return &amd64_emit_ops;
   else
 #endif
     return &i386_emit_ops;
+}
+
+static int
+x86_supports_range_stepping (void)
+{
+  return 1;
 }
 
 /* This is initialized assuming an amd64 target.
@@ -3182,11 +3403,9 @@ x86_emit_ops (void)
 struct linux_target_ops the_low_target =
 {
   x86_arch_setup,
-  -1,
-  NULL,
-  NULL,
-  NULL,
-  NULL,
+  x86_linux_regs_info,
+  x86_cannot_fetch_register,
+  x86_cannot_store_register,
   NULL, /* fetch_register */
   x86_get_pc,
   x86_set_pc,
@@ -3195,6 +3414,7 @@ struct linux_target_ops the_low_target =
   NULL,
   1,
   x86_breakpoint_at,
+  x86_supports_z_point_type,
   x86_insert_point,
   x86_remove_point,
   x86_stopped_by_watchpoint,
@@ -3215,4 +3435,36 @@ struct linux_target_ops the_low_target =
   x86_install_fast_tracepoint_jump_pad,
   x86_emit_ops,
   x86_get_min_fast_tracepoint_insn_len,
+  x86_supports_range_stepping,
 };
+
+void
+initialize_low_arch (void)
+{
+  /* Initialize the Linux target descriptions.  */
+#ifdef __x86_64__
+  init_registers_amd64_linux ();
+  init_registers_amd64_avx_linux ();
+  init_registers_amd64_avx512_linux ();
+  init_registers_amd64_mpx_linux ();
+
+  init_registers_x32_linux ();
+  init_registers_x32_avx_linux ();
+  init_registers_x32_avx512_linux ();
+
+  tdesc_amd64_linux_no_xml = xmalloc (sizeof (struct target_desc));
+  copy_target_description (tdesc_amd64_linux_no_xml, tdesc_amd64_linux);
+  tdesc_amd64_linux_no_xml->xmltarget = xmltarget_amd64_linux_no_xml;
+#endif
+  init_registers_i386_linux ();
+  init_registers_i386_mmx_linux ();
+  init_registers_i386_avx_linux ();
+  init_registers_i386_avx512_linux ();
+  init_registers_i386_mpx_linux ();
+
+  tdesc_i386_linux_no_xml = xmalloc (sizeof (struct target_desc));
+  copy_target_description (tdesc_i386_linux_no_xml, tdesc_i386_linux);
+  tdesc_i386_linux_no_xml->xmltarget = xmltarget_i386_linux_no_xml;
+
+  initialize_regsets_info (&x86_regsets_info);
+}

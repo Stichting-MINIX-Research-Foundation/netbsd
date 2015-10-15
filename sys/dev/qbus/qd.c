@@ -1,4 +1,4 @@
-/*	$NetBSD: qd.c,v 1.53 2012/10/27 17:18:37 chs Exp $	*/
+/*	$NetBSD: qd.c,v 1.56 2014/10/18 08:33:28 snj Exp $	*/
 
 /*-
  * Copyright (c) 1988 Regents of the University of California.
@@ -58,7 +58,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: qd.c,v 1.53 2012/10/27 17:18:37 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: qd.c,v 1.56 2014/10/18 08:33:28 snj Exp $");
 
 #include "opt_ddb.h"
 
@@ -195,7 +195,7 @@ struct DMAreq_header *DMAheader[NQD];  /* DMA buffer header pntrs */
 /*
  * The driver assists a client in scroll operations by loading dragon
  * registers from an interrupt service routine.	The loading is done using
- * parameters found in memory shrade between the driver and it's client.
+ * parameters found in memory shrade between the driver and its client.
  * The scroll parameter structures are ALL loacted in the same memory page
  * for reasons of memory economy.
  */
@@ -344,8 +344,18 @@ dev_type_poll(qdpoll);
 dev_type_kqfilter(qdkqfilter);
 
 const struct cdevsw qd_cdevsw = {
-	qdopen, qdclose, qdread, qdwrite, qdioctl,
-	qdstop, notty, qdpoll, nommap, qdkqfilter,
+	.d_open = qdopen,
+	.d_close = qdclose,
+	.d_read = qdread,
+	.d_write = qdwrite,
+	.d_ioctl = qdioctl,
+	.d_stop = qdstop,
+	.d_tty = notty,
+	.d_poll = qdpoll,
+	.d_mmap = nommap,
+	.d_kqfilter = qdkqfilter,
+	.d_discard = nodiscard,
+	.d_flag = 0
 };
 
 /*
@@ -576,7 +586,7 @@ qd_match(device_t parent, cfdata_t match, void *aux)
 	 * is found via an array of pte ptrs called "QVmap[]" (ubavar.h)
 	 * which is also loaded at config time.   These are the
 	 * variables used below to find a vacant 64kb boundary in
-	 * Qbus memory, and load it's corresponding physical adrs
+	 * Qbus memory, and load its corresponding physical adrs
 	 * into the QDSS's I/O page CSR.
 	 */
 

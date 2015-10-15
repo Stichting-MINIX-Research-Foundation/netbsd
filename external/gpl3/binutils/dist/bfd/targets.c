@@ -670,13 +670,14 @@ extern const bfd_target bfd_elf32_ntradlittlemips_vec;
 extern const bfd_target bfd_elf32_ntradbigmips_freebsd_vec;
 extern const bfd_target bfd_elf32_ntradlittlemips_freebsd_vec;
 extern const bfd_target bfd_elf32_openrisc_vec;
-extern const bfd_target bfd_elf32_or32_big_vec;
+extern const bfd_target bfd_elf32_or1k_big_vec;
 extern const bfd_target bfd_elf32_pj_vec;
 extern const bfd_target bfd_elf32_pjl_vec;
 extern const bfd_target bfd_elf32_powerpc_vec;
 extern const bfd_target bfd_elf32_powerpcle_vec;
 extern const bfd_target bfd_elf32_powerpc_freebsd_vec;
 extern const bfd_target bfd_elf32_powerpc_vxworks_vec;
+extern const bfd_target bfd_elf32_riscv_vec;
 extern const bfd_target bfd_elf32_rl78_vec;
 extern const bfd_target bfd_elf32_rx_le_vec;
 extern const bfd_target bfd_elf32_rx_be_vec;
@@ -729,8 +730,8 @@ extern const bfd_target bfd_elf32_xtensa_le_vec;
 extern const bfd_target bfd_elf64_alpha_freebsd_vec;
 extern const bfd_target bfd_elf64_alpha_vec;
 extern const bfd_target bfd_elf64_big_generic_vec;
-extern const bfd_target bfd_elf64_bigmips_vec;
 extern const bfd_target bfd_elf64_bigaarch64_vec;
+extern const bfd_target bfd_elf64_bigmips_vec;
 extern const bfd_target bfd_elf64_hppa_linux_vec;
 extern const bfd_target bfd_elf64_hppa_vec;
 extern const bfd_target bfd_elf64_ia64_big_vec;
@@ -738,12 +739,13 @@ extern const bfd_target bfd_elf64_ia64_hpux_big_vec;
 extern const bfd_target bfd_elf64_ia64_little_vec;
 extern const bfd_target bfd_elf64_ia64_vms_vec;
 extern const bfd_target bfd_elf64_little_generic_vec;
-extern const bfd_target bfd_elf64_littlemips_vec;
 extern const bfd_target bfd_elf64_littleaarch64_vec;
+extern const bfd_target bfd_elf64_littlemips_vec;
 extern const bfd_target bfd_elf64_mmix_vec;
 extern const bfd_target bfd_elf64_powerpc_vec;
 extern const bfd_target bfd_elf64_powerpcle_vec;
 extern const bfd_target bfd_elf64_powerpc_freebsd_vec;
+extern const bfd_target bfd_elf64_riscv_vec;
 extern const bfd_target bfd_elf64_s390_vec;
 extern const bfd_target bfd_elf64_sh64_vec;
 extern const bfd_target bfd_elf64_sh64l_vec;
@@ -833,7 +835,7 @@ extern const bfd_target nlm32_i386_vec;
 extern const bfd_target nlm32_powerpc_vec;
 extern const bfd_target nlm32_sparc_vec;
 extern const bfd_target oasys_vec;
-extern const bfd_target or32coff_big_vec;
+extern const bfd_target or1kcoff_big_vec;
 extern const bfd_target pc532machaout_vec;
 extern const bfd_target pc532netbsd_vec;
 extern const bfd_target pdp11_aout_vec;
@@ -1046,13 +1048,14 @@ static const bfd_target * const _bfd_target_vector[] =
 	&bfd_elf32_ntradlittlemips_freebsd_vec,
 #endif
 	&bfd_elf32_openrisc_vec,
-	&bfd_elf32_or32_big_vec,
+	&bfd_elf32_or1k_big_vec,
 	&bfd_elf32_pj_vec,
 	&bfd_elf32_pjl_vec,
 	&bfd_elf32_powerpc_vec,
 	&bfd_elf32_powerpc_vxworks_vec,
 	&bfd_elf32_powerpcle_vec,
 	&bfd_elf32_powerpc_freebsd_vec,
+	&bfd_elf32_riscv_vec,
 	&bfd_elf32_rl78_vec,
 	&bfd_elf32_rx_be_vec,
 	&bfd_elf32_rx_be_ns_vec,
@@ -1106,8 +1109,8 @@ static const bfd_target * const _bfd_target_vector[] =
 	&bfd_elf64_alpha_freebsd_vec,
 	&bfd_elf64_alpha_vec,
 	&bfd_elf64_big_generic_vec,
-	&bfd_elf64_bigmips_vec,
 	&bfd_elf64_bigaarch64_vec,
+	&bfd_elf64_bigmips_vec,
 	&bfd_elf64_hppa_linux_vec,
 	&bfd_elf64_hppa_vec,
 	&bfd_elf64_ia64_big_vec,
@@ -1115,12 +1118,13 @@ static const bfd_target * const _bfd_target_vector[] =
 	&bfd_elf64_ia64_little_vec,
 	&bfd_elf64_ia64_vms_vec,
 	&bfd_elf64_little_generic_vec,
-	&bfd_elf64_littlemips_vec,
 	&bfd_elf64_littleaarch64_vec,
+	&bfd_elf64_littlemips_vec,
 	&bfd_elf64_mmix_vec,
 	&bfd_elf64_powerpc_vec,
 	&bfd_elf64_powerpcle_vec,
 	&bfd_elf64_powerpc_freebsd_vec,
+	&bfd_elf64_riscv_vec,
 	&bfd_elf64_s390_vec,
 	&bfd_elf64_sh64_vec,
 	&bfd_elf64_sh64l_vec,
@@ -1252,7 +1256,7 @@ static const bfd_target * const _bfd_target_vector[] =
 	&oasys_vec,
 #endif
 	/* Entry for the OpenRISC family.  */
-	&or32coff_big_vec,
+	&or1kcoff_big_vec,
 
 	&pc532machaout_vec,
 	&pc532netbsd_vec,

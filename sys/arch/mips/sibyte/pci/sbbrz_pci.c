@@ -1,4 +1,4 @@
-/* $NetBSD: sbbrz_pci.c,v 1.4 2011/07/10 23:32:03 matt Exp $ */
+/* $NetBSD: sbbrz_pci.c,v 1.6 2015/10/02 05:22:51 msaitoh Exp $ */
 
 /*
  * Copyright 2000, 2001
@@ -64,7 +64,7 @@
 
 #include <sys/cdefs.h>			/* RCS ID & Copyright macro defns */
 
-__KERNEL_RCSID(0, "$NetBSD: sbbrz_pci.c,v 1.4 2011/07/10 23:32:03 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: sbbrz_pci.c,v 1.6 2015/10/02 05:22:51 msaitoh Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -96,7 +96,7 @@ static void	sbbrz_pci_conf_interrupt(void *, int, int, int, int, int *);
 static int	sbbrz_pci_intr_map(const struct pci_attach_args *,
 		    pci_intr_handle_t *);
 static const char *
-		sbbrz_pci_intr_string(void *, pci_intr_handle_t);
+		sbbrz_pci_intr_string(void *, pci_intr_handle_t, char *, size_t);
 static const struct evcnt *
 		sbbrz_pci_intr_evcnt(void *, pci_intr_handle_t);
 static void *	sbbrz_pci_intr_establish(void *, pci_intr_handle_t,
@@ -181,6 +181,9 @@ sbbrz_pci_conf_read(void *cpv, pcitag_t tag, int offset)
 		panic ("pci_conf_read: misaligned");
 #endif
 
+	if ((unsigned int)offset >= PCI_CONF_SIZE)
+		return 0xffffffff;
+
 	addr = A_PHYS_LDTPCI_CFG_MATCH_BITS + tag + offset;
 	addr = MIPS_PHYS_TO_XKPHYS(MIPS3_TLB_ATTR_UNCACHED, addr);
 
@@ -201,6 +204,9 @@ sbbrz_pci_conf_write(void *cpv, pcitag_t tag, int offset, pcireg_t data)
 	if ((offset & 0x3) != 0)
 		panic ("pci_conf_write: misaligned");
 #endif
+
+	if ((unsigned int)offset >= PCI_CONF_SIZE)
+		return;
 
 	addr = A_PHYS_LDTPCI_CFG_MATCH_BITS + tag + offset;
 	addr = MIPS_PHYS_TO_XKPHYS(MIPS3_TLB_ATTR_UNCACHED, addr);
@@ -225,15 +231,19 @@ sbbrz_pci_intr_map(const struct pci_attach_args *pa, pci_intr_handle_t *ihp)
 }
 
 const char *
-sbbrz_pci_intr_string(void *v, pci_intr_handle_t ih)
+sbbrz_pci_intr_string(void *v, pci_intr_handle_t ih, char *buf, size_t len)
 {
+	char c;
+
 	switch (ih) {
-	default:		return NULL;
-	case K_INT_PCI_INTA:	return "pci inta";
-	case K_INT_PCI_INTB:	return "pci intb";
-	case K_INT_PCI_INTC:	return "pci intc";
-	case K_INT_PCI_INTD:	return "pci intd";
+	default:		c = '?'; break;
+	case K_INT_PCI_INTA:	c = 'a'; break;
+	case K_INT_PCI_INTB:	c = 'b'; break;
+	case K_INT_PCI_INTC:	c = 'c'; break;
+	case K_INT_PCI_INTD:	c = 'd'; break;
 	}
+	snprintf(buf, len, "pci int%c", c);
+	return buf;
 }
 
 const struct evcnt *

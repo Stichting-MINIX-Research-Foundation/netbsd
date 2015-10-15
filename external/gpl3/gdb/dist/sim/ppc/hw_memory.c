@@ -25,7 +25,11 @@
 #define STATIC_INLINE_HW_MEMORY STATIC_INLINE
 #endif
 
+#include <stdlib.h>
+
 #include "device_table.h"
+
+#include <stdlib.h>
 
 /* DEVICE
 

@@ -1,4 +1,4 @@
-/*      $NetBSD: wmcom.c,v 1.1 2013/04/28 12:11:26 kiyohara Exp $      */
+/*      $NetBSD: wmcom.c,v 1.6 2015/04/13 21:18:41 riastradh Exp $      */
 /*
  * Copyright (c) 2012 KIYOHARA Takashi
  * All rights reserved.
@@ -25,7 +25,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: wmcom.c,v 1.1 2013/04/28 12:11:26 kiyohara Exp $");
+__KERNEL_RCSID(0, "$NetBSD: wmcom.c,v 1.6 2015/04/13 21:18:41 riastradh Exp $");
 
 #include "rnd.h"
 
@@ -50,17 +50,14 @@ __KERNEL_RCSID(0, "$NetBSD: wmcom.c,v 1.1 2013/04/28 12:11:26 kiyohara Exp $");
 #include <dev/cons.h>
 
 #ifdef RND_COM
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 #endif
 
 #include "ioconf.h"
 #include "locators.h"
 
-#define COMUNIT_MASK	0x7ffff
-#define COMDIALOUT_MASK	0x80000
-
-#define COMUNIT(x)	(minor(x) & COMUNIT_MASK)
-#define COMDIALOUT(x)	(minor(x) & COMDIALOUT_MASK)
+#define COMUNIT(x)	TTUNIT(x)
+#define COMDIALOUT(x)	TTDIALOUT(x)
 
 #define WMCOM_RING_SIZE	2048
 
@@ -133,8 +130,18 @@ CFATTACH_DECL_NEW(wmcom, sizeof(struct wmcom_softc),
     wmcom_match, wmcom_attach, NULL, NULL);
 
 const struct cdevsw wmcom_cdevsw = {
-	wmcomopen, wmcomclose, wmcomread, wmcomwrite, wmcomioctl,
-	wmcomstop, wmcomtty, wmcompoll, nommap, ttykqfilter, D_TTY
+	.d_open = wmcomopen,
+	.d_close = wmcomclose,
+	.d_read = wmcomread,
+	.d_write = wmcomwrite,
+	.d_ioctl = wmcomioctl,
+	.d_stop = wmcomstop,
+	.d_tty = wmcomtty,
+	.d_poll = wmcompoll,
+	.d_mmap = nommap,
+	.d_kqfilter = ttykqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_TTY
 };
 
 static struct cnm_state wmcom_cnm_state;
@@ -215,7 +222,7 @@ wmcom_attach(device_t parent, device_t self, void *aux)
 
 #ifdef RND_COM
 	rnd_attach_source(&sc->rnd_source, device_xname(sc->sc_dev),
-	    RND_TYPE_TTY, 0);
+	    RND_TYPE_TTY, RND_FLAG_DEFAULT);
 #endif
 
 	SET(sc->sc_hwflags, COM_HW_DEV_OK);

@@ -1,4 +1,4 @@
-/*	$NetBSD: ntp_crypto.c,v 1.5 2013/10/20 02:47:38 christos Exp $	*/
+/*	$NetBSD: ntp_crypto.c,v 1.9 2015/07/10 14:20:32 christos Exp $	*/
 
 /*
  * ntp_crypto.c - NTP version 4 public key routines
@@ -7,8 +7,9 @@
 #include <config.h>
 #endif
 
-#ifdef OPENSSL
+#ifdef AUTOKEY
 #include <stdio.h>
+#include <stdlib.h>	/* strtoul */
 #include <sys/types.h>
 #include <sys/param.h>
 #include <unistd.h>
@@ -20,6 +21,8 @@
 #include "ntp_string.h"
 #include "ntp_random.h"
 #include "ntp_assert.h"
+#include "ntp_calendar.h"
+#include "ntp_leapsec.h"
 
 #include "openssl/asn1_mac.h"
 #include "openssl/bn.h"
@@ -32,6 +35,33 @@
 #ifdef KERNEL_PLL
 #include "ntp_syscall.h"
 #endif /* KERNEL_PLL */
+
+/*
+ * calcomp - compare two calendar structures, ignoring yearday and weekday; like strcmp
+ * No, it's not a plotter.  If you don't understand that, you're too young.
+ */
+static int calcomp(struct calendar *pjd1, struct calendar *pjd2)
+{
+	int32_t diff;	/* large enough to hold the signed difference between two uint16_t values */
+
+	diff = pjd1->year - pjd2->year;
+	if (diff < 0) return -1; else if (diff > 0) return 1;
+	/* same year; compare months */
+	diff = pjd1->month - pjd2->month;
+	if (diff < 0) return -1; else if (diff > 0) return 1;
+	/* same year and month; compare monthday */
+	diff = pjd1->monthday - pjd2->monthday;
+	if (diff < 0) return -1; else if (diff > 0) return 1;
+	/* same year and month and monthday; compare time */
+	diff = pjd1->hour - pjd2->hour;
+	if (diff < 0) return -1; else if (diff > 0) return 1;
+	diff = pjd1->minute - pjd2->minute;
+	if (diff < 0) return -1; else if (diff > 0) return 1;
+	diff = pjd1->second - pjd2->second;
+	if (diff < 0) return -1; else if (diff > 0) return 1;
+	/* identical */
+	return 0;
+}
 
 /*
  * Extension field message format
@@ -111,6 +141,7 @@
 #define TAI_1972	10	/* initial TAI offset (s) */
 #define MAX_LEAP	100	/* max UTC leapseconds (s) */
 #define VALUE_LEN	(6 * 4) /* min response field length */
+#define MAX_VALLEN	(65535 - VALUE_LEN)
 #define YEAR		(60 * 60 * 24 * 365) /* seconds in year */
 
 /*
@@ -118,8 +149,10 @@
  */
 u_int32	crypto_flags = 0x0;	/* status word */
 int	crypto_nid = KEY_TYPE_MD5; /* digest nid */
-char	*sys_hostname = NULL;	/* host name */
-char	*sys_groupname = NULL;	/* group name */
+char	*sys_hostname = NULL;
+char	*sys_groupname = NULL;
+static char *host_filename = NULL;	/* host file name */
+static char *ident_filename = NULL;	/* group file name */
 
 /*
  * Global cryptodata in network byte order
@@ -149,8 +182,8 @@ static char *rand_file = NULL;	/* random seed file */
  */
 static	int	crypto_verify	(struct exten *, struct value *,
 				    struct peer *);
-static	int	crypto_encrypt	(struct exten *, struct value *,
-				    keyid_t *);
+static	int	crypto_encrypt	(const u_char *, u_int, keyid_t *,
+				    struct value *);
 static	int	crypto_alice	(struct peer *, struct value *);
 static	int	crypto_alice2	(struct peer *, struct value *);
 static	int	crypto_alice3	(struct peer *, struct value *);
@@ -162,8 +195,8 @@ static	int	crypto_gq	(struct exten *, struct peer *);
 static	int	crypto_mv	(struct exten *, struct peer *);
 static	int	crypto_send	(struct exten *, struct value *, int);
 static	tstamp_t crypto_time	(void);
-static	u_long	asn2ntp		(ASN1_TIME *);
-static	struct cert_info *cert_parse (u_char *, long, tstamp_t);
+static	void	asn_to_calendar		(ASN1_TIME *, struct calendar*);
+static	struct cert_info *cert_parse (const u_char *, long, tstamp_t);
 static	int	cert_sign	(struct exten *, struct value *);
 static	struct cert_info *cert_install (struct exten *, struct peer *);
 static	int	cert_hike	(struct peer *, struct cert_info *);
@@ -285,8 +318,8 @@ make_keylist(
 	 */
 	tstamp = crypto_time();
 	if (peer->keylist == NULL)
-		peer->keylist = emalloc(sizeof(keyid_t) *
-		    NTP_MAXSESSION);
+		peer->keylist = eallocarray(NTP_MAXSESSION,
+					    sizeof(keyid_t));
 
 	/*
 	 * Generate an initial key ID which is unique and greater than
@@ -310,7 +343,7 @@ make_keylist(
 	 * cookie if client mode or the host cookie if symmetric modes.
 	 */
 	mpoll = 1 << min(peer->ppoll, peer->hpoll);
-	lifetime = min((unsigned)1 << sys_automax, NTP_MAXSESSION * mpoll);
+	lifetime = min(1U << sys_automax, NTP_MAXSESSION * mpoll);
 	if (peer->hmode == MODE_BROADCAST)
 		cookie = 0;
 	else
@@ -349,16 +382,14 @@ make_keylist(
 		EVP_SignUpdate(&ctx, (u_char *)vp, 12);
 		EVP_SignUpdate(&ctx, vp->ptr, sizeof(struct autokey));
 		if (EVP_SignFinal(&ctx, vp->sig, &len, sign_pkey)) {
-			vp->siglen = htonl(sign_siglen);
+			NTP_INSIST(len <= sign_siglen);
+			vp->siglen = htonl(len);
 			peer->flags |= FLAG_ASSOC;
 		}
 	}
-#ifdef DEBUG
-	if (debug)
-		printf("make_keys: %d %08x %08x ts %u fs %u poll %d\n",
+	DPRINTF(1, ("make_keys: %d %08x %08x ts %u fs %u poll %d\n",
 		    peer->keynumber, keyid, cookie, ntohl(vp->tstamp),
-		    ntohl(vp->fstamp), peer->hpoll);
-#endif
+		    ntohl(vp->fstamp), peer->hpoll));
 	return (XEVNT_OK);
 }
 
@@ -402,7 +433,7 @@ crypto_recv(
 	keyid_t	cookie;		/* crumbles */
 	int	hismode;	/* packet mode */
 	int	rval = XEVNT_OK;
-	const u_char	*ptr;
+	const u_char *puch;
 	u_int32 temp32;
 
 	/*
@@ -422,15 +453,12 @@ crypto_recv(
 		ep = (struct exten *)pkt;
 		code = ntohl(ep->opcode) & 0xffff0000;
 		len = ntohl(ep->opcode) & 0x0000ffff;
+		// HMS: Why pkt[1] instead of ep->associd ?
 		associd = (associd_t)ntohl(pkt[1]);
 		rval = XEVNT_OK;
-#ifdef DEBUG
-		if (debug)
-			printf(
-			    "crypto_recv: flags 0x%x ext offset %d len %u code 0x%x associd %d\n",
+		DPRINTF(1, ("crypto_recv: flags 0x%x ext offset %d len %u code 0x%x associd %d\n",
 			    peer->crypto, authlen, len, code >> 16,
-			    associd);
-#endif
+			    associd));
 
 		/*
 		 * Check version number and field length. If bad,
@@ -444,6 +472,12 @@ crypto_recv(
 		if (len >= VALUE_LEN) {
 			fstamp = ntohl(ep->fstamp);
 			vallen = ntohl(ep->vallen);
+			/*
+			 * Bug 2761: I hope this isn't too early...
+			 */
+			if (   vallen == 0
+			    || len - VALUE_LEN < vallen)
+				return XEVNT_LEN;
 		}
 		switch (code) {
 
@@ -494,18 +528,15 @@ crypto_recv(
 					rval = XEVNT_ERR;
 				break;
 			}
+			INSIST(len >= VALUE_LEN);
 			if (vallen == 0 || vallen > MAXHOSTNAME ||
-			    len < VALUE_LEN + vallen) {
+			    len - VALUE_LEN < vallen) {
 				rval = XEVNT_LEN;
 				break;
 			}
-#ifdef DEBUG
-			if (debug)
-				printf(
-				    "crypto_recv: ident host 0x%x %d server 0x%x %d\n",
+			DPRINTF(1, ("crypto_recv: ident host 0x%x %d server 0x%x %d\n",
 				    crypto_flags, peer->associd, fstamp,
-				    peer->assoc);
-#endif
+				    peer->assoc));
 			temp32 = crypto_flags & CRYPTO_FLAG_MASK;
 
 			/*
@@ -572,17 +603,13 @@ crypto_recv(
 			peer->subject[vallen] = '\0';
 			if (peer->issuer != NULL)
 				free(peer->issuer);
-			peer->issuer = emalloc(vallen + 1);
-			strcpy(peer->issuer, peer->subject);
-			snprintf(statstr, NTP_MAXSTRLEN,
+			peer->issuer = estrdup(peer->subject);
+			snprintf(statstr, sizeof(statstr),
 			    "assoc %d %d host %s %s", peer->associd,
 			    peer->assoc, peer->subject,
 			    OBJ_nid2ln(temp32));
 			record_crypto_stats(&peer->srcadr, statstr);
-#ifdef DEBUG
-			if (debug)
-				printf("crypto_recv: %s\n", statstr);
-#endif
+			DPRINTF(1, ("crypto_recv: %s\n", statstr));
 			break;
 
 		/*
@@ -626,24 +653,21 @@ crypto_recv(
 			 * signature/digest NID.
 			 */
 			if (peer->pkey == NULL) {
-				ptr = (u_char *)xinfo->cert.ptr;
-				cert = d2i_X509(NULL, &ptr,
+				puch = xinfo->cert.ptr;
+				cert = d2i_X509(NULL, &puch,
 				    ntohl(xinfo->cert.vallen));
 				peer->pkey = X509_get_pubkey(cert);
 				X509_free(cert);
 			}
 			peer->flash &= ~TEST8;
 			temp32 = xinfo->nid;
-			snprintf(statstr, NTP_MAXSTRLEN,
+			snprintf(statstr, sizeof(statstr),
 			    "cert %s %s 0x%x %s (%u) fs %u",
 			    xinfo->subject, xinfo->issuer, xinfo->flags,
 			    OBJ_nid2ln(temp32), temp32,
 			    ntohl(ep->fstamp));
 			record_crypto_stats(&peer->srcadr, statstr);
-#ifdef DEBUG
-			if (debug)
-				printf("crypto_recv: %s\n", statstr);
-#endif
+			DPRINTF(1, ("crypto_recv: %s\n", statstr));
 			break;
 
 		/*
@@ -677,13 +701,10 @@ crypto_recv(
 
 			peer->crypto |= CRYPTO_FLAG_VRFY;
 			peer->flash &= ~TEST8;
-			snprintf(statstr, NTP_MAXSTRLEN, "iff %s fs %u",
+			snprintf(statstr, sizeof(statstr), "iff %s fs %u",
 			    peer->issuer, ntohl(ep->fstamp));
 			record_crypto_stats(&peer->srcadr, statstr);
-#ifdef DEBUG
-			if (debug)
-				printf("crypto_recv: %s\n", statstr);
-#endif
+			DPRINTF(1, ("crypto_recv: %s\n", statstr));
 			break;
 
 		/*
@@ -718,13 +739,10 @@ crypto_recv(
 
 			peer->crypto |= CRYPTO_FLAG_VRFY;
 			peer->flash &= ~TEST8;
-			snprintf(statstr, NTP_MAXSTRLEN, "gq %s fs %u",
+			snprintf(statstr, sizeof(statstr), "gq %s fs %u",
 			    peer->issuer, ntohl(ep->fstamp));
 			record_crypto_stats(&peer->srcadr, statstr);
-#ifdef DEBUG
-			if (debug)
-				printf("crypto_recv: %s\n", statstr);
-#endif
+			DPRINTF(1, ("crypto_recv: %s\n", statstr));
 			break;
 
 		/*
@@ -758,13 +776,10 @@ crypto_recv(
 
 			peer->crypto |= CRYPTO_FLAG_VRFY;
 			peer->flash &= ~TEST8;
-			snprintf(statstr, NTP_MAXSTRLEN, "mv %s fs %u",
+			snprintf(statstr, sizeof(statstr), "mv %s fs %u",
 			    peer->issuer, ntohl(ep->fstamp));
 			record_crypto_stats(&peer->srcadr, statstr);
-#ifdef DEBUG
-			if (debug)
-				printf("crypto_recv: %s\n", statstr);
-#endif
+			DPRINTF(1, ("crypto_recv: %s\n", statstr));
 			break;
 
 
@@ -789,15 +804,24 @@ crypto_recv(
 			 * errors.
 			 */
 			if (vallen == (u_int)EVP_PKEY_size(host_pkey)) {
-				if (RSA_private_decrypt(vallen,
-				    (u_char *)ep->pkt,
-				    (u_char *)&temp32,
-				    host_pkey->pkey.rsa,
-				    RSA_PKCS1_OAEP_PADDING) <= 0) {
+				u_int32 *cookiebuf = malloc(
+				    RSA_size(host_pkey->pkey.rsa));
+				if (!cookiebuf) {
 					rval = XEVNT_CKY;
 					break;
+				}
+
+				if (RSA_private_decrypt(vallen,
+				    (u_char *)ep->pkt,
+				    (u_char *)cookiebuf,
+				    host_pkey->pkey.rsa,
+				    RSA_PKCS1_OAEP_PADDING) != 4) {
+					rval = XEVNT_CKY;
+					free(cookiebuf);
+					break;
 				} else {
-					cookie = ntohl(temp32);
+					cookie = ntohl(*cookiebuf);
+					free(cookiebuf);
 				}
 			} else {
 				rval = XEVNT_CKY;
@@ -817,14 +841,11 @@ crypto_recv(
 				peer->pcookie = cookie;
 			peer->crypto |= CRYPTO_FLAG_COOK;
 			peer->flash &= ~TEST8;
-			snprintf(statstr, NTP_MAXSTRLEN,
+			snprintf(statstr, sizeof(statstr),
 			    "cook %x ts %u fs %u", peer->pcookie,
 			    ntohl(ep->tstamp), ntohl(ep->fstamp));
 			record_crypto_stats(&peer->srcadr, statstr);
-#ifdef DEBUG
-			if (debug)
-				printf("crypto_recv: %s\n", statstr);
-#endif
+			DPRINTF(1, ("crypto_recv: %s\n", statstr));
 			break;
 
 		/*
@@ -878,15 +899,12 @@ crypto_recv(
 			peer->pkeyid = bp->key;
 			peer->crypto |= CRYPTO_FLAG_AUTO;
 			peer->flash &= ~TEST8;
-			snprintf(statstr, NTP_MAXSTRLEN, 
+			snprintf(statstr, sizeof(statstr), 
 			    "auto seq %d key %x ts %u fs %u", bp->seq,
 			    bp->key, ntohl(ep->tstamp),
 			    ntohl(ep->fstamp));
 			record_crypto_stats(&peer->srcadr, statstr);
-#ifdef DEBUG
-			if (debug)
-				printf("crypto_recv: %s\n", statstr);
-#endif
+			DPRINTF(1, ("crypto_recv: %s\n", statstr));
 			break;
 	
 		/*
@@ -917,16 +935,13 @@ crypto_recv(
 			peer->crypto |= CRYPTO_FLAG_SIGN;
 			peer->flash &= ~TEST8;
 			temp32 = xinfo->nid;
-			snprintf(statstr, NTP_MAXSTRLEN,
+			snprintf(statstr, sizeof(statstr),
 			    "sign %s %s 0x%x %s (%u) fs %u",
 			    xinfo->subject, xinfo->issuer, xinfo->flags,
 			    OBJ_nid2ln(temp32), temp32,
 			    ntohl(ep->fstamp));
 			record_crypto_stats(&peer->srcadr, statstr);
-#ifdef DEBUG
-			if (debug)
-				printf("crypto_recv: %s\n", statstr);
-#endif
+			DPRINTF(1, ("crypto_recv: %s\n", statstr));
 			break;
 
 		/*
@@ -936,49 +951,37 @@ crypto_recv(
 		 * via the kernel to other applications.
 		 */
 		case CRYPTO_LEAP | CRYPTO_RESP:
-
 			/*
 			 * Discard the message if invalid. We can't
 			 * compare the value timestamps here, as they
 			 * can be updated by different servers.
 			 */
-			if ((rval = crypto_verify(ep, NULL, peer)) !=
-			    XEVNT_OK)
+			rval = crypto_verify(ep, NULL, peer);
+			if ((rval   != XEVNT_OK          ) ||
+			    (vallen != 3*sizeof(uint32_t))  )
 				break;
 
-			/*
-			 * If the packet leap values are more recent
-			 * than the stored ones, install the new leap
-			 * values and recompute the signatures.
+			/* Check if we can update the basic TAI offset
+			 * for our current leap frame. This is a hack
+			 * and ignores the time stamps in the autokey
+			 * message.
 			 */
-			if (ntohl(ep->pkt[2]) > leap_expire) {
-				char	tbuf[80], str1 [20], str2[20];
-
-				tai_leap.tstamp = ep->tstamp;
-				tai_leap.fstamp = ep->fstamp;
-				tai_leap.vallen = ep->vallen;
-				leap_tai = ntohl(ep->pkt[0]);
-				leap_sec = ntohl(ep->pkt[1]);
-				leap_expire = ntohl(ep->pkt[2]);
-				crypto_update();
-				strcpy(str1, fstostr(leap_sec));
-				strcpy(str2, fstostr(leap_expire));
-				snprintf(tbuf, sizeof(tbuf),
-				    "%d leap %s expire %s", leap_tai, str1,
-				    str2);
-				    report_event(EVNT_TAI, peer, tbuf);
-			}
+			if (sys_leap != LEAP_NOTINSYNC)
+				leapsec_autokey_tai(ntohl(ep->pkt[0]),
+						    rbufp->recv_time.l_ui, NULL);
+			tai_leap.tstamp = ep->tstamp;
+			tai_leap.fstamp = ep->fstamp;
+			crypto_update();
+			mprintf_event(EVNT_TAI, peer,
+				      "%d seconds", ntohl(ep->pkt[0]));
 			peer->crypto |= CRYPTO_FLAG_LEAP;
 			peer->flash &= ~TEST8;
-			snprintf(statstr, NTP_MAXSTRLEN,
-			    "leap TAI offset %d at %u expire %u fs %u",
-			    ntohl(ep->pkt[0]), ntohl(ep->pkt[1]),
-			    ntohl(ep->pkt[2]), ntohl(ep->fstamp));
+			snprintf(statstr, sizeof(statstr),
+				 "leap TAI offset %d at %u expire %u fs %u",
+				 ntohl(ep->pkt[0]), ntohl(ep->pkt[1]),
+				 ntohl(ep->pkt[2]), ntohl(ep->fstamp));
 			record_crypto_stats(&peer->srcadr, statstr);
-#ifdef DEBUG
-			if (debug)
-				printf("crypto_recv: %s\n", statstr);
-#endif
+			DPRINTF(1, ("crypto_recv: %s\n", statstr));
 			break;
 
 		/*
@@ -1023,14 +1026,11 @@ crypto_recv(
 		 * scan and we return the laundry to the caller.
 		 */
 		if (rval != XEVNT_OK) {
-			snprintf(statstr, NTP_MAXSTRLEN,
+			snprintf(statstr, sizeof(statstr),
 			    "%04x %d %02x %s", htonl(ep->opcode),
 			    associd, rval, eventstr(rval));
 			record_crypto_stats(&peer->srcadr, statstr);
-#ifdef DEBUG
-			if (debug)
-				printf("crypto_recv: %s\n", statstr);
-#endif
+			DPRINTF(1, ("crypto_recv: %s\n", statstr));
 			return (rval);
 		}
 		authlen += (len + 3) / 4 * 4;
@@ -1074,6 +1074,7 @@ crypto_xmit(
 	char	certname[MAXHOSTNAME + 1]; /* subject name buffer */
 	char	statstr[NTP_MAXSTRLEN]; /* statistics for filegen */
 	tstamp_t tstamp;
+	struct calendar tscal;
 	u_int	vallen;
 	struct value vtemp;
 	associd_t associd;
@@ -1133,8 +1134,9 @@ crypto_xmit(
 	 * signed and may or may not be trusted.
 	 */
 	case CRYPTO_SIGN:
-		if (tstamp < cert_host->first || tstamp >
-		    cert_host->last)
+		(void)ntpcal_ntp_to_date(&tscal, tstamp, NULL);
+		if ((calcomp(&tscal, &(cert_host->first)) < 0)
+		|| (calcomp(&tscal, &(cert_host->last)) > 0))
 			rval = XEVNT_PER;
 		else
 			len = crypto_send(fp, &cert_host->cert, start);
@@ -1153,14 +1155,11 @@ crypto_xmit(
 	 * choice. 
 	 */
 	case CRYPTO_CERT | CRYPTO_RESP:
-		vallen = ntohl(ep->vallen);
-		if (vallen == 0 || vallen > MAXHOSTNAME) {
+		vallen = ntohl(ep->vallen);	/* Must be <64k */
+		if (vallen == 0 || vallen > MAXHOSTNAME ||
+		    (u_int)(len - VALUE_LEN) < vallen) {
 			rval = XEVNT_LEN;
 			break;
-
-		} else {
-			memcpy(certname, ep->pkt, vallen);
-			certname[vallen] = '\0';
 		}
 
 		/*
@@ -1169,6 +1168,8 @@ crypto_xmit(
 		 * found, use that certificate. If not, use the last non
 		 * self-signed certificate.
 		 */
+		memcpy(certname, ep->pkt, vallen);
+		certname[vallen] = '\0';
 		xp = yp = NULL;
 		for (cp = cinfo; cp != NULL; cp = cp->link) {
 			if (cp->flags & (CERT_PRIV | CERT_ERROR))
@@ -1306,7 +1307,10 @@ crypto_xmit(
 	 * anything goes wrong.
 	 */
 	case CRYPTO_COOK | CRYPTO_RESP:
-		if ((opcode & 0xffff) < VALUE_LEN) {
+		vallen = ntohl(ep->vallen);	/* Must be <64k */
+		if (   vallen == 0
+		    || (vallen >= MAX_VALLEN)
+		    || (opcode & 0x0000ffff)  < VALUE_LEN + vallen) {
 			rval = XEVNT_LEN;
 			break;
 		}
@@ -1314,8 +1318,8 @@ crypto_xmit(
 			tcookie = cookie;
 		else
 			tcookie = peer->hcookie;
-		if ((rval = crypto_encrypt(ep, &vtemp, &tcookie)) ==
-		    XEVNT_OK) {
+		if ((rval = crypto_encrypt((const u_char *)ep->pkt, vallen, &tcookie, &vtemp))
+		    == XEVNT_OK) {
 			len = crypto_send(fp, &vtemp, start);
 			value_free(&vtemp);
 		}
@@ -1367,23 +1371,16 @@ crypto_xmit(
 		uint32 = CRYPTO_ERROR;
 		opcode |= uint32;
 		fp->opcode |= htonl(uint32);
-		snprintf(statstr, NTP_MAXSTRLEN,
+		snprintf(statstr, sizeof(statstr),
 		    "%04x %d %02x %s", opcode, associd, rval,
 		    eventstr(rval));
 		record_crypto_stats(srcadr_sin, statstr);
-#ifdef DEBUG
-		if (debug)
-			printf("crypto_xmit: %s\n", statstr);
-#endif
+		DPRINTF(1, ("crypto_xmit: %s\n", statstr));
 		if (!(opcode & CRYPTO_RESP))
 			return (0);
 	}
-#ifdef DEBUG
-	if (debug)
-		printf(
-		    "crypto_xmit: flags 0x%x offset %d len %d code 0x%x associd %d\n",
-		    crypto_flags, start, len, opcode >> 16, associd);
-#endif
+	DPRINTF(1, ("crypto_xmit: flags 0x%x offset %d len %d code 0x%x associd %d\n",
+		    crypto_flags, start, len, opcode >> 16, associd));
 	return (len);
 }
 
@@ -1455,13 +1452,16 @@ crypto_verify(
 	 * up to the next word (4 octets).
 	 */
 	vallen = ntohl(ep->vallen);
-	if (vallen == 0)
+	if (   vallen == 0
+	    || vallen > MAX_VALLEN)
 		return (XEVNT_LEN);
 
 	i = (vallen + 3) / 4;
 	siglen = ntohl(ep->pkt[i++]);
-	if (len < VALUE_LEN + ((vallen + 3) / 4) * 4 + ((siglen + 3) /
-	    4) * 4)
+	if (   siglen > MAX_VALLEN
+	    || len - VALUE_LEN < ((vallen + 3) / 4) * 4
+	    || len - VALUE_LEN - ((vallen + 3) / 4) * 4
+	      < ((siglen + 3) / 4) * 4)
 		return (XEVNT_LEN);
 
 	/*
@@ -1519,6 +1519,7 @@ crypto_verify(
 	 * proventic bit. What a relief.
 	 */
 	EVP_VerifyInit(&ctx, peer->digest);
+	/* XXX: the "+ 12" needs to be at least documented... */
 	EVP_VerifyUpdate(&ctx, (u_char *)&ep->tstamp, vallen + 12);
 	if (EVP_VerifyFinal(&ctx, (u_char *)&ep->pkt[i], siglen,
 	    pkey) <= 0)
@@ -1531,35 +1532,32 @@ crypto_verify(
 
 
 /*
- * crypto_encrypt - construct encrypted cookie and signature from
- * extension field and cookie
+ * crypto_encrypt - construct vp (encrypted cookie and signature) from
+ * the public key and cookie.
  *
- * Returns
+ * Returns:
  * XEVNT_OK	success
  * XEVNT_CKY	bad or missing cookie
  * XEVNT_PUB	bad or missing public key
  */
 static int
 crypto_encrypt(
-	struct exten *ep,	/* extension pointer */
-	struct value *vp,	/* value pointer */
-	keyid_t	*cookie		/* server cookie */
+	const u_char *ptr,	/* Public Key */
+	u_int	vallen,		/* Length of Public Key */
+	keyid_t	*cookie,	/* server cookie */
+	struct value *vp	/* value pointer */
 	)
 {
 	EVP_PKEY *pkey;		/* public key */
 	EVP_MD_CTX ctx;		/* signature context */
 	tstamp_t tstamp;	/* NTP timestamp */
 	u_int32	temp32;
-	u_int	len;
-	const u_char	*ptr;
-	u_char *sptr;
+	u_char *puch;
 
 	/*
 	 * Extract the public key from the request.
 	 */
-	len = ntohl(ep->vallen);
-	ptr = (u_char *)ep->pkt;
-	pkey = d2i_PublicKey(EVP_PKEY_RSA, NULL, &ptr, len);
+	pkey = d2i_PublicKey(EVP_PKEY_RSA, NULL, &ptr, vallen);
 	if (pkey == NULL) {
 		msyslog(LOG_ERR, "crypto_encrypt: %s",
 		    ERR_error_string(ERR_get_error(), NULL));
@@ -1573,12 +1571,12 @@ crypto_encrypt(
 	tstamp = crypto_time();
 	vp->tstamp = htonl(tstamp);
 	vp->fstamp = hostval.tstamp;
-	len = EVP_PKEY_size(pkey);
-	vp->vallen = htonl(len);
-	vp->ptr = emalloc(len);
-	sptr = vp->ptr;
+	vallen = EVP_PKEY_size(pkey);
+	vp->vallen = htonl(vallen);
+	vp->ptr = emalloc(vallen);
+	puch = vp->ptr;
 	temp32 = htonl(*cookie);
-	if (RSA_public_encrypt(4, (const u_char *)&temp32, sptr,
+	if (RSA_public_encrypt(4, (u_char *)&temp32, puch,
 	    pkey->pkey.rsa, RSA_PKCS1_OAEP_PADDING) <= 0) {
 		msyslog(LOG_ERR, "crypto_encrypt: %s",
 		    ERR_error_string(ERR_get_error(), NULL));
@@ -1593,9 +1591,11 @@ crypto_encrypt(
 	vp->sig = emalloc(sign_siglen);
 	EVP_SignInit(&ctx, sign_digest);
 	EVP_SignUpdate(&ctx, (u_char *)&vp->tstamp, 12);
-	EVP_SignUpdate(&ctx, vp->ptr, len);
-	if (EVP_SignFinal(&ctx, vp->sig, &len, sign_pkey))
-		vp->siglen = htonl(sign_siglen);
+	EVP_SignUpdate(&ctx, vp->ptr, vallen);
+	if (EVP_SignFinal(&ctx, vp->sig, &vallen, sign_pkey)) {
+		NTP_INSIST(vallen <= sign_siglen);
+		vp->siglen = htonl(vallen);
+	}
 	return (XEVNT_OK);
 }
 
@@ -1617,7 +1617,9 @@ crypto_ident(
 	struct peer *peer	/* peer structure pointer */
 	)
 {
-	char	filename[MAXFILENAME];
+	char		filename[MAXFILENAME];
+	const char *	scheme_name;
+	u_int		scheme_id;
 
 	/*
 	 * We come here after the group trusted host has been found; its
@@ -1625,34 +1627,32 @@ crypto_ident(
 	 * keys matching the same group name in order IFF, GQ and MV.
 	 * Use the first one available.
 	 */
+	scheme_name = NULL;
 	if (peer->crypto & CRYPTO_FLAG_IFF) {
-		snprintf(filename, MAXFILENAME, "ntpkey_iffpar_%s",
-		    peer->issuer);
+		scheme_name = "iff";
+		scheme_id = CRYPTO_IFF;
+	} else if (peer->crypto & CRYPTO_FLAG_GQ) {
+		scheme_name = "gq";
+		scheme_id = CRYPTO_GQ;
+	} else if (peer->crypto & CRYPTO_FLAG_MV) {
+		scheme_name = "mv";
+		scheme_id = CRYPTO_MV;
+	}
+
+	if (scheme_name != NULL) {
+		snprintf(filename, sizeof(filename), "ntpkey_%spar_%s",
+		    scheme_name, peer->ident);
 		peer->ident_pkey = crypto_key(filename, NULL,
 		    &peer->srcadr);
 		if (peer->ident_pkey != NULL)
-			return (CRYPTO_IFF);
+			return scheme_id;
 	}
-	if (peer->crypto & CRYPTO_FLAG_GQ) {
-		snprintf(filename, MAXFILENAME, "ntpkey_gqpar_%s",
-		    peer->issuer);
-		peer->ident_pkey = crypto_key(filename, NULL,
-		    &peer->srcadr);
-		if (peer->ident_pkey != NULL)
-			return (CRYPTO_GQ);
-	}
-	if (peer->crypto & CRYPTO_FLAG_MV) {
-		snprintf(filename, MAXFILENAME, "ntpkey_mvpar_%s",
-		    peer->issuer);
-		peer->ident_pkey = crypto_key(filename, NULL,
-		    &peer->srcadr);
-		if (peer->ident_pkey != NULL)
-			return (CRYPTO_MV);
-	}
+
 	msyslog(LOG_NOTICE,
 	    "crypto_ident: no identity parameters found for group %s",
-	    peer->issuer);
-	return (CRYPTO_NULL);
+	    peer->ident);
+
+	return CRYPTO_NULL;
 }
 
 
@@ -1665,6 +1665,9 @@ crypto_ident(
  * call in the protocol module.
  *
  * Returns extension field pointer (no errors)
+ *
+ * XXX: opcode and len should really be 32-bit quantities and
+ * we should make sure that str is not too big.
  */
 struct exten *
 crypto_args(
@@ -1677,15 +1680,21 @@ crypto_args(
 	tstamp_t tstamp;	/* NTP timestamp */
 	struct exten *ep;	/* extension field pointer */
 	u_int	len;		/* extension field length */
+	size_t	slen = 0;
 
 	tstamp = crypto_time();
 	len = sizeof(struct exten);
-	if (str != NULL)
-		len += strlen(str);
-	ep = emalloc(len);
-	memset(ep, 0, len);
+	if (str != NULL) {
+		slen = strlen(str);
+		INSIST(slen < MAX_VALLEN);
+		len += slen;
+	}
+	ep = emalloc_zero(len);
 	if (opcode == 0)
 		return (ep);
+
+	REQUIRE(0 == (len    & ~0x0000ffff));
+	REQUIRE(0 == (opcode & ~0xffff0000));
 
 	ep->opcode = htonl(opcode + len);
 	ep->associd = htonl(associd);
@@ -1693,8 +1702,8 @@ crypto_args(
 	ep->fstamp = hostval.tstamp;
 	ep->vallen = 0;
 	if (str != NULL) {
-		ep->vallen = htonl(strlen(str));
-		memcpy((char *)ep->pkt, str, strlen(str));
+		ep->vallen = htonl(slen);
+		memcpy((char *)ep->pkt, str, slen);
 	}
 	return (ep);
 }
@@ -1707,6 +1716,8 @@ crypto_args(
  * Note: it is not polite to send a nonempty signature with zero
  * timestamp or a nonzero timestamp with an empty signature, but those
  * rules are not enforced here.
+ *
+ * XXX This code won't work on a box with 16-bit ints.
  */
 int
 crypto_send(
@@ -1722,8 +1733,9 @@ crypto_send(
 	 * Calculate extension field length and check for buffer
 	 * overflow. Leave room for the MAC.
 	 */
-	len = 16;
+	len = 16;				/* XXX Document! */
 	vallen = ntohl(vp->vallen);
+	INSIST(vallen <= MAX_VALLEN);
 	len += ((vallen + 3) / 4 + 1) * 4; 
 	siglen = ntohl(vp->siglen);
 	len += ((siglen + 3) / 4 + 1) * 4; 
@@ -1756,7 +1768,7 @@ crypto_send(
 	 */
 	ep->pkt[i++] = vp->siglen;
 	if (siglen > 0 && vp->sig != NULL) {
-		j = vallen / 4;
+		j = siglen / 4;
 		if (j * 4 < siglen)
 			ep->pkt[i + j++] = 0;
 		memcpy(&ep->pkt[i], vp->sig, siglen);
@@ -1764,6 +1776,7 @@ crypto_send(
 	}
 	opcode = ntohl(ep->opcode);
 	ep->opcode = htonl((opcode & 0xffff0000) | len); 
+	ENSURE(len <= MAX_VALLEN);
 	return (len);
 }
 
@@ -1794,11 +1807,11 @@ crypto_update(void)
 	char	statstr[NTP_MAXSTRLEN]; /* statistics for filegen */
 	u_int32	*ptr;
 	u_int	len;
+	leap_result_t leap_data;
 
 	hostval.tstamp = htonl(crypto_time());
 	if (hostval.tstamp == 0)
 		return;
-
 
 	/*
 	 * Sign public key and timestamps. The filestamp is derived from
@@ -1813,8 +1826,10 @@ crypto_update(void)
 		EVP_SignInit(&ctx, sign_digest);
 		EVP_SignUpdate(&ctx, (u_char *)&pubkey, 12);
 		EVP_SignUpdate(&ctx, pubkey.ptr, ntohl(pubkey.vallen));
-		if (EVP_SignFinal(&ctx, pubkey.sig, &len, sign_pkey))
-			pubkey.siglen = htonl(sign_siglen);
+		if (EVP_SignFinal(&ctx, pubkey.sig, &len, sign_pkey)) {
+			NTP_INSIST(len <= sign_siglen);
+			pubkey.siglen = htonl(len);
+		}
 	}
 
 	/*
@@ -1832,8 +1847,10 @@ crypto_update(void)
 		EVP_SignUpdate(&ctx, (u_char *)&cp->cert, 12);
 		EVP_SignUpdate(&ctx, cp->cert.ptr,
 		    ntohl(cp->cert.vallen));
-		if (EVP_SignFinal(&ctx, cp->cert.sig, &len, sign_pkey))
-			cp->cert.siglen = htonl(sign_siglen);
+		if (EVP_SignFinal(&ctx, cp->cert.sig, &len, sign_pkey)) {
+			NTP_INSIST(len <= sign_siglen);
+			cp->cert.siglen = htonl(len);
+		}
 	}
 
 	/*
@@ -1842,32 +1859,86 @@ crypto_update(void)
 	 */
 	tai_leap.tstamp = hostval.tstamp;
 	tai_leap.fstamp = hostval.fstamp;
+
+	/* Get the leap second era. We might need a full lookup early
+	 * after start, when the cache is not yet loaded.
+	 */
+	leapsec_frame(&leap_data);
+	if ( ! memcmp(&leap_data.ebase, &leap_data.ttime, sizeof(vint64))) {
+		time_t   now    = time(NULL);
+		uint32_t nowntp = (uint32_t)now + JAN_1970;
+		leapsec_query(&leap_data, nowntp, &now);
+	}
+
+	/* Create the data block. The protocol does not work without. */
 	len = 3 * sizeof(u_int32);
-	if (tai_leap.ptr == NULL)
+	if (tai_leap.ptr == NULL || ntohl(tai_leap.vallen) != len) {
+		free(tai_leap.ptr);
 		tai_leap.ptr = emalloc(len);
-	tai_leap.vallen = htonl(len);
+		tai_leap.vallen = htonl(len);
+	}
 	ptr = (u_int32 *)tai_leap.ptr;
-	ptr[0] = htonl(leap_tai);
-	ptr[1] = htonl(leap_sec);
-	ptr[2] = htonl(leap_expire);
+	if (leap_data.tai_offs > 10) {
+		/* create a TAI / leap era block. The end time is a
+		 * fake -- maybe we can do better.
+		 */
+		ptr[0] = htonl(leap_data.tai_offs);
+		ptr[1] = htonl(leap_data.ebase.d_s.lo);
+		if (leap_data.ttime.d_s.hi >= 0)
+			ptr[2] = htonl(leap_data.ttime.D_s.lo +  7*86400);
+		else
+			ptr[2] = htonl(leap_data.ebase.D_s.lo + 25*86400);
+	} else {
+		/* no leap era available */
+		memset(ptr, 0, len);
+	}
 	if (tai_leap.sig == NULL)
 		tai_leap.sig = emalloc(sign_siglen);
 	EVP_SignInit(&ctx, sign_digest);
 	EVP_SignUpdate(&ctx, (u_char *)&tai_leap, 12);
 	EVP_SignUpdate(&ctx, tai_leap.ptr, len);
-	if (EVP_SignFinal(&ctx, tai_leap.sig, &len, sign_pkey))
-		tai_leap.siglen = htonl(sign_siglen);
-	if (leap_sec > 0)
-		crypto_flags |= CRYPTO_FLAG_TAI;
-	snprintf(statstr, NTP_MAXSTRLEN, "signature update ts %u",
+	if (EVP_SignFinal(&ctx, tai_leap.sig, &len, sign_pkey)) {
+		NTP_INSIST(len <= sign_siglen);
+		tai_leap.siglen = htonl(len);
+	}
+	crypto_flags |= CRYPTO_FLAG_TAI;
+
+	snprintf(statstr, sizeof(statstr), "signature update ts %u",
 	    ntohl(hostval.tstamp)); 
 	record_crypto_stats(NULL, statstr);
-#ifdef DEBUG
-	if (debug)
-		printf("crypto_update: %s\n", statstr);
-#endif
+	DPRINTF(1, ("crypto_update: %s\n", statstr));
 }
 
+/*
+ * crypto_update_taichange - eventually trigger crypto_update
+ *
+ * This is called when a change in 'sys_tai' is detected. This will
+ * happen shortly after a leap second is detected, but unhappily also
+ * early after system start; also, the crypto stuff might be unused and
+ * an unguarded call to crypto_update() causes a crash.
+ *
+ * This function makes sure that there already *is* a valid crypto block
+ * for the use with autokey, and only calls 'crypto_update()' if it can
+ * succeed.
+ *
+ * Returns void (no errors)
+ */
+void
+crypto_update_taichange(void)
+{
+	static const u_int len = 3 * sizeof(u_int32);
+
+	/* check if the signing digest algo is available */
+	if (sign_digest == NULL || sign_pkey == NULL)
+		return;
+
+	/* check size of TAI extension block */
+	if (tai_leap.ptr == NULL || ntohl(tai_leap.vallen) != len)
+		return;
+
+	/* crypto_update should at least not crash here! */
+	crypto_update();
+}
 
 /*
  * value_free - free value structure components.
@@ -1905,38 +1976,62 @@ crypto_time()
 
 
 /*
- * asn2ntp - convert ASN1_TIME time structure to NTP time.
+ * asn_to_calendar - convert ASN1_TIME time structure to struct calendar.
  *
- * Returns NTP seconds (no errors)
  */
-u_long
-asn2ntp	(
-	ASN1_TIME *asn1time	/* pointer to ASN1_TIME structure */
+static
+void
+asn_to_calendar	(
+	ASN1_TIME *asn1time,	/* pointer to ASN1_TIME structure */
+	struct calendar *pjd	/* pointer to result */
 	)
 {
-	char	*v;		/* pointer to ASN1_TIME string */
-	struct	tm tm;		/* used to convert to NTP time */
+	size_t	len;		/* length of ASN1_TIME string */
+	char	v[24];		/* writable copy of ASN1_TIME string */
+	unsigned long	temp;	/* result from strtoul */
 
 	/*
 	 * Extract time string YYMMDDHHMMSSZ from ASN1 time structure.
+	 * Or YYYYMMDDHHMMSSZ.
 	 * Note that the YY, MM, DD fields start with one, the HH, MM,
-	 * SS fiels start with zero and the Z character is ignored.
-	 * Also note that years less than 50 map to years greater than
+	 * SS fields start with zero and the Z character is ignored.
+	 * Also note that two-digit years less than 50 map to years greater than
 	 * 100. Dontcha love ASN.1? Better than MIL-188.
 	 */
-	v = (char *)asn1time->data;
-	tm.tm_year = (v[0] - '0') * 10 + v[1] - '0';
-	if (tm.tm_year < 50)
-		tm.tm_year += 100;
-	tm.tm_mon = (v[2] - '0') * 10 + v[3] - '0' - 1;
-	tm.tm_mday = (v[4] - '0') * 10 + v[5] - '0';
-	tm.tm_hour = (v[6] - '0') * 10 + v[7] - '0';
-	tm.tm_min = (v[8] - '0') * 10 + v[9] - '0';
-	tm.tm_sec = (v[10] - '0') * 10 + v[11] - '0';
-	tm.tm_wday = 0;
-	tm.tm_yday = 0;
-	tm.tm_isdst = 0;
-	return ((u_long)timegm(&tm) + JAN_1970);
+	len = asn1time->length;
+	NTP_REQUIRE(len < sizeof(v));
+	(void)strncpy(v, (char *)(asn1time->data), len);
+	NTP_REQUIRE(len >= 13);
+	temp = strtoul(v+len-3, NULL, 10);
+	pjd->second = temp;
+	v[len-3] = '\0';
+
+	temp = strtoul(v+len-5, NULL, 10);
+	pjd->minute = temp;
+	v[len-5] = '\0';
+
+	temp = strtoul(v+len-7, NULL, 10);
+	pjd->hour = temp;
+	v[len-7] = '\0';
+
+	temp = strtoul(v+len-9, NULL, 10);
+	pjd->monthday = temp;
+	v[len-9] = '\0';
+
+	temp = strtoul(v+len-11, NULL, 10);
+	pjd->month = temp;
+	v[len-11] = '\0';
+
+	temp = strtoul(v, NULL, 10);
+	/* handle two-digit years */
+	if (temp < 50UL)
+	    temp += 100UL;
+	if (temp < 150UL)
+	    temp += 1900UL;
+	pjd->year = temp;
+
+	pjd->yearday = pjd->weekday = 0;
+	return;
 }
 
 
@@ -2036,8 +2131,10 @@ crypto_alice(
 	/*
 	 * The identity parameters must have correct format and content.
 	 */
-	if (peer->ident_pkey == NULL)
+	if (peer->ident_pkey == NULL) {
+		msyslog(LOG_NOTICE, "crypto_alice: scheme unavailable");
 		return (XEVNT_ID);
+	}
 
 	if ((dsa = peer->ident_pkey->pkey->pkey.dsa) == NULL) {
 		msyslog(LOG_NOTICE, "crypto_alice: defective key");
@@ -2073,8 +2170,10 @@ crypto_alice(
 	EVP_SignInit(&ctx, sign_digest);
 	EVP_SignUpdate(&ctx, (u_char *)&vp->tstamp, 12);
 	EVP_SignUpdate(&ctx, vp->ptr, len);
-	if (EVP_SignFinal(&ctx, vp->sig, &len, sign_pkey))
-		vp->siglen = htonl(sign_siglen);
+	if (EVP_SignFinal(&ctx, vp->sig, &len, sign_pkey)) {
+		NTP_INSIST(len <= sign_siglen);
+		vp->siglen = htonl(len);
+	}
 	return (XEVNT_OK);
 }
 
@@ -2100,7 +2199,8 @@ crypto_bob(
 	tstamp_t tstamp;	/* NTP timestamp */
 	BIGNUM	*bn, *bk, *r;
 	u_char	*ptr;
-	u_int	len;
+	u_int	len;		/* extension field length */
+	u_int	vallen = 0;	/* value length */
 
 	/*
 	 * If the IFF parameters are not valid, something awful
@@ -2115,8 +2215,11 @@ crypto_bob(
 	/*
 	 * Extract r from the challenge.
 	 */
-	len = ntohl(ep->vallen);
-	if ((r = BN_bin2bn((u_char *)ep->pkt, len, NULL)) == NULL) {
+	vallen = ntohl(ep->vallen);
+	len = ntohl(ep->opcode) & 0x0000ffff;
+	if (vallen == 0 || len < VALUE_LEN || len - VALUE_LEN < vallen)
+		return XEVNT_LEN;
+	if ((r = BN_bin2bn((u_char *)ep->pkt, vallen, NULL)) == NULL) {
 		msyslog(LOG_ERR, "crypto_bob: %s",
 		    ERR_error_string(ERR_get_error(), NULL));
 		return (XEVNT_ERR);
@@ -2128,7 +2231,7 @@ crypto_bob(
 	 */
 	bctx = BN_CTX_new(); bk = BN_new(); bn = BN_new();
 	sdsa = DSA_SIG_new();
-	BN_rand(bk, len * 8, -1, 1);		/* k */
+	BN_rand(bk, vallen * 8, -1, 1);		/* k */
 	BN_mod_mul(bn, dsa->priv_key, r, dsa->q, bctx); /* b r mod q */
 	BN_add(bn, bn, bk);
 	BN_mod(bn, bn, dsa->q, bctx);		/* k + b r mod q */
@@ -2147,31 +2250,40 @@ crypto_bob(
 	 * Encode the values in ASN.1 and sign. The filestamp is from
 	 * the local file.
 	 */
-	len = i2d_DSA_SIG(sdsa, NULL);
-	if (len == 0) {
+	vallen = i2d_DSA_SIG(sdsa, NULL);
+	if (vallen == 0) {
 		msyslog(LOG_ERR, "crypto_bob: %s",
 		    ERR_error_string(ERR_get_error(), NULL));
 		DSA_SIG_free(sdsa);
 		return (XEVNT_ERR);
 	}
+	if (vallen > MAX_VALLEN) {
+		msyslog(LOG_ERR, "crypto_bob: signature is too big: %d",
+		    vallen);
+		DSA_SIG_free(sdsa);
+		return (XEVNT_LEN);
+	}
 	memset(vp, 0, sizeof(struct value));
 	tstamp = crypto_time();
 	vp->tstamp = htonl(tstamp);
 	vp->fstamp = htonl(iffkey_info->fstamp);
-	vp->vallen = htonl(len);
-	ptr = emalloc(len);
+	vp->vallen = htonl(vallen);
+	ptr = emalloc(vallen);
 	vp->ptr = ptr;
 	i2d_DSA_SIG(sdsa, &ptr);
 	DSA_SIG_free(sdsa);
 	if (tstamp == 0)
 		return (XEVNT_OK);
 
+	/* XXX: more validation to make sure the sign fits... */
 	vp->sig = emalloc(sign_siglen);
 	EVP_SignInit(&ctx, sign_digest);
 	EVP_SignUpdate(&ctx, (u_char *)&vp->tstamp, 12);
-	EVP_SignUpdate(&ctx, vp->ptr, len);
-	if (EVP_SignFinal(&ctx, vp->sig, &len, sign_pkey))
-		vp->siglen = htonl(sign_siglen);
+	EVP_SignUpdate(&ctx, vp->ptr, vallen);
+	if (EVP_SignFinal(&ctx, vp->sig, &vallen, sign_pkey)) {
+		NTP_INSIST(vallen <= sign_siglen);
+		vp->siglen = htonl(vallen);
+	}
 	return (XEVNT_OK);
 }
 
@@ -2375,8 +2487,10 @@ crypto_alice2(
 	EVP_SignInit(&ctx, sign_digest);
 	EVP_SignUpdate(&ctx, (u_char *)&vp->tstamp, 12);
 	EVP_SignUpdate(&ctx, vp->ptr, len);
-	if (EVP_SignFinal(&ctx, vp->sig, &len, sign_pkey))
-		vp->siglen = htonl(sign_siglen);
+	if (EVP_SignFinal(&ctx, vp->sig, &len, sign_pkey)) {
+		NTP_INSIST(len <= sign_siglen);
+		vp->siglen = htonl(len);
+	}
 	return (XEVNT_OK);
 }
 
@@ -2403,6 +2517,7 @@ crypto_bob2(
 	BIGNUM	*r, *k, *g, *y;
 	u_char	*ptr;
 	u_int	len;
+	int	s_len;
 
 	/*
 	 * If the GQ parameters are not valid, something awful
@@ -2449,8 +2564,8 @@ crypto_bob2(
 	 * Encode the values in ASN.1 and sign. The filestamp is from
 	 * the local file.
 	 */
-	len = i2d_DSA_SIG(sdsa, NULL);
-	if (len <= 0) {
+	len = s_len = i2d_DSA_SIG(sdsa, NULL);
+	if (s_len <= 0) {
 		msyslog(LOG_ERR, "crypto_bob2: %s",
 		    ERR_error_string(ERR_get_error(), NULL));
 		DSA_SIG_free(sdsa);
@@ -2472,8 +2587,10 @@ crypto_bob2(
 	EVP_SignInit(&ctx, sign_digest);
 	EVP_SignUpdate(&ctx, (u_char *)&vp->tstamp, 12);
 	EVP_SignUpdate(&ctx, vp->ptr, len);
-	if (EVP_SignFinal(&ctx, vp->sig, &len, sign_pkey))
-		vp->siglen = htonl(sign_siglen);
+	if (EVP_SignFinal(&ctx, vp->sig, &len, sign_pkey)) {
+		NTP_INSIST(len <= sign_siglen);
+		vp->siglen = htonl(len);
+	}
 	return (XEVNT_OK);
 }
 
@@ -2701,8 +2818,10 @@ crypto_alice3(
 	EVP_SignInit(&ctx, sign_digest);
 	EVP_SignUpdate(&ctx, (u_char *)&vp->tstamp, 12);
 	EVP_SignUpdate(&ctx, vp->ptr, len);
-	if (EVP_SignFinal(&ctx, vp->sig, &len, sign_pkey))
-		vp->siglen = htonl(sign_siglen);
+	if (EVP_SignFinal(&ctx, vp->sig, &len, sign_pkey)) {
+		NTP_INSIST(len <= sign_siglen);
+		vp->siglen = htonl(len);
+	}
 	return (XEVNT_OK);
 }
 
@@ -2801,8 +2920,10 @@ crypto_bob3(
 	EVP_SignInit(&ctx, sign_digest);
 	EVP_SignUpdate(&ctx, (u_char *)&vp->tstamp, 12);
 	EVP_SignUpdate(&ctx, vp->ptr, len);
-	if (EVP_SignFinal(&ctx, vp->sig, &len, sign_pkey))
-		vp->siglen = htonl(sign_siglen);
+	if (EVP_SignFinal(&ctx, vp->sig, &len, sign_pkey)) {
+		NTP_INSIST(len <= sign_siglen);
+		vp->siglen = htonl(len);
+	}
 	return (XEVNT_OK);
 }
 
@@ -2944,8 +3065,10 @@ cert_sign(
 	EVP_PKEY *pkey;		/* public key */
 	EVP_MD_CTX ctx;		/* message digest context */
 	tstamp_t tstamp;	/* NTP timestamp */
+	struct calendar tscal;
 	u_int	len;
-	const u_char	*ptr;
+	const u_char *cptr;
+	u_char *ptr;
 	int	i, temp;
 
 	/*
@@ -2957,8 +3080,8 @@ cert_sign(
 	if (tstamp == 0)
 		return (XEVNT_TSP);
 
-	ptr = (u_char *)ep->pkt;
-	if ((req = d2i_X509(NULL, &ptr, ntohl(ep->vallen))) == NULL) {
+	cptr = (void *)ep->pkt;
+	if ((req = d2i_X509(NULL, &cptr, ntohl(ep->vallen))) == NULL) {
 		msyslog(LOG_ERR, "cert_sign: %s",
 		    ERR_error_string(ERR_get_error(), NULL));
 		return (XEVNT_CRT);
@@ -2992,11 +3115,10 @@ cert_sign(
 	subj = X509_get_subject_name(req);
 	X509_set_subject_name(cert, subj);
 	X509_set_pubkey(cert, pkey);
-	ext = X509_get_ext(req, 0);
 	temp = X509_get_ext_count(req);
 	for (i = 0; i < temp; i++) {
 		ext = X509_get_ext(req, i);
-		X509_add_ext(cert, ext, -1);
+		INSIST(X509_add_ext(cert, ext, -1));
 	}
 	X509_free(req);
 
@@ -3004,7 +3126,9 @@ cert_sign(
 	 * Sign and verify the client certificate, but only if the host
 	 * certificate has not expired.
 	 */
-	if (tstamp < cert_host->first || tstamp > cert_host->last) {
+	(void)ntpcal_ntp_to_date(&tscal, tstamp, NULL);
+	if ((calcomp(&tscal, &(cert_host->first)) < 0)
+	|| (calcomp(&tscal, &(cert_host->last)) > 0)) {
 		X509_free(cert);
 		return (XEVNT_PER);
 	}
@@ -3035,8 +3159,10 @@ cert_sign(
 		EVP_SignInit(&ctx, sign_digest);
 		EVP_SignUpdate(&ctx, (u_char *)vp, 12);
 		EVP_SignUpdate(&ctx, vp->ptr, len);
-		if (EVP_SignFinal(&ctx, vp->sig, &len, sign_pkey))
-			vp->siglen = htonl(sign_siglen);
+		if (EVP_SignFinal(&ctx, vp->sig, &len, sign_pkey)) {
+			NTP_INSIST(len <= sign_siglen);
+			vp->siglen = htonl(len);
+		}
 	}
 #ifdef DEBUG
 	if (debug > 1)
@@ -3131,7 +3257,7 @@ cert_hike(
 {
 	struct cert_info *xp;	/* subject certificate */
 	X509	*cert;		/* X509 certificate */
-	const u_char	*ptr;
+	const u_char *ptr;
 
 	/*
 	 * Save the issuer on the new certificate, but remember the old
@@ -3139,8 +3265,7 @@ cert_hike(
 	 */
 	if (peer->issuer != NULL)
 		free(peer->issuer);
-	peer->issuer = emalloc(strlen(yp->issuer) + 1);
-	strcpy(peer->issuer, yp->issuer);
+	peer->issuer = estrdup(yp->issuer);
 	xp = peer->xinfo;
 	peer->xinfo = yp;
 
@@ -3156,20 +3281,16 @@ cert_hike(
 		if (!(yp->flags & CERT_TRUST))
 			return (XEVNT_OK);
 
-		peer->grpkey = yp->grpkey;
-		peer->crypto |= CRYPTO_FLAG_CERT;
-		if (!(peer->crypto & CRYPTO_FLAG_MASK))
-			peer->crypto |= CRYPTO_FLAG_VRFY |
-			    CRYPTO_FLAG_PROV;
-
 		/*
 		 * If the server has an an identity scheme, fetch the
 		 * identity credentials. If not, the identity is
 		 * verified only by the trusted certificate. The next
 		 * signature will set the server proventic.
 		 */
-		if (!(peer->crypto & CRYPTO_FLAG_MASK) ||
-		    sys_groupname == NULL)
+		peer->crypto |= CRYPTO_FLAG_CERT;
+		peer->grpkey = yp->grpkey;
+		if (peer->ident == NULL || !(peer->crypto &
+		    CRYPTO_FLAG_MASK))
 			peer->crypto |= CRYPTO_FLAG_VRFY;
 	}
 
@@ -3196,7 +3317,8 @@ cert_hike(
 	 * Signature X is valid only if it begins during the
 	 * lifetime of Y. 
 	 */
-	if (xp->first < yp->first || xp->first > yp->last) {
+	if ((calcomp(&(xp->first), &(yp->first)) < 0)
+	|| (calcomp(&(xp->first), &(yp->last)) > 0)) {
 		xp->flags |= CERT_ERROR;
 		return (XEVNT_PER);
 	}
@@ -3220,7 +3342,7 @@ cert_hike(
  */
 struct cert_info *		/* certificate information structure */
 cert_parse(
-	u_char	*asn1cert,	/* X509 certificate */
+	const u_char *asn1cert,	/* X509 certificate */
 	long	len,		/* certificate length */
 	tstamp_t fstamp		/* filestamp */
 	)
@@ -3230,8 +3352,10 @@ cert_parse(
 	struct cert_info *ret;	/* certificate info/value */
 	BIO	*bp;
 	char	pathbuf[MAXFILENAME];
-	const u_char	*ptr;
+	const u_char *ptr;
+	char	*pch;
 	int	temp, cnt, i;
+	struct calendar fscal;
 
 	/*
 	 * Decode ASN.1 objects and construct certificate structure.
@@ -3250,8 +3374,7 @@ cert_parse(
 	/*
 	 * Extract version, subject name and public key.
 	 */
-	ret = emalloc(sizeof(struct cert_info));
-	memset(ret, 0, sizeof(struct cert_info));
+	ret = emalloc_zero(sizeof(*ret));
 	if ((ret->pkey = X509_get_pubkey(cert)) == NULL) {
 		msyslog(LOG_ERR, "cert_parse: %s",
 		    ERR_error_string(ERR_get_error(), NULL));
@@ -3261,16 +3384,16 @@ cert_parse(
 	}
 	ret->version = X509_get_version(cert);
 	X509_NAME_oneline(X509_get_subject_name(cert), pathbuf,
-	    MAXFILENAME);
-	ptr = (unsigned char *)strstr(pathbuf, "CN=");
-	if (ptr == NULL) {
+	    sizeof(pathbuf));
+	pch = strstr(pathbuf, "CN=");
+	if (NULL == pch) {
 		msyslog(LOG_NOTICE, "cert_parse: invalid subject %s",
 		    pathbuf);
 		cert_free(ret);
 		X509_free(cert);
 		return (NULL);
 	}
-	ret->subject = estrdup((const char *)ptr + 3);
+	ret->subject = estrdup(pch + 3);
 
 	/*
 	 * Extract remaining objects. Note that the NTP serial number is
@@ -3284,17 +3407,17 @@ cert_parse(
 	ret->serial =
 	    (u_long)ASN1_INTEGER_get(X509_get_serialNumber(cert));
 	X509_NAME_oneline(X509_get_issuer_name(cert), pathbuf,
-	    MAXFILENAME);
-	if ((ptr = (unsigned char *)strstr(pathbuf, "CN=")) == NULL) {
+	    sizeof(pathbuf));
+	if ((pch = strstr(pathbuf, "CN=")) == NULL) {
 		msyslog(LOG_NOTICE, "cert_parse: invalid issuer %s",
 		    pathbuf);
 		cert_free(ret);
 		X509_free(cert);
 		return (NULL);
 	}
-	ret->issuer = estrdup((const char *)ptr + 3);
-	ret->first = asn2ntp(X509_get_notBefore(cert));
-	ret->last = asn2ntp(X509_get_notAfter(cert));
+	ret->issuer = estrdup(pch + 3);
+	asn_to_calendar(X509_get_notBefore(cert), &(ret->first));
+	asn_to_calendar(X509_get_notAfter(cert), &(ret->last));
 
 	/*
 	 * Extract extension fields. These are ad hoc ripoffs of
@@ -3316,17 +3439,14 @@ cert_parse(
 		case NID_ext_key_usage:
 			bp = BIO_new(BIO_s_mem());
 			X509V3_EXT_print(bp, ext, 0, 0);
-			BIO_gets(bp, pathbuf, MAXFILENAME);
+			BIO_gets(bp, pathbuf, sizeof(pathbuf));
 			BIO_free(bp);
 			if (strcmp(pathbuf, "Trust Root") == 0)
 				ret->flags |= CERT_TRUST;
 			else if (strcmp(pathbuf, "Private") == 0)
 				ret->flags |= CERT_PRIV;
-#if DEBUG
-			if (debug)
-				printf("cert_parse: %s: %s\n",
-				    OBJ_nid2ln(temp), pathbuf);
-#endif
+			DPRINTF(1, ("cert_parse: %s: %s\n",
+				    OBJ_nid2ln(temp), pathbuf));
 			break;
 
 		/*
@@ -3337,12 +3457,10 @@ cert_parse(
 			ret->grpkey = BN_bin2bn(&ext->value->data[2],
 			    ext->value->length - 2, NULL);
 			/* fall through */
-#if DEBUG
 		default:
-			if (debug)
-				printf("cert_parse: %s\n",
-				    OBJ_nid2ln(temp));
-#endif
+			DPRINTF(1, ("cert_parse: %s\n",
+				    OBJ_nid2ln(temp)));
+			break;
 		}
 	}
 	if (strcmp(ret->subject, ret->issuer) == 0) {
@@ -3377,10 +3495,18 @@ cert_parse(
 	 * Verify certificate valid times. Note that certificates cannot
 	 * be retroactive.
 	 */
-	if (ret->first > ret->last || ret->first < fstamp) {
+	(void)ntpcal_ntp_to_date(&fscal, fstamp, NULL);
+	if ((calcomp(&(ret->first), &(ret->last)) > 0)
+	|| (calcomp(&(ret->first), &fscal) < 0)) {
 		msyslog(LOG_NOTICE,
-		    "cert_parse: invalid times %s first %u last %u fstamp %u",
-		    ret->subject, ret->first, ret->last, fstamp);
+		    "cert_parse: invalid times %s first %u-%02u-%02uT%02u:%02u:%02u last %u-%02u-%02uT%02u:%02u:%02u fstamp %u-%02u-%02uT%02u:%02u:%02u",
+		    ret->subject,
+		    ret->first.year, ret->first.month, ret->first.monthday,
+		    ret->first.hour, ret->first.minute, ret->first.second,
+		    ret->last.year, ret->last.month, ret->last.monthday,
+		    ret->last.hour, ret->last.minute, ret->last.second,
+		    fscal.year, fscal.month, fscal.monthday,
+		    fscal.hour, fscal.minute, fscal.second);
 		cert_free(ret);
 		X509_free(cert);
 		return (NULL);
@@ -3459,9 +3585,10 @@ crypto_key(
 	 * wrong, abandon ship.
 	 */
 	if (*cp == '/')
-		strcpy(filename, cp);
+		strlcpy(filename, cp, sizeof(filename));
 	else
-		snprintf(filename, MAXFILENAME, "%s/%s", keysdir, cp);
+		snprintf(filename, sizeof(filename), "%s/%s", keysdir,
+		    cp);
 	str = fopen(filename, "r");
 	if (str == NULL)
 		return (NULL);
@@ -3469,7 +3596,7 @@ crypto_key(
 	/*
 	 * Read the filestamp, which is contained in the first line.
 	 */
-	if ((ptr = fgets(linkname, MAXFILENAME, str)) == NULL) {
+	if ((ptr = fgets(linkname, sizeof(linkname), str)) == NULL) {
 		msyslog(LOG_ERR, "crypto_key: empty file %s",
 		    filename);
 		fclose(str);
@@ -3507,21 +3634,20 @@ crypto_key(
 	pkp->link = pkinfo;
 	pkinfo = pkp;
 	pkp->pkey = pkey;
-	pkp->name = emalloc(strlen(cp) + 1);
+	pkp->name = estrdup(cp);
 	pkp->fstamp = fstamp;
-	strcpy(pkp->name, cp);
 
 	/*
 	 * Leave tracks in the cryptostats.
 	 */
 	if ((ptr = strrchr(linkname, '\n')) != NULL)
 		*ptr = '\0'; 
-	snprintf(statstr, NTP_MAXSTRLEN, "%s mod %d", &linkname[2],
+	snprintf(statstr, sizeof(statstr), "%s mod %d", &linkname[2],
 	    EVP_PKEY_size(pkey) * 8);
 	record_crypto_stats(addr, statstr);
+	
+	DPRINTF(1, ("crypto_key: %s\n", statstr));
 #ifdef DEBUG
-	if (debug)
-		printf("crypto_key: %s\n", statstr);
 	if (debug > 1) {
 		if (pkey->type == EVP_PKEY_DSA)
 			DSA_print_fp(stdout, pkey->pkey.dsa, 0);
@@ -3572,9 +3698,10 @@ crypto_cert(
 	 * something goes wrong, abandon ship.
 	 */
 	if (*cp == '/')
-		strcpy(filename, cp);
+		strlcpy(filename, cp, sizeof(filename));
 	else
-		snprintf(filename, MAXFILENAME, "%s/%s", keysdir, cp);
+		snprintf(filename, sizeof(filename), "%s/%s", keysdir,
+		    cp);
 	str = fopen(filename, "r");
 	if (str == NULL)
 		return (NULL);
@@ -3582,20 +3709,20 @@ crypto_cert(
 	/*
 	 * Read the filestamp, which is contained in the first line.
 	 */
-	if ((ptr = fgets(linkname, MAXFILENAME, str)) == NULL) {
+	if ((ptr = fgets(linkname, sizeof(linkname), str)) == NULL) {
 		msyslog(LOG_ERR, "crypto_cert: empty file %s",
 		    filename);
 		fclose(str);
 		return (NULL);
 	}
 	if ((ptr = strrchr(ptr, '.')) == NULL) {
-		msyslog(LOG_ERR, "crypto_cert: no filestamp %s\n",
+		msyslog(LOG_ERR, "crypto_cert: no filestamp %s",
 		    filename);
 		fclose(str);
 		return (NULL);
 	}
 	if (sscanf(++ptr, "%u", &fstamp) != 1) {
-		msyslog(LOG_ERR, "crypto_cert: invalid filestamp %s\n",
+		msyslog(LOG_ERR, "crypto_cert: invalid filestamp %s",
 		    filename);
 		fclose(str);
 		return (NULL);
@@ -3605,7 +3732,7 @@ crypto_cert(
 	 * Read PEM-encoded certificate and install.
 	 */
 	if (!PEM_read(str, &name, &header, &data, &len)) {
-		msyslog(LOG_ERR, "crypto_cert: %s\n",
+		msyslog(LOG_ERR, "crypto_cert: %s",
 		    ERR_error_string(ERR_get_error(), NULL));
 		fclose(str);
 		return (NULL);
@@ -3632,13 +3759,10 @@ crypto_cert(
 
 	if ((ptr = strrchr(linkname, '\n')) != NULL)
 		*ptr = '\0'; 
-	snprintf(statstr, NTP_MAXSTRLEN, "%s 0x%x len %lu",
+	snprintf(statstr, sizeof(statstr), "%s 0x%x len %lu",
 	    &linkname[2], ret->flags, len);
 	record_crypto_stats(NULL, statstr);
-#ifdef DEBUG
-	if (debug)
-		printf("crypto_cert: %s\n", statstr);
-#endif
+	DPRINTF(1, ("crypto_cert: %s\n", statstr));
 	return (ret);
 }
 
@@ -3662,7 +3786,8 @@ crypto_setup(void)
 {
 	struct pkey_info *pinfo; /* private/public key */
 	char	filename[MAXFILENAME]; /* file name buffer */
-	char *	randfile;
+	char	hostname[MAXFILENAME]; /* host name buffer */
+	char	*randfile;
 	char	statstr[NTP_MAXSTRLEN]; /* statistics for filegen */
 	l_fp	seed;		/* crypto PRNG seed as NTP timestamp */
 	u_int	len;
@@ -3707,24 +3832,18 @@ crypto_setup(void)
 		get_systime(&seed);
 		RAND_seed(&seed, sizeof(l_fp));
 		RAND_write_file(randfile);
-#ifdef DEBUG
-		if (debug)
-			printf(
-			    "crypto_setup: OpenSSL version %lx random seed file %s bytes read %d\n",
-			    SSLeay(), randfile, bytes);
-#endif
+		DPRINTF(1, ("crypto_setup: OpenSSL version %lx random seed file %s bytes read %d\n",
+			    SSLeay(), randfile, bytes));
 	}
 
 	/*
 	 * Initialize structures.
 	 */
-	if (sys_hostname == NULL) {
-		gethostname(filename, MAXFILENAME);
-		sys_hostname = emalloc(strlen(filename) + 1);
-		strcpy(sys_hostname, filename);
-	}
+	gethostname(hostname, sizeof(hostname));
+	if (host_filename != NULL)
+		strlcpy(hostname, host_filename, sizeof(hostname));
 	if (passwd == NULL)
-		passwd = sys_hostname;
+		passwd = estrdup(hostname);
 	memset(&hostval, 0, sizeof(hostval));
 	memset(&pubkey, 0, sizeof(pubkey));
 	memset(&tai_leap, 0, sizeof(tai_leap));
@@ -3735,7 +3854,7 @@ crypto_setup(void)
 	 * as we know it ends. The host key also becomes the default
 	 * sign key. 
 	 */
-	snprintf(filename, MAXFILENAME, "ntpkey_host_%s", sys_hostname);
+	snprintf(filename, sizeof(filename), "ntpkey_host_%s", hostname);
 	pinfo = crypto_key(filename, passwd, NULL);
 	if (pinfo == NULL) {
 		msyslog(LOG_ERR,
@@ -3766,14 +3885,15 @@ crypto_setup(void)
 	 * Load optional sign key from file "ntpkey_sign_<hostname>". If
 	 * available, it becomes the sign key.
 	 */
-	snprintf(filename, MAXFILENAME, "ntpkey_sign_%s", sys_hostname);
-	pinfo = crypto_key(filename, passwd, NULL); if (pinfo != NULL)
-	 	sign_pkey = pinfo->pkey;
+	snprintf(filename, sizeof(filename), "ntpkey_sign_%s", hostname);
+	pinfo = crypto_key(filename, passwd, NULL);
+	if (pinfo != NULL)
+		sign_pkey = pinfo->pkey;
 
 	/*
 	 * Load required certificate from file "ntpkey_cert_<hostname>".
 	 */
-	snprintf(filename, MAXFILENAME, "ntpkey_cert_%s", sys_hostname);
+	snprintf(filename, sizeof(filename), "ntpkey_cert_%s", hostname);
 	cinfo = crypto_cert(filename);
 	if (cinfo == NULL) {
 		msyslog(LOG_ERR,
@@ -3796,68 +3916,53 @@ crypto_setup(void)
 		    filename);
 		exit (-1);
 	}
+	hostval.ptr = estrdup(cinfo->subject);
 	hostval.vallen = htonl(strlen(cinfo->subject));
-	hostval.ptr = (unsigned char *)cinfo->subject;
+	sys_hostname = hostval.ptr;
+	ptr = (u_char *)strchr(sys_hostname, '@');
+	if (ptr != NULL)
+		sys_groupname = estrdup((char *)++ptr);
+	if (ident_filename != NULL)
+		strlcpy(hostname, ident_filename, sizeof(hostname));
 
 	/*
-	 * If trusted certificate, the subject name must match the group
-	 * name.
+	 * Load optional IFF parameters from file
+	 * "ntpkey_iffkey_<hostname>".
 	 */
-	if (cinfo->flags & CERT_TRUST) {
-		if (sys_groupname == NULL) {
-			sys_groupname = (char *)hostval.ptr;
-		} else if (strcmp((const char *)hostval.ptr, sys_groupname) != 0) {
-			msyslog(LOG_ERR,
-			    "crypto_setup: trusted certificate name %s does not match group name %s",
-			    hostval.ptr, sys_groupname);
-			exit (-1);
-		}
-	}
-	if (sys_groupname != NULL) {
+	snprintf(filename, sizeof(filename), "ntpkey_iffkey_%s",
+	    hostname);
+	iffkey_info = crypto_key(filename, passwd, NULL);
+	if (iffkey_info != NULL)
+		crypto_flags |= CRYPTO_FLAG_IFF;
 
-		/*
-		 * Load optional IFF parameters from file
-		 * "ntpkey_iffkey_<groupname>".
-		 */
-		snprintf(filename, MAXFILENAME, "ntpkey_iffkey_%s",
-		    sys_groupname);
-		iffkey_info = crypto_key(filename, passwd, NULL);
-		if (iffkey_info != NULL)
-			crypto_flags |= CRYPTO_FLAG_IFF;
+	/*
+	 * Load optional GQ parameters from file
+	 * "ntpkey_gqkey_<hostname>".
+	 */
+	snprintf(filename, sizeof(filename), "ntpkey_gqkey_%s",
+	    hostname);
+	gqkey_info = crypto_key(filename, passwd, NULL);
+	if (gqkey_info != NULL)
+		crypto_flags |= CRYPTO_FLAG_GQ;
 
-		/*
-		 * Load optional GQ parameters from file
-		 * "ntpkey_gqkey_<groupname>".
-		 */
-		snprintf(filename, MAXFILENAME, "ntpkey_gqkey_%s",
-		    sys_groupname);
-		gqkey_info = crypto_key(filename, passwd, NULL);
-		if (gqkey_info != NULL)
-			crypto_flags |= CRYPTO_FLAG_GQ;
-
-		/*
-		 * Load optional MV parameters from file
-		 * "ntpkey_mvkey_<groupname>".
-		 */
-		snprintf(filename, MAXFILENAME, "ntpkey_mvkey_%s",
-		    sys_groupname);
-		mvkey_info = crypto_key(filename, passwd, NULL);
-		if (mvkey_info != NULL)
-			crypto_flags |= CRYPTO_FLAG_MV;
-	}
+	/*
+	 * Load optional MV parameters from file
+	 * "ntpkey_mvkey_<hostname>".
+	 */
+	snprintf(filename, sizeof(filename), "ntpkey_mvkey_%s",
+	    hostname);
+	mvkey_info = crypto_key(filename, passwd, NULL);
+	if (mvkey_info != NULL)
+		crypto_flags |= CRYPTO_FLAG_MV;
 
 	/*
 	 * We met the enemy and he is us. Now strike up the dance.
 	 */
 	crypto_flags |= CRYPTO_FLAG_ENAB | (cinfo->nid << 16);
-	snprintf(statstr, NTP_MAXSTRLEN,
-	    "setup 0x%x host %s %s", crypto_flags, sys_hostname,
-	    OBJ_nid2ln(cinfo->nid));
+	snprintf(statstr, sizeof(statstr), "setup 0x%x host %s %s",
+	    crypto_flags, hostname, OBJ_nid2ln(cinfo->nid));
 	record_crypto_stats(NULL, statstr);
-#ifdef DEBUG
-	if (debug)
-		printf("crypto_setup: %s\n", statstr);
-#endif
+	DPRINTF(1, ("crypto_setup: %s\n", statstr));
 }
 
 
@@ -3872,42 +3977,44 @@ crypto_config(
 {
 	int	nid;
 
-#ifdef DEBUG
-	if (debug > 1)
-		printf("crypto_config: item %d %s\n", item, cp);
-#endif
+	DPRINTF(1, ("crypto_config: item %d %s\n", item, cp));
+
 	switch (item) {
 
 	/*
 	 * Set host name (host).
 	 */
 	case CRYPTO_CONF_PRIV:
-		sys_hostname = emalloc(strlen(cp) + 1);
-		strcpy(sys_hostname, cp);
+		if (NULL != host_filename)
+			free(host_filename);
+		host_filename = estrdup(cp);
 		break;
 
 	/*
 	 * Set group name (ident).
 	 */
 	case CRYPTO_CONF_IDENT:
-		sys_groupname = emalloc(strlen(cp) + 1);
-		strcpy(sys_groupname, cp);
+		if (NULL != ident_filename)
+			free(ident_filename);
+		ident_filename = estrdup(cp);
 		break;
 
 	/*
 	 * Set private key password (pw).
 	 */
 	case CRYPTO_CONF_PW:
-		passwd = emalloc(strlen(cp) + 1);
-		strcpy(passwd, cp);
+		if (NULL != passwd)
+			free(passwd);
+		passwd = estrdup(cp);
 		break;
 
 	/*
 	 * Set random seed file name (randfile).
 	 */
 	case CRYPTO_CONF_RAND:
-		rand_file = emalloc(strlen(cp) + 1);
-		strcpy(rand_file, cp);
+		if (NULL != rand_file)
+			free(rand_file);
+		rand_file = estrdup(cp);
 		break;
 
 	/*
@@ -3923,6 +4030,6 @@ crypto_config(
 		break;
 	}
 }
-# else
+# else	/* !AUTOKEY follows */
 int ntp_crypto_bs_pubkey;
-# endif /* OPENSSL */
+# endif	/* !AUTOKEY */

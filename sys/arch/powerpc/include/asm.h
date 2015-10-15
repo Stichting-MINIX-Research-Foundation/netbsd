@@ -1,4 +1,4 @@
-/*	$NetBSD: asm.h,v 1.42 2013/09/12 15:36:17 joerg Exp $	*/
+/*	$NetBSD: asm.h,v 1.48 2015/01/12 02:32:33 dennis Exp $	*/
 
 /*
  * Copyright (C) 1995, 1996 Wolfgang Solfrank.
@@ -104,23 +104,29 @@
 # define SF_SP		 0
 # define SF_CR		 8
 # define SF_LR		16
+# define SF_COMP	24
+# define SF_LD		32
+# define SF_TOC		40
 # define SF_PARAM	SF_HEADER_SZ
+# define SF_ALIGN(x)	(((x) + 0xf) & ~0xf)
 
-# define _ENTRY(y)			\
+# define _XENTRY(y)			\
 	.globl	y;			\
-	.section ".opd","aw";		\
+	.pushsection ".opd","aw";	\
 	.align	3;			\
-y:	.quad	.y,.TOC.@tocbase,0;	\
-	.previous;			\
+y:	.quad	.##y,.TOC.@tocbase,0;	\
+	.popsection;			\
 	.size	y,24;			\
-	.type	.y,@function;		\
-	.globl	.y;			\
+	.type	.##y,@function;		\
+	.globl	.##y;			\
 	.align	3;			\
-.y:
+.##y:
+
+#define _ENTRY(x)	.text; _XENTRY(x)
 
 # define ENTRY(y) _ENTRY(y)
 
-# define END(y)
+# define END(y)	.size .##y,. - .##y
 
 # define CALL(y)			\
 	bl	.y;			\
@@ -130,8 +136,8 @@ y:	.quad	.y,.TOC.@tocbase,0;	\
 # define ASENTRY(y)		ENTRY(y)
 #else /* !_LP64 */
 
-# define _ENTRY(x) \
-	.text; .align 2; .globl x; .type x,@function; x:
+# define _XENTRY(x)	.align 2; .globl x; .type x,@function; x:
+# define _ENTRY(x)	.text; _XENTRY(x)
 
 # define ENTRY(y)	_ENTRY(_C_LABEL(y)); _PROF_PROLOGUE
 
@@ -334,6 +340,7 @@ y:	.quad	.y,.TOC.@tocbase,0;	\
 # define streg		stw	/* load PPC general register */
 # define stregu		stwu	/* load PPC general register with udpate */
 # define SZREG		4	/* 4 byte registers */
+# define P2SZREG	2
 
 # define lptrarx	lwarx	/* load "C" pointer with reservation */
 # define llongarx	lwarx	/* load "C" long with reservation */
@@ -346,6 +353,19 @@ y:	.quad	.y,.TOC.@tocbase,0;	\
 # define clrrptri	clrrwi	/* clear right "C" pointer immediate */
 # define clrrlongi	clrrwi	/* clear right "C" long immediate */
 # define clrrregi	clrrwi	/* clear right PPC general register immediate */
+
+# define cmpptr		cmpw
+# define cmplong	cmpw
+# define cmpreg		cmpw
+# define cmpptri	cmpwi
+# define cmplongi	cmpwi
+# define cmpregi	cmpwi
+# define cmpptrl	cmplw
+# define cmplongl	cmplw
+# define cmpregl	cmplw
+# define cmpptrli	cmplwi
+# define cmplongli	cmplwi
+# define cmpregli	cmplwi
 
 #else /* __LP64__ */
 
@@ -365,6 +385,7 @@ y:	.quad	.y,.TOC.@tocbase,0;	\
 # define lmw		lmd	/* load multiple PPC general registers */
 # define stmw		stmd	/* store multiple PPC general registers */
 # define SZREG		8	/* 8 byte registers */
+# define P2SZREG	3
 
 # define lptrarx	ldarx	/* load "C" pointer with reservation */
 # define llongarx	ldarx	/* load "C" long with reservation */
@@ -377,6 +398,19 @@ y:	.quad	.y,.TOC.@tocbase,0;	\
 # define clrrptri	clrrdi	/* clear right "C" pointer immediate */
 # define clrrlongi	clrrdi	/* clear right "C" long immediate */
 # define clrrregi	clrrdi	/* clear right PPC general register immediate */
+
+# define cmpptr		cmpd
+# define cmplong	cmpd
+# define cmpreg		cmpd
+# define cmpptri	cmpdi
+# define cmplongi	cmpdi
+# define cmpregi	cmpdi
+# define cmpptrl	cmpld
+# define cmplongl	cmpld
+# define cmpregl	cmpld
+# define cmpptrli	cmpldi
+# define cmplongli	cmpldi
+# define cmpregli	cmpldi
 
 #endif /* __LP64__ */
 

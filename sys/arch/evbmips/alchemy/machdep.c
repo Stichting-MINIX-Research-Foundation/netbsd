@@ -1,4 +1,4 @@
-/* $NetBSD: machdep.c,v 1.52 2012/03/02 16:20:55 matt Exp $ */
+/* $NetBSD: machdep.c,v 1.55 2015/06/26 22:11:10 matt Exp $ */
 
 /*-
  * Copyright (c) 2006 Itronix Inc.
@@ -70,7 +70,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.52 2012/03/02 16:20:55 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.55 2015/06/26 22:11:10 matt Exp $");
 
 #include "opt_ddb.h"
 #include "opt_kgdb.h"
@@ -90,6 +90,7 @@ __KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.52 2012/03/02 16:20:55 matt Exp $");
 #include <sys/reboot.h>
 #include <sys/systm.h>
 #include <sys/termios.h>
+#include <sys/cpu.h>
 
 #include <net/if.h>
 #include <net/if_ether.h>
@@ -159,7 +160,7 @@ mach_init(int argc, char **argv, yamon_env_var *envp, u_long memsize)
 	memset(edata, 0, (char *)kernend - edata);
 
 	/* set CPU model info for sysctl_hw */
-	strcpy(cpu_model, board->ab_name);
+	cpu_setmodel("%s", board->ab_name);
 
 	/* save the yamon environment pointer */
 	yamon_envp = envp;
@@ -342,42 +343,7 @@ consinit(void)
 void
 cpu_startup(void)
 {
-	char pbuf[9];
-	vaddr_t minaddr, maxaddr;
-#ifdef DEBUG
-	extern int pmapdebug;		/* XXX */
-	int opmapdebug = pmapdebug;
-
-	pmapdebug = 0;		/* Shut up pmap debug during bootstrap */
-#endif
-
-	/*
-	 * Good {morning,afternoon,evening,night}.
-	 */
-	printf("%s%s", copyright, version);
-	printf("%s\n", cpu_model);
-	format_bytes(pbuf, sizeof(pbuf), ctob(physmem));
-	printf("total memory = %s\n", pbuf);
-
-	minaddr = 0;
-
-	/*
-	 * Allocate a submap for physio
-	 */
-	phys_map = uvm_km_suballoc(kernel_map, &minaddr, &maxaddr,
-	    VM_PHYS_SIZE, 0, false, NULL);
-
-	/*
-	 * No need to allocate an mbuf cluster submap.  Mbuf clusters
-	 * are allocated via the pool allocator, and we use KSEG to
-	 * map those pages.
-	 */
-
-#ifdef DEBUG
-	pmapdebug = opmapdebug;
-#endif
-	format_bytes(pbuf, sizeof(pbuf), ptoa(uvmexp.free));
-	printf("avail memory = %s\n", pbuf);
+	cpu_startup_common();
 }
 
 void

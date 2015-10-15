@@ -1,4 +1,4 @@
-/*	$NetBSD: ntfs_vnops.c,v 1.55 2013/03/18 19:35:38 plunky Exp $	*/
+/*	$NetBSD: ntfs_vnops.c,v 1.59 2014/11/13 16:51:53 hannken Exp $	*/
 
 /*
  * Copyright (c) 1992, 1993
@@ -36,7 +36,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ntfs_vnops.c,v 1.55 2013/03/18 19:35:38 plunky Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ntfs_vnops.c,v 1.59 2014/11/13 16:51:53 hannken Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -56,6 +56,7 @@ __KERNEL_RCSID(0, "$NetBSD: ntfs_vnops.c,v 1.55 2013/03/18 19:35:38 plunky Exp $
 #include <fs/ntfs/ntfs.h>
 #include <fs/ntfs/ntfs_inode.h>
 #include <fs/ntfs/ntfs_subr.h>
+#include <fs/ntfs/ntfs_vfsops.h>
 #include <miscfs/specfs/specdev.h>
 #include <miscfs/genfs/genfs.h>
 
@@ -235,6 +236,7 @@ ntfs_reclaim(void *v)
 	struct vnode *vp = ap->a_vp;
 	struct fnode *fp = VTOF(vp);
 	struct ntnode *ip = FTONT(fp);
+	const int attrlen = strlen(fp->f_attrname);
 	int error;
 
 	dprintf(("ntfs_reclaim: vnode: %p, ntnode: %llu\n", vp,
@@ -246,15 +248,24 @@ ntfs_reclaim(void *v)
 	if ((error = ntfs_ntget(ip)) != 0)
 		return (error);
 
+	vcache_remove(vp->v_mount, fp->f_key, NTKEY_SIZE(attrlen));
+
 	if (ip->i_devvp) {
 		vrele(ip->i_devvp);
 		ip->i_devvp = NULL;
 	}
-
 	genfs_node_destroy(vp);
-	ntfs_frele(fp);
-	ntfs_ntput(ip);
 	vp->v_data = NULL;
+
+	/* Destroy fnode. */
+	if (fp->f_key != &fp->f_smallkey)
+		kmem_free(fp->f_key, NTKEY_SIZE(attrlen));
+	if (fp->f_dirblbuf)
+		free(fp->f_dirblbuf, M_NTFSDIR);
+	kmem_free(fp, sizeof(*fp));
+	ntfs_ntrele(ip);
+
+	ntfs_ntput(ip);
 
 	return (0);
 }
@@ -470,7 +481,7 @@ ntfs_open(void *v)
 	struct vnode *vp = ap->a_vp;
 	struct ntnode *ip = VTONT(vp);
 
-	printf("ntfs_open: %llu\n", (unsigned long long)ip->i_number);
+	dprintf(("ntfs_open: %llu\n", (unsigned long long)ip->i_number));
 #endif
 
 	/*
@@ -498,7 +509,7 @@ ntfs_close(void *v)
 	struct vnode *vp = ap->a_vp;
 	struct ntnode *ip = VTONT(vp);
 
-	printf("ntfs_close: %llu\n", (unsigned long long)ip->i_number);
+	dprintf(("ntfs_close: %llu\n", (unsigned long long)ip->i_number));
 #endif
 
 	return (0);
@@ -649,7 +660,7 @@ ntfs_readdir(void *v)
 int
 ntfs_lookup(void *v)
 {
-	struct vop_lookup_args /* {
+	struct vop_lookup_v2_args /* {
 		struct vnode *a_dvp;
 		struct vnode **a_vpp;
 		struct componentname *a_cnp;
@@ -700,19 +711,17 @@ ntfs_lookup(void *v)
 		dprintf(("ntfs_lookup: faking .. directory in %llu\n",
 		    (unsigned long long)dip->i_number));
 
-		VOP_UNLOCK(dvp);
 		error = ntfs_ntvattrget(ntmp, dip, NTFS_A_NAME, NULL, 0, &vap);
 		if (error) {
-			vn_lock(dvp, LK_EXCLUSIVE | LK_RETRY);
 			return (error);
 		}
 
 		dprintf(("ntfs_lookup: parentdir: %d\n",
 			 vap->va_a_name->n_pnumber));
-		error = VFS_VGET(ntmp->ntm_mountp,
-				 vap->va_a_name->n_pnumber,ap->a_vpp);
+		error = ntfs_vgetex(ntmp->ntm_mountp,
+				 vap->va_a_name->n_pnumber,
+				 NTFS_A_DATA, "", 0, ap->a_vpp);
 		ntfs_ntvattrrele(vap);
-		vn_lock(dvp, LK_EXCLUSIVE | LK_RETRY);
 		if (error) {
 			return (error);
 		}
@@ -815,6 +824,8 @@ const struct vnodeopv_entry_desc ntfs_vnodeop_entries[] = {
 	{ &vop_setattr_desc, genfs_eopnotsupp },	/* setattr */
 	{ &vop_read_desc, (vop_t *) ntfs_read },	/* read */
 	{ &vop_write_desc, (vop_t *) ntfs_write },	/* write */
+	{ &vop_fallocate_desc, genfs_eopnotsupp },	/* fallocate */
+	{ &vop_fdiscard_desc, genfs_eopnotsupp },	/* fdiscard */
 	{ &vop_fcntl_desc, genfs_fcntl },		/* fcntl */
 	{ &vop_ioctl_desc, genfs_enoioctl },		/* ioctl */
 	{ &vop_poll_desc, genfs_poll },			/* poll */

@@ -1,4 +1,4 @@
-/*	$NetBSD: key.h,v 1.12 2013/06/04 22:47:37 christos Exp $	*/
+/*	$NetBSD: key.h,v 1.14 2015/03/30 03:51:50 ozaki-r Exp $	*/
 /*	$FreeBSD: src/sys/netipsec/key.h,v 1.1.4.1 2003/01/24 05:11:36 sam Exp $	*/
 /*	$KAME: key.h,v 1.21 2001/07/27 03:51:30 itojun Exp $	*/
 
@@ -35,8 +35,6 @@
 #define _NETIPSEC_KEY_H_
 
 #ifdef _KERNEL
-
-#include "opt_ipsec.h"
 
 struct secpolicy;
 struct secpolicyindex;
@@ -106,6 +104,8 @@ int key_parse (struct mbuf *, struct socket *);
 void key_init (void);
 void key_sa_recordxfer (struct secasvar *, struct mbuf *);
 void key_sa_routechange (struct sockaddr *);
+void key_update_used(void);
+int key_get_used(void);
 
 u_int16_t key_portfromsaddr (const union sockaddr_union *);
 

@@ -1,4 +1,4 @@
-#	$NetBSD: GENERIC,v 1.2 2013/06/25 13:56:59 kiyohara Exp $
+#	$NetBSD: GENERIC,v 1.8 2014/11/16 16:01:40 manu Exp $
 #
 # GENERIC machine description file
 #
@@ -22,7 +22,7 @@ include		"arch/epoc32/conf/std.epoc32"
 
 #options 	INCLUDE_CONFIG_FILE	# embed config file in kernel binary
 
-#ident 		"GENERIC-$Revision: 1.2 $"
+#ident 		"GENERIC-$Revision: 1.8 $"
 
 maxusers	32			# estimated number of users
 
@@ -54,6 +54,7 @@ options 	FFS_EI		# FFS Endian Independent support
 options 	WAPBL		# File system journaling support
 #options 	UFS_DIRHASH	# UFS Large Directory Hashing - Experimental
 #options 	FFS_NO_SNAPSHOT	# No FFS snapshot support
+#options 	UFS_EXTATTR	# Extended attribute support for UFS1
 #options 	EXT2FS_SYSTEM_FLAGS # makes ext2fs file flags (append and
 				# immutable) behave as system flags.
 
@@ -65,6 +66,7 @@ options 	INET6		# IPv6
 options 	PPP_FILTER	# Active filter support for PPP (requires bpf)
 
 # Compatibility options
+options		COMPAT_NETBSD32	# allow running arm (e.g. non-earm) binaries
 #options 	COMPAT_09	# NetBSD 0.9,
 #options 	COMPAT_10	# NetBSD 1.0,
 #options 	COMPAT_11	# NetBSD 1.1,
@@ -76,8 +78,8 @@ options 	PPP_FILTER	# Active filter support for PPP (requires bpf)
 #options 	COMPAT_20	# NetBSD 2.0,
 #options 	COMPAT_30	# NetBSD 3.0,
 #options 	COMPAT_40	# NetBSD 4.0,
-#options 	COMPAT_50	# NetBSD 5.0 compatibility.
-#options 	COMPAT_43	# and 4.3BSD
+#options 	COMPAT_50	# NetBSD 5.0 binary compatibility.
+#options 	COMPAT_43	# 4.3BSD binary compatibility.
 #options 	TCP_COMPAT_42	# 4.2BSD TCP/IP bug compat. Not recommended.
 
 #options 	COMPAT_OSSAUDIO	# OSS (Voxware) audio driver compatibility
@@ -90,6 +92,7 @@ options 	COMPAT_BSDPTY	# /dev/[pt]ty?? ptys.
 
 # Loadable kernel module support
 #options 	MODULAR		# new style module(7) framework
+#options 	MODULAR_DEFAULT_AUTOLOAD
 
 #
 # wscons options
@@ -112,7 +115,7 @@ options 	WSDISPLAY_COMPAT_RAWKBD		# can get raw scancodes
 options 	DDB             # in-kernel debugger
 options 	DDB_HISTORY_SIZE=100    # Enable history editing in DDB
 #makeoptions 	DEBUG="-g"  # compile full symbol table
-options 	SYMTAB_SPACE=500000
+makeoptions	COPY_SYMTAB=1
 
 
 # Kernel root file system and dump configuration.

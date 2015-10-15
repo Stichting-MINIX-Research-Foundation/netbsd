@@ -1,4 +1,4 @@
-/* $NetBSD: filemon.h,v 1.4 2012/11/19 22:20:10 sjg Exp $ */
+/* $NetBSD: filemon.h,v 1.7 2015/09/06 06:01:00 dholland Exp $ */
 /*
  * Copyright (c) 2010, Juniper Networks, Inc.
  *
@@ -25,13 +25,15 @@
  */
 #ifndef FILEMON_SET_FD
 
+#include <sys/ioccom.h>
+
 #ifndef _PATH_FILEMON
 #define _PATH_FILEMON "/dev/filemon"
 #endif
 #define FILEMON_SET_FD		_IOWR('S', 1, int)
 #define FILEMON_SET_PID		_IOWR('S', 2, pid_t)
 
-#define FILEMON_VERSION		4
+#define FILEMON_VERSION		5
 
 #ifdef _KERNEL
 struct filemon {
@@ -49,6 +51,7 @@ struct filemon * filemon_lookup(struct proc *);
 void filemon_output(struct filemon *, char *, size_t);
 void filemon_wrapper_install(void);
 int  filemon_wrapper_deinstall(void);
+void filemon_printf(struct filemon *, const char *, ...) __printflike(2, 3);
 #endif
 
 #endif

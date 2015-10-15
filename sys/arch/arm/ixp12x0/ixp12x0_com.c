@@ -1,4 +1,4 @@
-/*	$NetBSD: ixp12x0_com.c,v 1.42 2012/11/12 18:00:37 skrll Exp $ */
+/*	$NetBSD: ixp12x0_com.c,v 1.47 2015/04/13 21:18:41 riastradh Exp $ */
 /*
  * Copyright (c) 1998, 1999, 2001, 2002 The NetBSD Foundation, Inc.
  * All rights reserved.
@@ -66,14 +66,13 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ixp12x0_com.c,v 1.42 2012/11/12 18:00:37 skrll Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ixp12x0_com.c,v 1.47 2015/04/13 21:18:41 riastradh Exp $");
 
 #include "opt_ddb.h"
 #include "opt_kgdb.h"
 
-#include "rnd.h"
 #ifdef RND_COM
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 #endif
 
 #include <sys/param.h>
@@ -151,8 +150,18 @@ dev_type_tty(ixpcomtty);
 dev_type_poll(ixpcompoll);
 
 const struct cdevsw ixpcom_cdevsw = {
-	ixpcomopen, ixpcomclose, ixpcomread, ixpcomwrite, ixpcomioctl,
-	ixpcomstop, ixpcomtty, ixpcompoll, nommap, ttykqfilter, D_TTY
+	.d_open = ixpcomopen,
+	.d_close = ixpcomclose,
+	.d_read = ixpcomread,
+	.d_write = ixpcomwrite,
+	.d_ioctl = ixpcomioctl,
+	.d_stop = ixpcomstop,
+	.d_tty = ixpcomtty,
+	.d_poll = ixpcompoll,
+	.d_mmap = nommap,
+	.d_kqfilter = ttykqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_TTY
 };
 
 struct consdev ixpcomcons = {
@@ -164,11 +173,8 @@ struct consdev ixpcomcons = {
 #define DEFAULT_COMSPEED 38400
 #endif
 
-#define COMUNIT_MASK    0x7ffff
-#define COMDIALOUT_MASK 0x80000
-
-#define COMUNIT(x)	(minor(x) & COMUNIT_MASK)
-#define COMDIALOUT(x)	(minor(x) & COMDIALOUT_MASK)
+#define COMUNIT(x)	TTUNIT(x)
+#define COMDIALOUT(x)	TTDIALOUT(x)
 
 #define COM_ISALIVE(sc)	((sc)->enabled != 0 && \
 			 device_is_active((sc)->sc_dev))
@@ -238,7 +244,8 @@ ixpcom_attach_subr(struct ixpcom_softc *sc)
 
 #ifdef RND_COM
 	rnd_attach_source(&sc->rnd_source, device_xname(sc->sc_dev),
-			  RND_TYPE_TTY, 0);
+			  RND_TYPE_TTY, RND_FLAG_COLLECT_TIME|
+					RND_FLAG_ESTIMATE_TIME);
 #endif
 
 	/* if there are no enable/disable functions, assume the device

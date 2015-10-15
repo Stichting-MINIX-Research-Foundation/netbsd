@@ -1,4 +1,4 @@
-#	$NetBSD: INSTALL,v 1.102 2013/06/30 21:38:59 rmind Exp $
+#	$NetBSD: INSTALL,v 1.108 2015/08/12 07:53:58 maxv Exp $
 
 #
 #	INSTALL -- installation kernel.
@@ -8,7 +8,7 @@ include "arch/x68k/conf/std.x68k"
 
 #options 	INCLUDE_CONFIG_FILE	# embed config file in kernel binary
 
-#ident 		"INSTALL-$Revision: 1.102 $"
+#ident 		"INSTALL-$Revision: 1.108 $"
 
 makeoptions	COPTS="-Os"		# Optimise for space. Implies -O2
 
@@ -18,7 +18,7 @@ maxusers	4
 options 	MEMORY_DISK_HOOKS
 options 	MEMORY_DISK_IS_ROOT	# Force root on memory-disk
 options 	MEMORY_DISK_SERVER=0	# No user space hooks
-options 	MEMORY_DISK_ROOT_SIZE=3000
+options 	MEMORY_DISK_ROOT_SIZE=3400
 options 	MEMORY_DISK_RBFLAGS=RB_SINGLE	# boot in single-user mode
 
 ## System kernel configuration.  See options(4) for more detail.
@@ -62,11 +62,6 @@ options 	RTC_OFFSET=-540	# hardware clock is this many mins. west of GMT
 ## System call tracing (see ktrace(1)).
 #options 	KTRACE
 
-## Collect statistics on kernel malloc's and free's.  This does have a
-## significant performance hit on slower machines, so it is intended for
-## diagnostic use only.
-#options 	KMEMSTATS
-
 ## System V compatible IPC subsystem.  (msgctl(2), semctl(2), and shmctl(2))
 #options 	SYSVMSG		# System V message queues
 #options 	SYSVSEM		# System V semaphores
@@ -90,7 +85,7 @@ options 	PIPE_SOCKETPAIR		# smaller, but slower pipe(2)
 ## intercept.  DDB_HISTORY_SIZE adds up/down arrow command history.
 #options 	DDB			# kernel dynamic debugger
 #options 	DDB_HISTORY_SIZE=100	# enable history editing in DDB
-#options 	DDB_ONPANIC=1		# see also sysctl(8): `ddb.onpanic'
+#options 	DDB_ONPANIC=1		# see also sysctl(7): `ddb.onpanic'
 #options 	PANICBUTTON		# interrupt switch invokes DDB
 
 ## You may also use gdb, on another computer connected to this machine over
@@ -135,17 +130,17 @@ options 	PIPE_SOCKETPAIR		# smaller, but slower pipe(2)
 ## Options for compatibility with previous releases foreign system binaries.
 
 #options 	COMPAT_43	# 4.3BSD system interfaces
-#options 	COMPAT_09	# NetBSD 0.9 binary compatibility
-#options 	COMPAT_10	# NetBSD 1.0 binary compatibility
-#options 	COMPAT_11	# NetBSD 1.1 binary compatibility
-#options 	COMPAT_12	# NetBSD 1.2 binary compatibility
-#options 	COMPAT_13	# NetBSD 1.3 binary compatibility
-#options 	COMPAT_14	# NetBSD 1.4 binary compatibility
-#options 	COMPAT_15	# NetBSD 1.5 binary compatibility
-#options 	COMPAT_16	# NetBSD 1.6 binary compatibility
-#options 	COMPAT_20	# NetBSD 2.0 binary compatibility
-options 	COMPAT_30	# NetBSD 3.0 compatibility.
-options 	COMPAT_40	# NetBSD 4.0 compatibility.
+#options 	COMPAT_09	# NetBSD 0.9,
+#options 	COMPAT_10	# NetBSD 1.0,
+#options 	COMPAT_11	# NetBSD 1.1,
+#options 	COMPAT_12	# NetBSD 1.2,
+#options 	COMPAT_13	# NetBSD 1.3,
+#options 	COMPAT_14	# NetBSD 1.4,
+#options 	COMPAT_15	# NetBSD 1.5,
+#options 	COMPAT_16	# NetBSD 1.6,
+#options 	COMPAT_20	# NetBSD 2.0,
+options 	COMPAT_30	# NetBSD 3.0, and
+options 	COMPAT_40	# NetBSD 4.0 binary compatibility.
 #options 	COMPAT_AOUT_M68K # compatibility with NetBSD/m68k a.out
 #options 	COMPAT_M68K4K	# NetBSD/m68k4k binaries
 #options 	COMPAT_SUNOS	# SunOS 4.x binary compatibility; broken
@@ -158,7 +153,7 @@ options 	COMPAT_BSDPTY	# /dev/[pt]ty?? ptys.
 file-system	FFS		# Berkeley Fast Filesystem
 file-system	NFS		# Sun NFS-compatible filesystem client
 #file-system	KERNFS		# kernel data-structure filesystem
-#file-system	NULLFS		# NULL layered filesystem (buggy)
+#file-system	NULLFS		# NULL layered filesystem
 #file-system 	OVERLAY		# overlay file system
 #file-system	MFS		# memory-based filesystem
 #file-system	FDESC		# user file descriptor filesystem

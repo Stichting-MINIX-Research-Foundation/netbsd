@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -41,7 +41,6 @@
  * POSSIBILITY OF SUCH DAMAGES.
  */
 
-
 #include "aslcompiler.h"
 #include "aslcompiler.y.h"
 #include <string.h>
@@ -68,8 +67,8 @@ AnIsInternalMethod (
     ACPI_PARSE_OBJECT       *Op)
 {
 
-    if ((!ACPI_STRCMP (Op->Asl.ExternalName, "\\_OSI")) ||
-        (!ACPI_STRCMP (Op->Asl.ExternalName, "_OSI")))
+    if ((!strcmp (Op->Asl.ExternalName, "\\_OSI")) ||
+        (!strcmp (Op->Asl.ExternalName, "_OSI")))
     {
         return (TRUE);
     }
@@ -95,8 +94,8 @@ AnGetInternalMethodReturnType (
     ACPI_PARSE_OBJECT       *Op)
 {
 
-    if ((!ACPI_STRCMP (Op->Asl.ExternalName, "\\_OSI")) ||
-        (!ACPI_STRCMP (Op->Asl.ExternalName, "_OSI")))
+    if ((!strcmp (Op->Asl.ExternalName, "\\_OSI")) ||
+        (!strcmp (Op->Asl.ExternalName, "_OSI")))
     {
         return (ACPI_BTYPE_STRING);
     }
@@ -126,7 +125,6 @@ AnCheckId (
 {
     UINT32                  i;
     ACPI_SIZE               Length;
-    UINT32                  AlphaPrefixLength;
 
 
     /* Only care about string versions of _HID/_CID (integers are legal) */
@@ -174,12 +172,18 @@ AnCheckId (
         {
             AslError (ASL_ERROR, ASL_MSG_ALPHANUMERIC_STRING,
                 Op, Op->Asl.Value.String);
-            break;
+            return;
         }
     }
 
-    /* _HID String must be of the form "XXX####" or "ACPI####" */
-
+    /*
+     * _HID String must be one of these forms:
+     *
+     * "AAA####"    A is an uppercase letter and # is a hex digit
+     * "ACPI####"   # is a hex digit
+     * "NNNN####"   N is an uppercase letter or decimal digit (0-9)
+     *              # is a hex digit (ACPI 5.0)
+     */
     if ((Length < 7) || (Length > 8))
     {
         AslError (ASL_ERROR, ASL_MSG_HID_LENGTH,
@@ -187,22 +191,48 @@ AnCheckId (
         return;
     }
 
-    /* _HID Length is valid, now check for uppercase (first 3 or 4 chars) */
+    /* _HID Length is valid (7 or 8), now check the prefix (first 3 or 4 chars) */
 
-    AlphaPrefixLength = 3;
-    if (Length >= 8)
+    if (Length == 7)
     {
-        AlphaPrefixLength = 4;
+        /* AAA####: Ensure the alphabetic prefix is all uppercase */
+
+        for (i = 0; i < 3; i++)
+        {
+            if (!isupper ((int) Op->Asl.Value.String[i]))
+            {
+                AslError (ASL_ERROR, ASL_MSG_UPPER_CASE,
+                    Op, &Op->Asl.Value.String[i]);
+                return;
+            }
+        }
+    }
+    else /* Length == 8 */
+    {
+        /*
+         * ACPI#### or NNNN####:
+         * Ensure the prefix contains only uppercase alpha or decimal digits
+         */
+        for (i = 0; i < 4; i++)
+        {
+            if (!isupper ((int) Op->Asl.Value.String[i]) &&
+                !isdigit ((int) Op->Asl.Value.String[i]))
+            {
+                AslError (ASL_ERROR, ASL_MSG_HID_PREFIX,
+                    Op, &Op->Asl.Value.String[i]);
+                return;
+            }
+        }
     }
 
-    /* Ensure the alphabetic prefix is all uppercase */
+    /* Remaining characters (suffix) must be hex digits */
 
-    for (i = 0; (i < AlphaPrefixLength) && Op->Asl.Value.String[i]; i++)
+    for (; i < Length; i++)
     {
-        if (!isupper ((int) Op->Asl.Value.String[i]))
+        if (!isxdigit ((int) Op->Asl.Value.String[i]))
         {
-            AslError (ASL_ERROR, ASL_MSG_UPPER_CASE,
-                Op, &Op->Asl.Value.String[i]);
+         AslError (ASL_ERROR, ASL_MSG_HID_SUFFIX,
+            Op, &Op->Asl.Value.String[i]);
             break;
         }
     }
@@ -310,7 +340,7 @@ AnCheckMethodReturnValue (
          */
         if (ThisNodeBtype != 0)
         {
-            sprintf (MsgBuffer,
+            snprintf (MsgBuffer, sizeof(MsgBuffer),
                 "Method returns [%s], %s operator requires [%s]",
                 StringBuffer, OpInfo->Name, StringBuffer2);
 
@@ -350,6 +380,7 @@ AnIsResultUsed (
         return (TRUE);
 
     default:
+
         break;
     }
 
@@ -380,6 +411,7 @@ AnIsResultUsed (
         return (FALSE);
 
     default:
+
         /* Any other type of parent means that the result is used */
 
         return (TRUE);
@@ -430,7 +462,7 @@ ApCheckForGpeNameConflict (
 
     /* Verify 3rd/4th chars are a valid hex value */
 
-    GpeNumber = ACPI_STRTOUL (&Name[2], NULL, 16);
+    GpeNumber = strtoul (&Name[2], NULL, 16);
     if (GpeNumber == ACPI_UINT32_MAX)
     {
         return;
@@ -535,4 +567,52 @@ ApCheckRegMethod (
     /* No region found, issue warning */
 
     AslError (ASL_WARNING, ASL_MSG_NO_REGION, Op, NULL);
+}
+
+
+/*******************************************************************************
+ *
+ * FUNCTION:    ApFindNameInScope
+ *
+ * PARAMETERS:  Name                - Name to search for
+ *              Op                  - Current parse op
+ *
+ * RETURN:      TRUE if name found in the same scope as Op.
+ *
+ * DESCRIPTION: Determine if a name appears in the same scope as Op, as either
+ *              a Method() or a Name().
+ *
+ ******************************************************************************/
+
+BOOLEAN
+ApFindNameInScope (
+    char                    *Name,
+    ACPI_PARSE_OBJECT       *Op)
+{
+    ACPI_PARSE_OBJECT       *Next;
+    ACPI_PARSE_OBJECT       *Parent;
+
+
+    /* Get the start of the current scope */
+
+    Parent = Op->Asl.Parent;
+    Next = Parent->Asl.Child;
+
+    /* Search entire scope for a match to the name */
+
+    while (Next)
+    {
+        if ((Next->Asl.ParseOpcode == PARSEOP_METHOD) ||
+            (Next->Asl.ParseOpcode == PARSEOP_NAME))
+        {
+            if (ACPI_COMPARE_NAME (Name, Next->Asl.NameSeg))
+            {
+                return (TRUE);
+            }
+        }
+
+        Next = Next->Asl.Next;
+    }
+
+    return (FALSE);
 }

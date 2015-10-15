@@ -1,4 +1,4 @@
-/*	$NetBSD: rpc_main.c,v 1.37 2013/08/12 14:03:18 joerg Exp $	*/
+/*	$NetBSD: rpc_main.c,v 1.44 2015/09/20 16:57:13 kamil Exp $	*/
 
 /*
  * Sun RPC is a product of Sun Microsystems, Inc. and is provided for
@@ -39,7 +39,7 @@
 #if 0
 static char sccsid[] = "@(#)rpc_main.c 1.30 89/03/30 (C) 1987 SMI";
 #else
-__RCSID("$NetBSD: rpc_main.c,v 1.37 2013/08/12 14:03:18 joerg Exp $");
+__RCSID("$NetBSD: rpc_main.c,v 1.44 2015/09/20 16:57:13 kamil Exp $");
 #endif
 #endif
 
@@ -126,7 +126,9 @@ int     inetdflag /* = 1 */ ;	/* Support for inetd *//* is now the default */
 int     pmflag;			/* Support for port monitors */
 int     logflag;		/* Use syslog instead of fprintf for errors */
 int     tblflag;		/* Support for dispatch table file */
+int	BSDflag;		/* use BSD cplusplus macros */
 int     callerflag;		/* Generate svc_caller() function */
+int	docleanup = 1;		/* cause atexit to remove files */
 
 #define INLINE 3
 /*length at which to start doing an inline */
@@ -140,7 +142,6 @@ int     exitnow;		/* If started by port monitors, exit after the
 				 * call */
 int     timerflag;		/* TRUE if !indefinite && !exitnow */
 int     newstyle;		/* newstyle of passing arguments (by value) */
-int     Cflag = 0;		/* ANSI C syntax */
 int	Mflag = 0;		/* multithread safe */
 static int allfiles;		/* generate all files */
 int     tirpcflag = 1;		/* generating code for tirpc, by default */
@@ -149,28 +150,27 @@ int     tirpcflag = 1;		/* generating code for tirpc, by default */
 static char *dos_cppfile = NULL;
 #endif
 
-int main __P((int, char *[]));
-
-static char *extendfile __P((const char *, const char *));
-static void open_output __P((const char *, const char *));
-static void add_warning __P((void));
-static void clear_args __P((void));
-static void open_input __P((const char *, const char *));
-static int check_nettype __P((const char *, const char *[]));
-static void c_output __P((const char *, const char *, int, const char *));
-static void c_initialize __P((void));
-static char *generate_guard __P((const char *));
-static void h_output __P((const char *, const char *, int, const char *));
-static void s_output __P((int, char *[], char *, const char *, int, const char *, int, int));
-static void l_output __P((const char *, const char *, int, const char *));
-static void t_output __P((const char *, const char *, int, const char *));
-static void svc_output __P((const char *, const char *, int, const char *));
-static void clnt_output __P((const char *, const char *, int, const char *));
-static int do_registers __P((int, char *[]));
-static void addarg __P((const char *));
-static void putarg __P((int, const char *));
-static void checkfiles __P((const char *, const char *));
-static int parseargs __P((int, char *[], struct commandline *));
+static char *extendfile(const char *, const char *);
+static void open_output(const char *, const char *);
+static void add_warning(void);
+static void clear_args(void);
+static void open_input(const char *, const char *);
+static int check_nettype(const char *, const char *[]);
+static void c_output(const char *, const char *, int, const char *);
+static void c_initialize(void);
+static char *generate_guard(const char *);
+static void h_output(const char *, const char *, int, const char *);
+static void s_output(int, char *[], char *, const char *, int, const char *,
+    int, int);
+static void l_output(const char *, const char *, int, const char *);
+static void t_output(const char *, const char *, int, const char *);
+static void svc_output(const char *, const char *, int, const char *);
+static void clnt_output(const char *, const char *, int, const char *);
+static int do_registers(int, char *[]);
+static void addarg(const char *);
+static void putarg(int, const char *);
+static void checkfiles(const char *, const char *);
+static int parseargs(int, char *[], struct commandline *);
 static void usage(void) __dead;
 static void options_usage(void) __dead;
 
@@ -188,6 +188,7 @@ main(int argc, char *argv[])
 
 	(void) memset((char *) &cmd, 0, sizeof(struct commandline));
 	clear_args();
+	atexit(crash);
 	if (!parseargs(argc, argv, &cmd))
 		usage();
 
@@ -256,6 +257,7 @@ main(int argc, char *argv[])
 		(void) unlink(dos_cppfile);
 	}
 #endif
+	docleanup = 0;
 	exit(nonfatalerrors);
 	/* NOTREACHED */
 }
@@ -276,7 +278,7 @@ extendfile(const char *path, const char *ext)
 
 	res = alloc(strlen(file) + strlen(ext) + 1);
 	if (res == NULL) {
-		errx(1, "Out of memory");
+		err(EXIT_FAILURE, "Out of memory");
 	}
 	p = strrchr(file, '.');
 	if (p == NULL) {
@@ -298,15 +300,11 @@ open_output(const char *infile, const char *outfile)
 		return;
 	}
 	if (infile != NULL && streq(outfile, infile)) {
-		f_print(stderr, "%s: output would overwrite %s\n", cmdname,
-		    infile);
-		crash();
+		errx(EXIT_FAILURE, "Output would overwrite `%s'", infile);
 	}
 	fout = fopen(outfile, "w");
 	if (fout == NULL) {
-		f_print(stderr, "%s: unable to open ", cmdname);
-		perror(outfile);
-		crash();
+		err(EXIT_FAILURE, "Can't open `%s'", outfile);
 	}
 	record_open(outfile);
 
@@ -361,22 +359,18 @@ open_input(const char *infile, const char *define)
 
 		retval = spawnvp(P_WAIT, arglist[0], arglist);
 		if (retval != 0) {
-			fprintf(stderr, "%s: C PreProcessor failed\n", cmdname);
-			crash();
+			err(EXIT_FAILURE, "C preprocessor failed");
 		}
 		fnsplit(infile, drive, dir, name, ext);
 		fnmerge(cppfile, drive, dir, name, ".i");
 
 		fin = fopen(cppfile, "r");
 		if (fin == NULL) {
-			f_print(stderr, "%s: ", cmdname);
-			perror(cppfile);
-			crash();
+			err(EXIT_FAILURE, "Can't open `%s'", cppfile);
 		}
 		dos_cppfile = strdup(cppfile);
 		if (dos_cppfile == NULL) {
-			fprintf(stderr, "%s: out of memory\n", cmdname);
-			crash();
+			err(EXIT_FAILURE, "Can't copy `%s'", cppfile);
 		}
 	}
 #else
@@ -392,17 +386,15 @@ open_input(const char *infile, const char *define)
 		(void) dup2(pd[1], 1);
 		(void) close(pd[0]);
 		execvp(arglist[0], __UNCONST(arglist));
-		err(1, "$RPCGEN_CPP: %s", CPP);
+		err(EXIT_FAILURE, "$RPCGEN_CPP: %s", CPP);
 	case -1:
-		err(1, "fork");
+		err(EXIT_FAILURE, "fork");
 	}
 	(void) close(pd[1]);
 	fin = fdopen(pd[0], "r");
 #endif
 	if (fin == NULL) {
-		f_print(stderr, "%s: ", cmdname);
-		perror(infilename);
-		crash();
+		err(EXIT_FAILURE, "Can't open `%s'", infilename);
 	}
 }
 /* valid tirpc nettypes */
@@ -503,21 +495,56 @@ static char *
 generate_guard(const char *pathname)
 {
 	const char *filename;
-	char *guard, *tmp, *tmp2;
+	char *guard, *tmp, *tmp2, *extdot;
 
 	filename = strrchr(pathname, '/');	/* find last component */
 	filename = ((filename == 0) ? pathname : filename + 1);
 	guard = strdup(filename);
-	/* convert to upper case */
-	tmp = guard;
-	while (*tmp) {
-		*tmp = toupper((unsigned char)*tmp);
-		tmp++;
+	if (guard == NULL) {
+		err(EXIT_FAILURE, "strdup");
+	}
+	extdot = strrchr(guard, '.');
+
+	/*
+	 * Convert to valid C symbol name and make it upper case.
+	 * Map non alphanumerical characters to '_'.
+	 *
+	 * Leave extension as it is. It will be handled in extendfile().
+	 */
+	for (tmp = guard; *tmp; tmp++) {
+		if (islower((unsigned char)*tmp))
+			*tmp = toupper((unsigned char)*tmp);
+		else if (isupper((unsigned char)*tmp))
+			continue;
+		else if (isdigit((unsigned char)*tmp))
+			continue;
+		else if (*tmp == '_')
+			continue;
+		else if (tmp == extdot)
+			break;
+		else
+			*tmp = '_';
 	}
 
+	/*
+	 * Can't have a '_' or '.' at the front of a symbol name, beacuse it
+	 * will end up as "__".
+	 *
+	 * Prefix it with "RPCGEN_".
+	 */
+	if (guard[0] == '_' || guard[0] == '.') {
+		if (asprintf(&tmp2, "RPCGEN_%s", guard) == -1) {
+			err(EXIT_FAILURE, "asprintf");
+		}
+		free(guard);
+		guard = tmp2;
+	}
+
+	/* Replace the file extension */
 	tmp2 = extendfile(guard, "_H_RPCGEN");
 	free(guard);
 	guard = tmp2;
+
 	return (guard);
 }
 
@@ -533,6 +560,7 @@ h_output(const char *infile, const char *define, int extend,
 	long    tell;
 	char   *guard;
 	list   *l;
+	int did;
 
 	open_input(infile, define);
 	outfilename = extend ? extendfile(infile, outfile) : outfile;
@@ -543,7 +571,7 @@ h_output(const char *infile, const char *define, int extend,
 	else {
 		guard = strdup("STDIN_");
 		if (guard == NULL) {
-			err(1, "strdup");
+			err(EXIT_FAILURE, "strdup");
 		}
 	}
 
@@ -561,9 +589,16 @@ h_output(const char *infile, const char *define, int extend,
 
 	/* print function declarations.  Do this after data definitions
 	 * because they might be used as arguments for functions */
+	did = 0;
 	for (l = defined; l != NULL; l = l->next) {
-		print_funcdef(l->val);
+		print_funcdef(l->val, &did);
 	}
+	print_funcend(did);
+
+	for (l = defined; l != NULL; l = l->next) {
+		print_progdef(l->val);
+	}
+
 	if (extend && tell == ftell(fout)) {
 		(void) unlink(outfilename);
 	} else
@@ -601,13 +636,11 @@ s_output(int argc, char *argv[], char *infile,
 	f_print(fout, "#include <sys/ioctl.h>\n");
 	f_print(fout, "#include <fcntl.h>\n");
 	f_print(fout, "#include <stdio.h>\n");
+	f_print(fout, "#include <err.h>\n");
 	f_print(fout, "#include <stdlib.h>\n");
-	if (Cflag) {
-		f_print(fout, "#include <unistd.h>\n");
-		f_print(fout,
-		    "#include <rpc/pmap_clnt.h>\n");
-		f_print(fout, "#include <string.h>\n");
-	}
+	f_print(fout, "#include <unistd.h>\n");
+	f_print(fout, "#include <rpc/pmap_clnt.h>\n");
+	f_print(fout, "#include <string.h>\n");
 	f_print(fout, "#include <netdb.h>\n");
 	if (strcmp(svcclosetime, "-1") == 0)
 		indefinitewait = 1;
@@ -621,7 +654,7 @@ s_output(int argc, char *argv[], char *infile,
 			}
 	if (!tirpcflag && inetdflag)
 		f_print(fout, "#include <sys/ttycom.h>\n");
-	if (Cflag && (inetdflag || pmflag)) {
+	if (inetdflag || pmflag) {
 		f_print(fout, "#ifdef __cplusplus\n");
 		f_print(fout, "#include <sysent.h>\n");
 		f_print(fout, "#endif /* __cplusplus */\n");
@@ -643,8 +676,7 @@ s_output(int argc, char *argv[], char *infile,
 	if (logflag || inetdflag || pmflag)
 		f_print(fout, "#include <syslog.h>\n");
 
-	/* for ANSI-C */
-	f_print(fout, "\n#ifdef __STDC__\n#define SIG_PF void(*)(int)\n#endif\n");
+	f_print(fout, "\n#define SIG_PF void(*)(int)\n");
 
 	f_print(fout, "\n#ifdef DEBUG\n#define RPC_SVC_FG\n#endif\n");
 	if (timerflag)
@@ -684,8 +716,7 @@ l_output(const char *infile, const char *define, int extend,
 	outfilename = extend ? extendfile(infile, outfile) : outfile;
 	open_output(infile, outfilename);
 	add_warning();
-	if (Cflag)
-		f_print(fout, "#include <memory.h>\n");
+	f_print(fout, "#include <memory.h>\n");
 	if (infile && (include = extendfile(infile, ".h"))) {
 		f_print(fout, "#include \"%s\"\n", include);
 		free(include);
@@ -777,8 +808,8 @@ clnt_output(const char *infile, const char *define, int extend,
 
 	open_output(infile, outfilename);
 	add_sample_msg();
-	if (Cflag)
-		f_print(fout, "#include <stdio.h>\n");
+	f_print(fout, "#include <stdio.h>\n");
+	f_print(fout, "#include <err.h>\n");
 	if (infile && (include = extendfile(infile, ".h"))) {
 		f_print(fout, "#include \"%s\"\n", include);
 		free(include);
@@ -836,8 +867,7 @@ static void
 addarg(const char *cp)
 {
 	if (argcount >= ARGLISTLEN) {
-		f_print(stderr, "rpcgen: too many defines\n");
-		crash();
+		errx(EXIT_FAILURE, "Internal error: too many defines");
 		/* NOTREACHED */
 	}
 	arglist[argcount++] = cp;
@@ -848,8 +878,7 @@ static void
 putarg(int pwhere, const char *cp)
 {
 	if (pwhere >= ARGLISTLEN) {
-		f_print(stderr, "rpcgen: arglist coding error\n");
-		crash();
+		errx(EXIT_FAILURE, "Internal error: arglist coding error");
 		/* NOTREACHED */
 	}
 	arglist[pwhere] = cp;
@@ -869,17 +898,16 @@ checkfiles(const char *infile, const char *outfile)
 
 	if (infile)		/* infile ! = NULL */
 		if (stat(infile, &buf) < 0) {
-			perror(infile);
-			crash();
+			err(EXIT_FAILURE, "Can't stat `%s'", infile);
 		};
 #if 0
 	if (outfile) {
 		if (stat(outfile, &buf) < 0)
 			return;	/* file does not exist */
 		else {
-			f_print(stderr,
-			    "file '%s' already exists and may be overwritten\n", outfile);
-			crash();
+			errx(EXIT_FAILURE,
+			    "`%s' already exists and would be overwritten",
+			    outfile);
 		}
 	}
 #endif
@@ -930,6 +958,9 @@ parseargs(int argc, char *argv[], struct commandline *cmd)
 				case 'a':
 					allfiles = 1;
 					break;
+				case 'B':
+					BSDflag = 1;
+					break;
 				case 'c':
 				case 'h':
 				case 'l':
@@ -957,8 +988,7 @@ parseargs(int argc, char *argv[], struct commandline *cmd)
 					}
 					flag[c] = 1;
 					break;
-				case 'C':	/* ANSI C syntax */
-					Cflag = 1;
+				case 'C':	/* deprecated ANSI C syntax */
 					break;
 
 				case 'b':	/* turn TIRPC flag off for
@@ -1099,12 +1129,12 @@ static void
 usage(void)
 {
 	f_print(stderr, "usage:  %s infile\n", cmdname);
-	f_print(stderr, "\t%s [-a][-b][-C][-Dname[=value]] -i size [-I [-K seconds]] [-A] [-M] [-N] [-T] infile\n",
+	f_print(stderr, "\t%s [-AaBbILMNTv] [-Dname[=value]] [-i size] [-K seconds] [-Y pathname] infile\n",
 	    cmdname);
-	f_print(stderr, "\t%s [-L] [-M] [-c | -h | -l | -m | -t | -Sc | -Ss] [-o outfile] [infile]\n",
+	f_print(stderr, "\t%s [-c | -h | -l | -m | -t | -Sc | -Ss] [-o outfile] [infile]\n",
 	    cmdname);
-	f_print(stderr, "\t%s [-s nettype]* [-o outfile] [infile]\n", cmdname);
-	f_print(stderr, "\t%s [-n netid]* [-o outfile] [infile]\n", cmdname);
+	f_print(stderr, "\t%s [-s nettype] [-o outfile] [infile]\n", cmdname);
+	f_print(stderr, "\t%s [-n netid] [-o outfile] [infile]\n", cmdname);
 	options_usage();
 	exit(1);
 }
@@ -1115,26 +1145,27 @@ options_usage(void)
 	f_print(stderr, "options:\n");
 	f_print(stderr, "-A\t\tgenerate svc_caller() function\n");
 	f_print(stderr, "-a\t\tgenerate all files, including samples\n");
+	f_print(stderr, "-B\t\tgenerate BSD c++ macros\n");
 	f_print(stderr, "-b\t\tbackward compatibility mode (generates code for SunOS 4.1)\n");
 	f_print(stderr, "-c\t\tgenerate XDR routines\n");
-	f_print(stderr, "-C\t\tANSI C mode\n");
 	f_print(stderr, "-Dname[=value]\tdefine a symbol (same as #define)\n");
 	f_print(stderr, "-h\t\tgenerate header file\n");
-	f_print(stderr, "-i size\t\tsize at which to start generating inline code\n");
 	f_print(stderr, "-I\t\tgenerate code for inetd support in server (for SunOS 4.1)\n");
+	f_print(stderr, "-i size\t\tsize at which to start generating inline code\n");
 	f_print(stderr, "-K seconds\tserver exits after K seconds of inactivity\n");
-	f_print(stderr, "-l\t\tgenerate client side stubs\n");
 	f_print(stderr, "-L\t\tserver errors will be printed to syslog\n");
-	f_print(stderr, "-m\t\tgenerate server side stubs\n");
+	f_print(stderr, "-l\t\tgenerate client side stubs\n");
 	f_print(stderr, "-M\t\tgenerate thread-safe stubs\n");
-	f_print(stderr, "-n netid\tgenerate server code that supports named netid\n");
+	f_print(stderr, "-m\t\tgenerate server side stubs\n");
 	f_print(stderr, "-N\t\tsupports multiple arguments and call-by-value\n");
+	f_print(stderr, "-n netid\tgenerate server code that supports named netid\n");
 	f_print(stderr, "-o outfile\tname of the output file\n");
 	f_print(stderr, "-s nettype\tgenerate server code that supports named nettype\n");
 	f_print(stderr, "-Sc\t\tgenerate sample client code that uses remote procedures\n");
 	f_print(stderr, "-Ss\t\tgenerate sample server code that defines remote procedures\n");
-	f_print(stderr, "-t\t\tgenerate RPC dispatch table\n");
 	f_print(stderr, "-T\t\tgenerate code to support RPC dispatch tables\n");
+	f_print(stderr, "-t\t\tgenerate RPC dispatch table\n");
+	f_print(stderr, "-v\t\tdisplay version number\n");
 	f_print(stderr, "-Y path\t\tdirectory name to find C preprocessor (cpp)\n");
 
 	exit(1);

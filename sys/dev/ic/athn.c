@@ -1,5 +1,5 @@
-/*	$NetBSD: athn.c,v 1.7 2013/10/17 21:24:24 christos Exp $	*/
-/*	$OpenBSD: athn.c,v 1.75 2013/01/14 09:50:31 jsing Exp $	*/
+/*	$NetBSD: athn.c,v 1.11 2015/09/22 13:28:02 joerg Exp $	*/
+/*	$OpenBSD: athn.c,v 1.83 2014/07/22 13:12:11 mpi Exp $	*/
 
 /*-
  * Copyright (c) 2009 Damien Bergamini <damien.bergamini@free.fr>
@@ -23,7 +23,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: athn.c,v 1.7 2013/10/17 21:24:24 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: athn.c,v 1.11 2015/09/22 13:28:02 joerg Exp $");
 
 #ifndef _MODULE
 #include "athn_usb.h"		/* for NATHN_USB */
@@ -234,15 +234,16 @@ athn_attach(struct athn_softc *sc)
 	    ((sc->sc_rxchainmask >> 0) & 1);
 
 	if (AR_SINGLE_CHIP(sc)) {
-		aprint_normal(": Atheros %s\n", athn_get_mac_name(sc));
+		aprint_normal_dev(sc->sc_dev,
+		    "Atheros %s\n", athn_get_mac_name(sc));
 		aprint_verbose_dev(sc->sc_dev,
 		    "rev %d (%dT%dR), ROM rev %d, address %s\n",
 		    sc->sc_mac_rev,
 		    sc->sc_ntxchains, sc->sc_nrxchains, sc->sc_eep_rev,
 		    ether_sprintf(ic->ic_myaddr));
-	}
-	else {
-		aprint_normal(": Atheros %s, RF %s\n", athn_get_mac_name(sc),
+	} else {
+		aprint_normal_dev(sc->sc_dev,
+		    "Atheros %s, RF %s\n", athn_get_mac_name(sc),
 		    athn_get_rf_name(sc));
 		aprint_verbose_dev(sc->sc_dev,
 		    "rev %d (%dT%dR), ROM rev %d, address %s\n",
@@ -1259,7 +1260,7 @@ athn_calib_to(void *arg)
 	/* Do periodic (every 4 minutes) PA calibration. */
 	if (AR_SREV_9285_11_OR_LATER(sc) &&
 	    !AR_SREV_9380_10_OR_LATER(sc) &&
-	    ticks >= sc->sc_pa_calib_ticks + 240 * hz) {
+	    (ticks - (sc->sc_pa_calib_ticks + 240 * hz)) >= 0) {
 		sc->sc_pa_calib_ticks = ticks;
 		if (AR_SREV_9271(sc))
 			ar9271_pa_calib(sc);
@@ -2247,7 +2248,7 @@ athn_hw_reset(struct athn_softc *sc, struct ieee80211_channel *curchan,
 		/* Do not mask the subtype field in management frames. */
 		reg = RW(reg, AR_AES_MUTE_MASK1_FC0_MGMT, 0xff);
 		reg = RW(reg, AR_AES_MUTE_MASK1_FC1_MGMT,
-		    ~(IEEE80211_FC1_RETRY | IEEE80211_FC1_PWR_MGT |
+		    (uint32_t)~(IEEE80211_FC1_RETRY | IEEE80211_FC1_PWR_MGT |
 		      IEEE80211_FC1_MORE_DATA));
 		AR_WRITE(sc, AR_AES_MUTE_MASK1, reg);
 	}
@@ -2824,8 +2825,8 @@ athn_init(struct ifnet *ifp)
 		/* avoid recursion in athn_resume */
 		if (!pmf_device_subtree_resume(sc->sc_dev, &sc->sc_qual) ||
 		    !device_is_active(sc->sc_dev)) {
-			printf("%s: failed to power up device\n",
-			    device_xname(sc->sc_dev));
+			aprint_error_dev(sc->sc_dev,
+			    "failed to power up device\n");
 			return 0;
 		}
 		ifp->if_flags = flags;

@@ -1,4 +1,4 @@
-/*	$NetBSD: tcp_subr.c,v 1.252 2013/11/23 14:20:21 christos Exp $	*/
+/*	$NetBSD: tcp_subr.c,v 1.264 2015/09/07 01:56:50 ozaki-r Exp $	*/
 
 /*
  * Copyright (C) 1995, 1996, 1997, and 1998 WIDE Project.
@@ -91,19 +91,22 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: tcp_subr.c,v 1.252 2013/11/23 14:20:21 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: tcp_subr.c,v 1.264 2015/09/07 01:56:50 ozaki-r Exp $");
 
+#ifdef _KERNEL_OPT
 #include "opt_inet.h"
 #include "opt_ipsec.h"
 #include "opt_tcp_compat_42.h"
 #include "opt_inet_csum.h"
 #include "opt_mbuftrace.h"
+#endif
 
 #include <sys/param.h>
+#include <sys/atomic.h>
 #include <sys/proc.h>
 #include <sys/systm.h>
-#include <sys/malloc.h>
 #include <sys/mbuf.h>
+#include <sys/once.h>
 #include <sys/socket.h>
 #include <sys/socketvar.h>
 #include <sys/protosw.h>
@@ -222,7 +225,7 @@ int	tcp_rttlocal = 0;		/* Use RTT to decide who's 'local' */
 int	tcp4_vtw_enable = 0;		/* 1 to enable */
 int	tcp6_vtw_enable = 0;		/* 1 to enable */
 int	tcp_vtw_was_enabled = 0;
-int	tcp_vtw_entries = 1 << 16;	/* 64K vestigial TIME_WAIT entries */
+int	tcp_vtw_entries = 1 << 4;	/* 16 vestigial TIME_WAIT entries */
 
 /* tcb hash */
 #ifndef TCBHASHSIZE
@@ -239,12 +242,10 @@ int	tcp_syn_bucket_limit = 3*TCP_SYN_BUCKET_SIZE;
 struct	syn_cache_head tcp_syn_cache[TCP_SYN_HASH_SIZE];
 
 int	tcp_freeq(struct tcpcb *);
+static int	tcp_iss_secret_init(void);
 
 #ifdef INET
-void	tcp_mtudisc_callback(struct in_addr);
-#endif
-#ifdef INET6
-void	tcp6_mtudisc_callback(struct in6_addr *);
+static void	tcp_mtudisc_callback(struct in_addr);
 #endif
 
 #ifdef INET6
@@ -387,34 +388,15 @@ struct mowner tcp_sock_rx_mowner = MOWNER_INIT("tcp", "sock rx");
 struct mowner tcp_sock_tx_mowner = MOWNER_INIT("tcp", "sock tx");
 #endif
 
-/*
- * Tcp initialization
- */
-void
-tcp_init(void)
+callout_t tcp_slowtimo_ch;
+
+static int
+do_tcpinit(void)
 {
-	int hlen;
 
 	in_pcbinit(&tcbtable, tcbhashsize, tcbhashsize);
 	pool_init(&tcpcb_pool, sizeof(struct tcpcb), 0, 0, 0, "tcpcbpl",
 	    NULL, IPL_SOFTNET);
-
-	hlen = sizeof(struct ip) + sizeof(struct tcphdr);
-#ifdef INET6
-	if (sizeof(struct ip) < sizeof(struct ip6_hdr))
-		hlen = sizeof(struct ip6_hdr) + sizeof(struct tcphdr);
-#endif
-	if (max_protohdr < hlen)
-		max_protohdr = hlen;
-	if (max_linkhdr + hlen > MHLEN)
-		panic("tcp_init");
-
-#ifdef INET
-	icmp_mtudisc_callback_register(tcp_mtudisc_callback);
-#endif
-#ifdef INET6
-	icmp6_mtudisc_callback_register(tcp6_mtudisc_callback);
-#endif
 
 	tcp_usrreq_init();
 
@@ -447,6 +429,38 @@ tcp_init(void)
 	tcpstat_percpu = percpu_alloc(sizeof(uint64_t) * TCP_NSTATS);
 
 	vtw_earlyinit();
+
+	callout_init(&tcp_slowtimo_ch, CALLOUT_MPSAFE);
+	callout_reset(&tcp_slowtimo_ch, 1, tcp_slowtimo, NULL);
+
+	return 0;
+}
+
+void
+tcp_init_common(unsigned basehlen)
+{
+	static ONCE_DECL(dotcpinit);
+	unsigned hlen = basehlen + sizeof(struct tcphdr);
+	unsigned oldhlen;
+
+	if (max_linkhdr + hlen > MHLEN)
+		panic("tcp_init");
+	while ((oldhlen = max_protohdr) < hlen)
+		atomic_cas_uint(&max_protohdr, oldhlen, hlen);
+
+	RUN_ONCE(&dotcpinit, do_tcpinit);
+}
+
+/*
+ * Tcp initialization
+ */
+void
+tcp_init(void)
+{
+
+	icmp_mtudisc_callback_register(tcp_mtudisc_callback);
+
+	tcp_init_common(sizeof(struct ip));
 }
 
 /*
@@ -623,12 +637,9 @@ tcp_template(struct tcpcb *tp)
  * segment are as specified by the parameters.
  */
 int
-tcp_respond(struct tcpcb *tp, struct mbuf *template, struct mbuf *m,
+tcp_respond(struct tcpcb *tp, struct mbuf *mtemplate, struct mbuf *m,
     struct tcphdr *th0, tcp_seq ack, tcp_seq seq, int flags)
 {
-#ifdef INET6
-	struct rtentry *rt;
-#endif
 	struct route *ro;
 	int error, tlen, win = 0;
 	int hlen;
@@ -661,11 +672,11 @@ tcp_respond(struct tcpcb *tp, struct mbuf *template, struct mbuf *m,
 	ip6 = NULL;
 #endif
 	if (m == 0) {
-		if (!template)
+		if (!mtemplate)
 			return EINVAL;
 
 		/* get family information from template */
-		switch (mtod(template, struct ip *)->ip_v) {
+		switch (mtod(mtemplate, struct ip *)->ip_v) {
 		case 4:
 			family = AF_INET;
 			hlen = sizeof(struct ip);
@@ -698,8 +709,8 @@ tcp_respond(struct tcpcb *tp, struct mbuf *template, struct mbuf *m,
 			tlen = 0;
 
 		m->m_data += max_linkhdr;
-		bcopy(mtod(template, void *), mtod(m, void *),
-			template->m_len);
+		bcopy(mtod(mtemplate, void *), mtod(m, void *),
+			mtemplate->m_len);
 		switch (family) {
 		case AF_INET:
 			ip = mtod(m, struct ip *);
@@ -867,13 +878,9 @@ tcp_respond(struct tcpcb *tp, struct mbuf *template, struct mbuf *m,
 		th->th_sum = in6_cksum(m, IPPROTO_TCP, sizeof(struct ip6_hdr),
 				tlen);
 		ip6->ip6_plen = htons(tlen);
-		if (tp && tp->t_in6pcb) {
-			struct ifnet *oifp;
-			ro = &tp->t_in6pcb->in6p_route;
-			oifp = (rt = rtcache_validate(ro)) != NULL ? rt->rt_ifp
-			                                           : NULL;
-			ip6->ip6_hlim = in6_selecthlim(tp->t_in6pcb, oifp);
-		} else
+		if (tp && tp->t_in6pcb)
+			ip6->ip6_hlim = in6_selecthlim_rt(tp->t_in6pcb);
+		else
 			ip6->ip6_hlim = ip6_defhlim;
 		ip6->ip6_flow &= ~IPV6_FLOWINFO_MASK;
 		if (ip6_auto_flowlabel) {
@@ -969,6 +976,9 @@ static struct tcpcb tcpcb_template = {
 
 	.t_partialacks = -1,
 	.t_bytes_acked = 0,
+	.t_sndrexmitpack = 0,
+	.t_rcvoopack = 0,
+	.t_sndzerowin = 0,
 };
 
 /*
@@ -1021,9 +1031,6 @@ tcp_tcpcb_template(void)
 struct tcpcb *
 tcp_newtcpcb(int family, void *aux)
 {
-#ifdef INET6
-	struct rtentry *rt;
-#endif
 	struct tcpcb *tp;
 	int i;
 
@@ -1062,10 +1069,7 @@ tcp_newtcpcb(int family, void *aux)
 	    {
 		struct in6pcb *in6p = (struct in6pcb *)aux;
 
-		in6p->in6p_ip6.ip6_hlim = in6_selecthlim(in6p,
-			(rt = rtcache_validate(&in6p->in6p_route)) != NULL
-			    ? rt->rt_ifp
-			    : NULL);
+		in6p->in6p_ip6.ip6_hlim = in6_selecthlim_rt(in6p);
 		in6p->in6p_ppcb = (void *)tp;
 
 		tp->t_in6pcb = in6p;
@@ -1764,41 +1768,43 @@ void
 tcp_mtudisc(struct inpcb *inp, int errno)
 {
 	struct tcpcb *tp = intotcpcb(inp);
-	struct rtentry *rt = in_pcbrtentry(inp);
+	struct rtentry *rt;
 
-	if (tp != 0) {
-		if (rt != 0) {
-			/*
-			 * If this was not a host route, remove and realloc.
-			 */
-			if ((rt->rt_flags & RTF_HOST) == 0) {
-				in_rtchange(inp, errno);
-				if ((rt = in_pcbrtentry(inp)) == 0)
-					return;
-			}
+	if (tp == NULL)
+		return;
 
-			/*
-			 * Slow start out of the error condition.  We
-			 * use the MTU because we know it's smaller
-			 * than the previously transmitted segment.
-			 *
-			 * Note: This is more conservative than the
-			 * suggestion in draft-floyd-incr-init-win-03.
-			 */
-			if (rt->rt_rmx.rmx_mtu != 0)
-				tp->snd_cwnd =
-				    TCP_INITIAL_WINDOW(tcp_init_win,
-				    rt->rt_rmx.rmx_mtu);
+	rt = in_pcbrtentry(inp);
+	if (rt != NULL) {
+		/*
+		 * If this was not a host route, remove and realloc.
+		 */
+		if ((rt->rt_flags & RTF_HOST) == 0) {
+			in_rtchange(inp, errno);
+			if ((rt = in_pcbrtentry(inp)) == NULL)
+				return;
 		}
 
 		/*
-		 * Resend unacknowledged packets.
+		 * Slow start out of the error condition.  We
+		 * use the MTU because we know it's smaller
+		 * than the previously transmitted segment.
+		 *
+		 * Note: This is more conservative than the
+		 * suggestion in draft-floyd-incr-init-win-03.
 		 */
-		tp->snd_nxt = tp->sack_newdata = tp->snd_una;
-		tcp_output(tp);
+		if (rt->rt_rmx.rmx_mtu != 0)
+			tp->snd_cwnd =
+			    TCP_INITIAL_WINDOW(tcp_init_win,
+			    rt->rt_rmx.rmx_mtu);
 	}
+
+	/*
+	 * Resend unacknowledged packets.
+	 */
+	tp->snd_nxt = tp->sack_newdata = tp->snd_una;
+	tcp_output(tp);
 }
-#endif
+#endif /* INET */
 
 #ifdef INET6
 /*
@@ -2188,7 +2194,6 @@ tcp_rmx_rtt(struct tcpcb *tp)
 }
 
 tcp_seq	 tcp_iss_seq = 0;	/* tcp initial seq # */
-u_int8_t tcp_iss_secret[16];	/* 128 bits; should be plenty */
 
 /*
  * Get a new sequence value given a tcp control block
@@ -2217,6 +2222,20 @@ tcp_new_iss(struct tcpcb *tp, tcp_seq addin)
 	panic("tcp_new_iss");
 }
 
+static u_int8_t tcp_iss_secret[16];	/* 128 bits; should be plenty */
+
+/*
+ * Initialize RFC 1948 ISS Secret
+ */
+static int
+tcp_iss_secret_init(void)
+{
+	cprng_strong(kern_cprng,
+	    tcp_iss_secret, sizeof(tcp_iss_secret), 0);
+
+	return 0;
+}
+
 /*
  * This routine actually generates a new TCP initial sequence number.
  */
@@ -2226,21 +2245,16 @@ tcp_new_iss1(void *laddr, void *faddr, u_int16_t lport, u_int16_t fport,
 {
 	tcp_seq tcp_iss;
 
-	static bool tcp_iss_gotten_secret;
-
-	/*
-	 * If we haven't been here before, initialize our cryptographic
-	 * hash secret.
-	 */
-	if (tcp_iss_gotten_secret == false) {
-		cprng_strong(kern_cprng,
-			     tcp_iss_secret, sizeof(tcp_iss_secret), FASYNC);
-		tcp_iss_gotten_secret = true;
-	}
-
 	if (tcp_do_rfc1948) {
 		MD5_CTX ctx;
 		u_int8_t hash[16];	/* XXX MD5 knowledge */
+		static ONCE_DECL(tcp_iss_secret_control);
+
+		/*
+		 * If we haven't been here before, initialize our cryptographic
+		 * hash secret.
+		 */
+		RUN_ONCE(&tcp_iss_secret_control, tcp_iss_secret_init);
 
 		/*
 		 * Compute the base value of the ISS.  It is a hash

@@ -1,8 +1,5 @@
-/*	$NetBSD: kern.ldscript,v 1.1 2002/11/21 01:38:41 thorpej Exp $	*/
+/*	$NetBSD: kern.ldscript,v 1.5 2015/08/23 08:57:25 uebayasi Exp $	*/
 
-OUTPUT_FORMAT("elf32-littlearm", "elf32-bigarm",
-	      "elf32-littlearm")
-OUTPUT_ARCH(arm)
 SECTIONS
 {
   . = 0xf0000020;	/* 0x20 == sizeof(a.out header) */
@@ -34,14 +31,14 @@ SECTIONS
   __bss_start__ = .;
   .bss       :
   {
-   *(.dynbss)
-   *(.bss)
-   *(.bss.*)
-   *(COMMON)
-   /* Align here to ensure that the .bss section occupies space up to
-      _end.  Align after .bss to ensure correct alignment even if the
-      .bss section disappears because there are no input sections.  */
-   . = ALIGN(32 / 8);
+    *(.dynbss)
+    *(.bss)
+    *(.bss.*)
+    *(COMMON)
+    /* Align here to ensure that the .bss section occupies space up to
+       _end.  Align after .bss to ensure correct alignment even if the
+       .bss section disappears because there are no input sections.  */
+    . = ALIGN(32 / 8);
   }
   . = ALIGN(32 / 8);
   _end = .;

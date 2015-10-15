@@ -1,4 +1,4 @@
-/* $NetBSD: spiflash.c,v 1.11 2013/02/15 17:46:53 rkujawa Exp $ */
+/* $NetBSD: spiflash.c,v 1.18 2015/07/22 10:07:59 ryo Exp $ */
 
 /*-
  * Copyright (c) 2006 Urbana-Champaign Independent Media Center.
@@ -42,7 +42,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: spiflash.c,v 1.11 2013/02/15 17:46:53 rkujawa Exp $");
+__KERNEL_RCSID(0, "$NetBSD: spiflash.c,v 1.18 2015/07/22 10:07:59 ryo Exp $");
 
 #include <sys/param.h>
 #include <sys/conf.h>
@@ -147,6 +147,7 @@ const struct bdevsw spiflash_bdevsw = {
 	.d_ioctl = spiflash_ioctl,
 	.d_dump = nodump,
 	.d_psize = nosize,
+	.d_discard = nodiscard,
 	.d_flag = D_DISK,
 };
 
@@ -161,10 +162,13 @@ const struct cdevsw spiflash_cdevsw = {
 	.d_poll = nopoll,
 	.d_mmap = nommap,
 	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
 	.d_flag = D_DISK,
 };
 
-static struct dkdriver spiflash_dkdriver = { spiflash_strategy, NULL };
+static struct dkdriver spiflash_dkdriver = {
+	.d_strategy = spiflash_strategy
+};
 
 spiflash_handle_t
 spiflash_attach_mi(const struct spiflash_hw_if *hw, void *cookie,
@@ -230,9 +234,7 @@ spiflash_attach(device_t parent, device_t self, void *aux)
 	bufq_alloc(&sc->sc_workq, "fcfs", BUFQ_SORT_RAWBLOCK);
 	bufq_alloc(&sc->sc_doneq, "fcfs", BUFQ_SORT_RAWBLOCK);
 
-	sc->sc_dk.dk_driver = &spiflash_dkdriver;
-	sc->sc_dk.dk_name = device_xname(self);
-
+	disk_init(&sc->sc_dk, device_xname(self), &spiflash_dkdriver);
 	disk_attach(&sc->sc_dk);
 
 	/* arrange to allocate the kthread */
@@ -457,7 +459,7 @@ spiflash_process_write(spiflash_handle_t sc)
 	 * do the erase, if we need to.
 	 */
 	if (neederase) {
-		DPRINTF(("erasing from %x - %x\n", base, base + len));
+		DPRINTF(("erasing from %zx - %zx\n", base, base + len));
 		if ((err = sc->sc_erase(sc, base, len)) != 0) {
 			spiflash_process_done(sc, err);
 			return;
@@ -467,8 +469,7 @@ spiflash_process_write(spiflash_handle_t sc)
 	/*
 	 * now write our save area, and finish up.
 	 */
-	DPRINTF(("flashing %d bytes to %x from %x\n", len,
-		    base, (unsigned)save));
+	DPRINTF(("flashing %d bytes to %zx from %p\n", len, base, save));
 	err = sc->sc_write(sc, base, len, save);
 	spiflash_process_done(sc, err);
 }
@@ -509,10 +510,9 @@ spiflash_thread(void *arg)
 {
 	spiflash_handle_t sc = arg;
 	struct buf	*bp;
-	int		s;
 	int		sector;
 
-	s = splbio();
+	(void)splbio();
 	for (;;) {
 		if ((bp = bufq_get(sc->sc_waitq)) == NULL) {
 			tsleep(&sc->sc_thread, PRIBIO, "spiflash_thread", 0);
@@ -681,6 +681,7 @@ spiflash_common_read(spiflash_handle_t sc, size_t start, size_t size,
 			return rv;
 		}
 
+		data += cnt;
 		start += cnt;
 		size -= cnt;
 	}

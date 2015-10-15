@@ -1,4 +1,4 @@
-/*	$NetBSD: hifn7751.c,v 1.52 2013/06/13 00:55:01 tls Exp $	*/
+/*	$NetBSD: hifn7751.c,v 1.61 2015/05/14 07:27:14 maxv Exp $	*/
 /*	$FreeBSD: hifn7751.c,v 1.5.2.7 2003/10/08 23:52:00 sam Exp $ */
 /*	$OpenBSD: hifn7751.c,v 1.140 2003/08/01 17:55:54 deraadt Exp $	*/
 
@@ -48,7 +48,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: hifn7751.c,v 1.52 2013/06/13 00:55:01 tls Exp $");
+__KERNEL_RCSID(0, "$NetBSD: hifn7751.c,v 1.61 2015/05/14 07:27:14 maxv Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -59,6 +59,7 @@ __KERNEL_RCSID(0, "$NetBSD: hifn7751.c,v 1.52 2013/06/13 00:55:01 tls Exp $");
 #include <sys/kernel.h>
 #include <sys/mbuf.h>
 #include <sys/device.h>
+#include <sys/module.h>
 
 #ifdef __OpenBSD__
 #include <crypto/crypto.h>
@@ -66,7 +67,8 @@ __KERNEL_RCSID(0, "$NetBSD: hifn7751.c,v 1.52 2013/06/13 00:55:01 tls Exp $");
 #else
 #include <opencrypto/cryptodev.h>
 #include <sys/cprng.h>
-#include <sys/rnd.h>
+#include <sys/rndpool.h>
+#include <sys/rndsource.h>
 #include <sys/sha1.h>
 #endif
 
@@ -101,9 +103,15 @@ static int hifn_probe((struct device *, void *, void *);
 static int hifn_probe(device_t, cfdata_t, void *);
 #endif
 static void hifn_attach(device_t, device_t, void *);
+#ifdef __NetBSD__
+static int hifn_detach(device_t, int);
 
 CFATTACH_DECL_NEW(hifn, sizeof(struct hifn_softc),
+    hifn_probe, hifn_attach, hifn_detach, NULL);
+#else
+CFATTACH_DECL_NEW(hifn, sizeof(struct hifn_softc),
     hifn_probe, hifn_attach, NULL, NULL);
+#endif
 
 #ifdef __OpenBSD__
 struct cfdriver hifn_cd = {
@@ -241,13 +249,19 @@ hifn_attach(device_t parent, device_t self, void *aux)
 	const char *intrstr = NULL;
 	const char *hifncap;
 	char rbase;
+#ifdef __NetBSD__
+#define iosize0 sc->sc_iosz0
+#define iosize1 sc->sc_iosz1
+#else
 	bus_size_t iosize0, iosize1;
+#endif
 	u_int32_t cmd;
 	u_int16_t ena;
 	bus_dma_segment_t seg;
 	bus_dmamap_t dmamap;
 	int rseg;
 	void *kva;
+	char intrbuf[PCI_INTRSTR_LEN];
 
 	hp = hifn_lookup(pa);
 	if (hp == NULL) {
@@ -353,7 +367,7 @@ hifn_attach(device_t parent, device_t self, void *aux)
 		aprint_error_dev(sc->sc_dv, "couldn't map interrupt\n");
 		goto fail_mem;
 	}
-	intrstr = pci_intr_string(pc, ih);
+	intrstr = pci_intr_string(pc, ih, intrbuf, sizeof(intrbuf));
 #ifdef	__OpenBSD__
 	sc->sc_ih = pci_intr_establish(pc, ih, IPL_NET, hifn_intr, sc,
 	    device_xname(self));
@@ -419,12 +433,12 @@ hifn_attach(device_t parent, device_t self, void *aux)
 	    sc->sc_dmamap->dm_mapsize,
 	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 
+	mutex_init(&sc->sc_mtx, MUTEX_DEFAULT, IPL_VM);
+
 	if (sc->sc_flags & (HIFN_HAS_PUBLIC | HIFN_HAS_RNG)) {
 		hifn_init_pubrng(sc);
 		sc->sc_rng_need = RND_POOLBITS / NBBY;
 	}
-
-	mutex_init(&sc->sc_mtx, MUTEX_DEFAULT, IPL_VM);
 
 #ifdef	__OpenBSD__
 	timeout_set(&sc->sc_tickto, hifn_tick, sc);
@@ -453,6 +467,70 @@ fail_io0:
 	bus_space_unmap(sc->sc_st0, sc->sc_sh0, iosize0);
 }
 
+#ifdef __NetBSD__
+static int
+hifn_detach(device_t self, int flags)
+{
+	struct hifn_softc *sc = device_private(self);
+
+	hifn_abort(sc);
+
+	hifn_reset_board(sc, 1);
+
+	pci_intr_disestablish(sc->sc_pci_pc, sc->sc_ih);
+
+	crypto_unregister_all(sc->sc_cid);
+
+	rnd_detach_source(&sc->sc_rnd_source);
+
+	mutex_enter(&sc->sc_mtx);
+	callout_halt(&sc->sc_tickto, NULL);
+	if (sc->sc_flags & (HIFN_HAS_PUBLIC | HIFN_HAS_RNG))
+		callout_halt(&sc->sc_rngto, NULL);
+	mutex_exit(&sc->sc_mtx);
+
+	bus_space_unmap(sc->sc_st1, sc->sc_sh1, sc->sc_iosz1);
+	bus_space_unmap(sc->sc_st0, sc->sc_sh0, sc->sc_iosz0);
+
+	/*
+	 * XXX It's not clear if any additional buffers have been
+	 * XXX allocated and require free()ing
+	 */
+
+	return 0;
+}
+
+MODULE(MODULE_CLASS_DRIVER, hifn, "pci,opencrypto");
+
+#ifdef _MODULE
+#include "ioconf.c"
+#endif
+
+static int
+hifn_modcmd(modcmd_t cmd, void *data)
+{
+	int error = 0;
+
+	switch(cmd) {
+	case MODULE_CMD_INIT:
+#ifdef _MODULE
+		error = config_init_component(cfdriver_ioconf_hifn,
+		    cfattach_ioconf_hifn, cfdata_ioconf_hifn);
+#endif
+		return error;
+	case MODULE_CMD_FINI:
+#ifdef _MODULE
+		error = config_fini_component(cfdriver_ioconf_hifn,
+		    cfattach_ioconf_hifn, cfdata_ioconf_hifn);
+#endif
+		return error;
+	default:
+		return ENOTTY;
+	}
+}
+
+#endif /* ifdef __NetBSD__ */
+
 static void
 hifn_rng_get(size_t bytes, void *priv)
 {
@@ -460,8 +538,7 @@ hifn_rng_get(size_t bytes, void *priv)
 
 	mutex_enter(&sc->sc_mtx);
 	sc->sc_rng_need = bytes;
-
-	hifn_rng_locked(sc);
+	callout_reset(&sc->sc_rngto, 0, hifn_rng, sc);
 	mutex_exit(&sc->sc_mtx);
 }
 
@@ -518,20 +595,9 @@ hifn_init_pubrng(struct hifn_softc *sc)
 
 #ifdef __NetBSD__
 		rndsource_setcb(&sc->sc_rnd_source, hifn_rng_get, sc);
-		/*
-		 * XXX Careful!  The use of RND_FLAG_NO_ESTIMATE
-		 * XXX here is unobvious: we later feed raw bits
-		 * XXX into the "entropy pool" with rnd_add_data,
-		 * XXX explicitly supplying an entropy estimate.
-		 * XXX In this context, NO_ESTIMATE serves only
-		 * XXX to prevent rnd_add_data from trying to
-		 * XXX use the *time at which we added the data*
-		 * XXX as entropy, which is not a good idea since
-		 * XXX we add data periodically from a callout.
-		 */
 		rnd_attach_source(&sc->sc_rnd_source, device_xname(sc->sc_dv),
 				  RND_TYPE_RNG,
-				  RND_FLAG_NO_ESTIMATE|RND_FLAG_HASCB);
+				  RND_FLAG_COLLECT_VALUE|RND_FLAG_HASCB);
 #endif
 
 		if (hz >= 100)
@@ -623,6 +689,7 @@ hifn_rng_locked(void *vsc)
 
 		if (sc->sc_rng_need) {
 			nwords = (sc->sc_rng_need * NBBY) / HIFN_RNG_BITSPER;
+			nwords = MIN(__arraycount(num), nwords);
 		}
 
 		if (nwords < 2) {
@@ -3039,8 +3106,10 @@ hifn_mkmbuf_chain(int totlen, struct mbuf *mtemplate)
 	if (len == MHLEN)
 		M_DUP_PKTHDR(m0, mtemplate);
 	MCLGET(m0, M_DONTWAIT);
-	if (!(m0->m_flags & M_EXT))
-		m_freem(m0);
+	if (!(m0->m_flags & M_EXT)) {
+ 		m_freem(m0);
+		return (NULL);
+	}
 	len = MCLBYTES;
 
 	totlen -= len;
@@ -3055,6 +3124,7 @@ hifn_mkmbuf_chain(int totlen, struct mbuf *mtemplate)
 		}
 		MCLGET(m, M_DONTWAIT);
 		if (!(m->m_flags & M_EXT)) {
+			m_freem(m);
 			m_freem(m0);
 			return (NULL);
 		}

@@ -1,4 +1,4 @@
-/* $NetBSD: dkvar.h,v 1.18 2013/05/29 23:25:55 christos Exp $ */
+/* $NetBSD: dkvar.h,v 1.24 2015/08/28 17:41:49 mlelstv Exp $ */
 
 /*-
  * Copyright (c) 2002 The NetBSD Foundation, Inc.
@@ -29,8 +29,9 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-struct pathbuf; /* from namei.h */
+#include <sys/rndsource.h>
 
+struct pathbuf; /* from namei.h */
 
 /* literally this is not a softc, but is intended to be included in
  * the pseudo-disk's softc and passed to calls in dksubr.c.  It
@@ -45,7 +46,12 @@ struct dk_softc {
 #define DK_XNAME_SIZE 8
 	char			 sc_xname[DK_XNAME_SIZE]; /* external name */
 	struct disk		 sc_dkdev;	/* generic disk info */
+	kmutex_t		 sc_iolock;	/* protects buffer queue */
 	struct bufq_state	*sc_bufq;	/* buffer queue */
+	int			 sc_dtype;	/* disk type */
+	struct buf		*sc_deferred;	/* retry after start failed */
+	bool			 sc_busy;	/* processing buffers */
+	krndsource_t		 sc_rnd_source;	/* entropy source */
 };
 
 /* sc_flags:
@@ -59,23 +65,14 @@ struct dk_softc {
 #define DKF_WARNLABEL	0x00080000 /* warn if disklabel not present */
 #define DKF_LABELSANITY	0x00100000 /* warn if disklabel not sane */
 #define DKF_TAKEDUMP	0x00200000 /* allow dumping */
+#define DKF_KLABEL      0x00400000 /* keep label on close */
+#define DKF_VLABEL      0x00800000 /* label is valid */
+#define DKF_SLEEP       0x80000000 /* dk_start/dk_done may sleep */
 
 /* Mask of flags that dksubr.c understands, other flags are fair game */
 #define DK_FLAGMASK	0xffff0000
 
-/*
- * This defines the interface to the routines in dksubr.c.  This
- * should be a single static structure per pseudo-disk driver.
- * We only define the functions that we currently need.
- */
-struct dk_intf {
-	int	  di_dtype;			/* disk type */
-	const char *di_dkname;			/* disk type name */
-	int	(*di_open)(dev_t, int, int, struct lwp *);
-	int	(*di_close)(dev_t, int, int, struct lwp *);
-	void	(*di_strategy)(struct buf *);
-	int	(*di_diskstart)(struct dk_softc *, struct buf *);
-};
+#define DK_ATTACHED(_dksc) ((_dksc)->sc_flags & DKF_INITED)
 
 #define DK_BUSY(_dksc, _pmask)				\
 	(((_dksc)->sc_dkdev.dk_openmask & ~(_pmask)) ||	\
@@ -86,22 +83,25 @@ struct dk_intf {
  * Functions that are exported to the pseudo disk implementations:
  */
 
-void	dk_sc_init(struct dk_softc *, const char *);
+void	dk_init(struct dk_softc *, device_t, int);
+void	dk_attach(struct dk_softc *);
+void	dk_detach(struct dk_softc *);
 
-int	dk_open(struct dk_intf *, struct dk_softc *, dev_t,
+int	dk_open(struct dk_softc *, dev_t,
 		int, int, struct lwp *);
-int	dk_close(struct dk_intf *, struct dk_softc *, dev_t,
+int	dk_close(struct dk_softc *, dev_t,
 		 int, int, struct lwp *);
-void	dk_strategy(struct dk_intf *, struct dk_softc *, struct buf *);
-void	dk_start(struct dk_intf *, struct dk_softc *);
-void	dk_iodone(struct dk_intf *, struct dk_softc *);
-int	dk_size(struct dk_intf *, struct dk_softc *, dev_t);
-int	dk_ioctl(struct dk_intf *, struct dk_softc *, dev_t,
+void	dk_strategy(struct dk_softc *, struct buf *);
+int	dk_discard(struct dk_softc *, dev_t, off_t, off_t);
+void	dk_start(struct dk_softc *, struct buf *);
+void	dk_done(struct dk_softc *, struct buf *);
+void	dk_drain(struct dk_softc *);
+int	dk_size(struct dk_softc *, dev_t);
+int	dk_ioctl(struct dk_softc *, dev_t,
 		 u_long, void *, int, struct lwp *);
-int	dk_dump(struct dk_intf *, struct dk_softc *, dev_t,
+int	dk_dump(struct dk_softc *, dev_t,
 		daddr_t, void *, size_t);
-void	dk_getdisklabel(struct dk_intf *, struct dk_softc *, dev_t);
-void	dk_getdefaultlabel(struct dk_intf *, struct dk_softc *,
-			   struct disklabel *);
+void	dk_getdisklabel(struct dk_softc *, dev_t);
+void	dk_getdefaultlabel(struct dk_softc *, struct disklabel *);
 
 int	dk_lookup(struct pathbuf *, struct lwp *, struct vnode **);

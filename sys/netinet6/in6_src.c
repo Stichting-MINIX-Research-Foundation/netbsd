@@ -1,4 +1,4 @@
-/*	$NetBSD: in6_src.c,v 1.53 2012/06/25 15:28:39 christos Exp $	*/
+/*	$NetBSD: in6_src.c,v 1.58 2015/08/24 22:21:27 pooka Exp $	*/
 /*	$KAME: in6_src.c,v 1.159 2005/10/19 01:40:32 t-momose Exp $	*/
 
 /*
@@ -66,9 +66,11 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: in6_src.c,v 1.53 2012/06/25 15:28:39 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: in6_src.c,v 1.58 2015/08/24 22:21:27 pooka Exp $");
 
+#ifdef _KERNEL_OPT
 #include "opt_inet.h"
+#endif
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -118,9 +120,7 @@ __KERNEL_RCSID(0, "$NetBSD: in6_src.c,v 1.53 2012/06/25 15:28:39 christos Exp $"
 #define ADDR_LABEL_NOTAPP (-1)
 struct in6_addrpolicy defaultaddrpolicy;
 
-#ifdef notyet /* until introducing ND extensions and address selection */
 int ip6_prefer_tempaddr = 0;
-#endif
 
 static int selectroute(struct sockaddr_in6 *, struct ip6_pktopts *,
 	struct ip6_moptions *, struct route *, struct ifnet **,
@@ -184,9 +184,7 @@ in6_selectsrc(struct sockaddr_in6 *dstsock, struct ip6_pktopts *opts,
 	struct in6_addrpolicy *dst_policy = NULL, *best_policy = NULL;
 	u_int32_t odstzone;
 	int error;
-#ifdef notyet /* until introducing ND extensions and address selection */
 	int prefer_tempaddr;
-#endif
 #if defined(MIP6) && NMIP > 0
 	u_int8_t ip6po_usecoa = 0;
 #endif /* MIP6 && NMIP > 0 */
@@ -458,7 +456,6 @@ in6_selectsrc(struct sockaddr_in6 *dstsock, struct ip6_pktopts *opts,
 		 * a sysctl variable, so that privacy conscious users can
 		 * always prefer temporary addresses.
 		 */
-#ifdef notyet /* until introducing ND extensions and address selection */
 		if (opts == NULL ||
 		    opts->ip6po_prefer_tempaddr == IP6PO_TEMPADDR_SYSTEM) {
 			prefer_tempaddr = ip6_prefer_tempaddr;
@@ -481,7 +478,6 @@ in6_selectsrc(struct sockaddr_in6 *dstsock, struct ip6_pktopts *opts,
 			else
 				REPLACE(7);
 		}
-#endif
 
 		/*
 		 * Rule 8: prefer addresses on alive interfaces.
@@ -591,7 +587,7 @@ selectroute(struct sockaddr_in6 *dstsock, struct ip6_pktopts *opts,
 	/* If the caller specify the outgoing interface explicitly, use it. */
 	if (opts && (pi = opts->ip6po_pktinfo) != NULL && pi->ipi6_ifindex) {
 		/* XXX boundary check is assumed to be already done. */
-		ifp = ifindex2ifnet[pi->ipi6_ifindex];
+		ifp = if_byindex(pi->ipi6_ifindex);
 		if (ifp != NULL &&
 		    (norouteok || retrt == NULL ||
 		    IN6_IS_ADDR_MULTICAST(dst))) {
@@ -794,6 +790,21 @@ in6_selecthlim(struct in6pcb *in6p, struct ifnet *ifp)
 		return (ip6_defhlim);
 }
 
+int
+in6_selecthlim_rt(struct in6pcb *in6p)
+{
+	struct rtentry *rt;
+
+	if (in6p == NULL)
+		return in6_selecthlim(in6p, NULL);
+
+	rt = rtcache_validate(&in6p->in6p_route);
+	if (rt != NULL)
+		return in6_selecthlim(in6p, rt->rt_ifp);
+	else
+		return in6_selecthlim(in6p, NULL);
+}
+
 /*
  * Find an empty port and set it to the specified PCB.
  */
@@ -970,11 +981,10 @@ init_policy_queue(void)
 static int
 add_addrsel_policyent(struct in6_addrpolicy *newpolicy)
 {
-	struct addrsel_policyent *new, *pol;
+	struct addrsel_policyent *newpol, *pol;
 
 	/* duplication check */
-	for (pol = TAILQ_FIRST(&addrsel_policytab); pol;
-	     pol = TAILQ_NEXT(pol, ape_entry)) {
+	TAILQ_FOREACH(pol, &addrsel_policytab, ape_entry) {
 		if (IN6_ARE_ADDR_EQUAL(&newpolicy->addr.sin6_addr,
 		    &pol->ape_policy.addr.sin6_addr) &&
 		    IN6_ARE_ADDR_EQUAL(&newpolicy->addrmask.sin6_addr,
@@ -983,12 +993,12 @@ add_addrsel_policyent(struct in6_addrpolicy *newpolicy)
 		}
 	}
 
-	new = malloc(sizeof(*new), M_IFADDR, M_WAITOK|M_ZERO);
+	newpol = malloc(sizeof(*newpol), M_IFADDR, M_WAITOK|M_ZERO);
 
 	/* XXX: should validate entry */
-	new->ape_policy = *newpolicy;
+	newpol->ape_policy = *newpolicy;
 
-	TAILQ_INSERT_TAIL(&addrsel_policytab, new, ape_entry);
+	TAILQ_INSERT_TAIL(&addrsel_policytab, newpol, ape_entry);
 
 	return (0);
 }

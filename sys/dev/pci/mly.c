@@ -1,4 +1,4 @@
-/*	$NetBSD: mly.c,v 1.46 2013/10/17 21:06:15 christos Exp $	*/
+/*	$NetBSD: mly.c,v 1.49 2014/07/25 08:10:38 dholland Exp $	*/
 
 /*-
  * Copyright (c) 2001 The NetBSD Foundation, Inc.
@@ -70,7 +70,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: mly.c,v 1.46 2013/10/17 21:06:15 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: mly.c,v 1.49 2014/07/25 08:10:38 dholland Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -162,8 +162,18 @@ dev_type_close(mlyclose);
 dev_type_ioctl(mlyioctl);
 
 const struct cdevsw mly_cdevsw = {
-	mlyopen, mlyclose, noread, nowrite, mlyioctl,
-	nostop, notty, nopoll, nommap, nokqfilter, D_OTHER,
+	.d_open = mlyopen,
+	.d_close = mlyclose,
+	.d_read = noread,
+	.d_write = nowrite,
+	.d_ioctl = mlyioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_OTHER
 };
 
 static struct mly_ident {
@@ -280,6 +290,7 @@ mly_attach(device_t parent, device_t self, void *aux)
 	int ior, memr, i, rv, state;
 	struct scsipi_adapter *adapt;
 	struct scsipi_channel *chan;
+	char intrbuf[PCI_INTRSTR_LEN];
 
 	mly = device_private(self);
 	mly->mly_dv = self;
@@ -345,7 +356,7 @@ mly_attach(device_t parent, device_t self, void *aux)
 		aprint_error_dev(self, "can't map interrupt\n");
 		return;
 	}
-	intrstr = pci_intr_string(pc, ih);
+	intrstr = pci_intr_string(pc, ih, intrbuf, sizeof(intrbuf));
 	mly->mly_ih = pci_intr_establish(pc, ih, IPL_BIO, mly_intr, mly);
 	if (mly->mly_ih == NULL) {
 		aprint_error_dev(self, "can't establish interrupt");

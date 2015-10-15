@@ -1,4 +1,4 @@
-/* 	$NetBSD: wsfont.c,v 1.55 2012/04/05 02:46:21 macallan Exp $	*/
+/* 	$NetBSD: wsfont.c,v 1.59 2015/05/09 16:40:37 mlelstv Exp $	*/
 
 /*-
  * Copyright (c) 1999, 2000, 2001, 2002 The NetBSD Foundation, Inc.
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: wsfont.c,v 1.55 2012/04/05 02:46:21 macallan Exp $");
+__KERNEL_RCSID(0, "$NetBSD: wsfont.c,v 1.59 2015/05/09 16:40:37 mlelstv Exp $");
 
 #include "opt_wsfont.h"
 
@@ -115,6 +115,16 @@ __KERNEL_RCSID(0, "$NetBSD: wsfont.c,v 1.55 2012/04/05 02:46:21 macallan Exp $")
 #include <dev/wsfont/omron12x20.h>
 #endif
 
+#ifdef FONT_GLASS10x19
+#define HAVE_FONT 1
+#include <dev/wsfont/glass10x19.h>
+#endif
+
+#ifdef FONT_GLASS10x25
+#define HAVE_FONT 1
+#include <dev/wsfont/glass10x25.h>
+#endif
+
 #ifdef FONT_DEJAVU_SANS_MONO12x22
 #include <dev/wsfont/DejaVu_Sans_Mono_12x22.h>
 #endif
@@ -125,6 +135,10 @@ __KERNEL_RCSID(0, "$NetBSD: wsfont.c,v 1.55 2012/04/05 02:46:21 macallan Exp $")
 
 #ifdef FONT_DROID_SANS_MONO9x18
 #include <dev/wsfont/Droid_Sans_Mono_9x18.h>
+#endif
+
+#ifdef FONT_DROID_SANS_MONO19x36
+#include <dev/wsfont/Droid_Sans_Mono_19x36.h>
 #endif
 
 /* Make sure we always have at least one bitmap font. */
@@ -207,6 +221,12 @@ static struct font builtin_fonts[] = {
 #ifdef FONT_OMRON12x20
 	{ { NULL, NULL }, &omron12x20, 0, 0, WSFONT_STATIC | WSFONT_BUILTIN },
 #endif
+#ifdef FONT_GLASS10x19
+	{ { NULL, NULL }, &Glass_TTY_VT220_10x19, 0, 0, WSFONT_STATIC | WSFONT_BUILTIN },
+#endif
+#ifdef FONT_GLASS10x25
+	{ { NULL, NULL }, &Glass_TTY_VT220_10x25, 0, 0, WSFONT_STATIC | WSFONT_BUILTIN },
+#endif
 #ifdef FONT_DEJAVU_SANS_MONO12x22
 	{ { NULL, NULL }, &DejaVu_Sans_Mono_12x22, 0, 0, WSFONT_STATIC | WSFONT_BUILTIN },
 #endif
@@ -215,6 +235,9 @@ static struct font builtin_fonts[] = {
 #endif
 #ifdef FONT_DROID_SANS_MONO9x18
 	{ { NULL, NULL }, &Droid_Sans_Mono_9x18, 0, 0, WSFONT_STATIC | WSFONT_BUILTIN },
+#endif
+#ifdef FONT_DROID_SANS_MONO19x36
+	{ { NULL, NULL }, &Droid_Sans_Mono_19x36, 0, 0, WSFONT_STATIC | WSFONT_BUILTIN },
 #endif
 	{ { NULL, NULL }, NULL, 0, 0, 0 },
 };
@@ -547,6 +570,7 @@ int
 wsfont_matches(struct wsdisplay_font *font, const char *name,
 	       int width, int height, int stride, int flags)
 {
+	int score = 20000;
 
 	/* first weed out fonts the caller doesn't claim support for */
 	if (FONT_IS_ALPHA(font)) {
@@ -560,8 +584,17 @@ wsfont_matches(struct wsdisplay_font *font, const char *name,
 	if (height != 0 && font->fontheight != height)
 		return (0);
 
-	if (width != 0 && font->fontwidth != width)
-		return (0);
+	if (width != 0) {
+		if ((flags & WSFONT_FIND_BESTWIDTH) == 0) {
+			if (font->fontwidth != width)
+				return (0);
+		} else {
+			if (font->fontwidth > width)
+				score -= 10000 + min(font->fontwidth - width, 9999);
+			else
+				score -= min(width - font->fontwidth, 9999);
+		}
+	}
 
 	if (stride != 0 && font->stride != stride)
 		return (0);
@@ -569,18 +602,26 @@ wsfont_matches(struct wsdisplay_font *font, const char *name,
 	if (name != NULL && strcmp(font->name, name) != 0)
 		return (0);
 
-	return (1);
+	return (score);
 }
 
 int
 wsfont_find(const char *name, int width, int height, int stride, int bito, int byteo, int flags)
 {
-	struct font *ent;
+	struct font *ent, *bestent = NULL;
+	int score, bestscore = 0;
 
 	TAILQ_FOREACH(ent, &list, chain) {
-		if (wsfont_matches(ent->font, name, width, height, stride, flags))
-			return (wsfont_make_cookie(ent->cookie, bito, byteo));
+		score = wsfont_matches(ent->font, name,
+				width, height, stride, flags);
+		if (score > bestscore) {
+			bestscore = score;
+			bestent = ent;
+		}
 	}
+
+	if (bestent != NULL)
+		return (wsfont_make_cookie(bestent->cookie, bito, byteo));
 
 	return (-1);
 }

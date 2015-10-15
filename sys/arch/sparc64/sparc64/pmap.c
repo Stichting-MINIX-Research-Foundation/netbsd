@@ -1,4 +1,4 @@
-/*	$NetBSD: pmap.c,v 1.281 2013/09/11 18:27:44 martin Exp $	*/
+/*	$NetBSD: pmap.c,v 1.299 2015/09/08 13:18:06 nakayama Exp $	*/
 /*
  *
  * Copyright (C) 1996-1999 Eduardo Horvath.
@@ -26,7 +26,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: pmap.c,v 1.281 2013/09/11 18:27:44 martin Exp $");
+__KERNEL_RCSID(0, "$NetBSD: pmap.c,v 1.299 2015/09/08 13:18:06 nakayama Exp $");
 
 #undef	NO_VCACHE /* Don't forget the locked TLB in dostart */
 #define	HWREF
@@ -58,6 +58,10 @@ __KERNEL_RCSID(0, "$NetBSD: pmap.c,v 1.281 2013/09/11 18:27:44 martin Exp $");
 #include <machine/promlib.h>
 #include <machine/kcore.h>
 #include <machine/bootinfo.h>
+#ifdef SUN4V
+#include <machine/hypervisor.h>
+#endif
+#include <machine/mdesc.h>
 
 #include <sparc64/sparc64/cache.h>
 
@@ -206,7 +210,7 @@ paddr_t ekdatap;
  * Kernel 4MB pages.
  */
 extern struct tlb_entry *kernel_tlbs;
-extern int kernel_tlb_slots;
+extern int kernel_dtlb_slots, kernel_itlb_slots;
 
 static int npgs;
 
@@ -475,15 +479,15 @@ static int pmap_calculate_colors(void)
 			continue;
 
 		/* Found a CPU, get the E$ info. */
-		size = prom_getpropint(node, "ecache-size", -1);
-		if (size == -1) {
+		size = cpu_ecache_size(node);
+		if (size == 0) {
 			prom_printf("pmap_calculate_colors: node %x has "
 				"no ecache-size\n", node);
 			/* If we can't get the E$ size, skip the node */
 			continue;
 		}
 
-		assoc = prom_getpropint(node, "ecache-associativity", 1);
+		assoc = cpu_ecache_associativity(node);
 		color = size/assoc/PAGE_SIZE;
 		if (color > maxcolor)
 			maxcolor = color;
@@ -521,22 +525,31 @@ pmap_mp_init(void)
 	}
 
 	memcpy(v, mp_tramp_code, mp_tramp_code_len);
-	*(u_long *)(v + mp_tramp_tlb_slots) = kernel_tlb_slots;
+	*(u_long *)(v + mp_tramp_dtlb_slots) = kernel_dtlb_slots;
+	*(u_long *)(v + mp_tramp_itlb_slots) = kernel_itlb_slots;
 	*(u_long *)(v + mp_tramp_func) = (u_long)cpu_mp_startup;
 	*(u_long *)(v + mp_tramp_ci) = (u_long)cpu_args;
 	tp = (pte_t *)(v + mp_tramp_code_len);
-	for (i = 0; i < kernel_tlb_slots; i++) {
+	for (i = 0; i < kernel_dtlb_slots; i++) {
 		tp[i].tag  = kernel_tlbs[i].te_va;
 		tp[i].data = TSB_DATA(0,		/* g */
 				PGSZ_4M,		/* sz */
 				kernel_tlbs[i].te_pa,	/* pa */
 				1, /* priv */
-				1, /* write */
+				0, /* write */
 				1, /* cache */
 				1, /* aliased */
 				1, /* valid */
 				0 /* ie */);
 		tp[i].data |= TLB_L | TLB_CV;
+
+		if (i >= kernel_itlb_slots) {
+			tp[i].data |= TLB_W;
+		} else {
+			if (CPU_ISSUN4V)
+				tp[i].data |= SUN4V_TLB_X;
+		}
+			
 		DPRINTF(PDB_BOOT1, ("xtlb[%d]: Tag: %" PRIx64 " Data: %"
 				PRIx64 "\n", i, tp[i].tag, tp[i].data));
 	}
@@ -558,7 +571,7 @@ pmap_kextract(vaddr_t va)
 	int i;
 	paddr_t paddr = (paddr_t)-1;
 
-	for (i = 0; i < kernel_tlb_slots; i++) {
+	for (i = 0; i < kernel_dtlb_slots; i++) {
 		if ((va & ~PAGE_MASK_4M) == kernel_tlbs[i].te_va) {
 			paddr = kernel_tlbs[i].te_pa +
 				(paddr_t)(va & PAGE_MASK_4M);
@@ -566,7 +579,7 @@ pmap_kextract(vaddr_t va)
 		}
 	}
 
-	if (i == kernel_tlb_slots) {
+	if (i == kernel_dtlb_slots) {
 		panic("pmap_kextract: Address %p is not from kernel space.\n"
 				"Data segment is too small?\n", (void*)va);
 	}
@@ -719,6 +732,18 @@ pmap_bootstrap(u_long kernelstart, u_long kernelend)
 	/* Initialize bootstrap allocator. */
 	kdata_alloc_init(kernelend + 1 * 1024 * 1024, ekdata);
 
+	/* make sure we have access to the mdesc data on SUN4V machines */
+	if (CPU_ISSUN4V) {
+		vaddr_t m_va;
+		psize_t m_len;
+		paddr_t m_pa;
+
+		m_len = mdesc_get_len();
+		m_va = kdata_alloc(m_len, 16);
+		m_pa = kdatap + (m_va - kdata);
+		mdesc_init(m_va, m_pa, m_len);
+	}
+
 	pmap_bootdebug();
 	pmap_alloc_bootargs();
 	pmap_mp_init();
@@ -734,8 +759,7 @@ pmap_bootstrap(u_long kernelstart, u_long kernelend)
 	 * Get hold or the message buffer.
 	 */
 	msgbufp = (struct kern_msgbuf *)(vaddr_t)MSGBUF_VA;
-/* XXXXX -- increase msgbufsiz for uvmhist printing */
-	msgbufsiz = 4*PAGE_SIZE /* round_page(sizeof(struct msgbuf)) */;
+	msgbufsiz = MSGBUFSIZE;
 	BDPRINTF(PDB_BOOT, ("Trying to allocate msgbuf at %lx, size %lx\n",
 			    (long)msgbufp, (long)msgbufsiz));
 	if ((long)msgbufp !=
@@ -1019,7 +1043,6 @@ pmap_bootstrap(u_long kernelstart, u_long kernelend)
 	BDPRINTF(PDB_BOOT1, ("Inserting mesgbuf into pmap_kernel()\n"));
 	/* it's not safe to call pmap_enter so we need to do this ourselves */
 	va = (vaddr_t)msgbufp;
-	prom_map_phys(phys_msgbuf, msgbufsiz, (vaddr_t)msgbufp, -1);
 	while (msgbufsiz) {
 		data = TSB_DATA(0 /* global */,
 			PGSZ_8K,
@@ -1145,11 +1168,15 @@ pmap_bootstrap(u_long kernelstart, u_long kernelend)
 		cpus->ci_next = NULL;
 		cpus->ci_curlwp = &lwp0;
 		cpus->ci_flags = CPUF_PRIMARY;
-		cpus->ci_cpuid = CPU_UPAID;
+		cpus->ci_cpuid = cpu_myid();
 		cpus->ci_fplwp = NULL;
 		cpus->ci_eintstack = NULL;
 		cpus->ci_spinup = main; /* Call main when we're running. */
 		cpus->ci_paddr = cpu0paddr;
+		if (CPU_ISSUN4V) {
+			cpus->ci_mmfsa = cpu0paddr;
+			cpus->ci_tsb_desc = NULL;
+		}
 		cpus->ci_cpcb = (struct pcb *)u0va;
 		cpus->ci_idepth = -1;
 		memset(cpus->ci_intrpending, -1, sizeof(cpus->ci_intrpending));
@@ -1233,6 +1260,23 @@ cpu_pmap_prepare(struct cpu_info *ci, bool initial)
 		ci->ci_ctxbusy = curcpu()->ci_ctxbusy;
 	}
 
+	if (CPU_ISSUN4V) {
+		ci->ci_tsb_desc = (struct tsb_desc *)kdata_alloc(
+			sizeof(struct tsb_desc), 16);
+		memset(ci->ci_tsb_desc, 0, sizeof(struct tsb_desc));
+		/* 8K page size used for TSB index computation */
+		ci->ci_tsb_desc->td_idxpgsz = 0;
+		ci->ci_tsb_desc->td_assoc = 1;
+		ci->ci_tsb_desc->td_size = TSBENTS;
+		ci->ci_tsb_desc->td_ctxidx = -1;
+		ci->ci_tsb_desc->td_pgsz = 0xf;
+		ci->ci_tsb_desc->td_pa = pmap_kextract((vaddr_t)ci->ci_tsb_dmmu);
+		BDPRINTF(PDB_BOOT1, ("cpu %d: TSB descriptor allocated at %p "
+		    "size %08x - td_pa at %p\n",
+		    ci->ci_index, ci->ci_tsb_desc, sizeof(struct tsb_desc),
+		    ci->ci_tsb_desc->td_pa));
+	}
+
 	BDPRINTF(PDB_BOOT1, ("cpu %d: TSB allocated at %p/%p size %08x\n",
 	    ci->ci_index, ci->ci_tsb_dmmu, ci->ci_tsb_immu, TSBSIZE));
 }
@@ -1250,11 +1294,8 @@ cpu_pmap_init(struct cpu_info *ci)
 	 * running for cpu0 yet..
 	 */
 	ci->ci_pmap_next_ctx = 1;
-#ifdef SUN4V
-#error find out if we have 16 or 13 bit context ids
-#else
-	ci->ci_numctx = 0x2000; /* all SUN4U use 13 bit contexts */
-#endif
+	/* all SUN4U use 13 bit contexts - SUN4V use at least 13 bit contexts */
+	ci->ci_numctx = 0x2000; 
 	ctxsize = sizeof(paddr_t)*ci->ci_numctx;
 	ci->ci_ctxbusy = (paddr_t *)kdata_alloc(ctxsize, sizeof(uint64_t));
 	memset(ci->ci_ctxbusy, 0, ctxsize);
@@ -2318,7 +2359,7 @@ pmap_dumpsize(void)
 	int	sz;
 
 	sz = ALIGN(sizeof(kcore_seg_t)) + ALIGN(sizeof(cpu_kcore_hdr_t));
-	sz += kernel_tlb_slots * sizeof(struct cpu_kcore_4mbseg);
+	sz += kernel_dtlb_slots * sizeof(struct cpu_kcore_4mbseg);
 	sz += phys_installed_size * sizeof(phys_ram_seg_t);
 
 	return btodb(sz + DEV_BSIZE - 1);
@@ -2394,7 +2435,7 @@ pmap_dumpmmu(int (*dump)(dev_t, daddr_t, void *, size_t), daddr_t blkno)
 
 	/* new version of locked segments description */
 	kcpu->newmagic = SPARC64_KCORE_NEWMAGIC;
-	kcpu->num4mbsegs = kernel_tlb_slots;
+	kcpu->num4mbsegs = kernel_dtlb_slots;
 	kcpu->off4mbsegs = ALIGN(sizeof(cpu_kcore_hdr_t));
 
 	/* description of per-cpu mappings */
@@ -2406,7 +2447,7 @@ pmap_dumpmmu(int (*dump)(dev_t, daddr_t, void *, size_t), daddr_t blkno)
 	/* Now the memsegs */
 	kcpu->nmemseg = phys_installed_size;
 	kcpu->memsegoffset = kcpu->off4mbsegs
-		+ kernel_tlb_slots * sizeof(struct cpu_kcore_4mbseg);
+		+ kernel_dtlb_slots * sizeof(struct cpu_kcore_4mbseg);
 
 	/* Now we need to point this at our kernel pmap. */
 	kcpu->nsegmap = STSZ;
@@ -2416,7 +2457,7 @@ pmap_dumpmmu(int (*dump)(dev_t, daddr_t, void *, size_t), daddr_t blkno)
 	bp = (int *)((long)kcpu + ALIGN(sizeof(cpu_kcore_hdr_t)));
 
 	/* write locked kernel 4MB TLBs */
-	for (i = 0; i < kernel_tlb_slots; i++) {
+	for (i = 0; i < kernel_dtlb_slots; i++) {
 		ktlb.va = kernel_tlbs[i].te_va;
 		ktlb.pa = kernel_tlbs[i].te_pa;
 		EXPEDITE(&ktlb, sizeof(ktlb));
@@ -2600,12 +2641,12 @@ pmap_clear_reference(struct vm_page *pg)
 	pv_entry_t pv;
 	int rv;
 	int changed = 0;
-#ifdef DEBUG
+#if defined(DEBUG) && !defined(MULTIPROCESSOR)
 	int referenced = 0;
 #endif
 
 	mutex_enter(&pmap_lock);
-#ifdef DEBUG
+#if defined(DEBUG) && !defined(MULTIPROCESSOR)
 	DPRINTF(PDB_CHANGEPROT|PDB_REF, ("pmap_clear_reference(%p)\n", pg));
 	referenced = pmap_is_referenced_locked(pg);
 #endif
@@ -2661,7 +2702,7 @@ pmap_clear_reference(struct vm_page *pg)
 	}
 	dcache_flush_page_all(VM_PAGE_TO_PHYS(pg));
 	pv_check();
-#ifdef DEBUG
+#if defined(DEBUG) && !defined(MULTIPROCESSOR)
 	if (pmap_is_referenced_locked(pg)) {
 		pv = &md->mdpg_pvh;
 		printf("pmap_clear_reference(): %p still referenced "
@@ -3755,4 +3796,50 @@ sparc64_mmap_range_test(vaddr_t addr, vaddr_t eaddr)
 
 	return EINVAL;
 }
+#endif
+
+#ifdef SUN4V
+void
+pmap_setup_intstack_sun4v(paddr_t pa)
+{
+	int64_t hv_rc;
+	int64_t data;
+	data = SUN4V_TSB_DATA(
+	    0 /* global */,
+	    PGSZ_64K,
+	    pa,
+	    1 /* priv */,
+	    1 /* Write */,
+	    1 /* Cacheable */,
+	    FORCE_ALIAS /* ALIAS -- Disable D$ */,
+	    1 /* valid */,
+	    0 /* IE */);
+	hv_rc = hv_mmu_map_perm_addr(INTSTACK, data, MAP_DTLB);
+	if ( hv_rc != H_EOK ) {
+		panic("hv_mmu_map_perm_addr() failed - rc = %" PRId64 "\n",
+		    hv_rc);
+	}
+}
+
+void
+pmap_setup_tsb_sun4v(struct tsb_desc* tsb_desc)
+{
+	int err;
+	paddr_t tsb_desc_p;
+	tsb_desc_p = pmap_kextract((vaddr_t)tsb_desc);
+	if (!tsb_desc_p) {
+		panic("pmap_setup_tsb_sun4v() pmap_kextract() failed");
+	}
+	err = hv_mmu_tsb_ctx0(1, tsb_desc_p);
+	if (err != H_EOK) {
+		prom_printf("hv_mmu_tsb_ctx0() err: %d\n", err);
+		panic("pmap_setup_tsb_sun4v() hv_mmu_tsb_ctx0() failed");
+	}
+	err = hv_mmu_tsb_ctxnon0(1, tsb_desc_p);
+	if (err != H_EOK) {
+		prom_printf("hv_mmu_tsb_ctxnon0() err: %d\n", err);
+		panic("pmap_setup_tsb_sun4v() hv_mmu_tsb_ctxnon0() failed");
+	}
+}
+
 #endif

@@ -1,4 +1,4 @@
-/*	$NetBSD: plum.c,v 1.14 2012/10/27 17:17:52 chs Exp $ */
+/*	$NetBSD: plum.c,v 1.16 2015/10/02 09:05:33 msaitoh Exp $ */
 
 /*-
  * Copyright (c) 1999 The NetBSD Foundation, Inc.
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: plum.c,v 1.14 2012/10/27 17:17:52 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: plum.c,v 1.16 2015/10/02 09:05:33 msaitoh Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>

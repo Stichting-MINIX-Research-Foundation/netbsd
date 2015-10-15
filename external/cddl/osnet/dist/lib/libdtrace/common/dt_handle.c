@@ -31,7 +31,7 @@
 #include <errno.h>
 #include <unistd.h>
 #include <assert.h>
-#if defined(sun)
+#ifdef illumos
 #include <alloca.h>
 #endif
 
@@ -208,7 +208,7 @@ dt_handle_err(dtrace_hdl_t *dtp, dtrace_probedata_t *data)
 	case DTRACEFLT_BADALIGN:
 	case DTRACEFLT_BADSTACK:
 		(void) sprintf(details, " (0x%llx)",
-		    (u_longlong_t)err.dteda_addr);
+		    (unsigned long long)err.dteda_addr);
 		break;
 
 	default:
@@ -335,8 +335,9 @@ dt_handle_cpudrop(dtrace_hdl_t *dtp, processorid_t cpu,
 	}
 
 	(void) snprintf(s, size, "%llu %sdrop%s on CPU %d\n",
-	    howmany, what == DTRACEDROP_PRINCIPAL ? "" : "aggregation ",
-	    howmany > 1 ? "s" : "", cpu);
+	    (unsigned long long)howmany,
+	    what == DTRACEDROP_PRINCIPAL ? "" : "aggregation ",
+	    howmany > 1 ? "s" : "", (int)cpu);
 
 	if (dtp->dt_drophdlr == NULL)
 		return (dt_set_errno(dtp, EDT_DROPABORT));
@@ -427,7 +428,8 @@ dt_handle_status(dtrace_hdl_t *dtp, dtrace_status_t *old, dtrace_status_t *new)
 			size = sizeof (str);
 		}
 
-		(void) snprintf(s, size, "%llu %s%s%s\n", nval - oval,
+		(void) snprintf(s, size, "%llu %s%s%s\n",
+		    (unsigned long long)(nval - oval),
 		    _dt_droptab[i].dtdrt_str, (nval - oval > 1) ? "s" : "",
 		    _dt_droptab[i].dtdrt_msg != NULL ?
 		    _dt_droptab[i].dtdrt_msg : "");

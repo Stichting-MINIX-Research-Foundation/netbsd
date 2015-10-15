@@ -1,4 +1,4 @@
-# $NetBSD: HACKS,v 1.143 2013/11/16 17:14:06 skrll Exp $
+# $NetBSD: HACKS,v 1.162 2015/08/27 12:32:05 pooka Exp $
 #
 # This file is intended to document workarounds for currently unsolved
 # (mostly) compiler bugs.
@@ -280,6 +280,17 @@ descr
 	-fno-strict-aliasing.
 kcah
 
+hack	disable ctf for gcc-4.8 build
+mdate	April 3 2014
+who	christos
+file	external/gpl3/gcc/usr.bin/Makefile.frontend	: 1.4
+file	external/gpl3/gcc/usr.bin/Makefile.backend	: 1.5
+descr
+	nbctfconvert -g -L VERSION -g fold-const.o
+	ERROR: fold-const.c: failed to get mapping for tid 79154 \
+		((null)) <13532>
+kcak
+
 hack	emacs aborting on exit (libgcc issue)
 mdate	7 November 2011
 who	christos
@@ -341,6 +352,54 @@ pr	N/A
 descr
 	fixed in binutils-2.20.1. Linking with MKPIE=yes causes overlapping
 	sections
+kcah
+
+hack	Disable fortification for /usr/bin/makeinfo
+cdata	24 Mar 2014
+who	tron
+file	src/gnu/usr.bin/texinfo/makeinfo/Makefile	: 1.8
+pr	N/A
+descr
+	If "makeinfo" is compiled with "-D_FORTIFY_SOURCE=2" using GCC 4.8.3
+	it fails to process certain texinfo files, e.g. "cl.texi"
+	included in the Emacs 24.3 distribution.
+kcah
+
+hack	Disable Stack Smash Protection for /usr/X11R7/bin/xauth
+cdata	05 Apr 2014
+who	tron
+file	src/external/mit/xorg/bin/xauth/Makefile	: 1.4
+pr	N/A
+descr
+	If "xauth" is compile with "USE_SSP" set to "yes" it fails
+	mysteriously with an error message like this:
+
+	/usr/X11R7/bin/xauth:  file /foo/bar/.Xauthority does not exist
+	/usr/X11R7/bin/xauth:  unable to link authority file /foo/bar/.Xauthority, use /foo/bar/.Xauthority
+
+	The compiler seems to get confused about the two filename variables
+	used in the link(2) system call.
+kcah
+
+hack	g++ 5.x barfs on volatile in constexpr initializers
+cdata	27 Aug 2015
+who	pooka
+file	src/lib/libpthread/pthread_types.h	: 1.17
+pr	lib/49989
+descr
+	Trying to use e.g. pthread_mutex_t m = PTHREAD_MUTEX_INITIALIZER
+	in C++ results in:
+		error: temporary of non-literal type '__pthread_mutex_st'
+		in a constant expression
+		constexpr mutex() _NOEXCEPT : __m_(PTHREAD_MUTEX_INITIALIZER) {}
+		[...]
+		include/pthread_types.h:101:8: note: '__pthread_mutex_st' is
+		not literal because:
+		struct __pthread_mutex_st {
+		^
+		include/pthread_types.h:103:17: note:   non-static data
+		member '__pthread_mutex_st::ptm_errorcheck' has volatile type
+		pthread_spin_t ptm_errorcheck;
 kcah
 
 port	vax
@@ -777,6 +836,18 @@ port	i386
 		the i387 FPU without rounding the intermediate results
 	kcah
 
+port	x86
+	hack	turn off optimization for biosdisk_ll.c because otherwise
+		we are pass the wrong arguments to biosdisk_read(). 
+		$ cd /usr/src/sys/arch/i386/floppies/bootflopp-com
+		$ qemu-system-i386 -nographic -fda boot-com1.fs -boot a
+	who	christos
+	file	src/sys/arch/i386/stand/lib/Makefile : 1.38
+	descr
+		Turning on DISK_DEBUG shows the problem. We should find
+		out which option is causing this.
+	hcah
+
 port	powerpc
 
 	hack	avoid using __builtin_return_address(0) because it fails in
@@ -878,6 +949,16 @@ port	ia64
 		{standard input}:22978: Warning: This is the location of the conflicting usage
 	kcah
 
+	hack	libgcc unwind dummy function
+	cdate	Fri Apr 17 14:31:03 CEST 2015
+	who	martin
+	file	src/external/gpl3/gcc/dist/libgcc/config/ia64/unwind-ia64.c: 1.4
+	descr
+		Add an empty _Unwind_FindTableEntry() implementation.
+		In the end we will use our libc stuff, and this should
+		go away again.
+	kcah
+
 port	x68k
 
 	hack	compiler error with gcc 4.5.x
@@ -885,7 +966,6 @@ port	x68k
 	who	christos
 	file	src/external/gpl3/gcc/usr.bin/bakend/Makefile: 1.17
 		xsrc/external/mit/xorg/lib/libGLU/Makefile: 1.11
-		src/x11/lib/GLU/Makefile: 1.9
 	descr
 		workaround for:
 		internal compiler error: in cselib_record_set, at cselib.c:1999
@@ -902,7 +982,7 @@ descr
 	This applies only if RPCGEN_CPP is not set and /usr/bin/cpp is not executable.
 kcah
 
-port	hp700
+port	hppa
 
 	hack	compiler error with gcc 4.5.x
 	cdate	Tue Jul 23 07:42:28 BST 2013
@@ -911,3 +991,41 @@ port	hp700
 	descr
 		workaround for unanalysed codegen bug affecting md5c.c.
 	kcah
+
+	hack	gdb vs _rtld_debug_state problem
+	cdate	Thu Mar  5 09:49:53 UTC 2015
+	who	skrll
+	file	src/libexec/ld.elf_so/rtld.c: 1.175
+	descr
+		workaround for problem where gdb misses the breakpoint on
+		_rtld_debug_state when the function is only the
+		bv,n %r0(%rp) instruction - the nullify seems to
+		confuse something
+	kcah
+
+port	mips64*
+hack	compiler crashes on mips64* with optimization enabled
+cdate	Tue May 13 18:46:48 UTC 2014
+who	macallan
+file	src/external/lgpl3/gmp/lib/libgmp/arch/mips64eb/Makefile.inc: 1.6
+	src/external/lgpl3/gmp/lib/libgmp/arch/mips64eb/config.h: 1.5
+	src/external/lgpl3/gmp/lib/libgmp/arch/mips64el/Makefile.inc: 1.6
+	src/external/lgpl3/gmp/lib/libgmp/arch/mips64el/config.h: 1.5
+descr	workaround for n32 gcc doing unaligned 64bit accesses when optimizing
+pr	48696
+kcah
+
+port	vax
+hack	compile boot with -O1
+cdate	Sat May 24 09:40:58 CEST 2014
+who	martin
+file	src/sys/arch/vax/boot/boot/Makefile: 1.41
+descr	/boot does not work when compiled with -O2 and gcc 4.8
+kcah
+
+port	arm
+hack	avoid using labels in a 12-bit constant.
+who	matt
+file	crypto/external/bsd/openssl/lib/libcrypto/arch/arm/aes-armv4.S: 1.2
+descr	workaround for clang misassembling an instruction
+kcah

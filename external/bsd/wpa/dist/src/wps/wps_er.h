@@ -2,14 +2,8 @@
  * Wi-Fi Protected Setup - External Registrar
  * Copyright (c) 2009, Jouni Malinen <j@w1.fi>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #ifndef WPS_ER_H
@@ -82,6 +76,7 @@ struct wps_er_ap_settings {
 struct wps_er {
 	struct wps_context *wps;
 	char ifname[17];
+	int forced_ifname;
 	u8 mac_addr[ETH_ALEN]; /* mac addr of network i.f. we use */
 	char *ip_addr_text; /* IP address of network i.f. we use */
 	unsigned ip_addr; /* IP address of network i.f. we use (host order) */

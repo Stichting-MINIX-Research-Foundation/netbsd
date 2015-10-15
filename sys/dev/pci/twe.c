@@ -1,4 +1,4 @@
-/*	$NetBSD: twe.c,v 1.99 2013/09/15 15:00:57 martin Exp $	*/
+/*	$NetBSD: twe.c,v 1.103 2014/07/25 08:10:38 dholland Exp $	*/
 
 /*-
  * Copyright (c) 2000, 2001, 2002, 2003, 2004 The NetBSD Foundation, Inc.
@@ -63,7 +63,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: twe.c,v 1.99 2013/09/15 15:00:57 martin Exp $");
+__KERNEL_RCSID(0, "$NetBSD: twe.c,v 1.103 2014/07/25 08:10:38 dholland Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -318,6 +318,7 @@ twe_attach(device_t parent, device_t self, void *aux)
 	const struct sysctlnode *node;
 	struct twe_cmd *tc;
 	struct twe_ccb *ccb;
+	char intrbuf[PCI_INTRSTR_LEN];
 
 	sc = device_private(self);
 	sc->sc_dev = self;
@@ -348,7 +349,7 @@ twe_attach(device_t parent, device_t self, void *aux)
 		return;
 	}
 
-	intrstr = pci_intr_string(pc, ih);
+	intrstr = pci_intr_string(pc, ih, intrbuf, sizeof(intrbuf));
 	sc->sc_ih = pci_intr_establish(pc, ih, IPL_BIO, twe_intr, sc);
 	if (sc->sc_ih == NULL) {
 		aprint_error_dev(self, "can't establish interrupt%s%s\n",
@@ -457,14 +458,6 @@ twe_attach(device_t parent, device_t self, void *aux)
 	    TWE_CTL_ENABLE_INTRS);
 
 	/* sysctl set-up for 3ware cli */
-	if (sysctl_createv(NULL, 0, NULL, NULL,
-				CTLFLAG_PERMANENT, CTLTYPE_NODE, "hw",
-				NULL, NULL, 0, NULL, 0,
-				CTL_HW, CTL_EOL) != 0) {
-		aprint_error_dev(self, "could not create %s sysctl node\n",
-			"hw");
-		return;
-	}
 	if (sysctl_createv(NULL, 0, NULL, &node,
 				0, CTLTYPE_NODE, device_xname(self),
 				SYSCTL_DESCR("twe driver information"),
@@ -1889,8 +1882,18 @@ done:
 }
 
 const struct cdevsw twe_cdevsw = {
-	tweopen, tweclose, noread, nowrite, tweioctl,
-	    nostop, notty, nopoll, nommap, nokqfilter, D_OTHER,
+	.d_open = tweopen,
+	.d_close = tweclose,
+	.d_read = noread,
+	.d_write = nowrite,
+	.d_ioctl = tweioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_OTHER
 };
 
 /*

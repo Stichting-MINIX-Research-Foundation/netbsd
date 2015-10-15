@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile.inc,v 1.18 2013/10/03 20:17:47 christos Exp $
+#	$NetBSD: Makefile.inc,v 1.22 2014/08/18 04:40:51 christos Exp $
 
 .if !defined(BIND9_MAKEFILE_INC)
 BIND9_MAKEFILE_INC=yes
@@ -27,7 +27,7 @@ NAMED_USE_PTHREADS?=no
 
 IDIST=		${NETBSDSRCDIR}/external/bsd/bind/dist
 BIND_SRCDIR=	${NETBSDSRCDIR}/external/bsd/bind
-BIND_HTMLDIR=	/usr/share/doc/html/bind9
+BIND_HTMLDIR=	/usr/share/doc/reference/ref8/bind9
 
 .include "${IDIST}/version"
 
@@ -50,6 +50,7 @@ CPPFLAGS+=-I${BIND_SRCDIR}/include \
 
 .if (${USE_INET6} != "no")
 CPPFLAGS+=	-DWANT_IPV6
+CPPFLAGS+=	-DALLOW_FILTER_AAAA
 .endif
 
 .if defined(HAVE_GCC)
@@ -63,9 +64,9 @@ DBG=-g3 -gstabs
 .if !defined(LIB) || empty(LIB)
 # NOTE: the order of these libraries is important...
 .if defined(NAMED_DEBUG)
-LDADD+=		-lbind9_g -ldns_g -llwres_g -lisccfg_g -lisccc_g -lisc_g
+LDADD+=		-lbind9_g -llwres_g -lisccfg_g -ldns_g -lisccc_g -lisc_g
 .else
-LDADD+=		-lbind9 -ldns -llwres -lisccfg -lisccc -lisc
+LDADD+=		-lbind9 -llwres -lisccfg -ldns -lisccc -lisc
 DPADD+=		${LIBBIND9} ${LIBDNS} ${LIBLWRES}
 DPADD+=		${LIBISCCFG} ${LIBISCCC} ${LIBISC}
 .endif
@@ -95,7 +96,7 @@ CPPFLAGS+=-DGSSAPI
 .endif
 .if ${MKKERBEROS} != "no"
 .if !defined (LIB) || empty(LIB)
-LDADD+= -lgssapi -lkrb5 -lhx509 -lheimntlm -lheimbase \
+LDADD+= -lgssapi -lheimntlm -lkrb5 -lhx509 -lheimbase \
 	-lcom_err  -lroken -lasn1 -lwind
 DPADD+= ${LIBGSSAPI} ${LIBKRB5} ${LIBHX509} ${LIBHEIMNTLM} ${LIBHEIMBASE} \
 	${LIBCOM_ERR} ${LIBROKEN} ${LIBASN1} ${LIBWIND}

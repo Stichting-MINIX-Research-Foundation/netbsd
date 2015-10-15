@@ -1,5 +1,5 @@
 /*	$OpenBSD: if_rum.c,v 1.40 2006/09/18 16:20:20 damien Exp $	*/
-/*	$NetBSD: if_rum.c,v 1.47 2013/01/22 12:40:42 jmcneill Exp $	*/
+/*	$NetBSD: if_rum.c,v 1.51 2015/08/30 13:09:48 ryoon Exp $	*/
 
 /*-
  * Copyright (c) 2005-2007 Damien Bergamini <damien.bergamini@free.fr>
@@ -24,7 +24,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_rum.c,v 1.47 2013/01/22 12:40:42 jmcneill Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_rum.c,v 1.51 2015/08/30 13:09:48 ryoon Exp $");
 
 #include <sys/param.h>
 #include <sys/sockio.h>
@@ -266,7 +266,7 @@ rum_attachhook(void *xsc)
 	int error;
 
 	if ((error = firmware_open("rum", name, &fwh)) != 0) {
-		printf("%s: failed loadfirmware of file %s (error %d)\n",
+		printf("%s: failed firmware_open of file %s (error %d)\n",
 		    device_xname(sc->sc_dev), name, error);
 		return error;
 	}
@@ -283,18 +283,18 @@ rum_attachhook(void *xsc)
 	if (error != 0) {
 		printf("%s: failed to read firmware (error %d)\n",
 		    device_xname(sc->sc_dev), error);
-		firmware_free(ucode, 0);
+		firmware_free(ucode, size);
 		return error;
 	}
 
 	if (rum_load_microcode(sc, ucode, size) != 0) {
 		printf("%s: could not load 8051 microcode\n",
 		    device_xname(sc->sc_dev));
-		firmware_free(ucode, 0);
+		firmware_free(ucode, size);
 		return ENXIO;
 	}
 
-	firmware_free(ucode, 0);
+	firmware_free(ucode, size);
 	sc->sc_flags |= RT2573_FWLOADED;
 
 	return 0;
@@ -483,6 +483,9 @@ rum_attach(device_t parent, device_t self, void *aux)
 	usbd_add_drv_event(USB_EVENT_DRIVER_ATTACH, sc->sc_udev,
 	    sc->sc_dev);
 
+	if (!pmf_device_register(self, NULL, NULL))
+		aprint_error_dev(self, "couldn't establish power handler\n");
+
 	return;
 }
 
@@ -496,6 +499,8 @@ rum_detach(device_t self, int flags)
 
 	if (!ifp->if_softc)
 		return 0;
+
+	pmf_device_deregister(self);
 
 	s = splusb();
 
@@ -1476,17 +1481,22 @@ rum_write_multi(struct rum_softc *sc, uint16_t reg, void *buf, size_t len)
 {
 	usb_device_request_t req;
 	usbd_status error;
+	int offset;
 
 	req.bmRequestType = UT_WRITE_VENDOR_DEVICE;
 	req.bRequest = RT2573_WRITE_MULTI_MAC;
 	USETW(req.wValue, 0);
-	USETW(req.wIndex, reg);
-	USETW(req.wLength, len);
 
-	error = usbd_do_request(sc->sc_udev, &req, buf);
-	if (error != 0) {
-		printf("%s: could not multi write MAC register: %s\n",
-		    device_xname(sc->sc_dev), usbd_errstr(error));
+	/* write at most 64 bytes at a time */
+	for (offset = 0; offset < len; offset += 64) {
+		USETW(req.wIndex, reg + offset);
+		USETW(req.wLength, MIN(len - offset, 64));
+
+		error = usbd_do_request(sc->sc_udev, &req, (char *)buf + offset);
+		if (error != 0) {
+			printf("%s: could not multi write MAC register: %s\n",
+			    device_xname(sc->sc_dev), usbd_errstr(error));
+		}
 	}
 }
 

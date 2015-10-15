@@ -1,4 +1,4 @@
-/*	$NetBSD: cz.c,v 1.57 2013/09/12 19:37:19 martin Exp $	*/
+/*	$NetBSD: cz.c,v 1.61 2014/11/15 19:18:19 christos Exp $	*/
 
 /*-
  * Copyright (c) 2000 Zembu Labs, Inc.
@@ -73,7 +73,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: cz.c,v 1.57 2013/09/12 19:37:19 martin Exp $");
+__KERNEL_RCSID(0, "$NetBSD: cz.c,v 1.61 2014/11/15 19:18:19 christos Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -291,6 +291,7 @@ cz_attach(device_t parent, device_t self, void *aux)
 	struct cztty_softc *sc;
 	struct tty *tp;
 	int i;
+	char intrbuf[PCI_INTRSTR_LEN];
 
 	aprint_naive(": Multi-port serial controller\n");
 	aprint_normal(": Cyclades-Z multiport serial\n");
@@ -342,7 +343,7 @@ cz_attach(device_t parent, device_t self, void *aux)
 		cz->cz_ih = NULL;
 		goto polling_mode;
 	} else {
-		intrstr = pci_intr_string(pa->pa_pc, ih);
+		intrstr = pci_intr_string(pa->pa_pc, ih, intrbuf, sizeof(intrbuf));
 		cz->cz_ih = pci_intr_establish(pa->pa_pc, ih, IPL_TTY,
 		    cz_intr, cz);
 	}
@@ -845,9 +846,8 @@ cz_wait_pci_doorbell(struct cz_softc *cz, const char *wstring)
  * Cyclades-Z TTY code starts here...
  *****************************************************************************/
 
-#define CZTTYDIALOUT_MASK	0x80000
-
-#define	CZTTY_DIALOUT(dev)	(minor((dev)) & CZTTYDIALOUT_MASK)
+#define	CZTTY_DIALOUT(dev)	TTDIALOUT(dev)
+#define	CZTTY_UNIT(dev)		TTUNIT(dev)
 #define	CZTTY_CZ(sc)		((sc)->sc_parent)
 
 #define	CZTTY_SOFTC(dev)	cztty_getttysoftc(dev)
@@ -855,7 +855,7 @@ cz_wait_pci_doorbell(struct cz_softc *cz, const char *wstring)
 static struct cztty_softc *
 cztty_getttysoftc(dev_t dev)
 {
-	int i, j, k = 0, u = minor(dev) & ~CZTTYDIALOUT_MASK;
+	int i, j, k = 0, u = CZTTY_UNIT(dev);
 	struct cz_softc *cz = NULL;
 
 	for (i = 0, j = 0; i < cz_cd.cd_ndevs; i++) {
@@ -1535,8 +1535,18 @@ cztty_diag(void *arg)
 }
 
 const struct cdevsw cz_cdevsw = {
-	czttyopen, czttyclose, czttyread, czttywrite, czttyioctl,
-	    czttystop, czttytty, czttypoll, nommap, ttykqfilter, D_TTY
+	.d_open = czttyopen,
+	.d_close = czttyclose,
+	.d_read = czttyread,
+	.d_write = czttywrite,
+	.d_ioctl = czttyioctl,
+	.d_stop = czttystop,
+	.d_tty = czttytty,
+	.d_poll = czttypoll,
+	.d_mmap = nommap,
+	.d_kqfilter = ttykqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_TTY
 };
 
 /*

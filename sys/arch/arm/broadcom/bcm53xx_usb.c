@@ -32,8 +32,9 @@
 
 #include <sys/cdefs.h>
 
-__KERNEL_RCSID(1, "$NetBSD: bcm53xx_usb.c,v 1.4 2013/10/28 22:51:16 matt Exp $");
+__KERNEL_RCSID(1, "$NetBSD: bcm53xx_usb.c,v 1.6 2014/06/24 05:07:31 skrll Exp $");
 
+#include <sys/param.h>
 #include <sys/bus.h>
 #include <sys/device.h>
 #include <sys/intr.h>
@@ -124,10 +125,11 @@ ohci_bcmusb_attach(device_t parent, device_t self, void *aux)
 	int error = ohci_init(sc);
 	if (error != USBD_NORMAL_COMPLETION) {
 		aprint_error_dev(self, "init failed, error=%d\n", error);
-	} else {
-		/* Attach usb device. */
-		sc->sc_child = config_found(self, &sc->sc_bus, usbctlprint);
+		return;
 	}
+
+	/* Attach usb device. */
+	sc->sc_child = config_found(self, &sc->sc_bus, usbctlprint);
 }
 
 #ifdef EHCI_DEBUG
@@ -183,10 +185,10 @@ ehci_bcmusb_attach(device_t parent, device_t self, void *aux)
 	int error = ehci_init(sc);
 	if (error != USBD_NORMAL_COMPLETION) {
 		aprint_error_dev(self, "init failed, error=%d\n", error);
-	} else {
-		/* Attach usb device. */
-		sc->sc_child = config_found(self, &sc->sc_bus, usbctlprint);
+		return;
 	}
+	/* Attach usb device. */
+	sc->sc_child = config_found(self, &sc->sc_bus, usbctlprint);
 }
 
 /*

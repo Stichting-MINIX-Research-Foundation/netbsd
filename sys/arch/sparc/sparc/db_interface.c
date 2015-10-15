@@ -1,4 +1,4 @@
-/*	$NetBSD: db_interface.c,v 1.89 2011/07/09 15:02:49 mrg Exp $ */
+/*	$NetBSD: db_interface.c,v 1.91 2015/10/04 08:17:03 joerg Exp $ */
 
 /*
  * Mach Operating System
@@ -33,7 +33,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: db_interface.c,v 1.89 2011/07/09 15:02:49 mrg Exp $");
+__KERNEL_RCSID(0, "$NetBSD: db_interface.c,v 1.91 2015/10/04 08:17:03 joerg Exp $");
 
 #include "opt_ddb.h"
 #include "opt_kgdb.h"
@@ -43,7 +43,6 @@ __KERNEL_RCSID(0, "$NetBSD: db_interface.c,v 1.89 2011/07/09 15:02:49 mrg Exp $"
 #include <sys/proc.h>
 #include <sys/reboot.h>
 #include <sys/systm.h>
-#include <sys/simplelock.h>
 
 #include <dev/cons.h>
 
@@ -240,9 +239,6 @@ db_suspend_others(void)
 {
 	int cpu_me = cpu_number();
 	int win;
-
-	if (cpus == NULL)
-		return 1;
 
 	__cpu_simple_lock(&db_lock);
 	if (ddb_cpu == NOCPU)

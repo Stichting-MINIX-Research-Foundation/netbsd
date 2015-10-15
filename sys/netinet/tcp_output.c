@@ -1,4 +1,4 @@
-/*	$NetBSD: tcp_output.c,v 1.175 2013/06/05 19:01:26 christos Exp $	*/
+/*	$NetBSD: tcp_output.c,v 1.185 2015/08/24 22:21:26 pooka Exp $	*/
 
 /*
  * Copyright (C) 1995, 1996, 1997, and 1998 WIDE Project.
@@ -135,15 +135,16 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: tcp_output.c,v 1.175 2013/06/05 19:01:26 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: tcp_output.c,v 1.185 2015/08/24 22:21:26 pooka Exp $");
 
+#ifdef _KERNEL_OPT
 #include "opt_inet.h"
 #include "opt_ipsec.h"
 #include "opt_tcp_debug.h"
+#endif
 
 #include <sys/param.h>
 #include <sys/systm.h>
-#include <sys/malloc.h>
 #include <sys/mbuf.h>
 #include <sys/protosw.h>
 #include <sys/socket.h>
@@ -351,7 +352,8 @@ tcp_segsize(struct tcpcb *tp, int *txsegsizep, int *rxsegsizep,
 #ifdef INET
 	if (inp) {
 #if defined(IPSEC)
-		if (! IPSEC_PCB_SKIP_IPSEC(inp->inp_sp, IPSEC_DIR_OUTBOUND))
+		if (ipsec_used &&
+		    !IPSEC_PCB_SKIP_IPSEC(inp->inp_sp, IPSEC_DIR_OUTBOUND))
 			optlen += ipsec4_hdrsiz_tcp(tp);
 #endif
 		optlen += ip_optlen(inp);
@@ -361,7 +363,8 @@ tcp_segsize(struct tcpcb *tp, int *txsegsizep, int *rxsegsizep,
 #ifdef INET
 	if (in6p && tp->t_family == AF_INET) {
 #if defined(IPSEC)
-		if (! IPSEC_PCB_SKIP_IPSEC(in6p->in6p_sp, IPSEC_DIR_OUTBOUND))
+		if (ipsec_used &&
+		    !IPSEC_PCB_SKIP_IPSEC(in6p->in6p_sp, IPSEC_DIR_OUTBOUND))
 			optlen += ipsec4_hdrsiz_tcp(tp);
 #endif
 		/* XXX size -= ip_optlen(in6p); */
@@ -369,7 +372,8 @@ tcp_segsize(struct tcpcb *tp, int *txsegsizep, int *rxsegsizep,
 #endif
 	if (in6p && tp->t_family == AF_INET6) {
 #if defined(IPSEC)
-		if (! IPSEC_PCB_SKIP_IPSEC(in6p->in6p_sp, IPSEC_DIR_OUTBOUND))
+		if (ipsec_used &&
+		    !IPSEC_PCB_SKIP_IPSEC(in6p->in6p_sp, IPSEC_DIR_OUTBOUND))
 			optlen += ipsec6_hdrsiz_tcp(tp);
 #endif
 		optlen += ip6_optlen(in6p);
@@ -437,6 +441,7 @@ tcp_build_datapkt(struct tcpcb *tp, struct socket *so, int off,
 	if (tp->t_force && len == 1)
 		tcps[TCP_STAT_SNDPROBE]++;
 	else if (SEQ_LT(tp->snd_nxt, tp->snd_max)) {
+		tp->t_sndrexmitpack++;
 		tcps[TCP_STAT_SNDREXMITPACK]++;
 		tcps[TCP_STAT_SNDREXMITBYTE] += len;
 	} else {
@@ -554,6 +559,7 @@ tcp_output(struct tcpcb *tp)
 #endif
 	struct tcphdr *th;
 	u_char opt[MAX_TCPOPTLEN];
+#define OPT_FITS(more)	((optlen + (more)) < sizeof(opt))
 	unsigned optlen, hdrlen, packetlen;
 	unsigned int sack_numblks;
 	int idle, sendalot, txsegsize, rxsegsize;
@@ -627,20 +633,20 @@ tcp_output(struct tcpcb *tp)
 #if defined(INET)
 	has_tso4 = tp->t_inpcb != NULL &&
 #if defined(IPSEC)
-		  IPSEC_PCB_SKIP_IPSEC(tp->t_inpcb->inp_sp,
-		  		       IPSEC_DIR_OUTBOUND) &&
+	    (!ipsec_used || IPSEC_PCB_SKIP_IPSEC(tp->t_inpcb->inp_sp,
+	    IPSEC_DIR_OUTBOUND)) &&
 #endif
-		  (rt = rtcache_validate(&tp->t_inpcb->inp_route)) != NULL &&
-		  (rt->rt_ifp->if_capenable & IFCAP_TSOv4) != 0;
+	    (rt = rtcache_validate(&tp->t_inpcb->inp_route)) != NULL &&
+	    (rt->rt_ifp->if_capenable & IFCAP_TSOv4) != 0;
 #endif /* defined(INET) */
 #if defined(INET6)
 	has_tso6 = tp->t_in6pcb != NULL &&
 #if defined(IPSEC)
-		  IPSEC_PCB_SKIP_IPSEC(tp->t_in6pcb->in6p_sp,
-		  		       IPSEC_DIR_OUTBOUND) &&
+	    (!ipsec_used || IPSEC_PCB_SKIP_IPSEC(tp->t_in6pcb->in6p_sp,
+	    IPSEC_DIR_OUTBOUND)) &&
 #endif
-		  (rt = rtcache_validate(&tp->t_in6pcb->in6p_route)) != NULL &&
-		  (rt->rt_ifp->if_capenable & IFCAP_TSOv6) != 0;
+	    (rt = rtcache_validate(&tp->t_in6pcb->in6p_route)) != NULL &&
+	    (rt->rt_ifp->if_capenable & IFCAP_TSOv6) != 0;
 #endif /* defined(INET6) */
 	has_tso = (has_tso4 || has_tso6) && !alwaysfrag;
 
@@ -1016,11 +1022,19 @@ again:
 		long adv = min(win, (long)TCP_MAXWIN << tp->rcv_scale) -
 			(tp->rcv_adv - tp->rcv_nxt);
 
+		/*
+		 * If the new window size ends up being the same as the old
+		 * size when it is scaled, then don't force a window update.
+		 */
+		if ((tp->rcv_adv - tp->rcv_nxt) >> tp->rcv_scale ==
+		    (adv + tp->rcv_adv - tp->rcv_nxt) >> tp->rcv_scale)
+			goto dontupdate;
 		if (adv >= (long) (2 * rxsegsize))
 			goto send;
 		if (2 * adv >= (long) so->so_rcv.sb_hiwat)
 			goto send;
 	}
+dontupdate:
 
 	/*
 	 * Send if we owe peer an ACK.
@@ -1120,7 +1134,7 @@ send:
 		tp->snd_nxt = tp->iss;
 		tp->t_ourmss = tcp_mss_to_advertise(synrt != NULL ?
 						    synrt->rt_ifp : NULL, af);
-		if ((tp->t_flags & TF_NOOPT) == 0) {
+		if ((tp->t_flags & TF_NOOPT) == 0 && OPT_FITS(4)) {
 			opt[0] = TCPOPT_MAXSEG;
 			opt[1] = 4;
 			opt[2] = (tp->t_ourmss >> 8) & 0xff;
@@ -1129,7 +1143,8 @@ send:
 
 			if ((tp->t_flags & TF_REQ_SCALE) &&
 			    ((flags & TH_ACK) == 0 ||
-			    (tp->t_flags & TF_RCVD_SCALE))) {
+			    (tp->t_flags & TF_RCVD_SCALE)) &&
+			    OPT_FITS(4)) {
 				*((u_int32_t *) (opt + optlen)) = htonl(
 					TCPOPT_NOP << 24 |
 					TCPOPT_WINDOW << 16 |
@@ -1137,7 +1152,7 @@ send:
 					tp->request_r_scale);
 				optlen += 4;
 			}
-			if (tcp_do_sack) {
+			if (tcp_do_sack && OPT_FITS(4)) {
 				u_int8_t *cp = (u_int8_t *)(opt + optlen);
 
 				cp[0] = TCPOPT_SACK_PERMITTED;
@@ -1157,7 +1172,7 @@ send:
 	if ((tp->t_flags & (TF_REQ_TSTMP|TF_NOOPT)) == TF_REQ_TSTMP &&
 	     (flags & TH_RST) == 0 &&
 	    ((flags & (TH_SYN|TH_ACK)) == TH_SYN ||
-	     (tp->t_flags & TF_RCVD_TSTMP))) {
+	     (tp->t_flags & TF_RCVD_TSTMP)) && OPT_FITS(TCPOLEN_TSTAMP_APPA)) {
 		u_int32_t *lp = (u_int32_t *)(opt + optlen);
 
 		/* Form timestamp option as shown in appendix A of RFC 1323. */
@@ -1181,30 +1196,33 @@ send:
 		struct ipqent *tiqe;
 
 		sack_len = sack_numblks * 8 + 2;
-		bp[0] = TCPOPT_NOP;
-		bp[1] = TCPOPT_NOP;
-		bp[2] = TCPOPT_SACK;
-		bp[3] = sack_len;
-		if ((tp->rcv_sack_flags & TCPSACK_HAVED) != 0) {
-			sack_numblks--;
-			*lp++ = htonl(tp->rcv_dsack_block.left);
-			*lp++ = htonl(tp->rcv_dsack_block.right);
-			tp->rcv_sack_flags &= ~TCPSACK_HAVED;
+		if (OPT_FITS(sack_len + 2)) {
+			bp[0] = TCPOPT_NOP;
+			bp[1] = TCPOPT_NOP;
+			bp[2] = TCPOPT_SACK;
+			bp[3] = sack_len;
+			if ((tp->rcv_sack_flags & TCPSACK_HAVED) != 0) {
+				sack_numblks--;
+				*lp++ = htonl(tp->rcv_dsack_block.left);
+				*lp++ = htonl(tp->rcv_dsack_block.right);
+				tp->rcv_sack_flags &= ~TCPSACK_HAVED;
+			}
+			for (tiqe = TAILQ_FIRST(&tp->timeq);
+			    sack_numblks > 0;
+			    tiqe = TAILQ_NEXT(tiqe, ipqe_timeq)) {
+				KASSERT(tiqe != NULL);
+				sack_numblks--;
+				*lp++ = htonl(tiqe->ipqe_seq);
+				*lp++ = htonl(tiqe->ipqe_seq + tiqe->ipqe_len +
+				    ((tiqe->ipqe_flags & TH_FIN) != 0 ? 1 : 0));
+			}
+			optlen += sack_len + 2;
 		}
-		for (tiqe = TAILQ_FIRST(&tp->timeq);
-		    sack_numblks > 0; tiqe = TAILQ_NEXT(tiqe, ipqe_timeq)) {
-			KASSERT(tiqe != NULL);
-			sack_numblks--;
-			*lp++ = htonl(tiqe->ipqe_seq);
-			*lp++ = htonl(tiqe->ipqe_seq + tiqe->ipqe_len +
-			    ((tiqe->ipqe_flags & TH_FIN) != 0 ? 1 : 0));
-		}
-		optlen += sack_len + 2;
 	}
 	TCP_REASS_UNLOCK(tp);
 
 #ifdef TCP_SIGNATURE
-	if (tp->t_flags & TF_SIGNATURE) {
+	if ((tp->t_flags & TF_SIGNATURE) && OPT_FITS(TCPOLEN_SIGNATURE + 2)) {
 		u_char *bp;
 		/*
 		 * Initialize TCP-MD5 option (RFC2385)
@@ -1222,7 +1240,10 @@ send:
 		*bp++ = TCPOPT_NOP;
 		*bp++ = TCPOPT_EOL;
  		optlen += 2;
- 	}
+ 	} else if ((tp->t_flags & TF_SIGNATURE) != 0) {
+		error = ECONNABORTED;
+		goto out;
+	}
 #endif /* TCP_SIGNATURE */
 
 	hdrlen += optlen;
@@ -1394,6 +1415,9 @@ send:
 	if (win < (long)(int32_t)(tp->rcv_adv - tp->rcv_nxt))
 		win = (long)(int32_t)(tp->rcv_adv - tp->rcv_nxt);
 	th->th_win = htons((u_int16_t) (win>>tp->rcv_scale));
+	if (th->th_win == 0) {
+		tp->t_sndzerowin++;
+	}
 	if (SEQ_GT(tp->snd_up, tp->snd_nxt)) {
 		u_int32_t urp = tp->snd_up - tp->snd_nxt;
 		if (urp > IP_MAXPACKET)
@@ -1511,14 +1535,24 @@ send:
 		 * of retransmit time.
 		 */
 timer:
-		if (TCP_TIMER_ISARMED(tp, TCPT_REXMT) == 0 &&
-			((sack_rxmit && tp->snd_nxt != tp->snd_max) ||
-		    tp->snd_nxt != tp->snd_una)) {
-			if (TCP_TIMER_ISARMED(tp, TCPT_PERSIST)) {
-				TCP_TIMER_DISARM(tp, TCPT_PERSIST);
+		if (TCP_TIMER_ISARMED(tp, TCPT_REXMT) == 0) {
+			if ((sack_rxmit && tp->snd_nxt != tp->snd_max)
+			    || tp->snd_nxt != tp->snd_una) {
+				if (TCP_TIMER_ISARMED(tp, TCPT_PERSIST)) {
+					TCP_TIMER_DISARM(tp, TCPT_PERSIST);
+					tp->t_rxtshift = 0;
+				}
+				TCP_TIMER_ARM(tp, TCPT_REXMT, tp->t_rxtcur);
+			} else if (len == 0 && so->so_snd.sb_cc > 0
+			    && TCP_TIMER_ISARMED(tp, TCPT_PERSIST) == 0) {
+				/*
+				 * If we are sending a window probe and there's
+				 * unacked data in the socket, make sure at
+				 * least the persist timer is running.
+				 */
 				tp->t_rxtshift = 0;
+				tcp_setpersist(tp);
 			}
-			TCP_TIMER_ARM(tp, TCPT_REXMT, tp->t_rxtcur);
 		}
 	} else
 		if (SEQ_GT(tp->snd_nxt + len, tp->snd_max))
@@ -1568,9 +1602,7 @@ timer:
 			 * setsockopt. Also, desired default hop limit might
 			 * be changed via Neighbor Discovery.
 			 */
-			ip6->ip6_hlim = in6_selecthlim(tp->t_in6pcb,
-				(rt = rtcache_validate(ro)) != NULL ? rt->rt_ifp
-				                                    : NULL);
+			ip6->ip6_hlim = in6_selecthlim_rt(tp->t_in6pcb);
 		}
 		ip6->ip6_flow |= htonl(ecn_tos << 20);
 		/* ip6->ip6_flow = ??? (from template) */

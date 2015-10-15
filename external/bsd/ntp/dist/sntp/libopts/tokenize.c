@@ -1,12 +1,17 @@
-/*	$NetBSD: tokenize.c,v 1.2 2012/02/03 21:36:40 christos Exp $	*/
+/*	$NetBSD: tokenize.c,v 1.6 2015/07/10 14:20:35 christos Exp $	*/
 
+/** \file tokenize.c
+ *
+ *  Tokenize a string, accommodating quoted strings.
+ *
+ * @addtogroup autoopts
+ * @{
+ */
 /*
  *  This file defines the string_tokenize interface
- * Time-stamp:      "2010-07-17 10:40:26 bkorb"
- *
  *  This file is part of AutoOpts, a companion to AutoGen.
  *  AutoOpts is free software.
- *  AutoOpts is Copyright (c) 1992-2011 by Bruce Korb - all rights reserved
+ *  AutoOpts is Copyright (C) 1992-2015 by Bruce Korb - all rights reserved
  *
  *  AutoOpts is available under any one of two licenses.  The license
  *  in use must be one of these two and the choice is under the control
@@ -18,11 +23,11 @@
  *   The Modified Berkeley Software Distribution License
  *      See the file "COPYING.mbsd"
  *
- *  These files have the following md5sums:
+ *  These files have the following sha256 sums:
  *
- *  43b91e8ca915626ed3818ffb1b71248b pkg/libopts/COPYING.gplv3
- *  06a1a2e4760c90ea5e1dad8dfaac4d39 pkg/libopts/COPYING.lgplv3
- *  66a5cedaf62c4b2637025f049f9b826f pkg/libopts/COPYING.mbsd
+ *  8584710e9b04216a394078dc156b781d0b47e1729104d666658aecef8ee32e95  COPYING.gplv3
+ *  4379e7444a0e2ce2b12dd6f5a52a27a4d02d39d247901d3285c88cf0d37f477b  COPYING.lgplv3
+ *  13aa749a5b0a454917a944ed8fffc530b784f5ead522b1aacaf4ec8aa55a6239  COPYING.mbsd
  */
 
 #include <errno.h>
@@ -33,20 +38,20 @@
 
 /* = = = START-STATIC-FORWARD = = = */
 static void
-copy_cooked(ch_t** ppDest, char const ** ppSrc);
+copy_cooked(ch_t ** ppDest, char const ** ppSrc);
 
 static void
-copy_raw(ch_t** ppDest, char const ** ppSrc);
+copy_raw(ch_t ** ppDest, char const ** ppSrc);
 
 static token_list_t *
 alloc_token_list(char const * str);
 /* = = = END-STATIC-FORWARD = = = */
 
 static void
-copy_cooked(ch_t** ppDest, char const ** ppSrc)
+copy_cooked(ch_t ** ppDest, char const ** ppSrc)
 {
-    ch_t* pDest = (ch_t*)*ppDest;
-    const ch_t* pSrc  = (const ch_t*)(*ppSrc + 1);
+    ch_t * pDest = (ch_t *)*ppDest;
+    const ch_t * pSrc  = (const ch_t *)(*ppSrc + 1);
 
     for (;;) {
         ch_t ch = *(pSrc++);
@@ -54,7 +59,7 @@ copy_cooked(ch_t** ppDest, char const ** ppSrc)
         case NUL:   *ppSrc = NULL; return;
         case '"':   goto done;
         case '\\':
-            pSrc += ao_string_cook_escape_char((char*)(intptr_t)pSrc, (char*)(intptr_t)&ch, 0x7F);
+            pSrc += ao_string_cook_escape_char((const char *)pSrc, (char *)&ch, 0x7F);
             if (ch == 0x7F)
                 break;
             /* FALLTHROUGH */
@@ -65,16 +70,16 @@ copy_cooked(ch_t** ppDest, char const ** ppSrc)
     }
 
  done:
-    *ppDest = (ch_t*)pDest; /* next spot for storing character */
+    *ppDest = (ch_t *)pDest; /* next spot for storing character */
     *ppSrc  = (char const *)pSrc;  /* char following closing quote    */
 }
 
 
 static void
-copy_raw(ch_t** ppDest, char const ** ppSrc)
+copy_raw(ch_t ** ppDest, char const ** ppSrc)
 {
-    ch_t* pDest = *ppDest;
-    cc_t* pSrc  = (cc_t*) (*ppSrc + 1);
+    ch_t * pDest = *ppDest;
+    cc_t * pSrc  = (cc_t *) (*ppSrc + 1);
 
     for (;;) {
         ch_t ch = *(pSrc++);
@@ -89,11 +94,11 @@ copy_raw(ch_t** ppDest, char const ** ppSrc)
             switch (*pSrc) {
             case NUL:   *ppSrc = NULL; return;
             case '\r':
-                if (*(++pSrc) == '\n')
+                if (*(++pSrc) == NL)
                     ++pSrc;
                 continue;
 
-            case '\n':
+            case NL:
                 ++pSrc;
                 continue;
 
@@ -130,7 +135,7 @@ alloc_token_list(char const * str)
      *  Trim leading white space.  Use "ENOENT" and a NULL return to indicate
      *  an empty string was passed.
      */
-    while (IS_WHITESPACE_CHAR(*str))  str++;
+    str = SPN_WHITESPACE_CHARS(str);
     if (*str == NUL)  goto enoent_res;
 
     /*
@@ -139,23 +144,21 @@ alloc_token_list(char const * str)
      *  high and we'll squander the space for a few extra pointers.
      */
     {
-        cc_t* pz = (cc_t*)str;
+        char const * pz = str;
 
         do {
             max_token_ct++;
-            while (! IS_WHITESPACE_CHAR(*++pz))
-                if (*pz == NUL) goto found_nul;
-            while (IS_WHITESPACE_CHAR(*pz))  pz++;
+            pz = BRK_WHITESPACE_CHARS(pz+1);
+            pz = SPN_WHITESPACE_CHARS(pz);
         } while (*pz != NUL);
 
-    found_nul:
-        res = malloc(sizeof(*res) + (pz - (cc_t*)str)
-                     + (max_token_ct * sizeof(ch_t*)));
+        res = malloc(sizeof(*res) + (size_t)(pz - str)
+                     + ((size_t)max_token_ct * sizeof(ch_t *)));
     }
 
     if (res == NULL)
         errno = ENOMEM;
-    else res->tkn_list[0] = (ch_t*)(res->tkn_list + (max_token_ct - 1));
+    else res->tkn_list[0] = (ch_t *)(res->tkn_list + (max_token_ct - 1));
 
     return res;
 
@@ -169,9 +172,9 @@ alloc_token_list(char const * str)
  *
  * what: tokenize an input string
  *
- * arg:  + char const* + string + string to be tokenized +
+ * arg:  + char const * + string + string to be tokenized +
  *
- * ret_type:  token_list_t*
+ * ret_type:  token_list_t *
  * ret_desc:  pointer to a structure that lists each token
  *
  * doc:
@@ -212,7 +215,7 @@ alloc_token_list(char const * str)
  * @example
  *    #include <stdlib.h>
  *    int ix;
- *    token_list_t* ptl = ao_string_tokenize(some_string)
+ *    token_list_t * ptl = ao_string_tokenize(some_string)
  *    for (ix = 0; ix < ptl->tkn_ct; ix++)
  *       do_something_with_tkn(ptl->tkn_list[ix]);
  *    free(ptl);
@@ -230,11 +233,11 @@ alloc_token_list(char const * str)
  *  @code{ENOMEM} - There is not enough memory.
  *  @end itemize
 =*/
-token_list_t*
-ao_string_tokenize(char const* str)
+token_list_t *
+ao_string_tokenize(char const * str)
 {
-    token_list_t* res = alloc_token_list(str);
-    ch_t* pzDest;
+    token_list_t * res = alloc_token_list(str);
+    ch_t * pzDest;
 
     /*
      *  Now copy each token into the output buffer.
@@ -242,7 +245,7 @@ ao_string_tokenize(char const* str)
     if (res == NULL)
         return res;
 
-    pzDest = (ch_t*)(res->tkn_list[0]);
+    pzDest = (ch_t *)(res->tkn_list[0]);
     res->tkn_ct  = 0;
 
     do  {
@@ -251,7 +254,7 @@ ao_string_tokenize(char const* str)
             int ch = (ch_t)*str;
             if (IS_WHITESPACE_CHAR(ch)) {
             found_white_space:
-                while (IS_WHITESPACE_CHAR(*++str))  ;
+                str = SPN_WHITESPACE_CHARS(str+1);
                 break;
             }
 
@@ -283,7 +286,7 @@ ao_string_tokenize(char const* str)
 
             default:
                 str++;
-                *(pzDest++) = ch;
+                *(pzDest++) = (unsigned char)ch;
             }
         } copy_done:;
 
@@ -303,15 +306,15 @@ ao_string_tokenize(char const* str)
 #include <string.h>
 
 int
-main(int argc, char** argv)
+main(int argc, char ** argv)
 {
     if (argc == 1) {
         printf("USAGE:  %s arg [ ... ]\n", *argv);
         return 1;
     }
     while (--argc > 0) {
-        char* arg = *(++argv);
-        token_list_t* p = ao_string_tokenize(arg);
+        char * arg = *(++argv);
+        token_list_t * p = ao_string_tokenize(arg);
         if (p == NULL) {
             printf("Parsing string ``%s'' failed:\n\terrno %d (%s)\n",
                    arg, errno, strerror(errno));
@@ -328,7 +331,8 @@ main(int argc, char** argv)
 }
 #endif
 
-/*
+/** @}
+ *
  * Local Variables:
  * mode: C
  * c-file-style: "stroustrup"

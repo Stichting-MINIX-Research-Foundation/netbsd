@@ -1,4 +1,4 @@
-/*	$NetBSD: in_var.h,v 1.65 2010/11/05 01:35:57 rmind Exp $	*/
+/*	$NetBSD: in_var.h,v 1.74 2015/08/31 08:05:20 ozaki-r Exp $	*/
 
 /*-
  * Copyright (c) 1998 The NetBSD Foundation, Inc.
@@ -66,6 +66,15 @@
 
 #include <sys/queue.h>
 
+#define IN_IFF_TENTATIVE	0x01	/* tentative address */
+#define IN_IFF_DUPLICATED	0x02	/* DAD detected duplicate */
+#define IN_IFF_DETACHED		0x04	/* may be detached from the link */
+#define IN_IFF_TRYTENTATIVE	0x08	/* intent to try DAD */
+
+/* do not input/output */
+#define IN_IFF_NOTREADY \
+    (IN_IFF_TRYTENTATIVE | IN_IFF_TENTATIVE | IN_IFF_DUPLICATED)
+
 /*
  * Interface address, Internet version.  One of these structures
  * is allocated for each interface with an Internet address.
@@ -92,6 +101,9 @@ struct in_ifaddr {
 	struct	in_multi *ia_allhosts;	/* multicast address record for
 					   the allhosts multicast group */
 	uint16_t ia_idsalt;		/* ip_id salt for this ia */
+	int	ia4_flags;		/* address flags */
+	void	(*ia_dad_start) (struct ifaddr *);	/* DAD start function */
+	void	(*ia_dad_stop) (struct ifaddr *);	/* DAD stop function */
 };
 
 struct	in_aliasreq {
@@ -101,19 +113,18 @@ struct	in_aliasreq {
 #define	ifra_broadaddr	ifra_dstaddr
 	struct	sockaddr_in ifra_mask;
 };
+
 /*
  * Given a pointer to an in_ifaddr (ifaddr),
  * return a pointer to the addr as a sockaddr_in.
  */
 #define	IA_SIN(ia) (&(((struct in_ifaddr *)(ia))->ia_addr))
 
+#ifdef _KERNEL
 
-#ifdef	_KERNEL
+/* Note: 61, 127, 251, 509, 1021, 2039 are good. */
 #ifndef IN_IFADDR_HASH_SIZE
-#define IN_IFADDR_HASH_SIZE 509	/* 61, 127, 251, 509, 1021, 2039 are good */
-#endif
-#ifndef IN_MULTI_HASH_SIZE
-#define IN_MULTI_HASH_SIZE 509	/* 61, 127, 251, 509, 1021, 2039 are good */
+#define IN_IFADDR_HASH_SIZE	509
 #endif
 
 /*
@@ -123,26 +134,15 @@ struct	in_aliasreq {
  */
 
 #define	IN_IFADDR_HASH(x) in_ifaddrhashtbl[(u_long)(x) % IN_IFADDR_HASH_SIZE]
-#define IN_MULTI_HASH(x, ifp) \
-	(in_multihashtbl[(u_long)((x) ^ (ifp->if_index)) % IN_MULTI_HASH_SIZE])
 
 LIST_HEAD(in_ifaddrhashhead, in_ifaddr);	/* Type of the hash head */
 TAILQ_HEAD(in_ifaddrhead, in_ifaddr);		/* Type of the list head */
-LIST_HEAD(in_multihashhead, in_multi);		/* Type of the hash head */
-
 
 extern	u_long in_ifaddrhash;			/* size of hash table - 1 */
-extern	int	in_ifaddrentries;		/* total number of addrs */
 extern  struct in_ifaddrhashhead *in_ifaddrhashtbl;	/* Hash table head */
 extern  struct in_ifaddrhead in_ifaddrhead;		/* List head (in ip_input) */
 
-extern	u_long in_multihash;			/* size of hash table - 1 */
-extern	int	in_multientries;		/* total number of addrs */
-extern  struct in_multihashhead *in_multihashtbl;	/* Hash table head */
-
-extern	struct	ifqueue	ipintrq;		/* ip packet input queue */
 extern	const	int	inetctlerrmap[];
-
 
 /*
  * Macro for finding whether an internet address (in_addr) belongs to one
@@ -204,17 +204,17 @@ extern	const	int	inetctlerrmap[];
 	} \
 	(ia) = ifatoia(ifa); \
 }
-#endif
 
+#include <netinet/in_selsrc.h>
 /*
- * Per-interface router version information.
+ * IPv4 per-interface state.
  */
-struct router_info {
-	LIST_ENTRY(router_info) rti_link;
-	struct	ifnet *rti_ifp;
-	int	rti_type;	/* type of router on this interface */
-	int	rti_age;	/* time since last v1 query */
+struct in_ifinfo {
+	struct lltable		*ii_llt;	/* ARP state */
+	struct in_ifsysctl	*ii_selsrc;
 };
+
+#endif /* _KERNEL */
 
 /*
  * Internet multicast address structure.  There is one of these for each IP
@@ -222,6 +222,8 @@ struct router_info {
  * They are kept in a linked list, rooted in the interface's in_ifaddr
  * structure.
  */
+struct router_info;
+
 struct in_multi {
 	LIST_ENTRY(in_multi) inm_list;	/* list of multicast addresses */
 	struct	router_info *inm_rti;	/* router version info */
@@ -233,76 +235,47 @@ struct in_multi {
 };
 
 #ifdef _KERNEL
+
+#include <net/pktqueue.h>
+
+extern pktqueue_t *ip_pktq;
+
+extern int ip_dad_count;		/* Duplicate Address Detection probes */
+
 /*
- * Structure used by macros below to remember position when stepping through
- * all of the in_multi records.
+ * Structure used by functions below to remember position when stepping
+ * through all of the in_multi records.
  */
 struct in_multistep {
 	int i_n;
 	struct in_multi *i_inm;
 };
 
-/*
- * Macro for looking up the in_multi record for a given IP multicast address
- * on a given interface.  If no matching record is found, "inm" returns NULL.
- */
-#define IN_LOOKUP_MULTI(addr, ifp, inm) \
-	/* struct in_addr addr; */ \
-	/* struct ifnet *ifp; */ \
-	/* struct in_multi *inm; */ \
-{ \
-	LIST_FOREACH((inm), &IN_MULTI_HASH(((addr).s_addr), (ifp)), inm_list) {\
-		if (in_hosteq((inm)->inm_addr, (addr)) && \
-		    (inm)->inm_ifp == (ifp)) \
-			break; \
-	} \
-}
+bool in_multi_group(struct in_addr, struct ifnet *, int);
+struct in_multi *in_first_multi(struct in_multistep *);
+struct in_multi *in_next_multi(struct in_multistep *);
+struct in_multi *in_lookup_multi(struct in_addr, struct ifnet *);
+struct in_multi *in_addmulti(struct in_addr *, struct ifnet *);
+void in_delmulti(struct in_multi *);
 
-/*
- * Macro to step through all of the in_multi records, one at a time.
- * The current position is remembered in "step", which the caller must
- * provide.  IN_FIRST_MULTI(), below, must be called to initialize "step"
- * and get the first record.  Both macros return a NULL "inm" when there
- * are no remaining records.
- */
-#define IN_NEXT_MULTI(step, inm) \
-	/* struct in_multistep  step; */ \
-	/* struct in_multi *inm; */ \
-{ \
-	while ((step).i_inm == NULL && (step).i_n < IN_MULTI_HASH_SIZE) \
-		(step).i_inm = LIST_FIRST(&in_multihashtbl[++(step).i_n]); \
-	if (((inm) = (step).i_inm) != NULL) \
-		(step).i_inm = LIST_NEXT((inm), inm_list); \
-}
-
-#define IN_FIRST_MULTI(step, inm) \
-	/* struct in_multistep step; */ \
-	/* struct in_multi *inm; */ \
-{ \
-	(step).i_n = 0; \
-	(step).i_inm = LIST_FIRST(&in_multihashtbl[0]); \
-	IN_NEXT_MULTI((step), (inm)); \
-}
+void in_multi_lock(int);
+void in_multi_unlock(void);
+int in_multi_lock_held(void);
 
 struct ifaddr;
 
 int	in_ifinit(struct ifnet *,
-	    struct in_ifaddr *, const struct sockaddr_in *, int);
+	    struct in_ifaddr *, const struct sockaddr_in *, int, int);
 void	in_savemkludge(struct in_ifaddr *);
 void	in_restoremkludge(struct in_ifaddr *, struct ifnet *);
 void	in_purgemkludge(struct ifnet *);
-struct	in_multi *in_addmulti(struct in_addr *, struct ifnet *);
-void	in_delmulti(struct in_multi *);
 void	in_ifscrub(struct ifnet *, struct in_ifaddr *);
 void	in_setmaxmtu(void);
 const char *in_fmtaddr(struct in_addr);
-int	in_control(struct socket *, u_long, void *, struct ifnet *,
-	    struct lwp *);
+int	in_control(struct socket *, u_long, void *, struct ifnet *);
 void	in_purgeaddr(struct ifaddr *);
 void	in_purgeif(struct ifnet *);
-void	ip_input(struct mbuf *);
 int	ipflow_fastforward(struct mbuf *);
-
 
 struct ipid_state;
 typedef struct ipid_state ipid_state_t;
@@ -349,6 +322,9 @@ ip_newid(const struct in_ifaddr *ia)
 #ifdef SYSCTLFN_PROTO
 int	sysctl_inpcblist(SYSCTLFN_PROTO);
 #endif
+
+#define LLTABLE(ifp)	\
+	((struct in_ifinfo *)(ifp)->if_afdata[AF_INET])->ii_llt
 
 #endif	/* !_KERNEL */
 

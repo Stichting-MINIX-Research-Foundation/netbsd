@@ -1,7 +1,7 @@
-/*	$NetBSD: dig.h,v 1.7 2013/07/27 19:23:09 christos Exp $	*/
+/*	$NetBSD: dig.h,v 1.11 2015/07/08 17:28:55 christos Exp $	*/
 
 /*
- * Copyright (C) 2004-2009, 2011, 2012  Internet Systems Consortium, Inc. ("ISC")
+ * Copyright (C) 2004-2009, 2011-2015  Internet Systems Consortium, Inc. ("ISC")
  * Copyright (C) 2000-2003  Internet Software Consortium.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
@@ -16,8 +16,6 @@
  * OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
  * PERFORMANCE OF THIS SOFTWARE.
  */
-
-/* Id: dig.h,v 1.114 2011/12/07 17:23:28 each Exp  */
 
 #ifndef DIG_H
 #define DIG_H
@@ -119,6 +117,7 @@ struct dig_lookup {
 		trace, /*% dig +trace */
 		trace_root, /*% initial query for either +trace or +nssearch */
 		tcp_mode,
+		tcp_mode_set,
 		ip6_int,
 		comments,
 		stats,
@@ -132,6 +131,10 @@ struct dig_lookup {
 		done_as_is,
 		besteffort,
 		dnssec,
+		expire,
+#ifdef ISC_PLATFORM_USESIT
+		sit,
+#endif
 		nsid;   /*% Name Server ID (RFC 5001) */
 #ifdef DIG_SIGCHASE
 isc_boolean_t	sigchase;
@@ -186,6 +189,10 @@ isc_boolean_t	sigchase;
 	isc_buffer_t *querysig;
 	isc_uint32_t msgcounter;
 	dns_fixedname_t fdomain;
+	isc_sockaddr_t *ecs_addr;
+#ifdef ISC_PLATFORM_USESIT
+	char *sitvalue;
+#endif
 };
 
 /*% The dig_query structure */
@@ -204,6 +211,7 @@ struct dig_query {
 	isc_uint32_t second_rr_serial;
 	isc_uint32_t msg_count;
 	isc_uint32_t rr_count;
+	isc_boolean_t ixfr_axfr;
 	char *servname;
 	char *userarg;
 	isc_bufferlist_t sendlist,
@@ -220,6 +228,7 @@ struct dig_query {
 	ISC_LINK(dig_query_t) clink;
 	isc_sockaddr_t sockaddr;
 	isc_time_t time_sent;
+	isc_time_t time_recv;
 	isc_uint64_t byte_count;
 	isc_buffer_t sendbuf;
 };
@@ -258,7 +267,6 @@ extern isc_boolean_t check_ra, have_ipv4, have_ipv6, specified_source,
 extern in_port_t port;
 extern unsigned int timeout;
 extern isc_mem_t *mctx;
-extern dns_messageid_t id;
 extern int sendcount;
 extern int ndots;
 extern int lookup_counter;
@@ -277,7 +285,8 @@ extern isc_boolean_t validated;
 extern isc_taskmgr_t *taskmgr;
 extern isc_task_t *global_task;
 extern isc_boolean_t free_now;
-extern isc_boolean_t debugging, memdebugging;
+extern isc_boolean_t debugging, debugtiming, memdebugging;
+extern isc_boolean_t keep_open;
 
 extern const char *progname;
 extern int tries;
@@ -309,7 +318,7 @@ debug(const char *format, ...) ISC_FORMAT_PRINTF(1, 2);
 void
 check_result(isc_result_t result, const char *msg);
 
-void
+isc_boolean_t
 setup_lookup(dig_lookup_t *lookup);
 
 void
@@ -336,6 +345,9 @@ setup_system(void);
 isc_result_t
 parse_uint(isc_uint32_t *uip, const char *value, isc_uint32_t max,
 	   const char *desc);
+
+isc_result_t
+parse_netprefix(isc_sockaddr_t **sap, const char *value);
 
 void
 parse_hmac(const char *hmacstr);

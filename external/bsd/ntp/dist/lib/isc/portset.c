@@ -1,4 +1,4 @@
-/*	$NetBSD: portset.c,v 1.1.1.1 2009/12/13 16:54:20 kardel Exp $	*/
+/*	$NetBSD: portset.c,v 1.3 2015/07/10 14:20:29 christos Exp $	*/
 
 /*
  * Copyright (C) 2008  Internet Systems Consortium, Inc. ("ISC")
@@ -16,7 +16,7 @@
  * PERFORMANCE OF THIS SOFTWARE.
  */
 
-/* Id: portset.c,v 1.4 2008/06/24 23:24:35 marka Exp */
+/* Id: portset.c,v 1.4 2008/06/24 23:24:35 marka Exp  */
 
 /*! \file */
 

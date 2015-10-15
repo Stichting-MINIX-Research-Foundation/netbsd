@@ -1,4 +1,4 @@
-/*	$NetBSD: dpt.c,v 1.69 2013/09/12 19:49:08 martin Exp $	*/
+/*	$NetBSD: dpt.c,v 1.72 2014/10/18 08:33:27 snj Exp $	*/
 
 /*-
  * Copyright (c) 1997, 1998, 1999, 2000, 2001 The NetBSD Foundation, Inc.
@@ -71,7 +71,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: dpt.c,v 1.69 2013/09/12 19:49:08 martin Exp $");
+__KERNEL_RCSID(0, "$NetBSD: dpt.c,v 1.72 2014/10/18 08:33:27 snj Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -137,8 +137,18 @@ dev_type_open(dptopen);
 dev_type_ioctl(dptioctl);
 
 const struct cdevsw dpt_cdevsw = {
-	dptopen, nullclose, noread, nowrite, dptioctl,
-	nostop, notty, nopoll, nommap, nokqfilter, D_OTHER,
+	.d_open = dptopen,
+	.d_close = nullclose,
+	.d_read = noread,
+	.d_write = nowrite,
+	.d_ioctl = dptioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_OTHER,
 };
 
 extern struct cfdriver dpt_cd;
@@ -598,7 +608,7 @@ dpt_readcfg(struct dpt_softc *sc)
 
 /*
  * Our `shutdownhook' to cleanly shut down the HBA.  The HBA must flush all
- * data from it's cache and mark array groups as clean.
+ * data from its cache and mark array groups as clean.
  *
  * XXX This doesn't always work (i.e., the HBA may still be flushing after
  * we tell root that it's safe to power off).

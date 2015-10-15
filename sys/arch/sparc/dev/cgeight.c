@@ -1,4 +1,4 @@
-/*	$NetBSD: cgeight.c,v 1.47 2011/07/18 00:05:35 mrg Exp $	*/
+/*	$NetBSD: cgeight.c,v 1.50 2014/10/18 08:33:26 snj Exp $	*/
 
 /*-
  * Copyright (c) 1996, 1997 The NetBSD Foundation, Inc.
@@ -102,7 +102,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: cgeight.c,v 1.47 2011/07/18 00:05:35 mrg Exp $");
+__KERNEL_RCSID(0, "$NetBSD: cgeight.c,v 1.50 2014/10/18 08:33:26 snj Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -154,8 +154,18 @@ dev_type_ioctl(cgeightioctl);
 dev_type_mmap(cgeightmmap);
 
 const struct cdevsw cgeight_cdevsw = {
-	cgeightopen, nullclose, noread, nowrite, cgeightioctl,
-	nostop, notty, nopoll, cgeightmmap, nokqfilter
+	.d_open = cgeightopen,
+	.d_close = nullclose,
+	.d_read = noread,
+	.d_write = nowrite,
+	.d_ioctl = cgeightioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = cgeightmmap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = 0
 };
 
 #if defined(SUN4)
@@ -395,7 +405,7 @@ cgeightioctl(dev_t dev, u_long cmd, void *data, int flags, struct lwp *l)
  * Return the address that would map the given device at the given
  * offset, allowing for the given protection, or return -1 for error.
  *
- * The cg8 maps it's overlay plane at 0 for 128K, followed by the
+ * The cg8 maps its overlay plane at 0 for 128K, followed by the
  * enable plane for 128K, followed by the colour for as long as it
  * goes. Starting at 8MB, it maps the ramdac for PAGE_SIZE, then the p4
  * register for PAGE_SIZE, then the bootrom for 0x40000.

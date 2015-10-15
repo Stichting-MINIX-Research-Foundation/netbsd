@@ -1,7 +1,7 @@
-/*	$NetBSD: rcode.c,v 1.5 2012/12/04 23:38:42 spz Exp $	*/
+/*	$NetBSD: rcode.c,v 1.8 2014/12/10 04:37:58 christos Exp $	*/
 
 /*
- * Copyright (C) 2004-2012  Internet Systems Consortium, Inc. ("ISC")
+ * Copyright (C) 2004-2014  Internet Systems Consortium, Inc. ("ISC")
  * Copyright (C) 1998-2003  Internet Software Consortium.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
@@ -34,6 +34,8 @@
 #include <isc/util.h>
 
 #include <dns/cert.h>
+#include <dns/ds.h>
+#include <dns/dsdigest.h>
 #include <dns/keyflags.h>
 #include <dns/keyvalues.h>
 #include <dns/rcode.h>
@@ -132,6 +134,15 @@
 	{ 1, "SHA-1", 0 }, \
 	{ 0, NULL, 0 }
 
+/* RFC3658, RFC4509, RFC5933, RFC6605 */
+
+#define DSDIGESTNAMES \
+	{ DNS_DSDIGEST_SHA1, "SHA-1", 0 }, \
+	{ DNS_DSDIGEST_SHA256, "SHA-256", 0 }, \
+	{ DNS_DSDIGEST_GOST, "GOST", 0 }, \
+	{ DNS_DSDIGEST_SHA384, "SHA-384", 0 }, \
+	{ 0, NULL, 0}
+
 struct tbl {
 	unsigned int    value;
 	const char      *name;
@@ -144,6 +155,7 @@ static struct tbl certs[] = { CERTNAMES };
 static struct tbl secalgs[] = { SECALGNAMES };
 static struct tbl secprotos[] = { SECPROTONAMES };
 static struct tbl hashalgs[] = { HASHALGNAMES };
+static struct tbl dsdigests[] = { DSDIGESTNAMES };
 
 static struct keyflag {
 	const char *name;
@@ -196,7 +208,7 @@ str_totext(const char *source, isc_buffer_t *target) {
 	if (l > region.length)
 		return (ISC_R_NOSPACE);
 
-	memcpy(region.base, source, l);
+	memmove(region.base, source, l);
 	isc_buffer_add(target, l);
 	return (ISC_R_SUCCESS);
 }
@@ -214,11 +226,13 @@ maybe_numeric(unsigned int *valuep, isc_textregion_t *source,
 		return (ISC_R_BADNUMBER);
 
 	/*
-	 * We have a potential number.  Try to parse it with
-	 * isc_parse_uint32().  isc_parse_uint32() requires
+	 * We have a potential number.	Try to parse it with
+	 * isc_parse_uint32().	isc_parse_uint32() requires
 	 * null termination, so we must make a copy.
 	 */
-	strncpy(buffer, source->base, NUMBERSIZE);
+	strncpy(buffer, source->base, sizeof(buffer));
+	buffer[sizeof(buffer) - 1] = '\0';
+
 	INSIST(buffer[source->length] == '\0');
 
 	result = isc_parse_uint32(&n, buffer, 10);
@@ -383,9 +397,9 @@ dns_keyflags_fromtext(dns_keyflags_t *flagsp, isc_textregion_t *source)
 		unsigned int len;
 		char *delim = memchr(text, '|', end - text);
 		if (delim != NULL)
-			len = delim - text;
+			len = (unsigned int)(delim - text);
 		else
-			len = end - text;
+			len = (unsigned int)(end - text);
 		for (p = keyflags; p->name != NULL; p++) {
 			if (strncasecmp(p->name, text, len) == 0)
 				break;
@@ -404,6 +418,34 @@ dns_keyflags_fromtext(dns_keyflags_t *flagsp, isc_textregion_t *source)
 	}
 	*flagsp = value;
 	return (ISC_R_SUCCESS);
+}
+
+isc_result_t
+dns_dsdigest_fromtext(dns_dsdigest_t *dsdigestp, isc_textregion_t *source) {
+	unsigned int value;
+	RETERR(dns_mnemonic_fromtext(&value, source, dsdigests, 0xff));
+	*dsdigestp = value;
+	return (ISC_R_SUCCESS);
+}
+
+isc_result_t
+dns_dsdigest_totext(dns_dsdigest_t dsdigest, isc_buffer_t *target) {
+	return (dns_mnemonic_totext(dsdigest, target, dsdigests));
+}
+
+void
+dns_dsdigest_format(dns_dsdigest_t typ, char *cp, unsigned int size) {
+	isc_buffer_t b;
+	isc_region_t r;
+	isc_result_t result;
+
+	REQUIRE(cp != NULL && size > 0);
+	isc_buffer_init(&b, cp, size - 1);
+	result = dns_dsdigest_totext(typ, &b);
+	isc_buffer_usedregion(&b, &r);
+	r.base[r.length] = 0;
+	if (result != ISC_R_SUCCESS)
+		r.base[0] = 0;
 }
 
 /*

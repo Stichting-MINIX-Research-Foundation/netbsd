@@ -1,6 +1,6 @@
 /* Target-dependent header for the MIPS architecture, for GDB, the GNU Debugger.
 
-   Copyright (C) 2002-2013 Free Software Foundation, Inc.
+   Copyright (C) 2002-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -19,6 +19,8 @@
 
 #ifndef MIPS_TDEP_H
 #define MIPS_TDEP_H
+
+#include "objfiles.h"
 
 struct gdbarch;
 
@@ -45,6 +47,10 @@ enum mips_isa
     ISA_MIPS16,
     ISA_MICROMIPS
   };
+
+/* Corresponding MSYMBOL_TARGET_FLAG aliases.  */
+#define MSYMBOL_TARGET_FLAG_MIPS16 MSYMBOL_TARGET_FLAG_1
+#define MSYMBOL_TARGET_FLAG_MICROMIPS MSYMBOL_TARGET_FLAG_2
 
 /* Return the MIPS ISA's register size.  Just a short cut to the BFD
    architecture's word size.  */
@@ -107,14 +113,6 @@ struct gdbarch_tdep
   int register_size_valid_p;
   int register_size;
 
-  /* General-purpose registers.  */
-  struct regset *gregset;
-  struct regset *gregset64;
-
-  /* Floating-point registers.  */
-  struct regset *fpregset;
-  struct regset *fpregset64;
-
   /* Return the expected next PC if FRAME is stopped at a syscall
      instruction.  */
   CORE_ADDR (*syscall_next_pc) (struct frame_info *frame);
@@ -170,6 +168,9 @@ enum
 /* Single step based on where the current instruction will take us.  */
 extern int mips_software_single_step (struct frame_info *frame);
 
+/* Strip the ISA (compression) bit off from ADDR.  */
+extern CORE_ADDR mips_unmake_compact_addr (CORE_ADDR addr);
+
 /* Tell if the program counter value in MEMADDR is in a standard
    MIPS function.  */
 extern int mips_pc_is_mips (bfd_vma memaddr);
@@ -192,5 +193,13 @@ extern void mips_write_pc (struct regcache *regcache, CORE_ADDR pc);
    registers.  */
 extern struct target_desc *mips_tdesc_gp32;
 extern struct target_desc *mips_tdesc_gp64;
+
+/* Return non-zero if PC is in a MIPS SVR4 lazy binding stub section.  */
+
+static inline int
+in_mips_stubs_section (CORE_ADDR pc)
+{
+  return pc_in_section (pc, ".MIPS.stubs");
+}
 
 #endif /* MIPS_TDEP_H */

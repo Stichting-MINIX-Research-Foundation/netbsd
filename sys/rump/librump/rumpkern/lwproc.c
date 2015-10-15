@@ -1,4 +1,4 @@
-/*      $NetBSD: lwproc.c,v 1.24 2013/10/27 20:25:45 pooka Exp $	*/
+/*      $NetBSD: lwproc.c,v 1.35 2015/04/18 15:49:18 pooka Exp $	*/
 
 /*
  * Copyright (c) 2010, 2011 Antti Kantee.  All Rights Reserved.
@@ -25,8 +25,10 @@
  * SUCH DAMAGE.
  */
 
+#define RUMP__CURLWP_PRIVATE
+
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: lwproc.c,v 1.24 2013/10/27 20:25:45 pooka Exp $");
+__KERNEL_RCSID(0, "$NetBSD: lwproc.c,v 1.35 2015/04/18 15:49:18 pooka Exp $");
 
 #include <sys/param.h>
 #include <sys/atomic.h>
@@ -34,6 +36,7 @@ __KERNEL_RCSID(0, "$NetBSD: lwproc.c,v 1.24 2013/10/27 20:25:45 pooka Exp $");
 #include <sys/kauth.h>
 #include <sys/kmem.h>
 #include <sys/lwp.h>
+#include <sys/ktrace.h>
 #include <sys/pool.h>
 #include <sys/proc.h>
 #include <sys/queue.h>
@@ -41,22 +44,69 @@ __KERNEL_RCSID(0, "$NetBSD: lwproc.c,v 1.24 2013/10/27 20:25:45 pooka Exp $");
 #include <sys/uidinfo.h>
 
 #include <rump/rumpuser.h>
-
 #include "rump_private.h"
+#include "rump_curlwp.h"
 
 struct emul *emul_default = &emul_netbsd;
+
+void
+rump_lwproc_init(void)
+{
+
+	lwproc_curlwpop(RUMPUSER_LWP_CREATE, &lwp0);
+}
+
+struct lwp *
+rump_lwproc_curlwp_hypercall(void)
+{
+
+	return rumpuser_curlwp();
+}
+
+void
+rump_lwproc_curlwp_set(struct lwp *l)
+{
+
+	KASSERT(curlwp == NULL);
+	lwproc_curlwpop(RUMPUSER_LWP_SET, l);
+}
+
+void
+rump_lwproc_curlwp_clear(struct lwp *l)
+{
+
+	KASSERT(l == curlwp);
+	lwproc_curlwpop(RUMPUSER_LWP_CLEAR, l);
+}
 
 static void
 lwproc_proc_free(struct proc *p)
 {
 	kauth_cred_t cred;
+	struct proc *child;
+
+	KASSERT(p->p_stat == SDYING || p->p_stat == SDEAD);
+
+#ifdef KTRACE
+	if (p->p_tracep) {
+		mutex_enter(&ktrace_lock);
+		ktrderef(p);
+		mutex_exit(&ktrace_lock);
+	}
+#endif
 
 	mutex_enter(proc_lock);
 
+	/* childranee eunt initus */
+	while ((child = LIST_FIRST(&p->p_children)) != NULL) {
+		LIST_REMOVE(child, p_sibling);
+		child->p_pptr = initproc;
+		child->p_ppid = 1;
+		LIST_INSERT_HEAD(&initproc->p_children, child, p_sibling);
+	}
+
 	KASSERT(p->p_nlwps == 0);
 	KASSERT(LIST_EMPTY(&p->p_lwps));
-	KASSERT(p->p_stat == SACTIVE || p->p_stat == SDYING ||
-	    p->p_stat == SDEAD);
 
 	LIST_REMOVE(p, p_list);
 	LIST_REMOVE(p, p_sibling);
@@ -65,9 +115,9 @@ lwproc_proc_free(struct proc *p)
 
 	cred = p->p_cred;
 	chgproccnt(kauth_cred_getuid(cred), -1);
-	if (rump_proc_vfs_release)
-		rump_proc_vfs_release(p);
+	rump_proc_vfs_release(p);
 
+	doexithooks(p);
 	lim_free(p->p_limit);
 	pstatsfree(p->p_stats);
 	kauth_cred_free(p->p_cred);
@@ -80,10 +130,11 @@ lwproc_proc_free(struct proc *p)
 	cv_destroy(&p->p_waitcv);
 	cv_destroy(&p->p_lwpcv);
 
-	/* non-kernel vmspaces are not shared */
+	/* non-local vmspaces are not shared */
 	if (!RUMP_LOCALPROC_P(p)) {
+		struct rump_spctl *ctl = (struct rump_spctl *)p->p_vmspace;
 		KASSERT(p->p_vmspace->vm_refcnt == 1);
-		kmem_free(p->p_vmspace, sizeof(*p->p_vmspace));
+		kmem_free(ctl, sizeof(*ctl));
 	}
 
 	proc_free_mem(p);
@@ -97,7 +148,7 @@ lwproc_proc_free(struct proc *p)
  * Switch to the new lwp and return a pointer to it.
  */
 static struct proc *
-lwproc_newproc(struct proc *parent, int flags)
+lwproc_newproc(struct proc *parent, struct vmspace *vm, int flags)
 {
 	uid_t uid = kauth_cred_getuid(parent->p_cred);
 	struct proc *p;
@@ -126,8 +177,11 @@ lwproc_newproc(struct proc *parent, int flags)
 
 	p->p_stats = pstatscopy(parent->p_stats);
 
-	p->p_vmspace = vmspace_kernel();
+	p->p_vmspace = vm;
 	p->p_emul = emul_default;
+#ifdef __HAVE_SYSCALL_INTERN
+	p->p_emul->e_syscall_intern(p);
+#endif
 	if (*parent->p_comm)
 		strcpy(p->p_comm, parent->p_comm);
 	else
@@ -162,8 +216,7 @@ lwproc_newproc(struct proc *parent, int flags)
 	kauth_proc_fork(parent, p);
 
 	/* initialize cwd in rump kernels with vfs */
-	if (rump_proc_vfs_init)
-		rump_proc_vfs_init(p);
+	rump_proc_vfs_init(p);
 
 	chgproccnt(uid, 1); /* not enforced */
 
@@ -194,6 +247,8 @@ lwproc_freelwp(struct lwp *l)
 	if (--p->p_nlwps == 0) {
 		KASSERT(p != &proc0);
 		p->p_stat = SDEAD;
+	} else {
+		chglwpcnt(kauth_cred_getuid(p->p_cred), -1);
 	}
 	cv_broadcast(&p->p_lwpcv); /* nobody sleeps on this in a rump kernel? */
 	kauth_cred_free(l->l_cred);
@@ -207,7 +262,7 @@ lwproc_freelwp(struct lwp *l)
 		kmem_free(l->l_name, MAXCOMLEN);
 	lwp_finispecific(l);
 
-	rumpuser_curlwpop(RUMPUSER_LWP_DESTROY, l);
+	lwproc_curlwpop(RUMPUSER_LWP_DESTROY, l);
 	membar_exit();
 	kmem_free(l, sizeof(*l));
 
@@ -224,7 +279,15 @@ static void
 lwproc_makelwp(struct proc *p, struct lwp *l, bool doswitch, bool procmake)
 {
 
-	p->p_nlwps++;
+	/*
+	 * Account the new lwp to the owner of the process.
+	 * For some reason, NetBSD doesn't count the first lwp
+	 * in a process as a lwp, so skip that.
+	 */
+	if (p->p_nlwps++) {
+		chglwpcnt(kauth_cred_getuid(p->p_cred), 1);
+	}
+
 	l->l_refcnt = 1;
 	l->l_proc = p;
 
@@ -243,7 +306,7 @@ lwproc_makelwp(struct proc *p, struct lwp *l, bool doswitch, bool procmake)
 	lwp_initspecific(l);
 
 	membar_enter();
-	rumpuser_curlwpop(RUMPUSER_LWP_CREATE, l);
+	lwproc_curlwpop(RUMPUSER_LWP_CREATE, l);
 	if (doswitch) {
 		rump_lwproc_switch(l);
 	}
@@ -265,7 +328,7 @@ rump__lwproc_alloclwp(struct proc *p)
 	bool newproc = false;
 
 	if (p == NULL) {
-		p = lwproc_newproc(&proc0, 0);
+		p = lwproc_newproc(&proc0, rump_vmspace_local, RUMP_RFCFDG);
 		newproc = true;
 	}
 
@@ -306,7 +369,7 @@ rump_lwproc_newlwp(pid_t pid)
 }
 
 int
-rump_lwproc_rfork(int flags)
+rump_lwproc_rfork_vmspace(struct vmspace *vm, int flags)
 {
 	struct proc *p;
 	struct lwp *l;
@@ -315,13 +378,20 @@ rump_lwproc_rfork(int flags)
 	    (~flags & (RUMP_RFFDG|RUMP_RFCFDG)) == 0)
 		return EINVAL;
 
-	p = lwproc_newproc(curproc, flags);
+	p = lwproc_newproc(curproc, vm, flags);
 	l = kmem_zalloc(sizeof(*l), KM_SLEEP);
 	mutex_enter(p->p_lock);
 	KASSERT((p->p_sflag & PS_RUMP_LWPEXIT) == 0);
 	lwproc_makelwp(p, l, true, true);
 
 	return 0;
+}
+
+int
+rump_lwproc_rfork(int flags)
+{
+
+	return rump_lwproc_rfork_vmspace(rump_vmspace_local, flags);
 }
 
 /*
@@ -352,13 +422,13 @@ rump_lwproc_switch(struct lwp *newlwp)
 	}
 
 	KERNEL_UNLOCK_ALL(NULL, &l->l_biglocks);
-	rumpuser_curlwpop(RUMPUSER_LWP_CLEAR, l);
+	lwproc_curlwpop(RUMPUSER_LWP_CLEAR, l);
 
 	newlwp->l_cpu = newlwp->l_target_cpu = l->l_cpu;
 	newlwp->l_mutex = l->l_mutex;
 	newlwp->l_pflag |= LP_RUNNING;
 
-	rumpuser_curlwpop(RUMPUSER_LWP_SET, newlwp);
+	lwproc_curlwpop(RUMPUSER_LWP_SET, newlwp);
 	curcpu()->ci_curlwp = newlwp;
 	KERNEL_LOCK(newlwp->l_biglocks, NULL);
 

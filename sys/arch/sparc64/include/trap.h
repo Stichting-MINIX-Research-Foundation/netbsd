@@ -1,4 +1,4 @@
-/*	$NetBSD: trap.h,v 1.9 2011/03/27 18:47:09 martin Exp $ */
+/*	$NetBSD: trap.h,v 1.11 2015/04/01 18:38:30 palle Exp $ */
 
 /*
  * Copyright (c) 1996-1999 Eduardo Horvath
@@ -96,6 +96,7 @@
 #define T_FAST_ECC_ERROR 0x070	/* (2) fast ECC error [USIII] */
 #define T_DC_PAR_ERR	0x071	/* (2) dcache parity error [USIII] */
 #define T_IC_PAR_ERR	0x072	/* (2) icache parity error [USIII] */
+#define T_CPU_MONDO	0x07c	/* cpu mondo [SUN4V] */
 #define T_SPILL_N_NORM	0x080	/* (9) spill (n=0..7) normal */
 /*	through		0x09f	   unused */
 #define T_SPILL_N_OTHER	0x0a0	/* (9) spill (n=0..7) other */
@@ -143,6 +144,14 @@
 #define	SYSCALL_G2RFLAG	0x400	/* on success, return to %g2 rather than npc */
 #define	SYSCALL_G7RFLAG	0x800	/* use %g7 as above (deprecated) */
 #define	SYSCALL_G5RFLAG	0xc00	/* use %g5 as above (only ABI compatible way) */
+
+/* Software traps */
+#ifdef SUN4V
+#define ST_FAST_TRAP            0x80
+#define ST_MMU_MAP_ADDR         0x83
+#define ST_MMU_UNMAP_ADDR	0x84
+#define ST_CORE_TRAP	        0xff
+#endif
 
 /*
  * `software trap' macros to keep people happy (sparc v8 manual says not

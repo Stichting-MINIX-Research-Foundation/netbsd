@@ -1,4 +1,4 @@
-/*	$NetBSD: z8530tty.c,v 1.128 2011/04/24 16:27:00 rmind Exp $	*/
+/*	$NetBSD: z8530tty.c,v 1.131 2014/11/15 19:18:18 christos Exp $	*/
 
 /*-
  * Copyright (c) 1993, 1994, 1995, 1996, 1997, 1998, 1999
@@ -137,7 +137,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: z8530tty.c,v 1.128 2011/04/24 16:27:00 rmind Exp $");
+__KERNEL_RCSID(0, "$NetBSD: z8530tty.c,v 1.131 2014/11/15 19:18:18 christos Exp $");
 
 #include "opt_kgdb.h"
 #include "opt_ntp.h"
@@ -252,8 +252,18 @@ dev_type_tty(zstty);
 dev_type_poll(zspoll);
 
 const struct cdevsw zstty_cdevsw = {
-	zsopen, zsclose, zsread, zswrite, zsioctl,
-	zsstop, zstty, zspoll, nommap, ttykqfilter, D_TTY
+	.d_open = zsopen,
+	.d_close = zsclose,
+	.d_read = zsread,
+	.d_write = zswrite,
+	.d_ioctl = zsioctl,
+	.d_stop = zsstop,
+	.d_tty = zstty,
+	.d_poll = zspoll,
+	.d_mmap = nommap,
+	.d_kqfilter = ttykqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_TTY
 };
 
 struct zsops zsops_tty;
@@ -275,8 +285,8 @@ static void zstty_txint  (struct zs_chanstate *);
 static void zstty_softint(struct zs_chanstate *);
 static void zstty_softint1(struct zs_chanstate *);
 
-#define	ZSUNIT(x)	(minor(x) & 0x7ffff)
-#define	ZSDIALOUT(x)	(minor(x) & 0x80000)
+#define	ZSUNIT(x)	TTUNIT(x)
+#define	ZSDIALOUT(x)	TTDIALOUT(x)
 
 struct tty *zstty_get_tty_from_dev(device_t);
 

@@ -1,4 +1,4 @@
-/*        $NetBSD: device-mapper.c,v 1.31 2013/10/18 19:56:30 christos Exp $ */
+/*        $NetBSD: device-mapper.c,v 1.37 2015/08/20 14:40:17 christos Exp $ */
 
 /*
  * Copyright (c) 2010 The NetBSD Foundation, Inc.
@@ -49,6 +49,7 @@
 
 #include "netbsd-dm.h"
 #include "dm.h"
+#include "ioconf.h"
 
 static dev_type_open(dmopen);
 static dev_type_close(dmclose);
@@ -59,7 +60,6 @@ static dev_type_strategy(dmstrategy);
 static dev_type_size(dmsize);
 
 /* attach and detach routines */
-void dmattach(int);
 #ifdef _MODULE
 static int dmdestroy(void);
 #endif
@@ -84,6 +84,7 @@ const struct bdevsw dm_bdevsw = {
 	.d_ioctl = dmioctl,
 	.d_dump = nodump,
 	.d_psize = dmsize,
+	.d_discard = nodiscard,
 	.d_flag = D_DISK | D_MPSAFE
 };
 
@@ -98,6 +99,7 @@ const struct cdevsw dm_cdevsw = {
 	.d_poll = nopoll,
 	.d_mmap = nommap,
 	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
 	.d_flag = D_DISK | D_MPSAFE
 };
 
@@ -147,14 +149,15 @@ static const struct cmd_function cmd_fn[] = {
 /* Autoconf defines */
 CFDRIVER_DECL(dm, DV_DISK, NULL);
 
-MODULE(MODULE_CLASS_DRIVER, dm, NULL);
+MODULE(MODULE_CLASS_DRIVER, dm, "dk_subr");
 
 /* New module handle routine */
 static int
 dm_modcmd(modcmd_t cmd, void *arg)
 {
 #ifdef _MODULE
-	int error, bmajor, cmajor;
+	int error;
+	devmajor_t bmajor, cmajor;
 
 	error = 0;
 	bmajor = -1;
@@ -683,6 +686,4 @@ dmgetproperties(struct disk *disk, dm_table_head_t *head)
 	dg->dg_ntracks = 64;
 
 	disk_set_info(NULL, disk, "ESDI");
-
-	disk_blocksize(disk, secsize);
 }

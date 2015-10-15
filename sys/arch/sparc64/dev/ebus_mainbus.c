@@ -1,4 +1,4 @@
-/*	$NetBSD: ebus_mainbus.c,v 1.11 2013/09/12 19:51:09 martin Exp $	*/
+/*	$NetBSD: ebus_mainbus.c,v 1.15 2014/11/04 18:11:42 palle Exp $	*/
 /*	$OpenBSD: ebus_mainbus.c,v 1.7 2010/11/11 17:58:23 miod Exp $	*/
 
 /*
@@ -18,7 +18,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ebus_mainbus.c,v 1.11 2013/09/12 19:51:09 martin Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ebus_mainbus.c,v 1.15 2014/11/04 18:11:42 palle Exp $");
 
 #ifdef DEBUG
 #define	EDB_PROM	0x01
@@ -56,6 +56,8 @@ extern int ebus_debug;
 #include <dev/ebus/ebusvar.h>
 #include <sparc64/dev/ebusvar.h>
 
+#include "ioconf.h"
+
 int	ebus_mainbus_match(device_t, cfdata_t, void *);
 void	ebus_mainbus_attach(device_t, device_t, void *);
 
@@ -69,9 +71,11 @@ static void *ebus_mainbus_intr_establish(bus_space_tag_t, int, int,
 static bus_space_tag_t ebus_mainbus_alloc_bus_tag(struct ebus_softc *,
 	bus_space_tag_t, int);
 #ifdef SUN4V
+#if 0
+XXX
 static void ebus_mainbus_intr_ack(struct intrhand *);
 #endif
-
+#endif
 int
 ebus_mainbus_match(device_t parent, cfdata_t cf, void *aux)
 {
@@ -91,34 +95,10 @@ ebus_mainbus_attach(device_t parent, device_t self, void *aux)
 	struct ebus_interrupt_map_mask *immp;
 	int node, nmapmask, error;
 	struct pyro_softc *psc;
-	int i;
+	int i, j;
 
 	sc->sc_dev = self;
-	sc->sc_node = node = ma->ma_node;
-	sc->sc_ign = INTIGN((ma->ma_upaid) << INTMAP_IGN_SHIFT);
-
-	if (CPU_ISSUN4U) {
-		printf(": ign %x", sc->sc_ign);
-		/* XXX */
-		extern struct cfdriver pyro_cd;
-
-		for (i = 0; i < pyro_cd.cd_ndevs; i++) {
-			device_t dt = pyro_cd.cd_devs[i];
-			psc = device_private(dt);
-			if (psc && psc->sc_ign == sc->sc_ign) {
-				sc->sc_bust = psc->sc_bustag;
-				sc->sc_csr = psc->sc_csr;
-				sc->sc_csrh = psc->sc_csrh;
-				break;
-			}
-		}
-
-		if (sc->sc_csr == 0) {
-			printf(": can't find matching host bridge leaf\n");
-			return;
-		}
-	}
-
+	
 	printf("\n");
 
 	sc->sc_memtag = ebus_mainbus_alloc_bus_tag(sc, ma->ma_bustag,
@@ -128,6 +108,8 @@ ebus_mainbus_attach(device_t parent, device_t self, void *aux)
 	sc->sc_childbustag = sc->sc_memtag;
 	sc->sc_dmatag = ma->ma_dmatag;
 
+	sc->sc_node = node = ma->ma_node;
+	
 	/*
 	 * fill in our softc with information from the prom
 	 */
@@ -156,6 +138,23 @@ ebus_mainbus_attach(device_t parent, device_t self, void *aux)
 		break;
 	}
 
+	/*
+	 * Ebus interrupts may be connected to any of the PCI Express
+	 * leafs.  Here we add the appropriate IGN to the interrupt
+	 * mappings such that we can use it to distingish between
+	 * interrupts connected to PCIE-A and PCIE-B.
+	 */
+	for (i = 0; i < sc->sc_nintmap; i++) {
+		for (j = 0; j < pyro_cd.cd_ndevs; j++) {
+			device_t dt = device_lookup(&pyro_cd, j);
+			psc = device_private(dt);
+			if (psc && psc->sc_node == sc->sc_intmap[i].cnode) {
+				sc->sc_intmap[i].cintr |= psc->sc_ign;
+				break;
+			}
+		}
+	}
+	
 	error = prom_getprop(node, "ranges", sizeof(struct ebus_mainbus_ranges),
 	    &sc->sc_nrange, (void **)&sc->sc_range);
 	if (error)
@@ -273,13 +272,13 @@ static void *
 ebus_mainbus_intr_establish(bus_space_tag_t t, int ihandle, int level,
 	int (*handler)(void *), void *arg, void (*fastvec)(void) /* ignored */)
 {
-	struct ebus_softc *sc = t->cookie;
 	struct intrhand *ih = NULL;
 	volatile u_int64_t *intrmapptr = NULL, *intrclrptr = NULL;
 	u_int64_t *imap, *iclr;
 	int ino;
 
-#ifdef SUN4V
+#if 0
+XXX
 	if (CPU_ISSUN4V) {
 		struct upa_reg reg;
 		u_int64_t devhandle, devino = INTINO(ihandle);
@@ -330,12 +329,23 @@ ebus_mainbus_intr_establish(bus_space_tag_t t, int ihandle, int level,
 	}
 #endif
 
-	ihandle |= sc->sc_ign;
 	ino = INTINO(ihandle);
 
-	/* XXX */
-	imap = (uint64_t *)((uintptr_t)bus_space_vaddr(sc->sc_bustag, sc->sc_csrh) + 0x1000);
-	iclr = (uint64_t *)((uintptr_t)bus_space_vaddr(sc->sc_bustag, sc->sc_csrh) + 0x1400);
+	struct pyro_softc *psc = NULL;
+	int i;
+
+	for (i = 0; i < pyro_cd.cd_ndevs; i++) {
+		device_t dt = device_lookup(&pyro_cd, i);
+		psc = device_private(dt);
+		if (psc && psc->sc_ign == INTIGN(ihandle)) {
+			break;
+		}
+	}
+	if (psc == NULL)
+		return (NULL);
+	
+	imap = (uint64_t *)((uintptr_t)bus_space_vaddr(psc->sc_bustag, psc->sc_csrh) + 0x1000);
+	iclr = (uint64_t *)((uintptr_t)bus_space_vaddr(psc->sc_bustag, psc->sc_csrh) + 0x1400);
 	intrmapptr = &imap[ino];
 	intrclrptr = &iclr[ino];
 	ino |= INTVEC(ihandle);
@@ -372,11 +382,12 @@ ebus_mainbus_intr_establish(bus_space_tag_t t, int ihandle, int level,
 }
 
 #ifdef SUN4V
-
+#if 0
+XXX
 static void
 ebus_mainbus_intr_ack(struct intrhand *ih)
 {
 	hv_intr_setstate(ih->ih_number, INTR_IDLE);
 }
-
+#endif
 #endif

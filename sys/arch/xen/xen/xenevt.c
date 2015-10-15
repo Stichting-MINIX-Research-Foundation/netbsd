@@ -1,4 +1,4 @@
-/*      $NetBSD: xenevt.c,v 1.39 2011/12/03 22:41:40 bouyer Exp $      */
+/*      $NetBSD: xenevt.c,v 1.44 2015/08/20 14:40:17 christos Exp $      */
 
 /*
  * Copyright (c) 2005 Manuel Bouyer.
@@ -26,7 +26,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: xenevt.c,v 1.39 2011/12/03 22:41:40 bouyer Exp $");
+__KERNEL_RCSID(0, "$NetBSD: xenevt.c,v 1.44 2015/08/20 14:40:17 christos Exp $");
 
 #include "opt_xen.h"
 #include <sys/param.h>
@@ -52,6 +52,8 @@ __KERNEL_RCSID(0, "$NetBSD: xenevt.c,v 1.39 2011/12/03 22:41:40 bouyer Exp $");
 #include <xen/xenio3.h>
 #include <xen/xen.h>
 
+#include "ioconf.h"
+
 /*
  * Interface between the event channel and userland.
  * Each process with a xenevt device instance open can regiter events it
@@ -62,7 +64,6 @@ __KERNEL_RCSID(0, "$NetBSD: xenevt.c,v 1.39 2011/12/03 22:41:40 bouyer Exp $");
  * Processes get a device instance by opening a cloning device.
  */
 
-void		xenevtattach(int);
 static int	xenevt_fread(struct file *, off_t *, struct uio *,
     kauth_cred_t, int);
 static int	xenevt_fwrite(struct file *, off_t *, struct uio *,
@@ -88,8 +89,18 @@ dev_type_open(xenevtopen);
 dev_type_read(xenevtread);
 dev_type_mmap(xenevtmmap);
 const struct cdevsw xenevt_cdevsw = {
-	xenevtopen, nullclose, xenevtread, nowrite, noioctl,
-	nostop, notty, nopoll, xenevtmmap, nokqfilter, D_OTHER
+	.d_open = xenevtopen,
+	.d_close = nullclose,
+	.d_read = xenevtread,
+	.d_write = nowrite,
+	.d_ioctl = noioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = xenevtmmap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_OTHER
 };
 
 /* minor numbers */
@@ -290,7 +301,7 @@ xenevtopen(dev_t dev, int flags, int mode, struct lwp *l)
 
 	switch(minor(dev)) {
 	case DEV_EVT:
-		/* falloc() will use the descriptor for us. */
+		/* falloc() will fill in the descriptor for us. */
 		if ((error = fd_allocfile(&fp, &fd)) != 0)
 			return error;
 
@@ -479,7 +490,7 @@ xenevt_fwrite(struct file *fp, off_t *offp, struct uio *uio,
 	if (uio->uio_resid == 0)
 		return (0);
 	nentries = uio->uio_resid / sizeof(uint16_t);
-	if (nentries > NR_EVENT_CHANNELS)
+	if (nentries >= NR_EVENT_CHANNELS)
 		return EMSGSIZE;
 	chans = kmem_alloc(nentries * sizeof(uint16_t), KM_SLEEP);
 	if (chans == NULL)
@@ -572,7 +583,7 @@ xenevt_fioctl(struct file *fp, u_long cmd, void *addr)
 	{
 		struct ioctl_evtchn_unbind *unbind = addr;
 		
-		if (unbind->port > NR_EVENT_CHANNELS)
+		if (unbind->port >= NR_EVENT_CHANNELS)
 			return EINVAL;
 		mutex_enter(&devevent_lock);
 		if (devevent[unbind->port] != d) {
@@ -593,7 +604,7 @@ xenevt_fioctl(struct file *fp, u_long cmd, void *addr)
 	{
 		struct ioctl_evtchn_notify *notify = addr;
 		
-		if (notify->port > NR_EVENT_CHANNELS)
+		if (notify->port >= NR_EVENT_CHANNELS)
 			return EINVAL;
 		mutex_enter(&devevent_lock);
 		if (devevent[notify->port] != d) {

@@ -1,4 +1,4 @@
-/*	$NetBSD: agpvar.h,v 1.18 2009/05/06 10:34:32 cegger Exp $	*/
+/*	$NetBSD: agpvar.h,v 1.21 2014/11/02 00:05:03 christos Exp $	*/
 
 /*-
  * Copyright (c) 2000 Doug Rabson
@@ -177,6 +177,8 @@ int agp_generic_enable(struct agp_softc *, u_int32_t);
 struct agp_memory *agp_generic_alloc_memory(struct agp_softc *, int, vsize_t);
 int agp_generic_free_memory(struct agp_softc *, struct agp_memory *);
 int agp_generic_bind_memory(struct agp_softc *, struct agp_memory *, off_t);
+int agp_generic_bind_memory_bounded(struct agp_softc *, struct agp_memory *,
+	off_t, off_t, off_t);
 int agp_generic_unbind_memory(struct agp_softc *, struct agp_memory *);
 
 /* The vendor has already been matched when these functions are called */
@@ -185,6 +187,7 @@ int agp_amd64_match(const struct pci_attach_args *);
 
 int agp_ali_attach(device_t, device_t, void *);
 int agp_amd_attach(device_t, device_t, void *);
+int agp_apple_attach(device_t, device_t, void *);
 int agp_i810_attach(device_t, device_t, void *);
 int agp_intel_attach(device_t, device_t, void *);
 int agp_via_attach(device_t, device_t, void *);
@@ -268,6 +271,6 @@ void agp_memory_info(void *, void *, struct agp_memory_info *);
  * XXX horrible hack to allow drm code to use our mapping
  * of VGA chip registers
  */
-int agp_i810_borrow(bus_addr_t, bus_space_handle_t *);
+int agp_i810_borrow(bus_addr_t, bus_size_t, bus_space_handle_t *);
 
 #endif /* !_PCI_AGPPRIV_H_ */

@@ -1,5 +1,5 @@
-/*	$NetBSD: ssh.h,v 1.3 2010/11/21 18:29:49 adam Exp $	*/
-/* $OpenBSD: ssh.h,v 1.79 2010/06/25 07:14:46 djm Exp $ */
+/*	$NetBSD: ssh.h,v 1.6 2015/08/13 10:33:21 christos Exp $	*/
+/* $OpenBSD: ssh.h,v 1.81 2015/08/04 05:23:06 djm Exp $ */
 
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>

@@ -1,4 +1,4 @@
-.\"	$NetBSD: splraiseipl.9,v 1.6 2007/12/05 04:50:49 ad Exp $
+.\"	$NetBSD: splraiseipl.9,v 1.8 2015/07/09 11:34:59 wiz Exp $
 .\"
 .\" Copyright (c)2006 YAMAMOTO Takashi,
 .\" All rights reserved.
@@ -25,7 +25,7 @@
 .\" SUCH DAMAGE.
 .\"
 .\" ------------------------------------------------------------
-.Dd February 11, 2007
+.Dd July 9, 2015
 .Dt SPLRAISEIPL 9
 .Os
 .\" ------------------------------------------------------------
@@ -34,7 +34,7 @@
 .Nd raise the system priority level
 .\" ------------------------------------------------------------
 .Sh SYNOPSIS
-.In sys/param.h
+.In sys/intr.h
 .\" - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 .Ft int
 .Fn splraiseipl \

@@ -1,4 +1,4 @@
-/*	$NetBSD: ifconfig.c,v 1.231 2013/10/19 00:35:30 christos Exp $	*/
+/*	$NetBSD: ifconfig.c,v 1.235 2015/07/29 07:42:27 ozaki-r Exp $	*/
 
 /*-
  * Copyright (c) 1997, 1998, 2000 The NetBSD Foundation, Inc.
@@ -63,7 +63,7 @@
 #ifndef lint
 __COPYRIGHT("@(#) Copyright (c) 1983, 1993\
  The Regents of the University of California.  All rights reserved.");
-__RCSID("$NetBSD: ifconfig.c,v 1.231 2013/10/19 00:35:30 christos Exp $");
+__RCSID("$NetBSD: ifconfig.c,v 1.235 2015/07/29 07:42:27 ozaki-r Exp $");
 #endif /* not lint */
 
 #include <sys/param.h>
@@ -102,10 +102,13 @@ __RCSID("$NetBSD: ifconfig.c,v 1.231 2013/10/19 00:35:30 christos Exp $");
 #include "env.h"
 #include "prog_ops.h"
 
-static bool bflag, dflag, hflag, sflag, uflag;
-bool lflag, Nflag, vflag, zflag;
+#define WAIT_DAD	10000000 /* nanoseconds between each poll, 10ms */
 
-static char gflags[10 + 26 * 2 + 1] = "AabCdhlNsuvz";
+static bool bflag, dflag, hflag, sflag, uflag, wflag;
+bool lflag, Nflag, vflag, zflag;
+static long wflag_secs;
+
+static char gflags[10 + 26 * 2 + 1] = "AabCdhlNsuvw:z";
 bool gflagset[10 + 26 * 2];
 
 static int carrier(prop_dictionary_t);
@@ -115,6 +118,7 @@ static int flag_index(int);
 static void init_afs(void);
 static int list_cloners(prop_dictionary_t, prop_dictionary_t);
 static int media_status_exec(prop_dictionary_t, prop_dictionary_t);
+static int wait_dad_exec(prop_dictionary_t, prop_dictionary_t);
 static int no_cmds_exec(prop_dictionary_t, prop_dictionary_t);
 static int notrailers(prop_dictionary_t, prop_dictionary_t);
 static void printall(const char *, prop_dictionary_t);
@@ -222,6 +226,9 @@ static struct kwinst familykw[24];
 
 struct pterm cloneterm = PTERM_INITIALIZER(&cloneterm, "list cloners",
     list_cloners, "none");
+
+struct pterm wait_dad = PTERM_INITIALIZER(&wait_dad, "wait DAD", wait_dad_exec,
+    "none");
 
 struct pterm no_cmds = PTERM_INITIALIZER(&no_cmds, "no commands", no_cmds_exec,
     "none");
@@ -506,6 +513,53 @@ no_cmds_exec(prop_dictionary_t env, prop_dictionary_t oenv)
 }
 
 static int
+wait_dad_exec(prop_dictionary_t env, prop_dictionary_t oenv)
+{
+	bool waiting;
+	struct ifaddrs *ifaddrs, *ifa;
+	const struct timespec ts = { .tv_sec = 0, .tv_nsec = WAIT_DAD };
+	const struct timespec add = { .tv_sec = wflag_secs, .tv_nsec = 0};
+	struct timespec now, end = { .tv_sec = wflag_secs, .tv_nsec = 0};
+	const struct afswtch *afp;
+
+	if (wflag_secs) {
+		if (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
+			err(EXIT_FAILURE, "clock_gettime");
+		timespecadd(&now, &add, &end);
+	}
+
+	if (getifaddrs(&ifaddrs) == -1)
+		err(EXIT_FAILURE, "getifaddrs");
+
+	for (;;) {
+		waiting = false;
+		for (ifa = ifaddrs; ifa; ifa = ifa->ifa_next) {
+			if (ifa->ifa_addr == NULL)
+				continue;
+			afp = lookup_af_bynum(ifa->ifa_addr->sa_family);
+			if (afp && afp->af_addr_tentative &&
+			    afp->af_addr_tentative(ifa))
+			{
+				waiting = true;
+				break;
+			}
+		}
+		if (!waiting)
+			break;
+		nanosleep(&ts, NULL);
+		if (wflag_secs) {
+			if (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
+				err(EXIT_FAILURE, "clock_gettime");
+			if (timespeccmp(&now, &end, >))
+				errx(EXIT_FAILURE, "timed out");
+		}
+	}
+
+	freeifaddrs(ifaddrs);
+	exit(EXIT_SUCCESS);
+}
+
+static int
 media_status_exec(prop_dictionary_t env, prop_dictionary_t oenv)
 {
 	const char *ifname;
@@ -549,6 +603,7 @@ main(int argc, char **argv)
 	int ch, narg = 0, rc;
 	prop_dictionary_t env, oenv;
 	const char *ifname;
+	char *end;
 
 	memset(match, 0, sizeof(match));
 
@@ -605,6 +660,14 @@ main(int argc, char **argv)
 			vflag = true;
 			break;
 
+		case 'w':
+			wflag = true;
+			wflag_secs = strtol(optarg, &end, 10);
+			if ((end != NULL && *end != '\0') ||
+			    wflag_secs < 0 || wflag_secs >= INT32_MAX)
+				errx(EXIT_FAILURE, "%s: not a number", optarg);
+			break;
+
 		case 'z':
 			zflag = true;
 			break;
@@ -636,6 +699,9 @@ main(int argc, char **argv)
 			    start != &opt_family_only.pb_parser)
 				start = &iface_only.pif_parser;
 			break;
+		case 'w':
+			start = &wait_dad.pt_parser;
+			break;
 		default:
 			break;
 		}
@@ -644,19 +710,23 @@ main(int argc, char **argv)
 	argv += optind;
 
 	/*
-	 * -l means "list all interfaces", and is mutally exclusive with
+	 * -l means "list all interfaces", and is mutually exclusive with
 	 * all other flags/commands.
 	 *
 	 * -C means "list all names of cloners", and it mutually exclusive
 	 * with all other flags/commands.
 	 *
 	 * -a means "print status of all interfaces".
+	 *
+	 * -w means "spin until DAD completes for all addreseses", and is
+	 * mutually exclusivewith all other flags/commands.
 	 */
-	if ((lflag || Cflag) && (aflag || get_flag('m') || vflag || zflag))
+	if ((lflag || Cflag || wflag) &&
+	    (aflag || get_flag('m') || vflag || zflag))
 		usage();
-	if ((lflag || Cflag) && get_flag('L'))
+	if ((lflag || Cflag || wflag) && get_flag('L'))
 		usage();
-	if (lflag && Cflag)
+	if ((lflag && Cflag) || (lflag & wflag) || (Cflag && wflag))
 		usage();
 
 	nmatch = __arraycount(match);
@@ -1191,12 +1261,8 @@ status(const struct sockaddr *sdl, prop_dictionary_t env,
 	if ((ifname = getifinfo(env, oenv, &flags)) == NULL)
 		err(EXIT_FAILURE, "%s: getifinfo", __func__);
 
-	(void)snprintb_m(fbuf, sizeof(fbuf), IFFBITS, flags, MAX_PRINT_LEN);
-	bp = fbuf;
-	while (*bp != '\0') {
-		printf("%s: flags=%s", ifname, &bp[2]);
-		bp += strlen(bp) + 1;
-	}
+	(void)snprintb(fbuf, sizeof(fbuf), IFFBITS, flags);
+	printf("%s: flags=%s", ifname, fbuf);
 
 	estrlcpy(ifr.ifr_name, ifname, sizeof(ifr.ifr_name));
 	if (prog_ioctl(s, SIOCGIFMETRIC, &ifr) == -1)
@@ -1399,10 +1465,11 @@ usage(void)
 		"       %s -a [-b] [-d] [-h] %s[-u] [-v] [-z] [ af ]\n"
 		"       %s -l [-b] [-d] [-s] [-u]\n"
 		"       %s -C\n"
+		"       %s -w n\n"
 		"       %s interface create\n"
 		"       %s interface destroy\n",
 		progname, flag_is_registered(gflags, 'm') ? "[-m] " : "",
-		progname, progname, progname, progname);
+		progname, progname, progname, progname, progname);
 
 	prop_object_release((prop_object_t)env);
 	exit(EXIT_FAILURE);

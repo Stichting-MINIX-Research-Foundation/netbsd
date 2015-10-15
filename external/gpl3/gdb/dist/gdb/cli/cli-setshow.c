@@ -1,6 +1,6 @@
 /* Handle set and show GDB commands.
 
-   Copyright (C) 2000-2013 Free Software Foundation, Inc.
+   Copyright (C) 2000-2015 Free Software Foundation, Inc.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -19,7 +19,6 @@
 #include "readline/tilde.h"
 #include "value.h"
 #include <ctype.h>
-#include "gdb_string.h"
 #include "arch-utils.h"
 #include "observer.h"
 
@@ -28,10 +27,7 @@
 #include "cli/cli-decode.h"
 #include "cli/cli-cmds.h"
 #include "cli/cli-setshow.h"
-
-/* Prototypes for local functions.  */
-
-static int parse_binary_operation (char *);
+#include "cli/cli-utils.h"
 
 /* Return true if the change of command parameter should be notified.  */
 
@@ -76,8 +72,10 @@ parse_auto_binary_operation (const char *arg)
   return AUTO_BOOLEAN_AUTO; /* Pacify GCC.  */
 }
 
-static int
-parse_binary_operation (char *arg)
+/* See cli-setshow.h.  */
+
+int
+parse_cli_boolean_value (const char *arg)
 {
   int length;
 
@@ -100,10 +98,7 @@ parse_binary_operation (char *arg)
 	   || strncmp (arg, "disable", length) == 0)
     return 0;
   else
-    {
-      error (_("\"on\" or \"off\" expected."));
-      return 0;
-    }
+    return -1;
 }
 
 void
@@ -132,13 +127,27 @@ deprecated_show_value_hack (struct ui_file *ignore_file,
     }
 }
 
+/* Returns true if ARG is "unlimited".  */
+
+static int
+is_unlimited_literal (const char *arg)
+{
+  size_t len = sizeof ("unlimited") - 1;
+
+  arg = skip_spaces_const (arg);
+
+  return (strncmp (arg, "unlimited", len) == 0
+	  && (isspace (arg[len]) || arg[len] == '\0'));
+}
+
+
 /* Do a "set" command.  ARG is NULL if no argument, or the
    text of the argument, and FROM_TTY is nonzero if this command is
    being entered directly by the user (i.e. these are just like any
    other command).  C is the command list element for the command.  */
 
 void
-do_set_command (char *arg, int from_tty, struct cmd_list_element *c)
+do_set_command (const char *arg, int from_tty, struct cmd_list_element *c)
 {
   /* A flag to indicate the option is changed or not.  */
   int option_changed = 0;
@@ -150,7 +159,7 @@ do_set_command (char *arg, int from_tty, struct cmd_list_element *c)
     case var_string:
       {
 	char *new;
-	char *p;
+	const char *p;
 	char *q;
 	int ch;
 
@@ -223,13 +232,15 @@ do_set_command (char *arg, int from_tty, struct cmd_list_element *c)
 	if (arg != NULL)
 	  {
 	    /* Clear trailing whitespace of filename.  */
-	    char *ptr = arg + strlen (arg) - 1;
+	    const char *ptr = arg + strlen (arg) - 1;
+	    char *copy;
 
 	    while (ptr >= arg && (*ptr == ' ' || *ptr == '\t'))
 	      ptr--;
-	    *(ptr + 1) = '\0';
+	    copy = xstrndup (arg, ptr + 1 - arg);
 
-	    val = tilde_expand (arg);
+	    val = tilde_expand (copy);
+	    xfree (copy);
 	  }
 	else
 	  val = xstrdup ("");
@@ -248,8 +259,10 @@ do_set_command (char *arg, int from_tty, struct cmd_list_element *c)
       break;
     case var_boolean:
       {
-	int val = parse_binary_operation (arg);
+	int val = parse_cli_boolean_value (arg);
 
+	if (val < 0)
+	  error (_("\"on\" or \"off\" expected."));
 	if (val != *(int *) c->var)
 	  {
 	    *(int *) c->var = val;
@@ -276,8 +289,17 @@ do_set_command (char *arg, int from_tty, struct cmd_list_element *c)
 	LONGEST val;
 
 	if (arg == NULL)
-	  error_no_arg (_("integer to set it to."));
-	val = parse_and_eval_long (arg);
+	  {
+	    if (c->var_type == var_uinteger)
+	      error_no_arg (_("integer to set it to, or \"unlimited\"."));
+	    else
+	      error_no_arg (_("integer to set it to."));
+	  }
+
+	if (c->var_type == var_uinteger && is_unlimited_literal (arg))
+	  val = 0;
+	else
+	  val = parse_and_eval_long (arg);
 
 	if (c->var_type == var_uinteger && val == 0)
 	  val = UINT_MAX;
@@ -303,8 +325,17 @@ do_set_command (char *arg, int from_tty, struct cmd_list_element *c)
 	LONGEST val;
 
 	if (arg == NULL)
-	  error_no_arg (_("integer to set it to."));
-	val = parse_and_eval_long (arg);
+	  {
+	    if (c->var_type == var_integer)
+	      error_no_arg (_("integer to set it to, or \"unlimited\"."));
+	    else
+	      error_no_arg (_("integer to set it to."));
+	  }
+
+	if (c->var_type == var_integer && is_unlimited_literal (arg))
+	  val = 0;
+	else
+	  val = parse_and_eval_long (arg);
 
 	if (val == 0 && c->var_type == var_integer)
 	  val = INT_MAX;
@@ -399,8 +430,12 @@ do_set_command (char *arg, int from_tty, struct cmd_list_element *c)
 	LONGEST val;
 
 	if (arg == NULL)
-	  error_no_arg (_("integer to set it to."));
-	val = parse_and_eval_long (arg);
+	  error_no_arg (_("integer to set it to, or \"unlimited\"."));
+
+	if (is_unlimited_literal (arg))
+	  val = -1;
+	else
+	  val = parse_and_eval_long (arg);
 
 	if (val > INT_MAX)
 	  error (_("integer %s out of range"), plongest (val));
@@ -418,8 +453,6 @@ do_set_command (char *arg, int from_tty, struct cmd_list_element *c)
       error (_("gdb internal error: bad var_type in do_setshow_command"));
     }
   c->func (c, NULL, from_tty);
-  if (deprecated_set_hook)
-    deprecated_set_hook (c);
 
   if (notify_command_param_changed_p (option_changed, c))
     {
@@ -532,7 +565,7 @@ do_set_command (char *arg, int from_tty, struct cmd_list_element *c)
    other command).  C is the command list element for the command.  */
 
 void
-do_show_command (char *arg, int from_tty, struct cmd_list_element *c)
+do_show_command (const char *arg, int from_tty, struct cmd_list_element *c)
 {
   struct ui_out *uiout = current_uiout;
   struct cleanup *old_chain;
@@ -636,7 +669,7 @@ do_show_command (char *arg, int from_tty, struct cmd_list_element *c)
 /* Show all the settings in a list of show commands.  */
 
 void
-cmd_show_list (struct cmd_list_element *list, int from_tty, char *prefix)
+cmd_show_list (struct cmd_list_element *list, int from_tty, const char *prefix)
 {
   struct cleanup *showlist_chain;
   struct ui_out *uiout = current_uiout;

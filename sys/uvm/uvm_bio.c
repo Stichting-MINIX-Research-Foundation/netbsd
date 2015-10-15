@@ -1,4 +1,4 @@
-/*	$NetBSD: uvm_bio.c,v 1.80 2013/10/25 20:23:33 martin Exp $	*/
+/*	$NetBSD: uvm_bio.c,v 1.83 2015/05/27 19:43:40 rmind Exp $	*/
 
 /*
  * Copyright (c) 1998 Chuck Silvers.
@@ -34,7 +34,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: uvm_bio.c,v 1.80 2013/10/25 20:23:33 martin Exp $");
+__KERNEL_RCSID(0, "$NetBSD: uvm_bio.c,v 1.83 2015/05/27 19:43:40 rmind Exp $");
 
 #include "opt_uvmhist.h"
 #include "opt_ubc.h"
@@ -93,6 +93,7 @@ struct ubc_map {
 	LIST_ENTRY(ubc_map)	list;		/* per-object list */
 };
 
+TAILQ_HEAD(ubc_inactive_head, ubc_map);
 static struct ubc_object {
 	struct uvm_object uobj;		/* glue for uvm_map() */
 	char *kva;			/* where ubc_object is mapped */
@@ -101,7 +102,7 @@ static struct ubc_object {
 	LIST_HEAD(, ubc_map) *hash;	/* hashtable for cached ubc_map's */
 	u_long hashmask;		/* mask for hashtable */
 
-	TAILQ_HEAD(ubc_inactive_head, ubc_map) *inactive;
+	struct ubc_inactive_head *inactive;
 					/* inactive queues for ubc_map's */
 } ubc_object;
 
@@ -210,6 +211,12 @@ ubc_init(void)
 				UVM_ADV_RANDOM, UVM_FLAG_NOMERGE)) != 0) {
 		panic("ubc_init: failed to map ubc_object");
 	}
+}
+
+void
+ubchist_init(void)
+{
+
 	UVMHIST_INIT(ubchist, 300);
 }
 
@@ -574,6 +581,10 @@ again_faultbusy:
 		    &npages, 0, VM_PROT_READ | VM_PROT_WRITE, advice, gpflags);
 		UVMHIST_LOG(ubchist, "faultbusy getpages %d", error, 0, 0, 0);
 		if (error) {
+			/*
+			 * Flush: the mapping above might have been removed.
+			 */
+			pmap_update(pmap_kernel());
 			goto out;
 		}
 		for (i = 0; i < npages; i++) {

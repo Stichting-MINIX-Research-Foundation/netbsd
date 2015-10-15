@@ -1,4 +1,4 @@
-.\" $NetBSD: mdoc.local,v 1.74 2013/09/01 21:14:05 wiz Exp $
+.\" $NetBSD: mdoc.local,v 1.77 2015/09/28 21:07:47 christos Exp $
 .\"
 .\" Copyright (c) 2003, 2004 The NetBSD Foundation, Inc.
 .\" All rights reserved.
@@ -44,9 +44,9 @@
 .as doc-str-St--ieee1275-94     " (\*[Lq]\*[doc-Tn-font-size]Open Firmware\*[doc-str-St]\*[Rq])
 .
 .\" Default .Os value
-.ds doc-operating-system NetBSD\~6.0
+.ds doc-operating-system NetBSD\~7.0
 .\" Default footer operating system value
-.ds doc-default-operating-system NetBSD\~6.0
+.ds doc-default-operating-system NetBSD\~7.0
 .\" Other known versions, not yet in groff distribution
 .ds doc-operating-system-NetBSD-1.3.3  1.3.3
 .ds doc-operating-system-NetBSD-1.6.3  1.6.3
@@ -61,6 +61,7 @@
 .ds doc-operating-system-NetBSD-6.0    6.0
 .ds doc-operating-system-NetBSD-6.1    6.1
 .ds doc-operating-system-NetBSD-7.0    7.0
+.ds doc-operating-system-NetBSD-8.0    8.0
 .ds doc-operating-system-FreeBSD-4.11  4.11
 .ds doc-operating-system-FreeBSD-5.4   5.4
 .ds doc-operating-system-FreeBSD-5.5   5.5
@@ -98,11 +99,15 @@
 .ds doc-str-Lb-libnpf           NPF Packet Filter Library (libnpf, \-lnpf)
 .ds doc-str-Lb-libperfuse       PUFFS-enabled Relay to FUSE Library (libperfuse, \-lperfuse)
 .ds doc-str-Lb-libppath         Property-List Paths Library (libppath, \-lppath)
+.ds doc-str-Lb-libproc          Process manipulation Library (libproc, \-lproc)
 .ds doc-str-Lb-libprop          Property Container Object Library (libprop, \-lprop)
 .ds doc-str-Lb-libpuffs         puffs Convenience Library (libpuffs, \-lpuffs)
 .ds doc-str-Lb-libquota		Disk Quota Access and Control Library (libquota, \-lquota)
 .ds doc-str-Lb-librefuse        File System in Userspace Convenience Library (librefuse, \-lrefuse)
+.ds doc-str-Lb-librtld_db       Debugging interface to the runtime linker Library (librtld_db, \-lrtld_db)
 .ds doc-str-Lb-librumpclient	Clientside Stubs for rump Kernel Remote Protocols (librumpclient, \-lrumpclient)
 .ds doc-str-Lb-libsaslc         Simple Authentication and Security Layer client library (libsaslc, \-lsaslc)
 .ds doc-str-Lb-libssp           Buffer Overflow Protection Library (libssp, \-lssp)
 .ds doc-str-Lb-libterminfo      Terminal Information Library (libterminfo, \-lterminfo)
+.ds doc-str-St--p1003.1j-2000  \*[doc-Tn-font-size]\%IEEE\*[doc-str-St] Std 1003.1j-2000 
+.as doc-str-St--p1003.1j-2000  " (\*[Lq]\)\*[Px]\*[doc-str-St].1\*[Rq])

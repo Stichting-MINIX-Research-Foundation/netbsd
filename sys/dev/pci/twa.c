@@ -1,4 +1,4 @@
-/*	$NetBSD: twa.c,v 1.45 2013/10/17 21:06:15 christos Exp $ */
+/*	$NetBSD: twa.c,v 1.52 2014/09/27 15:44:27 christos Exp $ */
 /*	$wasabi: twa.c,v 1.27 2006/07/28 18:17:21 wrstuden Exp $	*/
 
 /*-
@@ -67,7 +67,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: twa.c,v 1.45 2013/10/17 21:06:15 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: twa.c,v 1.52 2014/09/27 15:44:27 christos Exp $");
 
 //#define TWA_DEBUG
 
@@ -1505,6 +1505,7 @@ twa_attach(device_t parent, device_t self, void *aux)
 	const struct twa_pci_identity *entry;
 	int i;
 	bool use_64bit;
+	char intrbuf[PCI_INTRSTR_LEN];
 
 	sc = device_private(self);
 
@@ -1584,7 +1585,7 @@ twa_attach(device_t parent, device_t self, void *aux)
 		aprint_error_dev(sc->twa_dv, "can't map interrupt\n");
 		return;
 	}
-	intrstr = pci_intr_string(pc, ih);
+	intrstr = pci_intr_string(pc, ih, intrbuf, sizeof(intrbuf));
 
 	sc->twa_ih = pci_intr_establish(pc, ih, IPL_BIO, twa_intr, sc);
 	if (sc->twa_ih == NULL) {
@@ -1604,14 +1605,6 @@ twa_attach(device_t parent, device_t self, void *aux)
 		twa_sdh = shutdownhook_establish(twa_shutdown, NULL);
 
 	/* sysctl set-up for 3ware cli */
-	if (sysctl_createv(NULL, 0, NULL, NULL,
-				CTLFLAG_PERMANENT, CTLTYPE_NODE, "hw",
-				NULL, NULL, 0, NULL, 0,
-				CTL_HW, CTL_EOL) != 0) {
-		aprint_error_dev(sc->twa_dv, "could not create %s sysctl node\n",
-			"hw");
-		return;
-	}
 	if (sysctl_createv(NULL, 0, NULL, &node,
 				0, CTLTYPE_NODE, device_xname(sc->twa_dv),
 				SYSCTL_DESCR("twa driver information"),
@@ -1873,7 +1866,7 @@ twa_map_request(struct twa_request *tr)
 static int
 twa_intr(void *arg)
 {
-	int	caught, s, rv;
+	int	caught, s, rv __diagused;
 	struct twa_softc *sc;
 	uint32_t	status_reg;
 	sc = (struct twa_softc *)arg;
@@ -2281,8 +2274,18 @@ fw_passthru_done:
 }
 
 const struct cdevsw twa_cdevsw = {
-	twaopen, twaclose, noread, nowrite, twaioctl,
-	nostop, notty, nopoll, nommap, nokqfilter, D_OTHER,
+	.d_open = twaopen,
+	.d_close = twaclose,
+	.d_read = noread,
+	.d_write = nowrite,
+	.d_ioctl = twaioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_OTHER
 };
 
 /*
@@ -2764,7 +2767,7 @@ twa_aen_callback(struct twa_request *tr)
 static uint16_t
 twa_enqueue_aen(struct twa_softc *sc, struct twa_command_header *cmd_hdr)
 {
-	int			rv, s;
+	int			rv __diagused, s;
 	struct tw_cl_event_packet *event;
 	uint16_t		aen_code;
 	unsigned long		sync_time;
@@ -2952,7 +2955,7 @@ twa_describe_controller(struct twa_softc *sc)
 	uint32_t		dsize;
 	uint8_t			ports;
 
-	memset(p, sizeof(struct twa_param_9k *), 10);
+	memset(p, 0, sizeof(p));
 
 	/* Get the port count. */
 	rv |= twa_get_param(sc, TWA_PARAM_CONTROLLER,

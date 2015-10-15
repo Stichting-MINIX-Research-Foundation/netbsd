@@ -1,7 +1,7 @@
-/*	$NetBSD: rdataset.h,v 1.6 2012/12/04 23:38:43 spz Exp $	*/
+/*	$NetBSD: rdataset.h,v 1.9 2015/07/08 17:28:59 christos Exp $	*/
 
 /*
- * Copyright (C) 2004-2012  Internet Systems Consortium, Inc. ("ISC")
+ * Copyright (C) 2004-2012, 2014  Internet Systems Consortium, Inc. ("ISC")
  * Copyright (C) 1999-2003  Internet Software Consortium.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
@@ -116,6 +116,7 @@ typedef struct dns_rdatasetmethods {
 	void			(*settrust)(dns_rdataset_t *rdataset,
 					    dns_trust_t trust);
 	void			(*expire)(dns_rdataset_t *rdataset);
+	void			(*clearprefetch)(dns_rdataset_t *rdataset);
 } dns_rdatasetmethods_t;
 
 #define DNS_RDATASET_MAGIC	       ISC_MAGIC('D','N','S','R')
@@ -201,12 +202,14 @@ struct dns_rdataset {
 #define DNS_RDATASETATTR_NXDOMAIN	0x00002000
 #define DNS_RDATASETATTR_NOQNAME	0x00004000
 #define DNS_RDATASETATTR_CHECKNAMES	0x00008000	/*%< Used by resolver. */
-#define DNS_RDATASETATTR_REQUIREDGLUE	0x00010000
+#define DNS_RDATASETATTR_REQUIRED	0x00010000
+#define DNS_RDATASETATTR_REQUIREDGLUE	DNS_RDATASETATTR_REQUIRED
 #define DNS_RDATASETATTR_LOADORDER	0x00020000
 #define DNS_RDATASETATTR_RESIGN		0x00040000
 #define DNS_RDATASETATTR_CLOSEST	0x00080000
 #define DNS_RDATASETATTR_OPTOUT		0x00100000	/*%< OPTOUT proof */
 #define DNS_RDATASETATTR_NEGATIVE	0x00200000
+#define DNS_RDATASETATTR_PREFETCH	0x00400000
 
 /*%
  * _OMITDNSSEC:
@@ -655,6 +658,17 @@ dns_rdataset_expire(dns_rdataset_t *rdataset);
  */
 
 void
+dns_rdataset_clearprefetch(dns_rdataset_t *rdataset);
+/*%<
+ * Clear the PREFETCH attribute for the given rdataset in the
+ * underlying database.
+ *
+ * In the cache database, this signals that the rdataset is not
+ * eligible to be prefetched when the TTL is close to expiring.
+ * It has no function in other databases.
+ */
+
+void
 dns_rdataset_trimttl(dns_rdataset_t *rdataset, dns_rdataset_t *sigrdataset,
 		     dns_rdata_rrsig_t *rrsig, isc_stdtime_t now,
 		     isc_boolean_t acceptexpired);
@@ -675,7 +689,7 @@ dns_rdataset_trimttl(dns_rdataset_t *rdataset, dns_rdataset_t *sigrdataset,
 
 const char *
 dns_trust_totext(dns_trust_t trust);
-/*
+/*%<
  * Display trust in textual form.
  */
 

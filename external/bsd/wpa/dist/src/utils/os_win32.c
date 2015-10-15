@@ -2,14 +2,8 @@
  * wpa_supplicant/hostapd / OS specific functions for Win32 systems
  * Copyright (c) 2005-2006, Jouni Malinen <j@w1.fi>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #include "includes.h"
@@ -18,6 +12,7 @@
 #include <wincrypt.h>
 
 #include "os.h"
+#include "common.h"
 
 void os_sleep(os_time_t sec, os_time_t usec)
 {
@@ -50,6 +45,17 @@ int os_get_time(struct os_time *t)
 	t->usec = (os_time_t) (tt % 1000000);
 
 	return 0;
+}
+
+
+int os_get_reltime(struct os_reltime *t)
+{
+	/* consider using performance counters or so instead */
+	struct os_time now;
+	int res = os_get_time(&now);
+	t->sec = now.sec;
+	t->usec = now.usec;
+	return res;
 }
 
 
@@ -238,4 +244,24 @@ size_t os_strlcpy(char *dest, const char *src, size_t siz)
 	}
 
 	return s - src - 1;
+}
+
+
+int os_memcmp_const(const void *a, const void *b, size_t len)
+{
+	const u8 *aa = a;
+	const u8 *bb = b;
+	size_t i;
+	u8 res;
+
+	for (res = 0, i = 0; i < len; i++)
+		res |= aa[i] ^ bb[i];
+
+	return res;
+}
+
+
+int os_exec(const char *program, const char *arg, int wait_completion)
+{
+	return -1;
 }

@@ -1,4 +1,4 @@
-/*	$NetBSD: machdep.c,v 1.52 2012/03/02 16:19:52 matt Exp $	*/
+/*	$NetBSD: machdep.c,v 1.54 2015/06/30 02:39:03 matt Exp $	*/
 
 /*-
  * Copyright (c) 2001 The NetBSD Foundation, Inc.
@@ -68,7 +68,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.52 2012/03/02 16:19:52 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.54 2015/06/30 02:39:03 matt Exp $");
 
 #include "opt_algor_p4032.h"
 #include "opt_algor_p5064.h" 
@@ -93,6 +93,7 @@ __KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.52 2012/03/02 16:19:52 matt Exp $");
 #include <sys/reboot.h>
 #include <sys/systm.h>
 #include <sys/termios.h>
+#include <sys/cpu.h>
 
 #include <net/if.h>
 #include <net/if_ether.h>
@@ -208,7 +209,7 @@ mach_init(int argc, char *argv[], char *envp[])
 		struct vtpbc_config *vt = &vtpbc_configuration; 
 		bus_space_handle_t sh;
 
-		strcpy(cpu_model, "Algorithmics P-4032");
+		cpu_setmodel("Algorithmics P-4032");
 
 		vt->vt_addr = MIPS_PHYS_TO_KSEG1(P4032_V962PBC);
 		vt->vt_cfgbase = MIPS_PHYS_TO_KSEG1(P4032_PCICFG);
@@ -255,7 +256,7 @@ mach_init(int argc, char *argv[], char *envp[])
 		struct vtpbc_config *vt = &vtpbc_configuration;
 		bus_space_handle_t sh;
 
-		strcpy(cpu_model, "Algorithmics P-5064");
+		cpu_setmodel("Algorithmics P-5064");
 
 		vt->vt_addr = MIPS_PHYS_TO_KSEG1(P5064_V360EPC);
 		vt->vt_cfgbase = MIPS_PHYS_TO_KSEG1(P5064_PCICFG);
@@ -299,7 +300,7 @@ mach_init(int argc, char *argv[], char *envp[])
 		struct bonito_config *bc = &acp->ac_bonito;
 		bus_space_handle_t sh;
 
-		strcpy(cpu_model, "Algorithmics P-6032");
+		cpu_setmodel("Algorithmics P-6032");
 
 		bc->bc_adbase = 11;
 		
@@ -510,66 +511,24 @@ consinit(void)
 void
 cpu_startup(void)
 {
-	vaddr_t minaddr, maxaddr;
-	char pbuf[9];
-#ifdef DEBUG
-	extern int pmapdebug;
-	int opmapdebug = pmapdebug;
-
-	pmapdebug = 0;		/* Shut up pmap debug during bootstrap */
-#endif
-
-	/*
-	 * Good {morning,afternoon,evening,night}.
-	 */
-	printf("%s%s", copyright, version);
-	printf("%s\n", cpu_model);
-	format_bytes(pbuf, sizeof(pbuf), ptoa(physmem));
-	printf("total memory = %s\n", pbuf);
-
 	/*
 	 * Virtual memory is bootstrapped -- notify the bus spaces
 	 * that memory allocation is now safe.
 	 */
 #if defined(ALGOR_P4032)
-	    {
-		struct p4032_config *acp = &p4032_configuration;
+	struct p4032_config * const acp = &p4032_configuration;
 
-		acp->ac_mallocsafe = 1;
-	    }
+	acp->ac_mallocsafe = 1;
 #elif defined(ALGOR_P5064)
-	    {
-		struct p5064_config *acp = &p5064_configuration;
+	struct p5064_config * const acp = &p5064_configuration;
 
-		acp->ac_mallocsafe = 1;
-	    }
+	acp->ac_mallocsafe = 1;
 #elif defined(ALGOR_P6032)
-	    {
-		struct p6032_config *acp = &p6032_configuration;
+	struct p6032_config * const acp = &p6032_configuration;
 
-		acp->ac_mallocsafe = 1;
-	    }
+	acp->ac_mallocsafe = 1;
 #endif
-
-	minaddr = 0;
-
-	/*
-	 * Allocate a submap for physio.
-	 */
-	phys_map = uvm_km_suballoc(kernel_map, &minaddr, &maxaddr,
-	    VM_PHYS_SIZE, 0, false, NULL);
-
-	/*
-	 * No need to allocate an mbuf cluster submap.  Mbuf clusters
-	 * are allocate via the pool allocator, and we use KSEG0 to
-	 * map those pages.
-	 */
-
-#ifdef DEBUG
-	pmapdebug = opmapdebug;
-#endif
-	format_bytes(pbuf, sizeof(pbuf), ptoa(uvmexp.free));
-	printf("avail memory = %s\n", pbuf);
+	cpu_startup_common();
 }
 
 int	waittime = -1;

@@ -1,4 +1,4 @@
-/*	$NetBSD: if_arp.c,v 1.154 2012/01/02 22:17:11 liamjfoy Exp $	*/
+/*	$NetBSD: if_arp.c,v 1.184 2015/10/08 08:17:37 roy Exp $	*/
 
 /*-
  * Copyright (c) 1998, 2000, 2008 The NetBSD Foundation, Inc.
@@ -68,10 +68,12 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_arp.c,v 1.154 2012/01/02 22:17:11 liamjfoy Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_arp.c,v 1.184 2015/10/08 08:17:37 roy Exp $");
 
+#ifdef _KERNEL_OPT
 #include "opt_ddb.h"
 #include "opt_inet.h"
+#endif
 
 #ifdef INET
 
@@ -95,6 +97,8 @@ __KERNEL_RCSID(0, "$NetBSD: if_arp.c,v 1.154 2012/01/02 22:17:11 liamjfoy Exp $"
 #include <sys/sysctl.h>
 #include <sys/socketvar.h>
 #include <sys/percpu.h>
+#include <sys/cprng.h>
+#include <sys/kmem.h>
 
 #include <net/ethertypes.h>
 #include <net/if.h>
@@ -102,6 +106,8 @@ __KERNEL_RCSID(0, "$NetBSD: if_arp.c,v 1.154 2012/01/02 22:17:11 liamjfoy Exp $"
 #include <net/if_token.h>
 #include <net/if_types.h>
 #include <net/if_ether.h>
+#include <net/if_llatbl.h>
+#include <net/net_osdep.h>
 #include <net/route.h>
 #include <net/net_stats.h>
 
@@ -135,25 +141,39 @@ __KERNEL_RCSID(0, "$NetBSD: if_arp.c,v 1.154 2012/01/02 22:17:11 liamjfoy Exp $"
 #define ETHERTYPE_IPTRAILERS ETHERTYPE_TRAIL
 
 /* timer values */
-int	arpt_prune = (5*60*1);	/* walk list every 5 minutes */
-int	arpt_keep = (20*60);	/* once resolved, good for 20 more minutes */
-int	arpt_down = 20;		/* once declared down, don't send for 20 secs */
-int	arpt_refresh = (5*60);	/* time left before refreshing */
+static int	arpt_keep = (20*60);	/* once resolved, good for 20 more minutes */
+static int	arpt_down = 20;		/* once declared down, don't send for 20 secs */
+static int	arp_maxhold = 1;	/* number of packets to hold per ARP entry */
 #define	rt_expire rt_rmx.rmx_expire
 #define	rt_pksent rt_rmx.rmx_pksent
 
+int		ip_dad_count = PROBE_NUM;
+#ifdef ARP_DEBUG
+static int	arp_debug = 1;
+#else
+static int	arp_debug = 0;
+#endif
+#define arplog(x)	do { if (arp_debug) log x; } while (/*CONSTCOND*/ 0)
+
+static	void arp_init(void);
+
 static	struct sockaddr *arp_setgate(struct rtentry *, struct sockaddr *,
 	    const struct sockaddr *);
-static	void arptfree(struct llinfo_arp *);
+static	void arptfree(struct rtentry *);
 static	void arptimer(void *);
-static	struct llinfo_arp *arplookup1(struct mbuf *, const struct in_addr *,
-				      int, int, struct rtentry *);
-static	struct llinfo_arp *arplookup(struct mbuf *, const struct in_addr *,
-					  int, int);
+static	struct llentry *arplookup(struct ifnet *, struct mbuf *,
+	    const struct in_addr *, int, int, int, struct rtentry *);
 static	void in_arpinput(struct mbuf *);
+static	void in_revarpinput(struct mbuf *);
+static	void revarprequest(struct ifnet *);
+
 static	void arp_drainstub(void);
 
-LIST_HEAD(, llinfo_arp) llinfo_arp;
+static void arp_dad_timer(struct ifaddr *);
+static void arp_dad_start(struct ifaddr *);
+static void arp_dad_stop(struct ifaddr *);
+static void arp_dad_duplicated(struct ifaddr *);
+
 struct	ifqueue arpintrq = {
 	.ifq_head = NULL,
 	.ifq_tail = NULL,
@@ -161,10 +181,9 @@ struct	ifqueue arpintrq = {
 	.ifq_maxlen = 50,
 	.ifq_drops = 0,
 };
-int	arp_inuse, arp_allocated;
-int	arp_maxtries = 5;
-int	useloopback = 1;	/* use loopback interface for local traffic */
-int	arpinit_done = 0;
+static int	arp_inuse, arp_allocated;
+static int	arp_maxtries = 5;
+static int	useloopback = 1;	/* use loopback interface for local traffic */
 
 static percpu_t *arpstat_percpu;
 
@@ -174,13 +193,11 @@ static percpu_t *arpstat_percpu;
 #define	ARP_STATINC(x)		_NET_STATINC(arpstat_percpu, x)
 #define	ARP_STATADD(x, v)	_NET_STATADD(arpstat_percpu, x, v)
 
-struct	callout arptimer_ch;
-
 /* revarp state */
-struct	in_addr myip, srv_ip;
-int	myip_initialized = 0;
-int	revarp_in_progress = 0;
-struct	ifnet *myip_ifp = NULL;
+static struct	in_addr myip, srv_ip;
+static int	myip_initialized = 0;
+static int	revarp_in_progress = 0;
+static struct	ifnet *myip_ifp = NULL;
 
 #ifdef DDB
 static void db_print_sa(const struct sockaddr *);
@@ -194,6 +211,7 @@ static int arp_drainwanted;
 static int log_movements = 1;
 static int log_permanent_modify = 1;
 static int log_wrong_iface = 1;
+static int log_unknown_network = 1;
 
 /*
  * this should be elsewhere.
@@ -249,7 +267,7 @@ const struct protosw arpsw[] = {
 	  .pr_output = 0,
 	  .pr_ctlinput = 0,
 	  .pr_ctloutput = 0,
-	  .pr_usrreq =  0,
+	  .pr_usrreqs = 0,
 	  .pr_init = arp_init,
 	  .pr_fasttimo = arp_fasttimo,
 	  .pr_slowtimo = 0,
@@ -257,82 +275,12 @@ const struct protosw arpsw[] = {
 	}
 };
 
-
 struct domain arpdomain = {
 	.dom_family = PF_ARP,
 	.dom_name = "arp",
 	.dom_protosw = arpsw,
 	.dom_protoswNPROTOSW = &arpsw[__arraycount(arpsw)],
 };
-
-/*
- * ARP table locking.
- *
- * to prevent lossage vs. the arp_drain routine (which may be called at
- * any time, including in a device driver context), we do two things:
- *
- * 1) manipulation of la->la_hold is done at splnet() (for all of
- * about two instructions).
- *
- * 2) manipulation of the arp table's linked list is done under the
- * protection of the ARP_LOCK; if arp_drain() or arptimer is called
- * while the arp table is locked, we punt and try again later.
- */
-
-static int	arp_locked;
-static inline int arp_lock_try(int);
-static inline void arp_unlock(void);
-
-static inline int
-arp_lock_try(int recurse)
-{
-	int s;
-
-	/*
-	 * Use splvm() -- we're blocking things that would cause
-	 * mbuf allocation.
-	 */
-	s = splvm();
-	if (!recurse && arp_locked) {
-		splx(s);
-		return 0;
-	}
-	arp_locked++;
-	splx(s);
-	return 1;
-}
-
-static inline void
-arp_unlock(void)
-{
-	int s;
-
-	s = splvm();
-	arp_locked--;
-	splx(s);
-}
-
-#ifdef DIAGNOSTIC
-#define	ARP_LOCK(recurse)						\
-do {									\
-	if (arp_lock_try(recurse) == 0) {				\
-		printf("%s:%d: arp already locked\n", __FILE__, __LINE__); \
-		panic("arp_lock");					\
-	}								\
-} while (/*CONSTCOND*/ 0)
-#define	ARP_LOCK_CHECK()						\
-do {									\
-	if (arp_locked == 0) {						\
-		printf("%s:%d: arp lock not held\n", __FILE__, __LINE__); \
-		panic("arp lock check");				\
-	}								\
-} while (/*CONSTCOND*/ 0)
-#else
-#define	ARP_LOCK(x)		(void) arp_lock_try(x)
-#define	ARP_LOCK_CHECK()	/* nothing */
-#endif
-
-#define	ARP_UNLOCK()		arp_unlock()
 
 static void sysctl_net_inet_arp_setup(struct sysctllog **);
 
@@ -358,77 +306,74 @@ arp_drainstub(void)
 void
 arp_drain(void)
 {
-	struct llinfo_arp *la, *nla;
-	int count = 0;
-	struct mbuf *mold;
 
-	KERNEL_LOCK(1, NULL);
-
-	if (arp_lock_try(0) == 0) {
-		KERNEL_UNLOCK_ONE(NULL);
-		return;
-	}
-
-	for (la = LIST_FIRST(&llinfo_arp); la != NULL; la = nla) {
-		nla = LIST_NEXT(la, la_list);
-
-		mold = la->la_hold;
-		la->la_hold = 0;
-
-		if (mold) {
-			m_freem(mold);
-			count++;
-		}
-	}
-	ARP_UNLOCK();
-	ARP_STATADD(ARP_STAT_DFRDROPPED, count);
-	KERNEL_UNLOCK_ONE(NULL);
+	lltable_drain(AF_INET);
 }
 
-
-/*
- * Timeout routine.  Age arp_tab entries periodically.
- */
-/* ARGSUSED */
 static void
 arptimer(void *arg)
 {
-	struct llinfo_arp *la, *nla;
+	struct llentry *lle = arg;
+	struct ifnet *ifp;
 
 	mutex_enter(softnet_lock);
-	KERNEL_LOCK(1, NULL);
 
-	if (arp_lock_try(0) == 0) {
-		/* get it later.. */
-		KERNEL_UNLOCK_ONE(NULL);
-		mutex_exit(softnet_lock);
-		return;
+	if (lle == NULL)
+		goto out;
+
+	if (lle->la_flags & LLE_STATIC)
+		goto out;
+
+	LLE_WLOCK(lle);
+	if (callout_pending(&lle->la_timer)) {
+		/*
+		 * Here we are a bit odd here in the treatment of
+		 * active/pending. If the pending bit is set, it got
+		 * rescheduled before I ran. The active
+		 * bit we ignore, since if it was stopped
+		 * in ll_tablefree() and was currently running
+		 * it would have return 0 so the code would
+		 * not have deleted it since the callout could
+		 * not be stopped so we want to go through
+		 * with the delete here now. If the callout
+		 * was restarted, the pending bit will be back on and
+		 * we just want to bail since the callout_reset would
+		 * return 1 and our reference would have been removed
+		 * by arpresolve() below.
+		 */
+		LLE_WUNLOCK(lle);
+		goto out;
+	}
+	ifp = lle->lle_tbl->llt_ifp;
+
+	callout_stop(&lle->la_timer);
+
+	/* XXX: LOR avoidance. We still have ref on lle. */
+	LLE_WUNLOCK(lle);
+
+	if (lle->la_rt != NULL) {
+		/* We have to call arptfree w/o IF_AFDATA_LOCK */
+		arptfree(lle->la_rt);
+		lle->la_rt = NULL;
 	}
 
-	callout_reset(&arptimer_ch, arpt_prune * hz, arptimer, NULL);
-	for (la = LIST_FIRST(&llinfo_arp); la != NULL; la = nla) {
-		struct rtentry *rt = la->la_rt;
+	IF_AFDATA_LOCK(ifp);
+	LLE_WLOCK(lle);
 
-		nla = LIST_NEXT(la, la_list);
-		if (rt->rt_expire == 0)
-			continue;
-		if ((rt->rt_expire - time_second) < arpt_refresh &&
-		    rt->rt_pksent > (time_second - arpt_keep)) {
-			/*
-			 * If the entry has been used during since last
-			 * refresh, try to renew it before deleting.
-			 */
-			arprequest(rt->rt_ifp,
-			    &satocsin(rt->rt_ifa->ifa_addr)->sin_addr,
-			    &satocsin(rt_getkey(rt))->sin_addr,
-			    CLLADDR(rt->rt_ifp->if_sadl));
-		} else if (rt->rt_expire <= time_second)
-			arptfree(la); /* timer has expired; clear */
+	/* Guard against race with other llentry_free(). */
+	if (lle->la_flags & LLE_LINKED) {
+		size_t pkts_dropped;
+
+		LLE_REMREF(lle);
+		pkts_dropped = llentry_free(lle);
+		ARP_STATADD(ARP_STAT_DFRDROPPED, pkts_dropped);
+	} else {
+		LLE_FREE_LOCKED(lle);
 	}
 
-	ARP_UNLOCK();
+	IF_AFDATA_UNLOCK(ifp);
 
-	KERNEL_UNLOCK_ONE(NULL);
+out:
 	mutex_exit(softnet_lock);
 }
 
@@ -453,7 +398,9 @@ arp_setgate(struct rtentry *rt, struct sockaddr *gate,
 	if ((rt->rt_flags & RTF_HOST) == 0 && netmask != NULL &&
 	    satocsin(netmask)->sin_addr.s_addr != 0xffffffff)
 		rt->rt_flags |= RTF_CLONING;
-	if (rt->rt_flags & RTF_CLONING) {
+	if (rt->rt_flags & RTF_CLONING ||
+	    ((rt->rt_flags & (RTF_LLINFO | RTF_LOCAL)) && !rt->rt_llinfo))
+	{
 		union {
 			struct sockaddr sa;
 			struct sockaddr_storage ss;
@@ -477,29 +424,11 @@ void
 arp_rtrequest(int req, struct rtentry *rt, const struct rt_addrinfo *info)
 {
 	struct sockaddr *gate = rt->rt_gateway;
-	struct llinfo_arp *la = (struct llinfo_arp *)rt->rt_llinfo;
-	size_t allocsize;
-	struct mbuf *mold;
-	int s;
+	struct llentry *la = NULL;
 	struct in_ifaddr *ia;
 	struct ifaddr *ifa;
 	struct ifnet *ifp = rt->rt_ifp;
-
-	if (!arpinit_done) {
-		arpinit_done = 1;
-		/*
-		 * We generate expiration times from time_second
-		 * so avoid accidentally creating permanent routes.
-		 */
-		if (time_second == 0) {
-			struct timespec ts;
-			ts.tv_sec = 1;
-			ts.tv_nsec = 0;
-			tc_setclock(&ts);
-		}
-		callout_init(&arptimer_ch, CALLOUT_MPSAFE);
-		callout_reset(&arptimer_ch, hz, arptimer, NULL);
-	}
+	int flags = 0;
 
 	if (req == RTM_LLINFO_UPD) {
 		struct in_addr *in;
@@ -508,6 +437,14 @@ arp_rtrequest(int req, struct rtentry *rt, const struct rt_addrinfo *info)
 			return;
 
 		in = &ifatoia(ifa)->ia_addr.sin_addr;
+
+		if (ifatoia(ifa)->ia4_flags &
+		    (IN_IFF_NOTREADY | IN_IFF_DETACHED))
+		{
+			arplog((LOG_DEBUG, "arp_request: %s not ready\n",
+			   in_fmtaddr(*in)));
+			return;
+		}
 
 		arprequest(ifa->ifa_ifp, in, in,
 		    CLLADDR(ifa->ifa_ifp->if_sadl));
@@ -528,7 +465,7 @@ arp_rtrequest(int req, struct rtentry *rt, const struct rt_addrinfo *info)
 				rt->rt_rmx.rmx_mtu = FDDIIPMTU;
 			break;
 #endif
-#if NARC > 0
+#if NARCNET > 0
 		case IFT_ARCNET:
 		    {
 			int arcipifmtu;
@@ -546,7 +483,9 @@ arp_rtrequest(int req, struct rtentry *rt, const struct rt_addrinfo *info)
 		return;
 	}
 
-	ARP_LOCK(1);		/* we may already be locked here. */
+	IF_AFDATA_RLOCK(ifp);
+	la = lla_lookup(LLTABLE(ifp), flags, rt_getkey(rt));
+	IF_AFDATA_RUNLOCK(ifp);
 
 	switch (req) {
 	case RTM_SETGATE:
@@ -554,13 +493,16 @@ arp_rtrequest(int req, struct rtentry *rt, const struct rt_addrinfo *info)
 		break;
 	case RTM_ADD:
 		gate = arp_setgate(rt, gate, info->rti_info[RTAX_NETMASK]);
-		if (rt->rt_flags & RTF_CLONING) {
+		if (rt->rt_flags & RTF_CLONING ||
+		    ((rt->rt_flags & (RTF_LLINFO | RTF_LOCAL)) && !la))
+		{
 			/*
 			 * Give this route an expiration time, even though
 			 * it's a "permanent" route, so that routes cloned
 			 * from it do not need their expiration time set.
 			 */
-			rt->rt_expire = time_second;
+			KASSERT(time_uptime != 0);
+			rt->rt_expire = time_uptime;
 			/*
 			 * linklayers with particular link MTU limitation.
 			 */
@@ -574,7 +516,7 @@ arp_rtrequest(int req, struct rtentry *rt, const struct rt_addrinfo *info)
 					rt->rt_rmx.rmx_mtu = FDDIIPMTU;
 				break;
 #endif
-#if NARC > 0
+#if NARCNET > 0
 			case IFT_ARCNET:
 			    {
 				int arcipifmtu;
@@ -592,14 +534,22 @@ arp_rtrequest(int req, struct rtentry *rt, const struct rt_addrinfo *info)
 			    }
 #endif
 			}
-			break;
+			if (rt->rt_flags & RTF_CLONING)
+				break;
 		}
 		/* Announce a new entry if requested. */
 		if (rt->rt_flags & RTF_ANNOUNCE) {
-			arprequest(ifp,
-			    &satocsin(rt_getkey(rt))->sin_addr,
-			    &satocsin(rt_getkey(rt))->sin_addr,
-			    CLLADDR(satocsdl(gate)));
+			INADDR_TO_IA(satocsin(rt_getkey(rt))->sin_addr, ia);
+			while (ia && ia->ia_ifp != ifp)
+				NEXT_IA_WITH_SAME_ADDR(ia);
+			if (ia == NULL ||
+			    ia->ia4_flags & (IN_IFF_NOTREADY | IN_IFF_DETACHED))
+				;
+			else
+				arprequest(ifp,
+				    &satocsin(rt_getkey(rt))->sin_addr,
+				    &satocsin(rt_getkey(rt))->sin_addr,
+				    CLLADDR(satocsdl(gate)));
 		}
 		/*FALLTHROUGH*/
 	case RTM_RESOLVE:
@@ -608,34 +558,23 @@ arp_rtrequest(int req, struct rtentry *rt, const struct rt_addrinfo *info)
 			log(LOG_DEBUG, "arp_rtrequest: bad gateway value\n");
 			break;
 		}
+
 		satosdl(gate)->sdl_type = ifp->if_type;
 		satosdl(gate)->sdl_index = ifp->if_index;
 		if (la != NULL)
 			break; /* This happens on a route change */
-		/*
-		 * Case 2:  This route may come from cloning, or a manual route
-		 * add with a LL address.
-		 */
-		switch (ifp->if_type) {
-#if NTOKEN > 0
-		case IFT_ISO88025:
-			allocsize = sizeof(*la) + sizeof(struct token_rif);
+
+		/* If the route is for a broadcast address mark it as such.
+		 * This way we can avoid an expensive call to in_broadcast()
+		 * in ip_output() most of the time (because the route passed
+		 * to ip_output() is almost always a host route). */
+		if (rt->rt_flags & RTF_HOST &&
+		    !(rt->rt_flags & RTF_BROADCAST) &&
+		    in_broadcast(satocsin(rt_getkey(rt))->sin_addr, rt->rt_ifp))
+			rt->rt_flags |= RTF_BROADCAST;
+		/* There is little point in resolving the broadcast address */
+		if (rt->rt_flags & RTF_BROADCAST)
 			break;
-#endif /* NTOKEN > 0 */
-		default:
-			allocsize = sizeof(*la);
-		}
-		R_Malloc(la, struct llinfo_arp *, allocsize);
-		rt->rt_llinfo = (void *)la;
-		if (la == NULL) {
-			log(LOG_DEBUG, "arp_rtrequest: malloc failed\n");
-			break;
-		}
-		arp_inuse++, arp_allocated++;
-		memset(la, 0, allocsize);
-		la->la_rt = rt;
-		rt->rt_flags |= RTF_LLINFO;
-		LIST_INSERT_HEAD(&llinfo_arp, la, la_list);
 
 		INADDR_TO_IA(satocsin(rt_getkey(rt))->sin_addr, ia);
 		while (ia && ia->ia_ifp != ifp)
@@ -665,8 +604,11 @@ arp_rtrequest(int req, struct rtentry *rt, const struct rt_addrinfo *info)
 				panic("%s(%s): sockaddr_dl_init cannot fail",
 				    __func__, ifp->if_xname);
 			}
-			if (useloopback)
+			if (useloopback) {
 				ifp = rt->rt_ifp = lo0ifp;
+				rt->rt_rmx.rmx_mtu = 0;
+			}
+			rt->rt_flags |= RTF_LOCAL;
 			/*
 			 * make sure to set rt->rt_ifa to the interface
 			 * address we are using, otherwise we will have trouble
@@ -676,27 +618,98 @@ arp_rtrequest(int req, struct rtentry *rt, const struct rt_addrinfo *info)
 			if (ifa != rt->rt_ifa)
 				rt_replace_ifa(rt, ifa);
 		}
+
+		/*
+		 * Case 2:  This route may come from cloning, or a manual route
+		 * add with a LL address.
+		 */
+		flags = LLE_EXCLUSIVE;
+		if ((rt->rt_flags & RTF_CLONED) == 0)
+			flags |= LLE_IFADDR;
+
+		IF_AFDATA_WLOCK(ifp);
+		la = lla_create(LLTABLE(ifp), flags, rt_getkey(rt));
+		IF_AFDATA_WUNLOCK(ifp);
+
+		if (la == NULL) {
+			log(LOG_DEBUG, "%s: lla_create failed\n",
+			    __func__);
+			rt->rt_llinfo = NULL;
+			break;
+		}
+		rt->rt_llinfo = la;
+		switch (ifp->if_type) {
+#if NTOKEN > 0
+		case IFT_ISO88025:
+			la->la_opaque = kmem_alloc(sizeof(struct token_rif),
+			    KM_SLEEP);
+			break;
+#endif /* NTOKEN > 0 */
+		default:
+			break;
+		}
+		la->la_rt = rt;
+		rt->rt_refcnt++;
+		rt->rt_flags |= RTF_LLINFO;
+		arp_inuse++, arp_allocated++;
+
+		LLE_WUNLOCK(la);
+		la = NULL;
+
 		break;
 
 	case RTM_DELETE:
 		if (la == NULL)
 			break;
 		arp_inuse--;
-		LIST_REMOVE(la, la_list);
 		rt->rt_llinfo = NULL;
 		rt->rt_flags &= ~RTF_LLINFO;
 
-		s = splnet();
-		mold = la->la_hold;
-		la->la_hold = 0;
-		splx(s);
+		LLE_RUNLOCK(la);
 
-		if (mold)
-			m_freem(mold);
+		flags |= LLE_EXCLUSIVE;
+		IF_AFDATA_WLOCK(ifp);
 
-		Free((void *)la);
+		la = lla_lookup(LLTABLE(ifp), flags, rt_getkey(rt));
+		/* This shouldn't happen */
+		if (la == NULL) {
+			IF_AFDATA_WUNLOCK(ifp);
+			break;
+		}
+
+		if (la->la_opaque != NULL) {
+			switch (ifp->if_type) {
+#if NTOKEN > 0
+			case IFT_ISO88025:
+				kmem_free(la->la_opaque,
+				    sizeof(struct token_rif));
+				break;
+#endif /* NTOKEN > 0 */
+			default:
+				break;
+			}
+		}
+
+		if (la->la_rt != NULL) {
+			/*
+			 * Don't rtfree (may actually free objects) here.
+			 * Leave it to rtrequest1.
+			 */
+			la->la_rt->rt_refcnt--;
+			la->la_rt = NULL;
+		}
+		llentry_free(la);
+
+		IF_AFDATA_WUNLOCK(ifp);
+		la = NULL;
 	}
-	ARP_UNLOCK();
+
+	if (la != NULL) {
+		if (flags & LLE_EXCLUSIVE)
+			LLE_WUNLOCK(la);
+		else
+			LLE_RUNLOCK(la);
+	}
 }
 
 /*
@@ -714,6 +727,10 @@ arprequest(struct ifnet *ifp,
 	struct arphdr *ah;
 	struct sockaddr sa;
 	uint64_t *arps;
+
+	KASSERT(sip != NULL);
+	KASSERT(tip != NULL);
+	KASSERT(enaddr != NULL);
 
 	if ((m = m_gethdr(M_DONTWAIT, MT_DATA)) == NULL)
 		return;
@@ -772,12 +789,16 @@ int
 arpresolve(struct ifnet *ifp, struct rtentry *rt, struct mbuf *m,
     const struct sockaddr *dst, u_char *desten)
 {
-	struct llinfo_arp *la;
+	struct llentry *la;
 	const struct sockaddr_dl *sdl;
-	struct mbuf *mold;
-	int s;
+	int renew;
+	int flags = 0;
+	int error;
 
-	if ((la = arplookup1(m, &satocsin(dst)->sin_addr, 1, 0, rt)) != NULL)
+	KASSERT(m != NULL);
+
+	la = arplookup(ifp, m, &satocsin(dst)->sin_addr, 1, 0, 0, rt);
+	if (la != NULL)
 		rt = la->la_rt;
 
 	if (la == NULL || rt == NULL) {
@@ -786,6 +807,8 @@ arpresolve(struct ifnet *ifp, struct rtentry *rt, struct mbuf *m,
 		    "arpresolve: can't allocate llinfo on %s for %s\n",
 		    ifp->if_xname, in_fmtaddr(satocsin(dst)->sin_addr));
 		m_freem(m);
+		if (la != NULL)
+			LLE_RUNLOCK(la);
 		return 0;
 	}
 	sdl = satocsdl(rt->rt_gateway);
@@ -793,28 +816,13 @@ arpresolve(struct ifnet *ifp, struct rtentry *rt, struct mbuf *m,
 	 * Check the address family and length is valid, the address
 	 * is resolved; otherwise, try to resolve.
 	 */
-	if ((rt->rt_expire == 0 || rt->rt_expire > time_second) &&
+	if ((rt->rt_expire == 0 || rt->rt_expire > time_uptime) &&
 	    sdl->sdl_family == AF_LINK && sdl->sdl_alen != 0) {
 		memcpy(desten, CLLADDR(sdl),
 		    min(sdl->sdl_alen, ifp->if_addrlen));
-		rt->rt_pksent = time_second; /* Time for last pkt sent */
+		rt->rt_pksent = time_uptime; /* Time for last pkt sent */
+		LLE_RUNLOCK(la);
 		return 1;
-	}
-	/*
-	 * There is an arptab entry, but no ethernet address
-	 * response yet.  Replace the held mbuf with this
-	 * latest one.
-	 */
-
-	ARP_STATINC(ARP_STAT_DFRTOTAL);
-	s = splnet();
-	mold = la->la_hold;
-	la->la_hold = m;
-	splx(s);
-
-	if (mold) {
-		ARP_STATINC(ARP_STAT_DFRDROPPED);
-		m_freem(mold);
 	}
 
 	/*
@@ -825,30 +833,162 @@ arpresolve(struct ifnet *ifp, struct rtentry *rt, struct mbuf *m,
 		/* This should never happen. (Should it? -gwr) */
 		printf("arpresolve: unresolved and rt_expire == 0\n");
 		/* Set expiration time to now (expired). */
-		rt->rt_expire = time_second;
+		rt->rt_expire = time_uptime;
 	}
 #endif
-	if (rt->rt_expire) {
-		rt->rt_flags &= ~RTF_REJECT;
-		if (la->la_asked == 0 || rt->rt_expire != time_second) {
-			rt->rt_expire = time_second;
-			if (la->la_asked++ < arp_maxtries) {
-				arprequest(ifp,
-				    &satocsin(rt->rt_ifa->ifa_addr)->sin_addr,
-				    &satocsin(dst)->sin_addr,
-#if NCARP > 0
-				    (rt->rt_ifp->if_type == IFT_CARP) ?
-				    CLLADDR(rt->rt_ifp->if_sadl):
+
+retry:
+	if (la == NULL) {
+		IF_AFDATA_RLOCK(ifp);
+		la = lla_lookup(LLTABLE(ifp), flags, dst);
+		IF_AFDATA_RUNLOCK(ifp);
+	}
+
+#ifdef IFF_STATICARP /* FreeBSD */
+#define _IFF_NOARP (IFF_NOARP | IFF_STATICARP)
+#else
+#define _IFF_NOARP IFF_NOARP
 #endif
-				    CLLADDR(ifp->if_sadl));
-			} else {
-				rt->rt_flags |= RTF_REJECT;
-				rt->rt_expire += arpt_down;
-				la->la_asked = 0;
-			}
+	if ((la == NULL) && ((flags & LLE_EXCLUSIVE) == 0)
+	    && ((ifp->if_flags & _IFF_NOARP) == 0))
+	{
+		flags |= LLE_EXCLUSIVE;
+		IF_AFDATA_WLOCK(ifp);
+		la = lla_create(LLTABLE(ifp), flags, dst);
+		IF_AFDATA_WUNLOCK(ifp);
+
+		if (la == NULL) {
+			log(LOG_DEBUG,
+			    "%s: failed to create llentry for %s on %s\n",
+			    __func__, inet_ntoa(satocsin(dst)->sin_addr),
+			    ifp->if_xname);
 		}
 	}
-	return 0;
+#undef _IFF_NOARP
+
+	if (la == NULL) {
+		m_freem(m);
+		return 0;
+	}
+
+	if ((la->la_flags & LLE_VALID) &&
+	    ((la->la_flags & LLE_STATIC) || la->la_expire > time_uptime)) {
+		memcpy(desten, CLLADDR(sdl),
+		    min(sdl->sdl_alen, ifp->if_addrlen));
+		renew = 0;
+		/*
+		 * If entry has an expiry time and it is approaching,
+		 * see if we need to send an ARP request within this
+		 * arpt_down interval.
+		 */
+		if (!(la->la_flags & LLE_STATIC) &&
+		    time_uptime + la->la_preempt > la->la_expire) {
+			renew = 1;
+			la->la_preempt--;
+		}
+
+		if (flags & LLE_EXCLUSIVE)
+			LLE_WUNLOCK(la);
+		else
+			LLE_RUNLOCK(la);
+
+		if (renew == 1) {
+			const u_int8_t *enaddr =
+#if NCARP > 0
+			    (rt->rt_ifp->if_type == IFT_CARP) ?
+			    CLLADDR(rt->rt_ifp->if_sadl):
+#endif
+			    CLLADDR(ifp->if_sadl);
+			arprequest(ifp, &satocsin(rt->rt_ifa->ifa_addr)->sin_addr,
+			    &satocsin(dst)->sin_addr, enaddr);
+		}
+
+		return 1;
+	}
+
+	if (la->la_flags & LLE_STATIC) {   /* should not happen! */
+		log(LOG_DEBUG, "arpresolve: ouch, empty static llinfo for %s\n",
+		    inet_ntoa(satocsin(dst)->sin_addr));
+		m_freem(m);
+		error = EINVAL;
+		goto done;
+	}
+
+	renew = (la->la_asked == 0 || la->la_expire != time_uptime);
+	if (renew && (flags & LLE_EXCLUSIVE) == 0) {
+		flags |= LLE_EXCLUSIVE;
+		LLE_RUNLOCK(la);
+		la = NULL;
+		goto retry;
+	}
+
+	/*
+	 * There is an arptab entry, but no ethernet address
+	 * response yet.  Add the mbuf to the list, dropping
+	 * the oldest packet if we have exceeded the system
+	 * setting.
+	 */
+	LLE_WLOCK_ASSERT(la);
+	if (la->la_numheld >= arp_maxhold) {
+		if (la->la_hold != NULL) {
+			struct mbuf *next = la->la_hold->m_nextpkt;
+			m_freem(la->la_hold);
+			la->la_hold = next;
+			la->la_numheld--;
+			ARP_STATINC(ARP_STAT_DFRDROPPED);
+		}
+	}
+	if (la->la_hold != NULL) {
+		struct mbuf *curr = la->la_hold;
+		while (curr->m_nextpkt != NULL)
+			curr = curr->m_nextpkt;
+		curr->m_nextpkt = m;
+	} else
+		la->la_hold = m;
+	la->la_numheld++;
+	if (renew == 0 && (flags & LLE_EXCLUSIVE)) {
+		flags &= ~LLE_EXCLUSIVE;
+		LLE_DOWNGRADE(la);
+	}
+
+	/*
+	 * Return EWOULDBLOCK if we have tried less than arp_maxtries. It
+	 * will be masked by ether_output(). Return EHOSTDOWN/EHOSTUNREACH
+	 * if we have already sent arp_maxtries ARP requests. Retransmit the
+	 * ARP request, but not faster than one request per second.
+	 */
+	if (la->la_asked < arp_maxtries)
+		error = EWOULDBLOCK;	/* First request. */
+	else
+		error = (rt->rt_flags & RTF_GATEWAY) ?
+		    EHOSTUNREACH : EHOSTDOWN;
+
+	if (renew) {
+		const u_int8_t *enaddr =
+#if NCARP > 0
+		    (rt->rt_ifp->if_type == IFT_CARP) ?
+		    CLLADDR(rt->rt_ifp->if_sadl):
+#endif
+		    CLLADDR(ifp->if_sadl);
+		LLE_ADDREF(la);
+		la->la_expire = time_uptime;
+		callout_reset(&la->la_timer, hz * arpt_down,
+		    arptimer, la);
+		la->la_asked++;
+		if (flags & LLE_EXCLUSIVE)
+			LLE_WUNLOCK(la);
+		else
+			LLE_RUNLOCK(la);
+		arprequest(ifp, &satocsin(rt->rt_ifa->ifa_addr)->sin_addr,
+		    &satocsin(dst)->sin_addr, enaddr);
+		return error == 0;
+	}
+done:
+	if (flags & LLE_EXCLUSIVE)
+		LLE_WUNLOCK(la);
+	else
+		LLE_RUNLOCK(la);
+	return error == 0;
 }
 
 /*
@@ -869,7 +1009,7 @@ arpintr(void)
 		s = splnet();
 		IF_DEQUEUE(&arpintrq, m);
 		splx(s);
-		if (m == 0 || (m->m_flags & M_PKTHDR) == 0)
+		if (m == NULL || (m->m_flags & M_PKTHDR) == 0)
 			panic("arpintr");
 
 		MCLAIM(m, &arpdomain.dom_mowner);
@@ -932,8 +1072,8 @@ in_arpinput(struct mbuf *m)
 {
 	struct arphdr *ah;
 	struct ifnet *ifp = m->m_pkthdr.rcvif;
-	struct llinfo_arp *la = NULL;
-	struct rtentry  *rt;
+	struct llentry *la = NULL;
+	struct rtentry  *rt = NULL;
 	struct in_ifaddr *ia;
 #if NBRIDGE > 0
 	struct in_ifaddr *bridge_ia = NULL;
@@ -941,13 +1081,11 @@ in_arpinput(struct mbuf *m)
 #if NCARP > 0
 	u_int32_t count = 0, index = 0;
 #endif
-	struct sockaddr_dl *sdl;
+	struct sockaddr_dl *sdl = NULL;
 	struct sockaddr sa;
 	struct in_addr isaddr, itaddr, myaddr;
 	int op;
-	struct mbuf *mold;
 	void *tha;
-	int s;
 	uint64_t *arps;
 
 	if (__predict_false(m_makewritable(&m, 0, m->m_pkthdr.len, M_DONTWAIT)))
@@ -979,16 +1117,6 @@ in_arpinput(struct mbuf *m)
 
 	if (m->m_flags & (M_BCAST|M_MCAST))
 		ARP_STATINC(ARP_STAT_RCVMCAST);
-
-	/*
-	 * If the target IP address is zero, ignore the packet.
-	 * This prevents the code below from tring to answer
-	 * when we are using IP address zero (booting).
-	 */
-	if (in_nullhost(itaddr)) {
-		ARP_STATINC(ARP_STAT_RCVZEROTPA);
-		goto out;
-	}
 
 
 	/*
@@ -1070,21 +1198,52 @@ in_arpinput(struct mbuf *m)
 	/*
 	 * If the source IP address is zero, this is an RFC 5227 ARP probe
 	 */
-	if (in_nullhost(isaddr)) {
+	if (in_nullhost(isaddr))
 		ARP_STATINC(ARP_STAT_RCVZEROSPA);
-		goto reply;
+	else if (in_hosteq(isaddr, myaddr))
+		ARP_STATINC(ARP_STAT_RCVLOCALSPA);
+
+	if (in_nullhost(itaddr))
+		ARP_STATINC(ARP_STAT_RCVZEROTPA);
+
+	/* DAD check, RFC 5227 2.1.1, Probe Details */
+	if (in_hosteq(isaddr, myaddr) ||
+	    (in_nullhost(isaddr) && in_hosteq(itaddr, myaddr)))
+	{
+		/* If our address is tentative, mark it as duplicated */
+		if (ia->ia4_flags & IN_IFF_TENTATIVE)
+			arp_dad_duplicated((struct ifaddr *)ia);
+		/* If our address is unuseable, don't reply */
+		if (ia->ia4_flags & (IN_IFF_NOTREADY | IN_IFF_DETACHED))
+			goto out;
 	}
 
+	/*
+	 * If the target IP address is zero, ignore the packet.
+	 * This prevents the code below from tring to answer
+	 * when we are using IP address zero (booting).
+	 */
+	if (in_nullhost(itaddr))
+		goto out;
+
+	if (in_nullhost(isaddr))
+		goto reply;
+
 	if (in_hosteq(isaddr, myaddr)) {
-		ARP_STATINC(ARP_STAT_RCVLOCALSPA);
 		log(LOG_ERR,
 		   "duplicate IP address %s sent from link address %s\n",
 		   in_fmtaddr(isaddr), lla_snprintf(ar_sha(ah), ah->ar_hln));
 		itaddr = myaddr;
 		goto reply;
 	}
-	la = arplookup(m, &isaddr, in_hosteq(itaddr, myaddr), 0);
-	if (la != NULL && (rt = la->la_rt) && (sdl = satosdl(rt->rt_gateway))) {
+
+	la = arplookup(ifp, m, &isaddr, in_hosteq(itaddr, myaddr), 0, 1, NULL);
+	if (la != NULL) {
+		rt = la->la_rt;
+		if (rt != NULL)
+			sdl = satosdl(rt->rt_gateway);
+	}
+	if (sdl != NULL) {
 		if (sdl->sdl_alen &&
 		    memcmp(ar_sha(ah), CLLADDR(sdl), sdl->sdl_alen)) {
 			if (rt->rt_flags & RTF_STATIC) {
@@ -1167,41 +1326,65 @@ in_arpinput(struct mbuf *m)
 #endif /* NTOKEN > 0 */
 		(void)sockaddr_dl_setaddr(sdl, sdl->sdl_len, ar_sha(ah),
 		    ah->ar_hln);
-		if (rt->rt_expire)
-			rt->rt_expire = time_second + arpt_keep;
+		if (rt->rt_expire) {
+			rt->rt_expire = time_uptime + arpt_keep;
+
+			KASSERT((la->la_flags & LLE_STATIC) == 0);
+			LLE_ADDREF(la);
+			callout_reset(&la->la_timer, hz * arpt_keep, arptimer, la);
+		}
 		rt->rt_flags &= ~RTF_REJECT;
 		la->la_asked = 0;
 
-		s = splnet();
-		mold = la->la_hold;
-		la->la_hold = 0;
-		splx(s);
+		if (la->la_hold != NULL) {
+			int n = la->la_numheld;
+			struct mbuf *m_hold, *m_hold_next;
 
-		if (mold) {
-			ARP_STATINC(ARP_STAT_DFRSENT);
-			(*ifp->if_output)(ifp, mold, rt_getkey(rt), rt);
-		}
+			m_hold = la->la_hold;
+			la->la_hold = NULL;
+			la->la_numheld = 0;
+			/*
+			 * We have to unlock here because if_output would call
+			 * arpresolve
+			 */
+			LLE_WUNLOCK(la);
+			ARP_STATADD(ARP_STAT_DFRSENT, n);
+			for (; m_hold != NULL; m_hold = m_hold_next) {
+				m_hold_next = m_hold->m_nextpkt;
+				m_hold->m_nextpkt = NULL;
+				(*ifp->if_output)(ifp, m_hold, rt_getkey(rt), rt);
+			}
+		} else
+			LLE_WUNLOCK(la);
+		la = NULL;
 	}
 reply:
+	if (la != NULL) {
+		LLE_WUNLOCK(la);
+		la = NULL;
+	}
 	if (op != ARPOP_REQUEST) {
 		if (op == ARPOP_REPLY)
 			ARP_STATINC(ARP_STAT_RCVREPLY);
-	out:
-		m_freem(m);
-		return;
+		goto out;
 	}
 	ARP_STATINC(ARP_STAT_RCVREQUEST);
 	if (in_hosteq(itaddr, myaddr)) {
+		/* If our address is unuseable, don't reply */
+		if (ia->ia4_flags & (IN_IFF_NOTREADY | IN_IFF_DETACHED))
+			goto out;
 		/* I am the target */
 		tha = ar_tha(ah);
 		if (tha)
 			memcpy(tha, ar_sha(ah), ah->ar_hln);
 		memcpy(ar_sha(ah), CLLADDR(ifp->if_sadl), ah->ar_hln);
 	} else {
-		la = arplookup(m, &itaddr, 0, SIN_PROXY);
+		la = arplookup(ifp, m, &itaddr, 0, SIN_PROXY, 0, NULL);
 		if (la == NULL)
 			goto out;
 		rt = la->la_rt;
+		LLE_RUNLOCK(la);
+		la = NULL;
 		if (rt->rt_ifp->if_type == IFT_CARP &&
 		    m->m_pkthdr.rcvif->if_type != IFT_CARP)
 			goto out;
@@ -1240,45 +1423,31 @@ reply:
 	ARP_STAT_PUTREF();
 	(*ifp->if_output)(ifp, m, &sa, NULL);
 	return;
+
+out:
+	if (la != NULL)
+		LLE_WUNLOCK(la);
+	m_freem(m);
 }
 
 /*
  * Free an arp entry.
  */
-static void arptfree(struct llinfo_arp *la)
+static void arptfree(struct rtentry *rt)
 {
-	struct rtentry *rt = la->la_rt;
-	struct sockaddr_dl *sdl;
 
-	ARP_LOCK_CHECK();
-
-	if (rt == NULL)
-		panic("arptfree");
-	if (rt->rt_refcnt > 0 && (sdl = satosdl(rt->rt_gateway)) &&
-	    sdl->sdl_family == AF_LINK) {
-		sdl->sdl_alen = 0;
-		la->la_asked = 0;
-		rt->rt_flags &= ~RTF_REJECT;
-		return;
-	}
 	rtrequest(RTM_DELETE, rt_getkey(rt), NULL, rt_mask(rt), 0, NULL);
-}
-
-static struct llinfo_arp *
-arplookup(struct mbuf *m, const struct in_addr *addr, int create, int proxy)
-{
-	return arplookup1(m, addr, create, proxy, NULL);
+	rtfree(rt);
 }
 
 /*
  * Lookup or enter a new address in arptab.
  */
-static struct llinfo_arp *
-arplookup1(struct mbuf *m, const struct in_addr *addr, int create, int proxy,
-    struct rtentry *rt0)
+static struct llentry *
+arplookup(struct ifnet *ifp, struct mbuf *m, const struct in_addr *addr,
+    int create, int proxy, int wlock, struct rtentry *rt0)
 {
 	struct arphdr *ah;
-	struct ifnet *ifp = m->m_pkthdr.rcvif;
 	struct rtentry *rt;
 	struct sockaddr_inarp sin;
 	const char *why = NULL;
@@ -1302,22 +1471,39 @@ arplookup1(struct mbuf *m, const struct in_addr *addr, int create, int proxy,
 	 (__rt)->rt_gateway->sa_family == AF_LINK)
 
 
-	if (IS_LLINFO(rt))
-		return (struct llinfo_arp *)rt->rt_llinfo;
+	if (IS_LLINFO(rt)) {
+		struct llentry *la;
+		int flags = wlock ? LLE_EXCLUSIVE : 0;
+
+		IF_AFDATA_RLOCK(ifp);
+		la = lla_lookup(LLTABLE(ifp), flags, rt_getkey(rt));
+		IF_AFDATA_RUNLOCK(ifp);
+
+		if (la == NULL && create) {
+			IF_AFDATA_WLOCK(ifp);
+			la = lla_create(LLTABLE(ifp), flags, rt_getkey(rt));
+			IF_AFDATA_WUNLOCK(ifp);
+		}
+
+		return la;
+	}
 
 	if (create) {
-		if (rt->rt_flags & RTF_GATEWAY)
-			why = "host is not on local network";
-		else if ((rt->rt_flags & RTF_LLINFO) == 0) {
+		if (rt->rt_flags & RTF_GATEWAY) {
+			if (log_unknown_network)
+				why = "host is not on local network";
+		} else if ((rt->rt_flags & RTF_LLINFO) == 0) {
 			ARP_STATINC(ARP_STAT_ALLOCFAIL);
 			why = "could not allocate llinfo";
 		} else
 			why = "gateway route is not ours";
-		log(LOG_DEBUG, "arplookup: unable to enter address"
-		    " for %s@%s on %s (%s)\n",
-		    in_fmtaddr(*addr), lla_snprintf(ar_sha(ah), ah->ar_hln),
-		    (ifp) ? ifp->if_xname : "null", why);
-		if (rt->rt_refcnt <= 0 && (rt->rt_flags & RTF_CLONED) != 0) {
+		if (why) {
+			log(LOG_DEBUG, "arplookup: unable to enter address"
+			    " for %s@%s on %s (%s)\n", in_fmtaddr(*addr),
+			    lla_snprintf(ar_sha(ah), ah->ar_hln),
+			    (ifp) ? ifp->if_xname : "null", why);
+		}
+		if ((rt->rt_flags & RTF_CLONED) != 0) {
 			rtrequest(RTM_DELETE, rt_getkey(rt),
 		    	    rt->rt_gateway, rt_mask(rt), rt->rt_flags, NULL);
 		}
@@ -1336,17 +1522,326 @@ void
 arp_ifinit(struct ifnet *ifp, struct ifaddr *ifa)
 {
 	struct in_addr *ip;
+	struct in_ifaddr *ia = (struct in_ifaddr *)ifa;
 
 	/*
 	 * Warn the user if another station has this IP address,
 	 * but only if the interface IP address is not zero.
 	 */
 	ip = &IA_SIN(ifa)->sin_addr;
-	if (!in_nullhost(*ip))
+	if (!in_nullhost(*ip) &&
+	    (ia->ia4_flags & (IN_IFF_NOTREADY | IN_IFF_DETACHED)) == 0)
 		arprequest(ifp, ip, ip, CLLADDR(ifp->if_sadl));
 
 	ifa->ifa_rtrequest = arp_rtrequest;
 	ifa->ifa_flags |= RTF_CLONING;
+
+	/* ARP will handle DAD for this address. */
+	if (ia->ia4_flags & IN_IFF_TRYTENTATIVE) {
+		ia->ia4_flags |= IN_IFF_TENTATIVE;
+		ia->ia_dad_start = arp_dad_start;
+		ia->ia_dad_stop = arp_dad_stop;
+	}
+}
+
+TAILQ_HEAD(dadq_head, dadq);
+struct dadq {
+	TAILQ_ENTRY(dadq) dad_list;
+	struct ifaddr *dad_ifa;
+	int dad_count;		/* max ARP to send */
+	int dad_arp_tcount;	/* # of trials to send ARP */
+	int dad_arp_ocount;	/* ARP sent so far */
+	int dad_arp_announce;	/* max ARP announcements */
+	int dad_arp_acount;	/* # of announcements */
+	struct callout dad_timer_ch;
+};
+MALLOC_JUSTDEFINE(M_IPARP, "ARP DAD", "ARP DAD Structure");
+
+static struct dadq_head dadq;
+static int dad_init = 0;
+static int dad_maxtry = 15;     /* max # of *tries* to transmit DAD packet */
+
+static struct dadq *
+arp_dad_find(struct ifaddr *ifa)
+{
+	struct dadq *dp;
+
+	TAILQ_FOREACH(dp, &dadq, dad_list) {
+		if (dp->dad_ifa == ifa)
+			return dp;
+	}
+	return NULL;
+}
+
+static void
+arp_dad_starttimer(struct dadq *dp, int ticks)
+{
+
+	callout_reset(&dp->dad_timer_ch, ticks,
+	    (void (*)(void *))arp_dad_timer, (void *)dp->dad_ifa);
+}
+
+static void
+arp_dad_stoptimer(struct dadq *dp)
+{
+
+	callout_stop(&dp->dad_timer_ch);
+}
+
+static void
+arp_dad_output(struct dadq *dp, struct ifaddr *ifa)
+{
+	struct in_ifaddr *ia = (struct in_ifaddr *)ifa;
+	struct ifnet *ifp = ifa->ifa_ifp;
+	struct in_addr sip;
+
+	dp->dad_arp_tcount++;
+	if ((ifp->if_flags & IFF_UP) == 0)
+		return;
+	if ((ifp->if_flags & IFF_RUNNING) == 0)
+		return;
+
+	dp->dad_arp_tcount = 0;
+	dp->dad_arp_ocount++;
+
+	memset(&sip, 0, sizeof(sip));
+	arprequest(ifa->ifa_ifp, &sip, &ia->ia_addr.sin_addr,
+	    CLLADDR(ifa->ifa_ifp->if_sadl));
+}
+
+/*
+ * Start Duplicate Address Detection (DAD) for specified interface address.
+ */
+static void
+arp_dad_start(struct ifaddr *ifa)
+{
+	struct in_ifaddr *ia = (struct in_ifaddr *)ifa;
+	struct dadq *dp;
+
+	if (!dad_init) {
+		TAILQ_INIT(&dadq);
+		dad_init++;
+	}
+
+	/*
+	 * If we don't need DAD, don't do it.
+	 * - DAD is disabled (ip_dad_count == 0)
+	 */
+	if (!(ia->ia4_flags & IN_IFF_TENTATIVE)) {
+		log(LOG_DEBUG,
+			"arp_dad_start: called with non-tentative address "
+			"%s(%s)\n",
+			in_fmtaddr(ia->ia_addr.sin_addr),
+			ifa->ifa_ifp ? if_name(ifa->ifa_ifp) : "???");
+		return;
+	}
+	if (!ip_dad_count) {
+		struct in_addr *ip = &IA_SIN(ifa)->sin_addr;
+
+		ia->ia4_flags &= ~IN_IFF_TENTATIVE;
+		rt_newaddrmsg(RTM_NEWADDR, ifa, 0, NULL);
+		arprequest(ifa->ifa_ifp, ip, ip,
+		    CLLADDR(ifa->ifa_ifp->if_sadl));
+		return;
+	}
+	if (ifa->ifa_ifp == NULL)
+		panic("arp_dad_start: ifa->ifa_ifp == NULL");
+	if (!(ifa->ifa_ifp->if_flags & IFF_UP))
+		return;
+	if (arp_dad_find(ifa) != NULL) {
+		/* DAD already in progress */
+		return;
+	}
+
+	dp = malloc(sizeof(*dp), M_IPARP, M_NOWAIT);
+	if (dp == NULL) {
+		log(LOG_ERR, "arp_dad_start: memory allocation failed for "
+			"%s(%s)\n",
+			in_fmtaddr(ia->ia_addr.sin_addr),
+			ifa->ifa_ifp ? if_name(ifa->ifa_ifp) : "???");
+		return;
+	}
+	memset(dp, 0, sizeof(*dp));
+	callout_init(&dp->dad_timer_ch, CALLOUT_MPSAFE);
+	TAILQ_INSERT_TAIL(&dadq, (struct dadq *)dp, dad_list);
+
+	arplog((LOG_DEBUG, "%s: starting DAD for %s\n", if_name(ifa->ifa_ifp),
+	    in_fmtaddr(ia->ia_addr.sin_addr)));
+
+	/*
+	 * Send ARP packet for DAD, ip_dad_count times.
+	 * Note that we must delay the first transmission.
+	 */
+	dp->dad_ifa = ifa;
+	ifaref(ifa);	/* just for safety */
+	dp->dad_count = ip_dad_count;
+	dp->dad_arp_announce = 0; /* Will be set when starting to announce */
+	dp->dad_arp_acount = dp->dad_arp_ocount = dp->dad_arp_tcount = 0;
+
+	arp_dad_starttimer(dp, cprng_fast32() % (PROBE_WAIT * hz));
+}
+
+/*
+ * terminate DAD unconditionally.  used for address removals.
+ */
+static void
+arp_dad_stop(struct ifaddr *ifa)
+{
+	struct dadq *dp;
+
+	if (!dad_init)
+		return;
+	dp = arp_dad_find(ifa);
+	if (dp == NULL) {
+		/* DAD wasn't started yet */
+		return;
+	}
+
+	arp_dad_stoptimer(dp);
+
+	TAILQ_REMOVE(&dadq, dp, dad_list);
+	free(dp, M_IPARP);
+	dp = NULL;
+	ifafree(ifa);
+}
+
+static void
+arp_dad_timer(struct ifaddr *ifa)
+{
+	struct in_ifaddr *ia = (struct in_ifaddr *)ifa;
+	struct dadq *dp;
+	struct in_addr *ip;
+
+	mutex_enter(softnet_lock);
+	KERNEL_LOCK(1, NULL);
+
+	/* Sanity check */
+	if (ia == NULL) {
+		log(LOG_ERR, "arp_dad_timer: called with null parameter\n");
+		goto done;
+	}
+	dp = arp_dad_find(ifa);
+	if (dp == NULL) {
+		log(LOG_ERR, "arp_dad_timer: DAD structure not found\n");
+		goto done;
+	}
+	if (ia->ia4_flags & IN_IFF_DUPLICATED) {
+		log(LOG_ERR, "nd4_dad_timer: called with duplicate address "
+			"%s(%s)\n",
+			in_fmtaddr(ia->ia_addr.sin_addr),
+			ifa->ifa_ifp ? if_name(ifa->ifa_ifp) : "???");
+		goto done;
+	}
+	if ((ia->ia4_flags & IN_IFF_TENTATIVE) == 0 && dp->dad_arp_acount == 0){
+		log(LOG_ERR, "arp_dad_timer: called with non-tentative address "
+			"%s(%s)\n",
+			in_fmtaddr(ia->ia_addr.sin_addr),
+			ifa->ifa_ifp ? if_name(ifa->ifa_ifp) : "???");
+		goto done;
+	}
+
+	/* timeouted with IFF_{RUNNING,UP} check */
+	if (dp->dad_arp_tcount > dad_maxtry) {
+		arplog((LOG_INFO, "%s: could not run DAD, driver problem?\n",
+			if_name(ifa->ifa_ifp)));
+
+		TAILQ_REMOVE(&dadq, dp, dad_list);
+		free(dp, M_IPARP);
+		dp = NULL;
+		ifafree(ifa);
+		goto done;
+	}
+
+	/* Need more checks? */
+	if (dp->dad_arp_ocount < dp->dad_count) {
+		int adelay;
+
+		/*
+		 * We have more ARP to go.  Send ARP packet for DAD.
+		 */
+		arp_dad_output(dp, ifa);
+		if (dp->dad_arp_ocount < dp->dad_count)
+			adelay = (PROBE_MIN * hz) +
+			    (cprng_fast32() %
+			    ((PROBE_MAX * hz) - (PROBE_MIN * hz)));
+		else
+			adelay = ANNOUNCE_WAIT * hz;
+		arp_dad_starttimer(dp, adelay);
+		goto done;
+	} else if (dp->dad_arp_acount == 0) {
+		/*
+		 * We are done with DAD.
+		 * No duplicate address found.
+		 */
+		ia->ia4_flags &= ~IN_IFF_TENTATIVE;
+		rt_newaddrmsg(RTM_NEWADDR, ifa, 0, NULL);
+		arplog((LOG_DEBUG,
+		    "%s: DAD complete for %s - no duplicates found\n",
+		    if_name(ifa->ifa_ifp),
+		    in_fmtaddr(ia->ia_addr.sin_addr)));
+		dp->dad_arp_announce = ANNOUNCE_NUM;
+		goto announce;
+	} else if (dp->dad_arp_acount < dp->dad_arp_announce) {
+announce:
+		/*
+		 * Announce the address.
+		 */
+		ip = &IA_SIN(ifa)->sin_addr;
+		arprequest(ifa->ifa_ifp, ip, ip,
+		    CLLADDR(ifa->ifa_ifp->if_sadl));
+		dp->dad_arp_acount++;
+		if (dp->dad_arp_acount < dp->dad_arp_announce) {
+			arp_dad_starttimer(dp, ANNOUNCE_INTERVAL * hz);
+			goto done;
+		}
+		arplog((LOG_DEBUG,
+		    "%s: ARP announcement complete for %s\n",
+		    if_name(ifa->ifa_ifp),
+		    in_fmtaddr(ia->ia_addr.sin_addr)));
+	}
+
+	TAILQ_REMOVE(&dadq, dp, dad_list);
+	free(dp, M_IPARP);
+	dp = NULL;
+	ifafree(ifa);
+
+done:
+	KERNEL_UNLOCK_ONE(NULL);
+	mutex_exit(softnet_lock);
+}
+
+static void
+arp_dad_duplicated(struct ifaddr *ifa)
+{
+	struct in_ifaddr *ia = (struct in_ifaddr *)ifa;
+	struct ifnet *ifp;
+	struct dadq *dp;
+
+	dp = arp_dad_find(ifa);
+	if (dp == NULL) {
+		log(LOG_ERR, "arp_dad_duplicated: DAD structure not found\n");
+		return;
+	}
+
+	ifp = ifa->ifa_ifp;
+	log(LOG_ERR, "%s: DAD detected duplicate IPv4 address %s: "
+	    "ARP out=%d\n",
+	    if_name(ifp), in_fmtaddr(ia->ia_addr.sin_addr),
+	    dp->dad_arp_ocount);
+
+	ia->ia4_flags &= ~IN_IFF_TENTATIVE;
+	ia->ia4_flags |= IN_IFF_DUPLICATED;
+
+	/* We are done with DAD, with duplicated address found. (failure) */
+	arp_dad_stoptimer(dp);
+
+	/* Inform the routing socket that DAD has completed */
+	rt_newaddrmsg(RTM_NEWADDR, ifa, 0, NULL);
+
+	TAILQ_REMOVE(&dadq, dp, dad_list);
+	free(dp, M_IPARP);
+	dp = NULL;
+	ifafree(ifa);
 }
 
 /*
@@ -1473,15 +1968,19 @@ revarprequest(struct ifnet *ifp)
 
 	memcpy(ar_sha(ah), CLLADDR(ifp->if_sadl), ah->ar_hln);
 	tha = ar_tha(ah);
-	if (tha == NULL)
+	if (tha == NULL) {
+		m_free(m);
 		return;
+	}
 	memcpy(tha, CLLADDR(ifp->if_sadl), ah->ar_hln);
 
 	sa.sa_family = AF_ARP;
 	sa.sa_len = 2;
 	m->m_flags |= M_BCAST;
-	(*ifp->if_output)(ifp, m, &sa, NULL);
 
+	KERNEL_LOCK(1, NULL);
+	(*ifp->if_output)(ifp, m, &sa, NULL);
+	KERNEL_UNLOCK_ONE(NULL);
 }
 
 /*
@@ -1619,6 +2118,12 @@ db_show_arptab(db_expr_t addr, bool have_addr,
 }
 #endif
 
+void
+arp_stat_add(int type, uint64_t count)
+{
+	ARP_STATADD(type, count);
+}
+
 static int
 sysctl_net_inet_arp_stats(SYSCTLFN_ARGS)
 {
@@ -1633,11 +2138,6 @@ sysctl_net_inet_arp_setup(struct sysctllog **clog)
 
 	sysctl_createv(clog, 0, NULL, NULL,
 			CTLFLAG_PERMANENT,
-			CTLTYPE_NODE, "net", NULL,
-			NULL, 0, NULL, 0,
-			CTL_NET, CTL_EOL);
-	sysctl_createv(clog, 0, NULL, NULL,
-			CTLFLAG_PERMANENT,
 			CTLTYPE_NODE, "inet", NULL,
 			NULL, 0, NULL, 0,
 			CTL_NET, PF_INET, CTL_EOL);
@@ -1647,13 +2147,6 @@ sysctl_net_inet_arp_setup(struct sysctllog **clog)
 			SYSCTL_DESCR("Address Resolution Protocol"),
 			NULL, 0, NULL, 0,
 			CTL_NET, PF_INET, CTL_CREATE, CTL_EOL);
-
-	sysctl_createv(clog, 0, NULL, NULL,
-			CTLFLAG_PERMANENT|CTLFLAG_READWRITE,
-			CTLTYPE_INT, "prune",
-			SYSCTL_DESCR("ARP cache pruning interval in seconds"),
-			NULL, 0, &arpt_prune, 0,
-			CTL_NET,PF_INET, node->sysctl_num, CTL_CREATE, CTL_EOL);
 
 	sysctl_createv(clog, 0, NULL, NULL,
 			CTLFLAG_PERMANENT|CTLFLAG_READWRITE,
@@ -1669,13 +2162,6 @@ sysctl_net_inet_arp_setup(struct sysctllog **clog)
 			NULL, 0, &arpt_down, 0,
 			CTL_NET,PF_INET, node->sysctl_num, CTL_CREATE, CTL_EOL);
 
-	sysctl_createv(clog, 0, NULL, NULL,
-			CTLFLAG_PERMANENT|CTLFLAG_READWRITE,
-			CTLTYPE_INT, "refresh",
-			SYSCTL_DESCR("ARP entry refresh interval"),
-			NULL, 0, &arpt_refresh, 0,
-			CTL_NET,PF_INET, node->sysctl_num, CTL_CREATE, CTL_EOL);
-	
 	sysctl_createv(clog, 0, NULL, NULL,
 			CTLFLAG_PERMANENT,
 			CTLTYPE_STRUCT, "stats",
@@ -1706,6 +2192,20 @@ sysctl_net_inet_arp_setup(struct sysctllog **clog)
 			    " interface"),
 			NULL, 0, &log_wrong_iface, 0,
 			CTL_NET,PF_INET, node->sysctl_num, CTL_CREATE, CTL_EOL);
+
+	sysctl_createv(clog, 0, NULL, NULL,
+			CTLFLAG_PERMANENT|CTLFLAG_READWRITE,
+			CTLTYPE_INT, "log_unknown_network",
+			SYSCTL_DESCR("log ARP packets from non-local network"),
+			NULL, 0, &log_unknown_network, 0,
+			CTL_NET,PF_INET, node->sysctl_num, CTL_CREATE, CTL_EOL);
+
+	sysctl_createv(clog, 0, NULL, NULL,
+		       CTLFLAG_PERMANENT|CTLFLAG_READWRITE,
+		       CTLTYPE_INT, "debug",
+		       SYSCTL_DESCR("Enable ARP DAD debug output"),
+		       NULL, 0, &arp_debug, 0,
+		       CTL_NET, PF_INET, node->sysctl_num, CTL_CREATE, CTL_EOL);
 }
 
 #endif /* INET */

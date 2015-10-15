@@ -1,4 +1,4 @@
-/* Copyright (C) 2010-2013 Free Software Foundation, Inc.
+/* Copyright (C) 2010-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -15,9 +15,8 @@
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
-#include "server.h"
-
 struct regcache;
+struct target_desc;
 
 /*  Some information relative to a given register set.   */
 
@@ -50,3 +49,6 @@ struct lynx_target_ops
 
 extern struct lynx_target_ops the_low_target;
 
+/* The inferior's target description.  This is a global because the
+   LynxOS ports support neither bi-arch nor multi-process.  */
+extern const struct target_desc *lynx_tdesc;

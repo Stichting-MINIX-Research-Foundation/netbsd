@@ -1,4 +1,4 @@
-/*	$NetBSD: booke_machdep.c,v 1.18 2013/07/17 23:27:02 matt Exp $	*/
+/*	$NetBSD: booke_machdep.c,v 1.23 2015/01/23 07:27:05 nonaka Exp $	*/
 /*-
  * Copyright (c) 2010, 2011 The NetBSD Foundation, Inc.
  * All rights reserved.
@@ -38,7 +38,7 @@
 #define	_POWERPC_BUS_DMA_PRIVATE
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: booke_machdep.c,v 1.18 2013/07/17 23:27:02 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: booke_machdep.c,v 1.23 2015/01/23 07:27:05 nonaka Exp $");
 
 #include "opt_modular.h"
 
@@ -51,6 +51,7 @@ __KERNEL_RCSID(0, "$NetBSD: booke_machdep.c,v 1.18 2013/07/17 23:27:02 matt Exp 
 #include <sys/kernel.h>
 #include <sys/reboot.h>
 #include <sys/bus.h>
+#include <sys/cpu.h>
 
 #include <uvm/uvm_extern.h>
 
@@ -145,7 +146,6 @@ __CTASSERT(__arraycount(cpu_info) == __arraycount(cpu_softc));
 /*
  * This should probably be in autoconf!				XXX
  */
-char cpu_model[80];
 char machine[] = MACHINE;		/* from <machine/param.h> */
 char machine_arch[] = MACHINE_ARCH;	/* from <machine/param.h> */
 
@@ -167,7 +167,7 @@ booke_cpu_startup(const char *model)
 	vaddr_t 	minaddr, maxaddr;
 	char 		pbuf[9];
 
-	strlcpy(cpu_model, model, sizeof(cpu_model));
+	cpu_setmodel("%s", model);
 
 	printf("%s%s", copyright, version);
 
@@ -207,6 +207,9 @@ booke_cpu_startup(const char *model)
 	fake_mapiodev = 0;
 
 #ifdef MULTIPROCESSOR
+	pmap_kernel()->pm_active = kcpuset_running;
+	pmap_kernel()->pm_onproc = kcpuset_running;
+
 	for (size_t i = 1; i < __arraycount(cpu_info); i++) {
 		struct cpu_info * const ci = &cpu_info[i];
 		struct cpu_softc * const cpu = &cpu_softc[i];
@@ -227,6 +230,8 @@ booke_cpu_startup(const char *model)
 	kcpuset_create(&cpuset_info.cpus_paused, true);
 	kcpuset_create(&cpuset_info.cpus_resumed, true);
 	kcpuset_create(&cpuset_info.cpus_halted, true);
+
+	kcpuset_set(cpuset_info.cpus_running, cpu_number());
 #endif /* MULTIPROCESSOR */
 }
 
@@ -566,10 +571,10 @@ booke_sstep(struct trapframe *tf)
 			const int16_t off = insn & ~3;
 			iac2 = ((insn & 2) ? 0 : tf->tf_srr0) + off;
 			dbcr0 |= DBCR0_IAC2;
-		} else if ((insn & 0xfc00ffde) == 0x4c000420) {
+		} else if ((insn & 0xfc00fffe) == 0x4c000420) {
 			iac2 = tf->tf_ctr;
 			dbcr0 |= DBCR0_IAC2;
-		} else if ((insn & 0xfc00ffde) == 0x4c000020) {
+		} else if ((insn & 0xfc00fffe) == 0x4c000020) {
 			iac2 = tf->tf_lr;
 			dbcr0 |= DBCR0_IAC2;
 		}

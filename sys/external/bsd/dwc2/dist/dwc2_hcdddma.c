@@ -1,4 +1,4 @@
-/*	$NetBSD: dwc2_hcdddma.c,v 1.4 2013/10/05 06:51:43 skrll Exp $	*/
+/*	$NetBSD: dwc2_hcdddma.c,v 1.6 2014/04/03 06:34:58 skrll Exp $	*/
 
 /*
  * hcd_ddma.c - DesignWare HS OTG Controller descriptor DMA routines
@@ -40,7 +40,7 @@
  * This file contains the Descriptor DMA implementation for Host mode
  */
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: dwc2_hcdddma.c,v 1.4 2013/10/05 06:51:43 skrll Exp $");
+__KERNEL_RCSID(0, "$NetBSD: dwc2_hcdddma.c,v 1.6 2014/04/03 06:34:58 skrll Exp $");
 
 #include <sys/param.h>
 #include <sys/types.h>
@@ -164,8 +164,7 @@ static int dwc2_frame_list_alloc(struct dwc2_hsotg *hsotg, gfp_t mem_flags)
 
 static void dwc2_frame_list_free(struct dwc2_hsotg *hsotg)
 {
-	u32 *frame_list;
-	dma_addr_t frame_list_dma;
+	usb_dma_t frame_list_usbdma;
 	unsigned long flags;
 
 	spin_lock_irqsave(&hsotg->lock, flags);
@@ -175,13 +174,12 @@ static void dwc2_frame_list_free(struct dwc2_hsotg *hsotg)
 		return;
 	}
 
-	frame_list = hsotg->frame_list;
-	frame_list_dma = hsotg->frame_list_dma;
+	frame_list_usbdma = hsotg->frame_list_usbdma;
 	hsotg->frame_list = NULL;
 
 	spin_unlock_irqrestore(&hsotg->lock, flags);
 
-	usb_freemem(&hsotg->hsotg_sc->sc_bus, &hsotg->frame_list_usbdma);
+	usb_freemem(&hsotg->hsotg_sc->sc_bus, &frame_list_usbdma);
 }
 
 static void dwc2_per_sched_enable(struct dwc2_hsotg *hsotg, u32 fr_list_en)
@@ -643,8 +641,8 @@ static void dwc2_fill_host_dma_desc(struct dwc2_hsotg *hsotg,
 	struct dwc2_hcd_dma_desc *dma_desc = &qh->desc_list[n_desc];
 	int len = chan->xfer_len;
 
-	if (len > MAX_DMA_DESC_SIZE)
-		len = MAX_DMA_DESC_SIZE - chan->max_packet + 1;
+	if (len > MAX_DMA_DESC_SIZE - (chan->max_packet - 1))
+		len = MAX_DMA_DESC_SIZE - (chan->max_packet - 1);
 
 	if (chan->ep_is_in) {
 		int num_packets;
@@ -1125,8 +1123,10 @@ static void dwc2_complete_non_isoc_xfer_ddma(struct dwc2_hsotg *hsotg,
 		for (i = 0; i < qtd->n_desc; i++) {
 			if (dwc2_process_non_isoc_desc(hsotg, chan, chnum, qtd,
 						       desc_num, halt_status,
-						       &xfer_done))
+						       &xfer_done)) {
+				qtd = NULL;
 				break;
+			}
 			desc_num++;
 		}
 	}

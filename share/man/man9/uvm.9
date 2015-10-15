@@ -1,4 +1,4 @@
-.\"	$NetBSD: uvm.9,v 1.107 2012/07/02 21:10:31 jym Exp $
+.\"	$NetBSD: uvm.9,v 1.110 2015/03/23 08:19:12 riastradh Exp $
 .\"
 .\" Copyright (c) 1998 Matthew R. Green
 .\" All rights reserved.
@@ -24,7 +24,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd July 2, 2012
+.Dd March 23, 2015
 .Dt UVM 9
 .Os
 .Sh NAME
@@ -459,25 +459,42 @@ must be a vnode object.
 The number of pages requested is pointed to by
 .Fa npagesp ,
 and this value is updated with the actual number of pages returned.
-The flags can be
-.Bd -literal
-#define UFP_ALL         0x00    /* return all pages requested */
-#define UFP_NOWAIT      0x01    /* don't sleep */
-#define UFP_NOALLOC     0x02    /* don't allocate new pages */
-#define UFP_NOCACHE     0x04    /* don't return pages which already exist */
-#define UFP_NORDONLY    0x08    /* don't return PG_READONLY pages */
-.Ed
+The flags can be any bitwise inclusive-or of:
 .Pp
-.Dv UFP_ALL
-is a pseudo-flag meaning all requested pages should be returned.
-.Dv UFP_NOWAIT
-means that we must not sleep.
-.Dv UFP_NOALLOC
-causes any pages which do not already exist to be skipped.
-.Dv UFP_NOCACHE
-causes any pages which do already exist to be skipped.
-.Dv UFP_NORDONLY
-causes any pages which are marked PG_READONLY to be skipped.
+.Bl -tag -offset abcd -compact -width UVM_ADV_SEQUENTIAL
+.It Dv UFP_ALL
+Zero pseudo-flag meaning return all pages.
+.It Dv UFP_NOWAIT
+Don't sleep -- yield
+.Dv NULL
+for busy pages or for uncached pages for which allocation would sleep.
+.It Dv UFP_NOALLOC
+Don't allocate -- yield
+.Dv NULL
+for uncached pages.
+.It Dv UFP_NOCACHE
+Don't use cached pages -- yield
+.Dv NULL
+instead.
+.It Dv UFP_NORDONLY
+Don't yield read-only pages -- yield
+.Dv NULL
+for pages marked
+.Dv PG_READONLY .
+.It Dv UFP_DIRTYONLY
+Don't yield clean pages -- stop early at the first clean one.
+As a side effect, mark yielded dirty pages clean.
+Caller must write them to permanent storage before unbusying.
+.It Dv UFP_BACKWARD
+Traverse pages in reverse order.
+If
+.Fn uvn_findpages
+returns early, it will have filled
+.Li * Ns Fa npagesp
+entries at the end of
+.Fa pps
+rather than the beginning.
+.El
 .Pp
 .Fn uvm_vnp_setsize
 sets the size of vnode
@@ -669,18 +686,19 @@ Charles D. Cranor.
 UVM appeared in
 .Nx 1.4 .
 .Sh AUTHORS
-Charles D. Cranor
-.Aq chuck@ccrc.wustl.edu
+.An -nosplit
+.An Charles D. Cranor
+.Aq Mt chuck@ccrc.wustl.edu
 designed and implemented UVM.
 .Pp
-Matthew Green
-.Aq mrg@eterna.com.au
+.An Matthew Green
+.Aq Mt mrg@eterna.com.au
 wrote the swap-space management code and handled the logistical issues
 involved with merging UVM into the
 .Nx
 source tree.
 .Pp
-Chuck Silvers
-.Aq chuq@chuq.com
+.An Chuck Silvers
+.Aq Mt chuq@chuq.com
 implemented the aobj pager, thus allowing UVM to support System V shared
 memory and process swapping.

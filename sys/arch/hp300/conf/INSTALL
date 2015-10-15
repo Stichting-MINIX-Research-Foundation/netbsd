@@ -1,4 +1,4 @@
-# $NetBSD: INSTALL,v 1.55 2013/06/30 21:38:57 rmind Exp $
+# $NetBSD: INSTALL,v 1.60 2014/08/23 20:26:58 dholland Exp $
 #
 # INSTALL machine description file
 #
@@ -44,19 +44,20 @@ maxusers	32
 # Standard system options
 #options 	COMPAT_43	# compatibility with 4.3BSD interfaces
 #options 	COMPAT_44	# compatibility with 4.4BSD binaries
-#options 	COMPAT_09	# compatibility with NetBSD 0.9
-#options 	COMPAT_10	# compatibility with NetBSD 1.0
-#options 	COMPAT_11	# compatibility with NetBSD 1.1
-#options 	COMPAT_12	# compatibility with NetBSD 1.2
-#options 	COMPAT_13	# compatibility with NetBSD 1.3
-#options 	COMPAT_14	# compatibility with NetBSD 1.4
-#options 	COMPAT_15	# compatibility with NetBSD 1.5
-#options 	COMPAT_16	# compatibility with NetBSD 1.6
-#options 	COMPAT_20	# compatibility with NetBSD 2.0
-#options 	COMPAT_30	# compatibility with NetBSD 3.0
-#options 	COMPAT_40	# compatibility with NetBSD 4.0
-#options 	COMPAT_50	# compatibility with NetBSD 5.0
-#options 	COMPAT_60	# NetBSD 6.0 compatibility.
+#options 	COMPAT_09	# NetBSD 0.9,
+#options 	COMPAT_10	# NetBSD 1.0,
+#options 	COMPAT_11	# NetBSD 1.1,
+#options 	COMPAT_12	# NetBSD 1.2,
+#options 	COMPAT_13	# NetBSD 1.3,
+#options 	COMPAT_14	# NetBSD 1.4,
+#options 	COMPAT_15	# NetBSD 1.5,
+#options 	COMPAT_16	# NetBSD 1.6,
+#options 	COMPAT_20	# NetBSD 2.0,
+#options 	COMPAT_30	# NetBSD 3.0,
+#options 	COMPAT_40	# NetBSD 4.0,
+#options 	COMPAT_50	# NetBSD 5.0,
+#options 	COMPAT_60	# NetBSD 6.0, and
+#options 	COMPAT_70	# NetBSD 7.0 binary compatibility.
 #options 	TCP_COMPAT_42	# 4.2BSD TCP/IP bug compat. Not recommended.
 options 	COMPAT_BSDPTY	# /dev/[pt]ty?? ptys.
 #options 	SYSVSHM		# System V-style shared memory
@@ -136,7 +137,7 @@ mainbus0	at root		# root "bus"
 
 intio0		at mainbus0	# internal i/o space
 dio0		at mainbus0	# DIO/DIO-II bus
-#sgc0		at mainbus0	# SGC bus
+sgc0		at mainbus0	# SGC bus
 
 # Real-time clock (not optional)
 rtc*		at intio?
@@ -156,6 +157,9 @@ frodo*		at intio?
 #dnkbd0		at frodo? offset 0x0	# Domain keyboard flavor
 #wskbd*		at dnkbd? mux 1
 com*		at frodo? offset ?	# tty flavor
+
+# mc146818-like real time clock found on 425e
+mcclock0	at frodo? offset 0x80
 
 # Davinci framebuffer
 dvbox*		at intio?
@@ -187,6 +191,9 @@ wsdisplay*	at tvrx?
 
 gendiofb*	at dio? scode ?
 wsdisplay*	at gendiofb?
+
+sti*		at sgc?	slot ?		# SGC EVRX framebuffers
+wsdisplay*	at sti?
 
 com*		at dio0 scode 9		# DCA serial interfaces
 com*		at dio? scode ?
@@ -245,3 +252,4 @@ pseudo-device	loop			# loopback network interface
 #pseudo-device	stf			# 6to4 IPv6 over IPv4 encapsulation
 #pseudo-device	vlan			# IEEE 802.1q encapsulation
 #pseudo-device	bridge			# simple inter-network bridging
+pseudo-device	wsmux			# mouse & keyboard multiplexor

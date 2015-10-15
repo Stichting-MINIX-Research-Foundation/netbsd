@@ -1,4 +1,4 @@
-/*	$NetBSD: arcmsr.c,v 1.30 2011/06/20 22:03:16 pgoyette Exp $ */
+/*	$NetBSD: arcmsr.c,v 1.32 2015/03/12 15:33:10 christos Exp $ */
 /*	$OpenBSD: arc.c,v 1.68 2007/10/27 03:28:27 dlg Exp $ */
 
 /*
@@ -21,7 +21,7 @@
 #include "bio.h"
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: arcmsr.c,v 1.30 2011/06/20 22:03:16 pgoyette Exp $");
+__KERNEL_RCSID(0, "$NetBSD: arcmsr.c,v 1.32 2015/03/12 15:33:10 christos Exp $");
 
 #include <sys/param.h>
 #include <sys/buf.h>
@@ -548,6 +548,7 @@ arc_map_pci_resources(device_t self, struct pci_attach_args *pa)
 	struct arc_softc		*sc = device_private(self);
 	pcireg_t			memtype;
 	pci_intr_handle_t		ih;
+	char intrbuf[PCI_INTRSTR_LEN];
 
 	sc->sc_pc = pa->pa_pc;
 	sc->sc_tag = pa->pa_tag;
@@ -574,7 +575,7 @@ arc_map_pci_resources(device_t self, struct pci_attach_args *pa)
 	
 	aprint_normal("\n");
 	aprint_normal_dev(self, "interrupting at %s\n",
-	    pci_intr_string(pa->pa_pc, ih));
+	    pci_intr_string(pa->pa_pc, ih, intrbuf, sizeof(intrbuf)));
 
 	return 0;
 
@@ -1840,78 +1841,23 @@ arc_refresh_sensors(struct sysmon_envsys *sme, envsys_data_t *edata)
 	bv.bv_volid = arcdata->arc_volid;
 
 	if (arc_bio_vol(sc, &bv)) {
-		edata->value_cur = ENVSYS_DRIVE_EMPTY;
-		edata->state = ENVSYS_SINVALID;
+		bv.bv_status = BIOC_SVINVALID;
+		bio_vol_to_envsys(edata, &bv);
 		return;
 	}
 
-	/* Current sensor is handling a disk volume member */
 	if (arcdata->arc_diskid) {
+		/* Current sensor is handling a disk volume member */
 		memset(&bd, 0, sizeof(bd));
 		bd.bd_volid = arcdata->arc_volid;
 		bd.bd_diskid = arcdata->arc_diskid - 10;
 
-		if (arc_bio_disk_volume(sc, &bd)) {
-			edata->value_cur = ENVSYS_DRIVE_OFFLINE;
-			edata->state = ENVSYS_SCRITICAL;
-			return;
-		}
-
-		switch (bd.bd_status) {
-		case BIOC_SDONLINE:
-			edata->value_cur = ENVSYS_DRIVE_ONLINE;
-			edata->state = ENVSYS_SVALID;
-			break;
-		case BIOC_SDOFFLINE:
-			edata->value_cur = ENVSYS_DRIVE_OFFLINE;
-			edata->state = ENVSYS_SCRITICAL;
-			break;
-		default:
-			edata->value_cur = ENVSYS_DRIVE_FAIL;
-			edata->state = ENVSYS_SCRITICAL;
-			break;
-		}
-
-		return;
-	}
-
-	/* Current sensor is handling a volume */
-	switch (bv.bv_status) {
-	case BIOC_SVOFFLINE:
-		edata->value_cur = ENVSYS_DRIVE_OFFLINE;
-		edata->state = ENVSYS_SCRITICAL;
-		break;
-	case BIOC_SVDEGRADED:
-		edata->value_cur = ENVSYS_DRIVE_PFAIL;
-		edata->state = ENVSYS_SCRITICAL;
-		break;
-	case BIOC_SVBUILDING:
-		edata->value_cur = ENVSYS_DRIVE_BUILD;
-		edata->state = ENVSYS_SVALID;
-		break;
-	case BIOC_SVMIGRATING:
-		edata->value_cur = ENVSYS_DRIVE_MIGRATING;
-		edata->state = ENVSYS_SVALID;
-		break;
-	case BIOC_SVCHECKING:
-		edata->value_cur = ENVSYS_DRIVE_CHECK;
-		edata->state = ENVSYS_SVALID;
-		break;
-	case BIOC_SVREBUILD:
-		edata->value_cur = ENVSYS_DRIVE_REBUILD;
-		edata->state = ENVSYS_SCRITICAL;
-		break;
-	case BIOC_SVSCRUB:
-	case BIOC_SVONLINE:
-		edata->value_cur = ENVSYS_DRIVE_ONLINE;
-		edata->state = ENVSYS_SVALID;
-		break;
-	case BIOC_SVINVALID:
-		/* FALLTHROUGH */
-	default:
-		edata->value_cur = ENVSYS_DRIVE_EMPTY; /* unknown state */
-		edata->state = ENVSYS_SINVALID;
-		break;
+		if (arc_bio_disk_volume(sc, &bd))
+			bd.bd_status = BIOC_SDOFFLINE;
+		bio_disk_to_envsys(edata, &bd);
+	} else {
+		/* Current sensor is handling a volume */
+		bio_vol_to_envsys(edata, &bv);
 	}
 }
 #endif /* NBIO > 0 */

@@ -1,4 +1,4 @@
-/*	$NetBSD: comvar.h,v 1.78 2013/10/03 13:23:03 kiyohara Exp $	*/
+/*	$NetBSD: comvar.h,v 1.81 2015/05/03 17:22:54 jmcneill Exp $	*/
 
 /*
  * Copyright (c) 1996 Christopher G. Demetriou.  All rights reserved.
@@ -30,14 +30,13 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "rnd.h"
 #include "opt_multiprocessor.h"
 #include "opt_lockdebug.h"
 #include "opt_com.h"
 #include "opt_kgdb.h"
 
 #ifdef RND_COM
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 #endif
 
 #include <sys/callout.h>
@@ -234,6 +233,8 @@ struct com_softc {
 #define	COM_TYPE_AU1x00		3	/* AMD/Alchemy Au1x000 proc. built-in */
 #define	COM_TYPE_OMAP		4	/* TI OMAP processor built-in */
 #define	COM_TYPE_16550_NOERS	5	/* like a 16550, no ERS */
+#define	COM_TYPE_INGENIC	6	/* JZ4780 built-in */
+#define	COM_TYPE_TEGRA		7	/* NVIDIA Tegra built-in */
 
 	/* power management hooks */
 	int (*enable)(struct com_softc *);

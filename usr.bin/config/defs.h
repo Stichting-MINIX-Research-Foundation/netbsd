@@ -1,4 +1,4 @@
-/*	$NetBSD: defs.h,v 1.44 2012/06/08 08:56:45 martin Exp $	*/
+/*	$NetBSD: defs.h,v 1.93 2015/09/04 10:16:35 uebayasi Exp $	*/
 
 /*
  * Copyright (c) 1992, 1993
@@ -107,7 +107,7 @@ extern const char *progname;
  * The next two lines define the current version of the config(1) binary,
  * and the minimum version of the configuration files it supports.
  */
-#define CONFIG_VERSION		20100430
+#define CONFIG_VERSION		20150846
 #define CONFIG_MINVERSION	0
 
 /*
@@ -149,6 +149,22 @@ struct defoptlist {
 	struct nvlist *dl_depends;
 };
 
+struct files;
+TAILQ_HEAD(filelist, files);
+
+struct module {
+	const char		*m_name;
+#if 1
+	struct attrlist		*m_deps;
+#else
+	struct attrlist		*m_attrs;
+	struct modulelist	*m_deps;
+#endif
+	int			m_expanding;
+	struct filelist		m_files;
+	int			m_weight;
+};
+
 /*
  * Attributes.  These come in three flavors: "plain", "device class,"
  * and "interface".  Plain attributes (e.g., "ether") simply serve
@@ -165,15 +181,23 @@ struct defoptlist {
  * SCSI host adapter drivers such as the SPARC "esp").
  */
 struct attr {
-	const char *a_name;		/* name of this attribute */
+	/* XXX */
+	struct module a_m;
+#define	a_name		a_m.m_name
+#define	a_deps		a_m.m_deps
+#define	a_expanding	a_m.m_expanding
+#define	a_files		a_m.m_files
+#define	a_weight	a_m.m_weight
+
+	/* "interface attribute" */
 	int	a_iattr;		/* true => allows children */
-	const char *a_devclass;		/* device class described */
 	struct	loclist *a_locs;	/* locators required */
 	int	a_loclen;		/* length of above list */
 	struct	nvlist *a_devs;		/* children */
 	struct	nvlist *a_refs;		/* parents */
-	struct	attrlist *a_deps;	/* we depend on these other attrs */
-	int	a_expanding;		/* to detect cycles in attr graph */
+
+	/* "device class" */
+	const char *a_devclass;		/* device class described */
 };
 
 /*
@@ -299,8 +323,8 @@ struct devi {
 
 	/* created during packing or ioconf.c generation */
 	short	i_collapsed;	/* set => this alias no longer needed */
-	short	i_cfindex;	/* our index in cfdata */
-	short	i_locoff;	/* offset in locators.vec */
+	u_short	i_cfindex;	/* our index in cfdata */
+	int	i_locoff;	/* offset in locators.vec */
 
 };
 /* special units */
@@ -308,48 +332,30 @@ struct devi {
 #define	WILD	(-2)		/* unit number for, e.g., "sd?" */
 
 /*
- * Files or objects.  This structure defines the common fields
+ * Files (*.c, *.S, or *.o).  This structure defines the common fields
  * between the two.
  */
-struct filetype
-{
-	const char *fit_srcfile;	/* the name of the "files" file that got us */
-	u_short	fit_srcline;	/* and the line number */
-	u_char	fit_flags;	/* as below */
-	char	fit_lastc;	/* last char from path */
-	const char *fit_path;	/* full file path */
-	const char *fit_prefix;	/* any file prefix */
-};
-/* Anything less than 0x10 is sub-type specific */
-#define FIT_NOPROLOGUE  0x10    /* Don't prepend $S/ */
-#define FIT_FORCESELECT 0x20    /* Always include this file */
-
-/*
- * Files.  Each file is either standard (always included) or optional,
- * depending on whether it has names on which to *be* optional.  The
- * options field (fi_optx) is an expression tree of type struct
- * condexpr, with nodes for OR, AND, and NOT, as well as atoms (words)
- * representing some particular option.
- * 
- * For any file marked as needs-count or needs-flag, fixfiles() will
- * build fi_optf, a `flat list' of the options with nv_num fields that
- * contain counts or `need' flags; this is used in mkheaders().
- */
 struct files {
-	struct filetype fi_fit;
 	TAILQ_ENTRY(files) fi_next;
-	const  char *fi_tail;	/* name, i.e., strrchr(fi_path, '/') + 1 */
-	const  char *fi_base;	/* tail minus ".c" (or whatever) */
+	TAILQ_ENTRY(files) fi_snext;	/* per-suffix list */
+	const char *fi_srcfile;	/* the name of the "files" file that got us */
+	u_short	fi_srcline;	/* and the line number */
+	u_char fi_flags;	/* as below */
+	const char *fi_tail;	/* name, i.e., strrchr(fi_path, '/') + 1 */
+	const char *fi_base;	/* tail minus ".c" (or whatever) */
+	const char *fi_dir;	/* path to file */
+	const char *fi_path;	/* full file path */
+	const char *fi_prefix;	/* any file prefix */
+	const char *fi_buildprefix;	/* prefix in builddir */
+	int fi_suffix;		/* single char suffix */
+	size_t fi_len;		/* path string length */
 	struct condexpr *fi_optx; /* options expression */
 	struct nvlist *fi_optf; /* flattened version of above, if needed */
-	const  char *fi_mkrule;	/* special make rule, if any */
+	const char *fi_mkrule;	/* special make rule, if any */
+	struct attr *fi_attr;	/* owner attr */
+	int fi_order;		/* score of order in ${ALLFILES} */
+	TAILQ_ENTRY(files) fi_anext;	/* next file in attr */
 };
-#define fi_srcfile fi_fit.fit_srcfile
-#define fi_srcline fi_fit.fit_srcline
-#define fi_flags   fi_fit.fit_flags
-#define fi_lastc   fi_fit.fit_lastc
-#define fi_path    fi_fit.fit_path
-#define fi_prefix  fi_fit.fit_prefix
 
 /* flags */
 #define	FI_SEL		0x01	/* selected */
@@ -357,27 +363,8 @@ struct files {
 #define	FI_NEEDSFLAG	0x04	/* needs-flag */
 #define	FI_HIDDEN	0x08	/* obscured by other(s), base names overlap */
 
-/*
- * Objects and libraries.  This allows precompiled object and library
- * files (e.g. binary-only device drivers) to be linked in.
- */
-struct objects {
-	struct  filetype oi_fit;
-	TAILQ_ENTRY(objects) oi_next;
-	struct condexpr *oi_optx;	/* condition expression */
-	struct  nvlist *oi_optf;/* flattened version of above, if needed */
-};
-
-#define oi_srcfile oi_fit.fit_srcfile
-#define oi_srcline oi_fit.fit_srcline
-#define oi_flags   oi_fit.fit_flags
-#define oi_lastc   oi_fit.fit_lastc
-#define oi_path    oi_fit.fit_path
-#define oi_prefix  oi_fit.fit_prefix
-
-/* flags */
-#define	OI_SEL		0x01	/* selected */
-#define	OI_NEEDSFLAG	0x02	/* needs-flag */
+extern size_t nselfiles;
+extern struct files **selfiles;
 
 /*
  * Condition expressions.
@@ -409,6 +396,10 @@ struct condexpr {
  * File/object prefixes.  These are arranged in a stack, and affect
  * the behavior of the source path.
  */
+
+struct prefix;
+SLIST_HEAD(prefixlist, prefix);
+
 struct prefix {
 	SLIST_ENTRY(prefix)	pf_next;	/* next prefix in stack */
 	const char		*pf_prefix;	/* the actual prefix */
@@ -476,6 +467,7 @@ struct	dlhash *defoptlint;	/* lint values for options */
 struct	nvhash *deffstab;	/* defined file systems */
 struct	dlhash *optfiletab;	/* "defopt"'d option .h files */
 struct	hashtab *attrtab;	/* attributes (locators, etc.) */
+struct	hashtab *attrdeptab;	/* attribute dependencies */
 struct	hashtab *bdevmtab;	/* block devm lookup */
 struct	hashtab *cdevmtab;	/* character devm lookup */
 
@@ -494,14 +486,18 @@ int	do_devsw;			/* 0 if pre-devsw config */
 int	oktopackage;			/* 0 before setmachine() */
 int	devilevel;			/* used for devi->i_level */
 
-TAILQ_HEAD(, files)	allfiles;	/* list of all kernel source files */
-TAILQ_HEAD(, objects)	allobjects;	/* list of all kernel object and
-					   library files */
+struct filelist		allfiles;	/* list of all kernel source files */
+struct filelist		allcfiles;	/* list of all .c files */
+struct filelist		allsfiles;	/* list of all .S files */
+struct filelist		allofiles;	/* list of all .o files */
 
-SLIST_HEAD(, prefix)	prefixes,	/* prefix stack */
+struct prefixlist	prefixes,	/* prefix stack */
 			allprefixes;	/* all prefixes used (after popped) */
+struct prefixlist	buildprefixes,	/* build prefix stack */
+			allbuildprefixes;/* all build prefixes used (after popped) */
 SLIST_HEAD(, prefix)	curdirs;	/* curdir stack */
 
+extern struct attr allattr;
 struct	devi **packed;		/* arrayified table for packed devi's */
 size_t	npacked;		/* size of packed table, <= ndevi */
 
@@ -519,23 +515,27 @@ struct numconst {
 void	initfiles(void);
 void	checkfiles(void);
 int	fixfiles(void);		/* finalize */
-int	fixobjects(void);
 int	fixdevsw(void);
-void	addfile(const char *, struct condexpr *, int, const char *);
-void	addobject(const char *, struct condexpr *, int);
+void	addfile(const char *, struct condexpr *, u_char, const char *);
 int	expr_eval(struct condexpr *, int (*)(const char *, void *), void *);
 
 /* hash.c */
 struct	hashtab *ht_new(void);
 void	ht_free(struct hashtab *);
+int	ht_insrep2(struct hashtab *, const char *, const char *, void *, int);
 int	ht_insrep(struct hashtab *, const char *, void *, int);
+#define	ht_insert2(ht, nam1, nam2, val) ht_insrep2(ht, nam1, nam2, val, 0)
 #define	ht_insert(ht, nam, val) ht_insrep(ht, nam, val, 0)
 #define	ht_replace(ht, nam, val) ht_insrep(ht, nam, val, 1)
+int	ht_remove2(struct hashtab *, const char *, const char *);
 int	ht_remove(struct hashtab *, const char *);
+void	*ht_lookup2(struct hashtab *, const char *, const char *);
 void	*ht_lookup(struct hashtab *, const char *);
 void	initintern(void);
 const char *intern(const char *);
+typedef int (*ht_callback2)(const char *, const char *, void *, void *);
 typedef int (*ht_callback)(const char *, void *, void *);
+int	ht_enumerate2(struct hashtab *, ht_callback2, void *);
 int	ht_enumerate(struct hashtab *, ht_callback, void *);
 
 /* typed hash, named struct HT, whose type is string -> struct VT */
@@ -558,6 +558,8 @@ void	emit_options(void);
 void	emit_params(void);
 
 /* main.c */
+extern	int Mflag;
+extern	int Sflag;
 void	addoption(const char *, const char *);
 void	addfsoption(const char *);
 void	addmkoption(const char *, const char *);
@@ -574,6 +576,8 @@ int	devbase_has_instances(struct devbase *, int);
 int	is_declared_option(const char *);
 int	deva_has_instances(struct deva *, int);
 void	setupdirs(void);
+void	fixmaxusers(void);
+void	fixmkoption(void);
 const char *strtolower(const char *);
 
 /* tests on option types */
@@ -609,10 +613,11 @@ int	mkswap(void);
 void	pack(void);
 
 /* scan.l */
-int	currentline(void);
+u_short	currentline(void);
 int	firstfile(const char *);
 void	package(const char *);
 int	include(const char *, int, int, int);
+extern int includedepth;
 
 /* sem.c, other than for yacc actions */
 void	initsem(void);
@@ -621,7 +626,14 @@ int	onlist(struct nvlist *, void *);
 /* util.c */
 void	prefix_push(const char *);
 void	prefix_pop(void);
+void	buildprefix_push(const char *);
+void	buildprefix_pop(void);
 char	*sourcepath(const char *);
+extern	int dflag;
+#define	CFGDBG(n, ...) \
+	do { if ((dflag) >= (n)) cfgdbg(__VA_ARGS__); } while (0)
+void	cfgdbg(const char *, ...)			/* debug info */
+     __printflike(1, 2);
 void	cfgwarn(const char *, ...)			/* immediate warns */
      __printflike(1, 2);
 void	cfgxwarn(const char *, int, const char *, ...)	/* delayed warns */

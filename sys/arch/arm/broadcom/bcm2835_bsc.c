@@ -1,4 +1,4 @@
-/*	$NetBSD: bcm2835_bsc.c,v 1.1 2013/01/05 20:15:17 jakllsch Exp $	*/
+/*	$NetBSD: bcm2835_bsc.c,v 1.5 2015/01/24 00:27:31 jakllsch Exp $	*/
 
 /*
  * Copyright (c) 2012 Jonathan A. Kollasch
@@ -27,14 +27,15 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: bcm2835_bsc.c,v 1.1 2013/01/05 20:15:17 jakllsch Exp $");
+__KERNEL_RCSID(0, "$NetBSD: bcm2835_bsc.c,v 1.5 2015/01/24 00:27:31 jakllsch Exp $");
 
 #include <sys/param.h>
-#include <sys/device.h>
-#include <sys/systm.h>
-#include <sys/mutex.h>
 #include <sys/bus.h>
+#include <sys/device.h>
 #include <sys/intr.h>
+#include <sys/mutex.h>
+#include <sys/once.h>
+#include <sys/systm.h>
 
 #include <dev/i2c/i2cvar.h>
 
@@ -48,7 +49,6 @@ __KERNEL_RCSID(0, "$NetBSD: bcm2835_bsc.c,v 1.1 2013/01/05 20:15:17 jakllsch Exp
 #endif
 #include <sys/kernhist.h>
 
-KERNHIST_DECL(bsciichist);
 KERNHIST_DEFINE(bsciichist);
 
 struct bsciic_softc {
@@ -75,6 +75,15 @@ CFATTACH_DECL_NEW(bsciic, sizeof(struct bsciic_softc),
     bsciic_match, bsciic_attach, NULL, NULL);
 
 static int
+bsciic_init(void)
+{
+
+	KERNHIST_INIT(bsciichist, 512);
+
+	return 0;
+}
+
+static int
 bsciic_match(device_t parent, cfdata_t match, void *aux)
 {
 	struct amba_attach_args * const aaa = aux;
@@ -92,6 +101,7 @@ bsciic_attach(device_t parent, device_t self, void *aux)
 	struct amba_attach_args * const aaa = aux;
 	struct i2cbus_attach_args iba;
 	u_int bscunit = ~0;
+	static ONCE_DECL(control);
 
 	switch (aaa->aaa_addr) {
 	case BCM2835_BSC0_BASE:
@@ -105,7 +115,7 @@ bsciic_attach(device_t parent, device_t self, void *aux)
 	aprint_naive("\n");
 	aprint_normal(": BSC%u\n", bscunit);
 
-	KERNHIST_INIT(bsciichist, 512);
+	RUN_ONCE(&control, bsciic_init);
 
 	sc->sc_dev = self;
 
@@ -169,7 +179,7 @@ static int
 bsciic_acquire_bus(void *v, int flags)
 {
 	struct bsciic_softc * const sc = v;
-	uint32_t s;
+	uint32_t s __diagused;
 
 	mutex_enter(&sc->sc_buslock);
 
@@ -220,6 +230,9 @@ bsciic_exec(void *v, i2c_op_t op, i2c_addr_t addr, const void *cmdbuf,
 #if notyet
 	c |= BSC_C_INTR | BSC_C_INTT | BSC_C_INTD;
 #endif
+
+	if (isread && cmdlen == 0)
+		goto only_read;
 
 	buf = __UNCONST(cmdbuf);
 	len = cmdlen;
@@ -285,9 +298,13 @@ flood_again:
 	if (s != 0)
 		bus_space_write_4(sc->sc_iot, sc->sc_ioh, BSC_S, s);
 
+	if (error == 0 && (s & (BSC_S_CLKT|BSC_S_ERR)) != 0)
+		error = EIO;
+
 	if (!isread)
 		goto done;
 
+only_read:
 	c |= BSC_C_READ;
 
 	buf = databuf;
@@ -358,6 +375,9 @@ done:
 		bus_space_write_4(sc->sc_iot, sc->sc_ioh, BSC_S, s);
 
 	bsciic_dump_regs(sc);
+
+	if (error == 0 && (s & (BSC_S_CLKT|BSC_S_ERR)) != 0)
+		error = EIO;
 
 	return error;
 }

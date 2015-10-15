@@ -1,6 +1,6 @@
 #!@PYTHON@
 ############################################################################
-# Copyright (C) 2013  Internet Systems Consortium, Inc. ("ISC")
+# Copyright (C) 2013, 2014  Internet Systems Consortium, Inc. ("ISC")
 #
 # Permission to use, copy, modify, and/or distribute this software for any
 # purpose with or without fee is hereby granted, provided that the above
@@ -26,6 +26,32 @@ from collections import defaultdict
 import pprint
 
 prog='dnssec-coverage'
+
+# These routines permit platform-independent location of BIND 9 tools
+if os.name == 'nt':
+    import win32con
+    import win32api
+
+def prefix(bindir = ''):
+    if os.name != 'nt':
+        return os.path.join('@prefix@', bindir)
+
+    bind_subkey = "Software\\ISC\\BIND"
+    hKey = None
+    keyFound = True
+    try:
+        hKey = win32api.RegOpenKeyEx(win32con.HKEY_LOCAL_MACHINE, bind_subkey)
+    except:
+        keyFound = False
+    if keyFound:
+        try:
+            (namedBase, _) = win32api.RegQueryValueEx(hKey, "InstallDir")
+        except:
+            keyFound = False
+        win32api.RegCloseKey(hKey)
+    if keyFound:
+        return os.path.join(namedBase, bindir)
+    return os.path.join(win32api.GetSystemDirectory(), bindir)
 
 ########################################################################
 # Class Event
@@ -78,7 +104,7 @@ class Key:
         self.alg = int(alg)
         self.keyid = int(keyid)
 
-        kfp = file(key_file, "r")
+        kfp = open(key_file, "r")
         for line in kfp:
             if line[0] == ';':
                 continue
@@ -106,7 +132,7 @@ class Key:
                 self.sep = False
         kfp.close()
 
-        pfp = file(private_file, "rU")
+        pfp = open(private_file, "rU")
         propDict = dict()
         for propLine in pfp:
             propDef = propLine.strip()
@@ -506,6 +532,13 @@ def check_events(eventsList, ksk):
         eventgroups.append(eventgroup)
 
     for eventgroup in eventgroups:
+        if (args.checklimit and
+            calendar.timegm(eventgroup[0].when) > args.checklimit):
+            print("Ignoring events after %s" %
+                  time.strftime("%a %b %d %H:%M:%S UTC %Y", 
+                      time.gmtime(args.checklimit)))
+            return True
+
         (active, published) = \
            process_events(eventgroup, active, published)
 
@@ -548,21 +581,23 @@ def check_zones(eventsList):
 
         zonesfound = True
         for alg in eventsList[zone]:
-            vspace()
-            print("Checking scheduled KSK events for zone %s, algorithm %s..." %
-                   (zone, algname(alg)))
-            if not check_events(eventsList[zone][alg], True):
-                foundprob = True
-            else:
-                print ("No errors found")
+            if not args.no_ksk:
+                vspace()
+                print("Checking scheduled KSK events for zone %s, algorithm %s..." %
+                       (zone, algname(alg)))
+                if not check_events(eventsList[zone][alg], True):
+                    foundprob = True
+                else:
+                    print ("No errors found")
 
-            vspace()
-            print("Checking scheduled ZSK events for zone %s, algorithm %s..." %
-                  (zone, algname(alg)))
-            if not check_events(eventsList[zone][alg], False):
-                foundprob = True
-            else:
-                print ("No errors found")
+            if not args.no_zsk:
+                vspace()
+                print("Checking scheduled ZSK events for zone %s, algorithm %s..." %
+                      (zone, algname(alg)))
+                if not check_events(eventsList[zone][alg], False):
+                    foundprob = True
+                else:
+                    print ("No errors found")
 
     if not zonesfound:
         print("ERROR: No key events found for %s in '%s'" %
@@ -620,9 +655,8 @@ def set_path(command, default=None):
 def parse_args():
     """Read command line arguments, set global 'args' structure"""
     global args
-
     compilezone = set_path('named-compilezone',
-                           '@prefix@/sbin/named-compilezone')
+                           os.path.join(prefix('bin'), 'named-compilezone'))
 
     parser = argparse.ArgumentParser(description=prog + ': checks future ' +
                                      'DNSKEY coverage for a zone')
@@ -635,23 +669,38 @@ def parse_args():
                         help='zone master file', metavar='file')
     parser.add_argument('-m', dest='maxttl', type=str,
                         help='the longest TTL in the zone(s)',
-                        metavar='int')
+                        metavar='time')
     parser.add_argument('-d', dest='keyttl', type=str,
-                        help='the DNSKEY TTL', metavar='int')
+                        help='the DNSKEY TTL', metavar='time')
     parser.add_argument('-r', dest='resign', default='1944000', 
                         type=int, help='the RRSIG refresh interval '
                                        'in seconds [default: 22.5 days]',
-                        metavar='int')
+                        metavar='time')
     parser.add_argument('-c', dest='compilezone',
                         default=compilezone, type=str,
                         help='path to \'named-compilezone\'',
                         metavar='path')
+    parser.add_argument('-l', dest='checklimit',
+                        type=str, default='0',
+                        help='Length of time to check for '
+                             'DNSSEC coverage [default: 0 (unlimited)]',
+                        metavar='time')
+    parser.add_argument('-z', dest='no_ksk',
+                        action='store_true', default=False,
+                        help='Only check zone-signing keys (ZSKs)')
+    parser.add_argument('-k', dest='no_zsk',
+                        action='store_true', default=False,
+                        help='Only check key-signing keys (KSKs)')
     parser.add_argument('-D', '--debug', dest='debug_mode',
                         action='store_true', default=False,
                         help='Turn on debugging output')
     parser.add_argument('-v', '--version', action='version', version='9.9.1')
 
     args = parser.parse_args()
+
+    if args.no_zsk and args.no_ksk:
+        print("ERROR: -z and -k cannot be used together.");
+        exit(1)
 
     # convert from time arguments to seconds
     try:
@@ -672,6 +721,17 @@ def parse_args():
         if args.resign:
             r = parse_time(args.resign)
             args.resign = r
+    except:
+        pass
+
+    try:
+        if args.checklimit:
+            lim = args.checklimit
+            r = parse_time(args.checklimit)
+            if r == 0:
+                args.checklimit = None
+            else:
+                args.checklimit = time.time() + r
     except:
         pass
 

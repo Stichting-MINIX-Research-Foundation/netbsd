@@ -1,4 +1,4 @@
-/*	$NetBSD: if_fddisubr.c,v 1.84 2013/03/01 18:25:56 joerg Exp $	*/
+/*	$NetBSD: if_fddisubr.c,v 1.94 2015/09/30 06:25:59 ozaki-r Exp $	*/
 
 /*
  * Copyright (C) 1995, 1996, 1997, and 1998 WIDE Project.
@@ -96,13 +96,14 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_fddisubr.c,v 1.84 2013/03/01 18:25:56 joerg Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_fddisubr.c,v 1.94 2015/09/30 06:25:59 ozaki-r Exp $");
 
+#ifdef _KERNEL_OPT
 #include "opt_gateway.h"
 #include "opt_inet.h"
 #include "opt_atalk.h"
-#include "opt_ipx.h"
 #include "opt_mbuftrace.h"
+#endif
 
 
 #include <sys/param.h>
@@ -131,14 +132,8 @@ __KERNEL_RCSID(0, "$NetBSD: if_fddisubr.c,v 1.84 2013/03/01 18:25:56 joerg Exp $
 #include <netinet/in.h>
 #include <netinet/in_var.h>
 #include <netinet/if_inarp.h>
-#include "opt_gateway.h"
 #endif
 #include <net/if_fddi.h>
-
-#ifdef IPX
-#include <netipx/ipx.h>
-#include <netipx/ipx_if.h>
-#endif
 
 #ifdef INET6
 #ifndef INET
@@ -152,10 +147,6 @@ __KERNEL_RCSID(0, "$NetBSD: if_fddisubr.c,v 1.84 2013/03/01 18:25:56 joerg Exp $
 #include "carp.h"
 #if NCARP > 0
 #include <netinet/ip_carp.h>
-#endif
-
-#ifdef DECNET
-#include <netdnet/dn.h>
 #endif
 
 #ifdef NETATALK
@@ -195,13 +186,12 @@ static	void fddi_input(struct ifnet *, struct mbuf *);
  */
 static int
 fddi_output(struct ifnet *ifp0, struct mbuf *m0, const struct sockaddr *dst,
-    struct rtentry *rt0)
+    struct rtentry *rt)
 {
 	uint16_t etype;
 	int error = 0, hdrcmplt = 0;
 	uint8_t esrc[6], edst[6];
 	struct mbuf *m = m0;
-	struct rtentry *rt;
 	struct fddi_header *fh;
 	struct mbuf *mcopy = NULL;
 	struct ifnet *ifp = ifp0;
@@ -217,7 +207,7 @@ fddi_output(struct ifnet *ifp0, struct mbuf *m0, const struct sockaddr *dst,
 		if (dst != NULL && ifp0->if_link_state == LINK_STATE_UP &&
 		    (ifa = ifa_ifwithaddr(dst)) != NULL &&
 		    ifa->ifa_ifp == ifp0)
-			return (looutput(ifp0, m, dst, rt0));
+			return (looutput(ifp0, m, dst, rt));
 
 		ifp = ifp->if_carpdev;
 		/* ac = (struct arpcom *)ifp; */
@@ -229,30 +219,6 @@ fddi_output(struct ifnet *ifp0, struct mbuf *m0, const struct sockaddr *dst,
 #endif /* NCARP > 0 */
 	if ((ifp->if_flags & (IFF_UP|IFF_RUNNING)) != (IFF_UP|IFF_RUNNING))
 		senderr(ENETDOWN);
-#if !defined(__bsdi__) || _BSDI_VERSION >= 199401
-	if ((rt = rt0) != NULL) {
-		if ((rt->rt_flags & RTF_UP) == 0) {
-			if ((rt0 = rt = rtalloc1(dst, 1)) != NULL)
-				rt->rt_refcnt--;
-			else
-				senderr(EHOSTUNREACH);
-		}
-		if (rt->rt_flags & RTF_GATEWAY) {
-			if (rt->rt_gwroute == 0)
-				goto lookup;
-			if (((rt = rt->rt_gwroute)->rt_flags & RTF_UP) == 0) {
-				rtfree(rt); rt = rt0;
-			lookup: rt->rt_gwroute = rtalloc1(rt->rt_gateway, 1);
-				if ((rt = rt->rt_gwroute) == 0)
-					senderr(EHOSTUNREACH);
-			}
-		}
-		if (rt->rt_flags & RTF_REJECT)
-			if (rt->rt_rmx.rmx_expire == 0 ||
-			    time_second < rt->rt_rmx.rmx_expire)
-				senderr(rt == rt0 ? EHOSTDOWN : EHOSTUNREACH);
-	}
-#endif
 
 	/*
 	 * If the queueing discipline needs packet classification,
@@ -316,16 +282,6 @@ fddi_output(struct ifnet *ifp0, struct mbuf *m0, const struct sockaddr *dst,
 		break;
 	}
 #endif /* AF_ARP */
-#ifdef IPX
-	case AF_IPX:
-		etype = htons(ETHERTYPE_IPX);
- 		memcpy(edst, &(((struct sockaddr_ipx *)dst)->sipx_addr.x_host),
-		    sizeof (edst));
-		/* If broadcasting on a simplex interface, loopback a copy */
-		if ((m->m_flags & M_BCAST) && (ifp->if_flags & IFF_SIMPLEX))
-			mcopy = m_copy(m, 0, (int)M_COPYALL);
-		break;
-#endif
 #ifdef NETATALK
 	case AF_APPLETALK: {
 		struct at_ifaddr *aa;
@@ -459,10 +415,15 @@ bad:
 static void
 fddi_input(struct ifnet *ifp, struct mbuf *m)
 {
-#if defined(INET) || defined(INET6) || defined(NS) || defined(DECNET) || defined(IPX) || defined(NETATALK)
-	struct ifqueue *inq;
+#if defined(INET) || defined(INET6)
+	pktqueue_t *pktq = NULL;
+#endif
+#if defined(NETATALK)
+	struct ifqueue *inq = NULL;
+	int isr = 0;
 	int s;
 #endif
+
 	struct llc *l;
 	struct fddi_header *fh;
 
@@ -501,7 +462,7 @@ fddi_input(struct ifnet *ifp, struct mbuf *m)
 
 	l = (struct llc *)(fh+1);
 	switch (l->llc_dsap) {
-#if defined(INET) || defined(INET6) || defined(NS) || defined(DECNET) || defined(IPX) || defined(NETATALK)
+#if defined(INET) || defined(INET6) || defined(NETATALK)
 	case LLC_SNAP_LSAP:
 	{
 		uint16_t etype;
@@ -517,7 +478,7 @@ fddi_input(struct ifnet *ifp, struct mbuf *m)
 		 	ntohs(l->llc_snap_ether_type) == ETHERTYPE_ATALK) {
 		    inq = &atintrq2;
 		    m_adj( m, sizeof( struct llc ));
-		    schednetisr(NETISR_ATALK);
+		    isr = NETISR_ATALK;
 		    break;
 		}
 
@@ -547,25 +508,20 @@ fddi_input(struct ifnet *ifp, struct mbuf *m)
 			if (ipflow_fastforward(m))
 				return;
 #endif
-			schednetisr(NETISR_IP);
-			inq = &ipintrq;
+			pktq = ip_pktq;
 			break;
 
 		case ETHERTYPE_ARP:
 #if !defined(__bsdi__) || _BSDI_VERSION >= 199401
-			schednetisr(NETISR_ARP);
+#if defined(NETATALK)
+			isr = NETISR_ARP;
 			inq = &arpintrq;
+#endif
 			break;
 #else
 			arpinput(ifp, m);
 			return;
 #endif
-#endif
-#ifdef IPX
-		case ETHERTYPE_IPX:
-			schednetisr(NETISR_IPX);
-			inq = &ipxintrq;
-			break;
 #endif
 #ifdef INET6
 		case ETHERTYPE_IPV6:
@@ -573,20 +529,13 @@ fddi_input(struct ifnet *ifp, struct mbuf *m)
 			if (ip6flow_fastforward(&m))
 				return;
 #endif
-			schednetisr(NETISR_IPV6);
-			inq = &ip6intrq;
+			pktq = ip6_pktq;
 			break;
 
 #endif
-#ifdef DECNET
-		case ETHERTYPE_DECNET:
-			schednetisr(NETISR_DECNET);
-			inq = &decnetintrq;
-			break;
-#endif
 #ifdef NETATALK
 		case ETHERTYPE_ATALK:
-	                schednetisr(NETISR_ATALK);
+	                isr = NETISR_ATALK;
 			inq = &atintrq1;
 			break;
 	        case ETHERTYPE_AARP:
@@ -604,20 +553,33 @@ fddi_input(struct ifnet *ifp, struct mbuf *m)
 
 	default:
 		ifp->if_noproto++;
-#if defined(INET) || defined(INET6) || defined(NS) || defined(DECNET) || defined(IPX) || defined(NETATALK)
+#if defined(INET) || defined(INET6) || defined(NETATALK)
 	dropanyway:
 #endif
 		m_freem(m);
 		return;
 	}
 
-#if defined(INET) || defined(INET6) || defined(NS) || defined(DECNET) || defined(IPX) || defined(NETATALK)
+#if defined(INET) || defined(INET6)
+	if (__predict_true(pktq)) {
+		if (__predict_false(!pktq_enqueue(pktq, m, 0))) {
+			m_freem(m);
+		}
+		return;
+	}
+#endif
+#if defined(NETATALK)
+	if (!inq) {
+		m_freem(m);
+	}
 	s = splnet();
 	if (IF_QFULL(inq)) {
 		IF_DROP(inq);
 		m_freem(m);
-	} else
+	} else {
 		IF_ENQUEUE(inq, m);
+		schednetisr(isr);
+	}
 	splx(s);
 #endif
 }

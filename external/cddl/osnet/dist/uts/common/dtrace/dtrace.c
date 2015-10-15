@@ -5641,7 +5641,7 @@ dtrace_action_breakpoint(dtrace_ecb_t *ecb)
 	ASSERT(probe != NULL);
 
 	/*
-	 * This is a poor man's (destitute man's?) sprintf():  we want to
+	 * This is a poor man's (destitute man's?) snprintf():  we want to
 	 * print the provider name, module name, function name and name of
 	 * the probe, along with the hex address of the ECB with the breakpoint
 	 * action -- all of which we must place in the character buffer by
@@ -7892,8 +7892,8 @@ dtrace_probe_lookup_match(dtrace_probe_t *probe, void *arg)
  * name and probe name.
  */
 dtrace_id_t
-dtrace_probe_lookup(dtrace_provider_id_t prid, char *mod,
-    char *func, char *name)
+dtrace_probe_lookup(dtrace_provider_id_t prid, const char *mod,
+    const char *func, const char *name)
 {
 	dtrace_probekey_t pkey;
 	dtrace_id_t id;
@@ -7901,11 +7901,11 @@ dtrace_probe_lookup(dtrace_provider_id_t prid, char *mod,
 
 	pkey.dtpk_prov = ((dtrace_provider_t *)prid)->dtpv_name;
 	pkey.dtpk_pmatch = &dtrace_match_string;
-	pkey.dtpk_mod = mod;
+	pkey.dtpk_mod = __UNCONST(mod);
 	pkey.dtpk_mmatch = mod ? &dtrace_match_string : &dtrace_match_nul;
-	pkey.dtpk_func = func;
+	pkey.dtpk_func = __UNCONST(func);
 	pkey.dtpk_fmatch = func ? &dtrace_match_string : &dtrace_match_nul;
-	pkey.dtpk_name = name;
+	pkey.dtpk_name = __UNCONST(name);
 	pkey.dtpk_nmatch = name ? &dtrace_match_string : &dtrace_match_nul;
 	pkey.dtpk_id = DTRACE_IDNONE;
 
@@ -11758,6 +11758,7 @@ dtrace_dof_copyin(uintptr_t uarg, int *errp)
 	return (dof);
 }
 
+#if 0
 #if !defined(sun)
 static __inline uchar_t
 dtrace_dof_char(char c) {
@@ -11791,6 +11792,7 @@ dtrace_dof_char(char c) {
 	/* Should not reach here. */
 	return (0);
 }
+#endif
 #endif
 
 static dof_hdr_t *
@@ -15349,7 +15351,7 @@ static dev_type_open(dtrace_open);
 /* Just opens, clones to the fileops below */
 const struct cdevsw dtrace_cdevsw = {
 	dtrace_open, noclose, noread, nowrite, noioctl,
-	nostop, notty, nopoll, nommap, nokqfilter,
+	nostop, notty, nopoll, nommap, nokqfilter, nodiscard,
 	D_OTHER | D_MPSAFE
 };
 
@@ -16603,7 +16605,7 @@ static int		dtrace_unload(void);
 #include <dtrace_unload.c>
 #include <dtrace_vtime.c>
 #include <dtrace_hacks.c>
-#if defined(__i386__) || defined(__x86_64__)
+#if defined(__i386__) || defined(__x86_64__) || defined(__arm__)
 #include <dtrace_isa.c>
 #endif
 
@@ -16655,7 +16657,7 @@ dtrace_state_worker_add(void (*fn)(dtrace_state_t *), dtrace_state_t *state,
     hrtime_t interval)
 {
 	struct dtrace_state_worker *w;
-	int error;
+	int error __diagused;
 
 	w = kmem_alloc(sizeof(*w), KM_SLEEP);
 	mutex_init(&w->lock, MUTEX_DEFAULT, IPL_NONE);
@@ -16673,7 +16675,7 @@ dtrace_state_worker_add(void (*fn)(dtrace_state_t *), dtrace_state_t *state,
 void
 dtrace_state_worker_remove(struct dtrace_state_worker *w)
 {
-	int error;
+	int error __diagused;
 
 	KASSERT(!w->exiting);
 	mutex_enter(&w->lock);

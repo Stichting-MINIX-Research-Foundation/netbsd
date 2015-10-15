@@ -2,14 +2,8 @@
  * SSL/TLS interface functions for Microsoft Schannel
  * Copyright (c) 2005-2009, Jouni Malinen <j@w1.fi>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 /*
@@ -698,6 +692,31 @@ int tls_connection_set_params(void *tls_ctx, struct tls_connection *conn,
 	if (conn == NULL)
 		return -1;
 
+	if (params->subject_match) {
+		wpa_printf(MSG_INFO, "TLS: subject_match not supported");
+		return -1;
+	}
+
+	if (params->altsubject_match) {
+		wpa_printf(MSG_INFO, "TLS: altsubject_match not supported");
+		return -1;
+	}
+
+	if (params->suffix_match) {
+		wpa_printf(MSG_INFO, "TLS: suffix_match not supported");
+		return -1;
+	}
+
+	if (params->domain_match) {
+		wpa_printf(MSG_INFO, "TLS: domain_match not supported");
+		return -1;
+	}
+
+	if (params->openssl_ciphers) {
+		wpa_printf(MSG_INFO, "GnuTLS: openssl_ciphers not supported");
+		return -1;
+	}
+
 	if (global->my_cert_store == NULL &&
 	    (global->my_cert_store = CertOpenSystemStore(0, TEXT("MY"))) ==
 	    NULL) {
@@ -735,4 +754,10 @@ int tls_connection_set_params(void *tls_ctx, struct tls_connection *conn,
 unsigned int tls_capabilities(void *tls_ctx)
 {
 	return 0;
+}
+
+
+int tls_get_library_version(char *buf, size_t buf_len)
+{
+	return os_snprintf(buf, buf_len, "schannel");
 }

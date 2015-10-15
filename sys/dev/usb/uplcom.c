@@ -1,4 +1,4 @@
-/*	$NetBSD: uplcom.c,v 1.73 2011/12/23 00:51:48 jakllsch Exp $	*/
+/*	$NetBSD: uplcom.c,v 1.75 2015/05/30 16:44:28 riastradh Exp $	*/
 /*
  * Copyright (c) 2001 The NetBSD Foundation, Inc.
  * All rights reserved.
@@ -34,7 +34,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: uplcom.c,v 1.73 2011/12/23 00:51:48 jakllsch Exp $");
+__KERNEL_RCSID(0, "$NetBSD: uplcom.c,v 1.75 2015/05/30 16:44:28 riastradh Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -191,6 +191,8 @@ static const struct usb_devno uplcom_devs[] = {
 	{ USB_VENDOR_NETINDEX, USB_PRODUCT_NETINDEX_WS002IN },
 	/* COREGA CG-USBRS232R */
 	{ USB_VENDOR_COREGA, USB_PRODUCT_COREGA_CGUSBRS232R },
+	/* Sharp CE-175TU (USB to Zaurus option port 15 adapter) */
+	{ USB_VENDOR_SHARP, USB_PRODUCT_SHARP_CE175TU },
 };
 #define uplcom_lookup(v, p) usb_lookup(uplcom_devs, v, p)
 
@@ -416,6 +418,9 @@ uplcom_attach(device_t parent, device_t self, void *aux)
 	sc->sc_subdev = config_found_sm_loc(self, "ucombus", NULL, &uca,
 					    ucomprint, ucomsubmatch);
 
+	if (!pmf_device_register(self, NULL, NULL))
+		aprint_error_dev(self, "couldn't establish power handler\n");
+
 	return;
 }
 
@@ -449,6 +454,9 @@ uplcom_detach(device_t self, int flags)
 
 	usbd_add_drv_event(USB_EVENT_DRIVER_DETACH, sc->sc_udev,
 			   sc->sc_dev);
+
+	if (rv == 0)
+		pmf_device_deregister(self);
 
 	return (rv);
 }

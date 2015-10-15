@@ -1,4 +1,4 @@
-/*	$NetBSD: usbdivar.h,v 1.107 2013/10/03 19:04:00 skrll Exp $	*/
+/*	$NetBSD: usbdivar.h,v 1.110 2015/08/23 11:12:01 skrll Exp $	*/
 
 /*
  * Copyright (c) 1998, 2012 The NetBSD Foundation, Inc.
@@ -48,7 +48,7 @@
  *	allocx			-
  *	freex			-
  *	get_lock 		-	Called at attach time
- *	new_device		
+ *	new_device
  *
  *	PIPE METHOD		LOCK  NOTES
  *	----------------------- -------	-------------------------
@@ -61,7 +61,7 @@
  *
  * The above semantics are likely to change.  Little performance
  * evaluation has been done on this code and the locking strategy.
- * 
+ *
  * USB functions known to expect the lock taken include (this list is
  * probably not exhaustive):
  *    usb_transfer_complete()
@@ -164,7 +164,8 @@ struct usbd_bus {
 #define USBREV_1_0	2
 #define USBREV_1_1	3
 #define USBREV_2_0	4
-#define USBREV_STR { "unknown", "pre 1.0", "1.0", "1.1", "2.0" }
+#define USBREV_3_0	5
+#define USBREV_STR { "unknown", "pre 1.0", "1.0", "1.1", "2.0", "3.0" }
 
 	void		       *soft; /* soft interrupt cookie */
 	bus_dma_tag_t		dmatag;	/* DMA tag */
@@ -323,6 +324,16 @@ usbd_status	usbd_get_initial_ddesc(usbd_device_handle,
 void		usb_needs_explore(usbd_device_handle);
 void		usb_needs_reattach(usbd_device_handle);
 void		usb_schedsoftintr(struct usbd_bus *);
+
+static inline int
+usbd_xfer_isread(struct usbd_xfer *xfer)
+{
+	if (xfer->rqflags & URQ_REQUEST)
+		return xfer->request.bmRequestType & UT_READ;
+
+	return xfer->pipe->endpoint->edesc->bEndpointAddress &
+	    UE_DIR_IN;
+}
 
 /*
  * These macros reflect the current locking scheme.  They might change.

@@ -1,4 +1,4 @@
-/*	$NetBSD: if_axen.c,v 1.2 2013/10/29 16:10:49 joerg Exp $	*/
+/*	$NetBSD: if_axen.c,v 1.6 2015/04/13 16:33:25 riastradh Exp $	*/
 /*	$OpenBSD: if_axen.c,v 1.3 2013/10/21 10:10:22 yuo Exp $	*/
 
 /*
@@ -23,7 +23,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_axen.c,v 1.2 2013/10/29 16:10:49 joerg Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_axen.c,v 1.6 2015/04/13 16:33:25 riastradh Exp $");
 
 #ifdef _KERNEL_OPT
 #include "opt_inet.h"
@@ -40,7 +40,7 @@ __KERNEL_RCSID(0, "$NetBSD: if_axen.c,v 1.2 2013/10/29 16:10:49 joerg Exp $");
 #include <sys/sockio.h>
 #include <sys/systm.h>
 
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 
 #include <net/if.h>
 #include <net/if_dl.h>
@@ -688,10 +688,18 @@ axen_attach(device_t parent, device_t self, void *aux)
 
 	id = usbd_get_interface_descriptor(sc->axen_iface);
 
-	/* XXX fix when USB3.0 HC is supported */
 	/* decide on what our bufsize will be */
-	sc->axen_bufsz = (sc->axen_udev->speed == USB_SPEED_HIGH) ?
-	    AXEN_BUFSZ_HS * 1024 : AXEN_BUFSZ_LS * 1024;
+	switch (sc->axen_udev->speed) {
+	case USB_SPEED_SUPER:
+		sc->axen_bufsz = AXEN_BUFSZ_SS * 1024;
+		break;
+	case USB_SPEED_HIGH:
+		sc->axen_bufsz = AXEN_BUFSZ_HS * 1024;
+		break;
+	default:
+		sc->axen_bufsz = AXEN_BUFSZ_LS * 1024;
+		break;
+	}
 
 	/* Find endpoints. */
 	for (i = 0; i < id->bNumEndpoints; i++) {
@@ -786,7 +794,7 @@ axen_attach(device_t parent, device_t self, void *aux)
 	if_attach(ifp);
 	ether_ifattach(ifp, eaddr);
 	rnd_attach_source(&sc->rnd_source, device_xname(sc->axen_dev),
-	    RND_TYPE_NET, 0);
+	    RND_TYPE_NET, RND_FLAG_DEFAULT);
 
 	callout_init(&sc->axen_stat_ch, 0);
 	callout_setfunc(&sc->axen_stat_ch, axen_tick, sc);
@@ -795,6 +803,9 @@ axen_attach(device_t parent, device_t self, void *aux)
 	splx(s);
 
 	usbd_add_drv_event(USB_EVENT_DRIVER_ATTACH, sc->axen_udev,sc->axen_dev);
+
+	if (!pmf_device_register(self, NULL, NULL))
+		aprint_error_dev(self, "couldn't establish power handler\n");
 }
 
 static int
@@ -809,6 +820,8 @@ axen_detach(device_t self, int flags)
 	/* Detached before attached finished, so just bail out. */
 	if (!sc->axen_attached)
 		return 0;
+
+	pmf_device_deregister(self);
 
 	sc->axen_dying = true;
 
@@ -1071,7 +1084,7 @@ axen_rxeof(usbd_xfer_handle xfer, usbd_private_handle priv, usbd_status status)
 		/* skip pseudo header (2byte) */
 		ifp->if_ipackets++;
 		m->m_pkthdr.rcvif = ifp;
-		m->m_pkthdr.len = m->m_len = pkt_len - 2;
+		m->m_pkthdr.len = m->m_len = pkt_len - 6;
 
 #ifdef AXEN_TOE
 		/* cheksum err */
@@ -1094,7 +1107,7 @@ axen_rxeof(usbd_xfer_handle xfer, usbd_private_handle priv, usbd_status status)
 		}
 #endif
 
-		memcpy(mtod(m, char *), buf + 2, pkt_len - 2);
+		memcpy(mtod(m, char *), buf + 2, pkt_len - 6);
 
 		/* push the packet up */
 		s = splnet();

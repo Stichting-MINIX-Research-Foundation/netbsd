@@ -1,4 +1,4 @@
-/* $NetBSD: rpi_vcmbox.c,v 1.2 2013/01/07 22:32:24 jmcneill Exp $ */
+/* $NetBSD: rpi_vcmbox.c,v 1.4 2014/10/04 13:18:34 mlelstv Exp $ */
 
 /*-
  * Copyright (c) 2013 Jared D. McNeill <jmcneill@invisible.ca>
@@ -31,7 +31,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: rpi_vcmbox.c,v 1.2 2013/01/07 22:32:24 jmcneill Exp $");
+__KERNEL_RCSID(0, "$NetBSD: rpi_vcmbox.c,v 1.4 2014/10/04 13:18:34 mlelstv Exp $");
 
 #include <sys/param.h>
 #include <sys/types.h>
@@ -152,7 +152,11 @@ vcmbox_attach(device_t parent, device_t self, void *aux)
 	sc->sc_sme->sme_refresh = vcmbox_sensor_refresh;
 	sc->sc_sme->sme_get_limits = vcmbox_sensor_get_limits;
 	vcmbox_create_sensors(sc);
-	sysmon_envsys_register(sc->sc_sme);
+	if (sysmon_envsys_register(sc->sc_sme) == 0)
+		return;
+
+	aprint_error_dev(self, "unable to register with sysmon\n");
+	sysmon_envsys_destroy(sc->sc_sme);
 }
 
 static int
@@ -264,7 +268,7 @@ vcmbox_cpufreq_init(struct vcmbox_softc *sc)
 	error = sysctl_createv(&sc->sc_log, 0, &freqnode, &node,
 	    CTLFLAG_READWRITE, CTLTYPE_INT, "target", NULL,
 	    vcmbox_cpufreq_sysctl_helper, 0, (void *)sc, 0,
-	    CTL_CREATE, CTL_EOL); 
+	    CTL_CREATE, CTL_EOL);
 	if (error)
 		goto sysctl_failed;
 	sc->sc_node_target = node->sysctl_num;
@@ -272,7 +276,7 @@ vcmbox_cpufreq_init(struct vcmbox_softc *sc)
 	error = sysctl_createv(&sc->sc_log, 0, &freqnode, &node,
 	    0, CTLTYPE_INT, "current", NULL,
 	    vcmbox_cpufreq_sysctl_helper, 0, (void *)sc, 0,
-	    CTL_CREATE, CTL_EOL); 
+	    CTL_CREATE, CTL_EOL);
 	if (error)
 		goto sysctl_failed;
 	sc->sc_node_current = node->sysctl_num;
@@ -280,7 +284,7 @@ vcmbox_cpufreq_init(struct vcmbox_softc *sc)
 	error = sysctl_createv(&sc->sc_log, 0, &freqnode, &node,
 	    0, CTLTYPE_INT, "min", NULL,
 	    vcmbox_cpufreq_sysctl_helper, 0, (void *)sc, 0,
-	    CTL_CREATE, CTL_EOL); 
+	    CTL_CREATE, CTL_EOL);
 	if (error)
 		goto sysctl_failed;
 	sc->sc_node_min = node->sysctl_num;
@@ -288,7 +292,7 @@ vcmbox_cpufreq_init(struct vcmbox_softc *sc)
 	error = sysctl_createv(&sc->sc_log, 0, &freqnode, &node,
 	    0, CTLTYPE_INT, "max", NULL,
 	    vcmbox_cpufreq_sysctl_helper, 0, (void *)sc, 0,
-	    CTL_CREATE, CTL_EOL); 
+	    CTL_CREATE, CTL_EOL);
 	if (error)
 		goto sysctl_failed;
 	sc->sc_node_max = node->sysctl_num;
@@ -355,13 +359,14 @@ vcmbox_create_sensors(struct vcmbox_softc *sc)
 	sc->sc_sensor[VCMBOX_SENSOR_TEMP].sensor = VCMBOX_SENSOR_TEMP;
 	sc->sc_sensor[VCMBOX_SENSOR_TEMP].units = ENVSYS_STEMP;
 	sc->sc_sensor[VCMBOX_SENSOR_TEMP].state = ENVSYS_SINVALID;
-	sc->sc_sensor[VCMBOX_SENSOR_TEMP].flags = ENVSYS_FHAS_ENTROPY;
+	sc->sc_sensor[VCMBOX_SENSOR_TEMP].flags = ENVSYS_FMONLIMITS |
+						  ENVSYS_FHAS_ENTROPY;
 	strlcpy(sc->sc_sensor[VCMBOX_SENSOR_TEMP].desc,
 	    vcmbox_sensor_name[VCMBOX_SENSOR_TEMP],
 	    sizeof(sc->sc_sensor[VCMBOX_SENSOR_TEMP].desc));
 	if (vcmbox_read_temp(sc, VCPROPTAG_GET_MAX_TEMPERATURE,
 			     vcmbox_sensor_id[VCMBOX_SENSOR_TEMP], &val) == 0) {
-		sc->sc_sensor[VCMBOX_SENSOR_TEMP].value_max = 
+		sc->sc_sensor[VCMBOX_SENSOR_TEMP].value_max =
 		    val * 1000 + 273150000;
 		sc->sc_sensor[VCMBOX_SENSOR_TEMP].flags |= ENVSYS_FVALID_MAX;
 	}

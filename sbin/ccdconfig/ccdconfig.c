@@ -1,4 +1,4 @@
-/*	$NetBSD: ccdconfig.c,v 1.53 2013/05/03 00:01:15 christos Exp $	*/
+/*	$NetBSD: ccdconfig.c,v 1.56 2014/12/07 10:44:34 mlelstv Exp $	*/
 
 /*-
  * Copyright (c) 1996, 1997 The NetBSD Foundation, Inc.
@@ -33,7 +33,7 @@
 #ifndef lint
 __COPYRIGHT("@(#) Copyright (c) 1996, 1997\
  The NetBSD Foundation, Inc.  All rights reserved.");
-__RCSID("$NetBSD: ccdconfig.c,v 1.53 2013/05/03 00:01:15 christos Exp $");
+__RCSID("$NetBSD: ccdconfig.c,v 1.56 2014/12/07 10:44:34 mlelstv Exp $");
 #endif
 
 #include <sys/param.h>
@@ -164,8 +164,10 @@ do_single(int argc, char **argv, int action)
 {
 	struct ccd_ioctl ccio;
 	char *ccd, *cp, *cp2, **disks;
+	char buf[MAXPATHLEN];
 	int noflags = 0, i, ileave, flags, j;
-	unsigned int ui;
+	unsigned int ndisks, ui;
+	int ret = 1;
 
 	flags = 0;
 	memset(&ccio, 0, sizeof(ccio));
@@ -235,29 +237,34 @@ do_single(int argc, char **argv, int action)
 
 	/* Next is the list of disks to make the ccd from. */
 	disks = emalloc(argc * sizeof(char *));
-	for (ui = 0; argc != 0; ) {
-		cp = *argv++; --argc;
+	for (ndisks = 0; argc != 0; ++argv, --argc) {
+		if (getfsspecname(buf, sizeof(buf), *argv) == NULL) {
+			warn("%s", *argv);
+			goto error;
+		}
+
+		cp = strdup(buf);
+		if (cp == NULL) {
+			warn("%s", cp);
+			goto error;
+		}
+
 		if ((j = checkdev(cp)) == 0)
-			disks[ui++] = cp;
+			disks[ndisks++] = cp;
 		else {
 			warnx("%s: %s", cp, strerror(j));
-			free(ccd);
-			free(disks);
-			return (1);
+			goto error;
 		}
 	}
 
 	/* Fill in the ccio. */
 	ccio.ccio_disks = disks;
-	ccio.ccio_ndisks = ui;
+	ccio.ccio_ndisks = ndisks;
 	ccio.ccio_ileave = ileave;
 	ccio.ccio_flags = flags;
 
-	if (do_io(ccd, CCDIOCSET, &ccio)) {
-		free(ccd);
-		free(disks);
-		return (1);
-	}
+	if (do_io(ccd, CCDIOCSET, &ccio))
+		goto error;
 
 	if (verbose) {
 		printf("ccd%d: %d components ", ccio.ccio_unit,
@@ -271,16 +278,21 @@ do_single(int argc, char **argv, int action)
 			    ui == 0 ? '(' : ' ', cp2,
 			    ui == ccio.ccio_ndisks - 1 ? ')' : ',');
 		}
-		printf(", %ld blocks ", (long)ccio.ccio_size);
+		printf(", %ju blocks ", (uintmax_t)ccio.ccio_size);
 		if (ccio.ccio_ileave != 0)
 			printf("interleaved at %d blocks\n", ccio.ccio_ileave);
 		else
 			printf("concatenated\n");
 	}
 
+	ret = 0;
+
+error:
 	free(ccd);
+	while (ndisks > 0)
+		free(disks[--ndisks]);
 	free(disks);
-	return (0);
+	return (ret);
 }
 
 static int
@@ -445,8 +457,9 @@ print_ccd_info(int u, struct ccddiskinfo *ccd, char *str)
 	}
 
 	/* Dump out softc information. */
-	printf("ccd%d\t\t%d\t0x%x\t%zu\t", u, ccd->ccd_ileave,
-	    ccd->ccd_flags & CCDF_USERMASK, ccd->ccd_size * DEV_BSIZE);
+	printf("ccd%d\t\t%d\t0x%x\t%ju\t", u, ccd->ccd_ileave,
+	    ccd->ccd_flags & CCDF_USERMASK,
+	    (uintmax_t)ccd->ccd_size * DEV_BSIZE);
 
 	/* Read component pathname and display component info. */
 	for (size_t i = 0; i < ccd->ccd_ndisks; ++i) {

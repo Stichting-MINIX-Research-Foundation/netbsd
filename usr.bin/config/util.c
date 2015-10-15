@@ -1,4 +1,4 @@
-/*	$NetBSD: util.c,v 1.16 2013/11/01 21:39:13 christos Exp $	*/
+/*	$NetBSD: util.c,v 1.20 2015/09/01 13:42:48 uebayasi Exp $	*/
 
 /*
  * Copyright (c) 1992, 1993
@@ -44,6 +44,9 @@
 #include "nbtool_config.h"
 #endif
 
+#include <sys/cdefs.h>
+__RCSID("$NetBSD: util.c,v 1.20 2015/09/01 13:42:48 uebayasi Exp $");
+
 #include <sys/types.h>
 #include <assert.h>
 #include <ctype.h>
@@ -57,6 +60,8 @@
 
 static void cfgvxerror(const char *, int, const char *, va_list)
 	     __printflike(3, 0);
+static void cfgvxdbg(const char *, int, const char *, va_list)
+	     __printflike(3, 0);
 static void cfgvxwarn(const char *, int, const char *, va_list)
 	     __printflike(3, 0);
 static void cfgvxmsg(const char *, int, const char *, const char *, va_list)
@@ -68,28 +73,49 @@ static void cfgvxmsg(const char *, int, const char *, const char *, va_list)
  * Prefix stack
  */
 
+static void
+prefixlist_push(struct prefixlist *pl, const char *path)
+{
+	struct prefix *prevpf = SLIST_FIRST(pl);
+	struct prefix *pf;
+	char *cp;
+
+	pf = ecalloc(1, sizeof(struct prefix));
+
+	if (prevpf != NULL) {
+		cp = emalloc(strlen(prevpf->pf_prefix) + 1 +
+		    strlen(path) + 1);
+		(void) sprintf(cp, "%s/%s", prevpf->pf_prefix, path);
+		pf->pf_prefix = intern(cp);
+		free(cp);
+	} else
+		pf->pf_prefix = intern(path);
+
+	SLIST_INSERT_HEAD(pl, pf, pf_next);
+}
+
+static void
+prefixlist_pop(struct prefixlist *allpl, struct prefixlist *pl)
+{
+	struct prefix *pf;
+
+	if ((pf = SLIST_FIRST(pl)) == NULL) {
+		cfgerror("no prefixes on the stack to pop");
+		return;
+	}
+
+	SLIST_REMOVE_HEAD(pl, pf_next);
+	/* Remember this prefix for emitting -I... directives later. */
+	SLIST_INSERT_HEAD(allpl, pf, pf_next);
+}
+
 /*
  * Push a prefix onto the prefix stack.
  */
 void
 prefix_push(const char *path)
 {
-	struct prefix *pf;
-	char *cp;
-
-	pf = ecalloc(1, sizeof(struct prefix));
-
-	if (! SLIST_EMPTY(&prefixes) && *path != '/') {
-		cp = emalloc(strlen(SLIST_FIRST(&prefixes)->pf_prefix) + 1 +
-		    strlen(path) + 1);
-		(void) sprintf(cp, "%s/%s",
-		    SLIST_FIRST(&prefixes)->pf_prefix, path);
-		pf->pf_prefix = intern(cp);
-		free(cp);
-	} else
-		pf->pf_prefix = intern(path);
-
-	SLIST_INSERT_HEAD(&prefixes, pf, pf_next);
+	prefixlist_push(&prefixes, path);
 }
 
 /*
@@ -98,16 +124,25 @@ prefix_push(const char *path)
 void
 prefix_pop(void)
 {
-	struct prefix *pf;
+	prefixlist_pop(&allprefixes, &prefixes);
+}
 
-	if ((pf = SLIST_FIRST(&prefixes)) == NULL) {
-		cfgerror("no prefixes on the stack to pop");
-		return;
-	}
+/*
+ * Push a buildprefix onto the buildprefix stack.
+ */
+void
+buildprefix_push(const char *path)
+{
+	prefixlist_push(&buildprefixes, path);
+}
 
-	SLIST_REMOVE_HEAD(&prefixes, pf_next);
-	/* Remember this prefix for emitting -I... directives later. */
-	SLIST_INSERT_HEAD(&allprefixes, pf, pf_next);
+/*
+ * Pop a buildprefix off the buildprefix stack.
+ */
+void
+buildprefix_pop(void)
+{
+	prefixlist_pop(&allbuildprefixes, &buildprefixes);
 }
 
 /*
@@ -414,6 +449,17 @@ condexpr_destroy(struct condexpr *expr)
  */
 
 void
+cfgdbg(const char *fmt, ...)
+{
+	va_list ap;
+	extern const char *yyfile;
+
+	va_start(ap, fmt);
+	cfgvxdbg(yyfile, currentline(), fmt, ap);
+	va_end(ap);
+}
+
+void
 cfgwarn(const char *fmt, ...)
 {
 	va_list ap;
@@ -432,6 +478,12 @@ cfgxwarn(const char *file, int line, const char *fmt, ...)
 	va_start(ap, fmt);
 	cfgvxwarn(file, line, fmt, ap);
 	va_end(ap);
+}
+
+static void
+cfgvxdbg(const char *file, int line, const char *fmt, va_list ap)
+{
+	cfgvxmsg(file, line, "debug: ", fmt, ap);
 }
 
 static void

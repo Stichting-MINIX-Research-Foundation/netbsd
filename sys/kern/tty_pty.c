@@ -1,4 +1,4 @@
-/*	$NetBSD: tty_pty.c,v 1.133 2013/09/15 14:56:26 martin Exp $	*/
+/*	$NetBSD: tty_pty.c,v 1.142 2015/08/20 09:45:45 christos Exp $	*/
 
 /*
  * Copyright (c) 1982, 1986, 1989, 1993
@@ -37,9 +37,11 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: tty_pty.c,v 1.133 2013/09/15 14:56:26 martin Exp $");
+__KERNEL_RCSID(0, "$NetBSD: tty_pty.c,v 1.142 2015/08/20 09:45:45 christos Exp $");
 
 #include "opt_ptm.h"
+
+#define TTY_ALLOW_PRIVATE
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -59,6 +61,8 @@ __KERNEL_RCSID(0, "$NetBSD: tty_pty.c,v 1.133 2013/09/15 14:56:26 martin Exp $")
 #include <sys/poll.h>
 #include <sys/pty.h>
 #include <sys/kauth.h>
+
+#include "ioconf.h"
 
 #define	DEFAULT_NPTYS		16	/* default number of initial ptys */
 #define DEFAULT_MAXPTYS		992	/* default maximum number of ptys */
@@ -84,7 +88,6 @@ int npty = 0;			/* for pstat -t */
 #define	PF_NOSTOP	0x40
 #define PF_UCNTL	0x80		/* user control mode */
 
-void	ptyattach(int);
 void	ptcwakeup(struct tty *, int);
 void	ptsstart(struct tty *);
 int	pty_maxptys(int, int);
@@ -109,13 +112,33 @@ dev_type_ioctl(ptyioctl);
 dev_type_tty(ptytty);
 
 const struct cdevsw ptc_cdevsw = {
-	ptcopen, ptcclose, ptcread, ptcwrite, ptyioctl,
-	nullstop, ptytty, ptcpoll, nommap, ptckqfilter, D_TTY
+	.d_open = ptcopen,
+	.d_close = ptcclose,
+	.d_read = ptcread,
+	.d_write = ptcwrite,
+	.d_ioctl = ptyioctl,
+	.d_stop = nullstop,
+	.d_tty = ptytty,
+	.d_poll = ptcpoll,
+	.d_mmap = nommap,
+	.d_kqfilter = ptckqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_TTY
 };
 
 const struct cdevsw pts_cdevsw = {
-	ptsopen, ptsclose, ptsread, ptswrite, ptyioctl,
-	ptsstop, ptytty, ptspoll, nommap, ttykqfilter, D_TTY
+	.d_open = ptsopen,
+	.d_close = ptsclose,
+	.d_read = ptsread,
+	.d_write = ptswrite,
+	.d_ioctl = ptyioctl,
+	.d_stop = ptsstop,
+	.d_tty = ptytty,
+	.d_poll = ptspoll,
+	.d_mmap = nommap,
+	.d_kqfilter = ttykqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_TTY
 };
 
 #if defined(pmax)
@@ -125,13 +148,33 @@ const struct cdevsw pts_cdevsw = {
  */
 
 const struct cdevsw ptc_ultrix_cdevsw = {
-	ptcopen, ptcclose, ptcread, ptcwrite, ptyioctl,
-	nullstop, ptytty, ptcpoll, nommap, ptckqfilter, D_TTY
+	.d_open = ptcopen,
+	.d_close = ptcclose,
+	.d_read = ptcread,
+	.d_write = ptcwrite,
+	.d_ioctl = ptyioctl,
+	.d_stop = nullstop,
+	.d_tty = ptytty,
+	.d_poll = ptcpoll,
+	.d_mmap = nommap,
+	.d_kqfilter = ptckqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_TTY
 };
 
 const struct cdevsw pts_ultrix_cdevsw = {
-	ptsopen, ptsclose, ptsread, ptswrite, ptyioctl,
-	ptsstop, ptytty, ptspoll, nommap, ttykqfilter, D_TTY
+	.d_open = ptsopen,
+	.d_close = ptsclose,
+	.d_read = ptsread,
+	.d_write = ptswrite,
+	.d_ioctl = ptyioctl,
+	.d_stop = ptsstop,
+	.d_tty = ptytty,
+	.d_poll = ptspoll,
+	.d_mmap = nommap,
+	.d_kqfilter = ttykqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_TTY
 };
 #endif /* defined(pmax) */
 
@@ -201,7 +244,7 @@ pty_check(int ptn)
 
 		/*
 		 * Now grab the pty array mutex - we need to ensure
-		 * that the pty array is consistent while copying it's
+		 * that the pty array is consistent while copying its
 		 * content to newly allocated, larger space; we also
 		 * need to be safe against pty_maxptys().
 		 */
@@ -509,6 +552,8 @@ ptsstop(struct tty *tp, int flush)
 	KASSERT(mutex_owned(&tty_lock));
 
 	/* note: FLUSHREAD and FLUSHWRITE already ok */
+	CTASSERT(TIOCPKT_FLUSHREAD == FREAD);
+	CTASSERT(TIOCPKT_FLUSHWRITE == FWRITE);
 	if (flush == 0) {
 		flush = TIOCPKT_STOP;
 		pti->pt_flags |= PF_STOPPED;
@@ -1003,6 +1048,9 @@ ptyioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 	const struct cdevsw *cdev;
 	u_char *cc = tp->t_cc;
 	int stop, error, sig;
+#ifndef NO_DEV_PTM
+	struct mount *mp;
+#endif
 
 	/*
 	 * IF CONTROLLER STTY THEN MUST FLUSH TO PREVENT A HANG.
@@ -1033,8 +1081,11 @@ ptyioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 
 #ifndef NO_DEV_PTM
 	/* Allow getting the name from either the master or the slave */
-	if (cmd == TIOCPTSNAME)
-		return pty_fill_ptmget(l, dev, -1, -1, data);
+	if (cmd == TIOCPTSNAME) {
+		if ((error = pty_getmp(l, &mp)) != 0)
+			return error;
+		return pty_fill_ptmget(l, dev, -1, -1, data, mp);
+	}
 #endif
 
 	cdev = cdevsw_lookup(dev);
@@ -1042,7 +1093,9 @@ ptyioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 		switch (cmd) {
 #ifndef NO_DEV_PTM
 		case TIOCGRANTPT:
-			return pty_grant_slave(l, dev);
+			if ((error = pty_getmp(l, &mp)) != 0)
+				return error;
+			return pty_grant_slave(l, dev, mp);
 #endif
 
 		case TIOCGPGRP:

@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -47,10 +47,6 @@
         ACPI_MODULE_NAME    ("antables")
 
 /* Local prototypes */
-
-ACPI_PHYSICAL_ADDRESS
-AeLocalGetRootPointer (
-    void);
 
 /* Non-AML tables that are constructed locally and installed */
 
@@ -128,8 +124,8 @@ AeBuildLocalTables (
         return (AE_NO_MEMORY);
     }
 
-    ACPI_MEMSET (LocalXSDT, 0, XsdtSize);
-    ACPI_STRNCPY (LocalXSDT->Header.Signature, ACPI_SIG_XSDT, 4);
+    memset (LocalXSDT, 0, XsdtSize);
+    ACPI_MOVE_NAME (LocalXSDT->Header.Signature, ACPI_SIG_XSDT);
     LocalXSDT->Header.Length = XsdtSize;
     LocalXSDT->Header.Revision = 1;
 
@@ -177,9 +173,9 @@ AeBuildLocalTables (
 
     /* Build an RSDP */
 
-    ACPI_MEMSET (&LocalRSDP, 0, sizeof (ACPI_TABLE_RSDP));
-    ACPI_MEMCPY (LocalRSDP.Signature, ACPI_SIG_RSDP, 8);
-    ACPI_MEMCPY (LocalRSDP.OemId, "I_TEST", 6);
+    memset (&LocalRSDP, 0, sizeof (ACPI_TABLE_RSDP));
+    ACPI_MAKE_RSDP_SIG (LocalRSDP.Signature);
+    memcpy (LocalRSDP.OemId, "I_TEST", 6);
     LocalRSDP.Revision = 2;
     LocalRSDP.XsdtPhysicalAddress = ACPI_PTR_TO_PHYSADDR (LocalXSDT);
     LocalRSDP.Length = sizeof (ACPI_TABLE_XSDT);
@@ -202,7 +198,7 @@ AeBuildLocalTables (
          * Use the external FADT, but we must update the DSDT/FACS addresses
          * as well as the checksum
          */
-        ExternalFadt->Dsdt = DsdtAddress;
+        ExternalFadt->Dsdt = (UINT32) DsdtAddress;
         ExternalFadt->Facs = ACPI_PTR_TO_PHYSADDR (&LocalFACS);
 
         if (ExternalFadt->Header.Length > ACPI_PTR_DIFF (&ExternalFadt->XDsdt, ExternalFadt))
@@ -221,8 +217,8 @@ AeBuildLocalTables (
         /*
          * Build a local FADT so we can test the hardware/event init
          */
-        ACPI_MEMSET (&LocalFADT, 0, sizeof (ACPI_TABLE_FADT));
-        ACPI_STRNCPY (LocalFADT.Header.Signature, ACPI_SIG_FADT, 4);
+        memset (&LocalFADT, 0, sizeof (ACPI_TABLE_FADT));
+        ACPI_MOVE_NAME (LocalFADT.Header.Signature, ACPI_SIG_FADT);
 
         /* Setup FADT header and DSDT/FACS addresses */
 
@@ -272,8 +268,8 @@ AeBuildLocalTables (
 
     /* Build a FACS */
 
-    ACPI_MEMSET (&LocalFACS, 0, sizeof (ACPI_TABLE_FACS));
-    ACPI_STRNCPY (LocalFACS.Signature, ACPI_SIG_FACS, 4);
+    memset (&LocalFACS, 0, sizeof (ACPI_TABLE_FACS));
+    ACPI_MOVE_NAME (LocalFACS.Signature, ACPI_SIG_FACS);
 
     LocalFACS.Length = sizeof (ACPI_TABLE_FACS);
     LocalFACS.GlobalLock = 0x11AA0011;
@@ -284,7 +280,7 @@ AeBuildLocalTables (
 
 /******************************************************************************
  *
- * FUNCTION:    AeLocalGetRootPointer
+ * FUNCTION:    AcpiOsGetRootPointer
  *
  * PARAMETERS:  None
  *
@@ -296,9 +292,9 @@ AeBuildLocalTables (
  *****************************************************************************/
 
 ACPI_PHYSICAL_ADDRESS
-AeLocalGetRootPointer (
+AcpiOsGetRootPointer (
     void)
 {
 
-    return ((ACPI_PHYSICAL_ADDRESS) &LocalRSDP);
+    return (ACPI_PTR_TO_PHYSADDR (&LocalRSDP));
 }

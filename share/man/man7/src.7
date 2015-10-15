@@ -1,4 +1,4 @@
-.\" $NetBSD: src.7,v 1.5 2013/07/20 21:39:59 wiz Exp $
+.\" $NetBSD: src.7,v 1.10 2015/05/21 01:05:33 ozaki-r Exp $
 .\"
 .\" Copyright (c) 2012, 2013 Mingzhe Wang and Elvira Khabirova.
 .\"	All rights reserved.
@@ -24,7 +24,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd November 30, 2012
+.Dd May 21, 2015
 .Dt SRC 7
 .Os
 .Sh NAME
@@ -194,7 +194,7 @@ build.
 .It Pa games/
 Sources for utilities/files in
 .Pa /usr/games ;
-each utility has it's own subdirectory, where
+each utility has its own subdirectory, where
 its sources and Makefiles are located.
 .It Pa gnu/
 Sources licensed under GNU GPL.
@@ -314,8 +314,6 @@ MPLS protocol stack
 .Xr mpls 4 .
 .It Pa netnatm/
 Native Mode ATM protocol stack.
-.It Pa netns/
-Xerox network protocol stack.
 .It Pa netsmb/
 SMB network protocol stack.
 .It Pa nfs/
@@ -379,6 +377,7 @@ Reachover build structure for X11R7; the source is in
 .Pa X11SRCDIR .
 The directory structure copies the system\'s;
 every directory contains a Makefile.
+.El
 .Sh SEE ALSO
 .Xr hier 7
 .Sh HISTORY

@@ -1,4 +1,4 @@
-/*	$NetBSD: if_ipw.c,v 1.55 2013/10/17 21:06:15 christos Exp $	*/
+/*	$NetBSD: if_ipw.c,v 1.58 2015/01/07 07:05:48 ozaki-r Exp $	*/
 /*	FreeBSD: src/sys/dev/ipw/if_ipw.c,v 1.15 2005/11/13 17:17:40 damien Exp 	*/
 
 /*-
@@ -29,7 +29,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_ipw.c,v 1.55 2013/10/17 21:06:15 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_ipw.c,v 1.58 2015/01/07 07:05:48 ozaki-r Exp $");
 
 /*-
  * Intel(R) PRO/Wireless 2100 MiniPCI driver
@@ -185,6 +185,7 @@ ipw_attach(device_t parent, device_t self, void *aux)
 	uint32_t data;
 	uint16_t val;
 	int i, error;
+	char intrbuf[PCI_INTRSTR_LEN];
 
 	sc->sc_dev = self;
 	sc->sc_pct = pa->pa_pc;
@@ -218,7 +219,7 @@ ipw_attach(device_t parent, device_t self, void *aux)
 		return;
 	}
 
-	intrstr = pci_intr_string(sc->sc_pct, ih);
+	intrstr = pci_intr_string(sc->sc_pct, ih, intrbuf, sizeof(intrbuf));
 	sc->sc_ih = pci_intr_establish(sc->sc_pct, ih, IPL_NET, ipw_intr, sc);
 	if (sc->sc_ih == NULL) {
 		aprint_error_dev(sc->sc_dev, "could not establish interrupt");
@@ -1906,8 +1907,8 @@ ipw_cache_firmware(struct ipw_softc *sc)
 
 	return 0;
 
-fail3:	firmware_free(fw->ucode, 0);
-fail2:	firmware_free(fw->main, 0);
+fail3:	firmware_free(fw->ucode, fw->ucode_size);
+fail2:	firmware_free(fw->main, fw->main_size);
 fail1:  firmware_close(fwh);
 fail0:
 	return error;
@@ -1919,8 +1920,8 @@ ipw_free_firmware(struct ipw_softc *sc)
 	if (!(sc->flags & IPW_FLAG_FW_CACHED))
 		return;
 
-	firmware_free(sc->fw.main, 0);
-	firmware_free(sc->fw.ucode, 0);
+	firmware_free(sc->fw.main, sc->fw.main_size);
+	firmware_free(sc->fw.ucode, sc->fw.ucode_size);
 
 	sc->flags &= ~IPW_FLAG_FW_CACHED;
 }
@@ -2260,19 +2261,11 @@ SYSCTL_SETUP(sysctl_hw_ipw_accept_eula_setup, "sysctl hw.ipw.accept_eula")
 
 	sysctl_createv(NULL, 0, NULL, &rnode,
 		CTLFLAG_PERMANENT,
-		CTLTYPE_NODE, "hw",
-		NULL,
-		NULL, 0,
-		NULL, 0,
-		CTL_HW, CTL_EOL);
-
-	sysctl_createv(NULL, 0, &rnode, &rnode,
-		CTLFLAG_PERMANENT,
 		CTLTYPE_NODE, "ipw",
 		NULL,
 		NULL, 0,
 		NULL, 0,
-		CTL_CREATE, CTL_EOL);
+		CTL_HW, CTL_CREATE, CTL_EOL);
 
 	sysctl_createv(NULL, 0, &rnode, &cnode,
 		CTLFLAG_PERMANENT | CTLFLAG_READWRITE,

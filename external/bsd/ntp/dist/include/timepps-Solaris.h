@@ -1,11 +1,11 @@
-/*	$NetBSD: timepps-Solaris.h,v 1.1.1.1 2009/12/13 16:54:53 kardel Exp $	*/
+/*	$NetBSD: timepps-Solaris.h,v 1.4 2015/07/10 14:20:29 christos Exp $	*/
 
 /***********************************************************************
  *								       *
  * Copyright (c) David L. Mills 1999-2009			       *
  *								       *
  * Permission to use, copy, modify, and distribute this software and   *
- * its documentation for any purpose and without fee is hereby	       *
+ * its documentation for any purpose and with or without fee is hereby *
  * granted, provided that the above copyright notice appears in all    *
  * copies and that both the copyright notice and this permission       *
  * notice appear in supporting documentation, and that the name        *
@@ -415,7 +415,7 @@ time_pps_getparams(
 	}
 
 	punit = (pps_unit_t *)handle;
-	memcpy(params, &punit->params, sizeof(params));
+	memcpy(params, &punit->params, sizeof(*params));
 	return (0);
 }
 

@@ -12,32 +12,19 @@ DRV_AP_LIBS =
 
 ##### COMMON DRIVERS
 
-ifdef CONFIG_DRIVER_HOSTAP
-DRV_CFLAGS += -DCONFIG_DRIVER_HOSTAP
-DRV_OBJS += src/drivers/driver_hostap.c
-CONFIG_WIRELESS_EXTENSION=y
-NEED_AP_MLME=y
-NEED_NETLINK=y
-NEED_LINUX_IOCTL=y
-endif
-
 ifdef CONFIG_DRIVER_WIRED
 DRV_CFLAGS += -DCONFIG_DRIVER_WIRED
 DRV_OBJS += src/drivers/driver_wired.c
 endif
 
-ifdef CONFIG_DRIVER_MADWIFI
-DRV_CFLAGS += -DCONFIG_DRIVER_MADWIFI
-DRV_OBJS += src/drivers/driver_madwifi.c
-CONFIG_WIRELESS_EXTENSION=y
-CONFIG_L2_PACKET=linux
-NEED_NETLINK=y
-NEED_LINUX_IOCTL=y
-endif
-
 ifdef CONFIG_DRIVER_NL80211
 DRV_CFLAGS += -DCONFIG_DRIVER_NL80211
 DRV_OBJS += src/drivers/driver_nl80211.c
+DRV_OBJS += src/drivers/driver_nl80211_android.c
+DRV_OBJS += src/drivers/driver_nl80211_capa.c
+DRV_OBJS += src/drivers/driver_nl80211_event.c
+DRV_OBJS += src/drivers/driver_nl80211_monitor.c
+DRV_OBJS += src/drivers/driver_nl80211_scan.c
 DRV_OBJS += src/utils/radiotap.c
 NEED_SME=y
 NEED_AP_MLME=y
@@ -48,7 +35,11 @@ NEED_RFKILL=y
 ifdef CONFIG_LIBNL32
   DRV_LIBS += -lnl-3
   DRV_LIBS += -lnl-genl-3
-  DRV_CFLAGS += -DCONFIG_LIBNL20
+  DRV_CFLAGS += -DCONFIG_LIBNL20 -I/usr/include/libnl3
+ifdef CONFIG_LIBNL3_ROUTE
+  DRV_LIBS += -lnl-route-3
+  DRV_CFLAGS += -DCONFIG_LIBNL3_ROUTE
+endif
 else
   ifdef CONFIG_LIBNL_TINY
     DRV_LIBS += -lnl-tiny
@@ -73,10 +64,12 @@ CONFIG_L2_FREEBSD=y
 CONFIG_DNET_PCAP=y
 endif
 
-ifdef CONFIG_DRIVER_TEST
-DRV_CFLAGS += -DCONFIG_DRIVER_TEST
-DRV_OBJS += src/drivers/driver_test.c
-NEED_AP_MLME=y
+ifdef CONFIG_DRIVER_OPENBSD
+ifndef CONFIG_L2_PACKET
+CONFIG_L2_PACKET=freebsd
+endif
+DRV_CFLAGS += -DCONFIG_DRIVER_OPENBSD
+DRV_OBJS += src/drivers/driver_openbsd.c
 endif
 
 ifdef CONFIG_DRIVER_NONE
@@ -85,6 +78,15 @@ DRV_OBJS += src/drivers/driver_none.c
 endif
 
 ##### PURE AP DRIVERS
+
+ifdef CONFIG_DRIVER_HOSTAP
+DRV_AP_CFLAGS += -DCONFIG_DRIVER_HOSTAP
+DRV_AP_OBJS += src/drivers/driver_hostap.c
+CONFIG_WIRELESS_EXTENSION=y
+NEED_AP_MLME=y
+NEED_NETLINK=y
+NEED_LINUX_IOCTL=y
+endif
 
 ifdef CONFIG_DRIVER_ATHEROS
 DRV_AP_CFLAGS += -DCONFIG_DRIVER_ATHEROS
@@ -104,18 +106,6 @@ NEED_LINUX_IOCTL=y
 NEED_RFKILL=y
 endif
 
-ifdef CONFIG_DRIVER_RALINK
-DRV_WPA_CFLAGS += -DCONFIG_DRIVER_RALINK
-DRV_WPA_OBJS += src/drivers/driver_ralink.c
-NEED_NETLINK=y
-NEED_LINUX_IOCTL=y
-endif
-
-ifdef CONFIG_DRIVER_BROADCOM
-DRV_WPA_CFLAGS += -DCONFIG_DRIVER_BROADCOM
-DRV_WPA_OBJS += src/drivers/driver_broadcom.c
-endif
-
 ifdef CONFIG_DRIVER_NDIS
 DRV_WPA_CFLAGS += -DCONFIG_DRIVER_NDIS
 DRV_WPA_OBJS += src/drivers/driver_ndis.c
@@ -129,20 +119,6 @@ CONFIG_WINPCAP=y
 ifdef CONFIG_USE_NDISUIO
 DRV_WPA_CFLAGS += -DCONFIG_USE_NDISUIO
 endif
-endif
-
-ifdef CONFIG_DRIVER_OSX
-DRV_WPA_CFLAGS += -DCONFIG_DRIVER_OSX
-DRV_WPA_OBJS += src/drivers/driver_osx.c
-DRV_WPA_LDFLAGS += -framework CoreFoundation
-DRV_WPA_LDFLAGS += -F/System/Library/PrivateFrameworks -framework Apple80211
-endif
-
-ifdef CONFIG_DRIVER_IPHONE
-DRV_WPA_CFLAGS += -DCONFIG_DRIVER_IPHONE
-DRV_WPA_OBJS += src/drivers/driver_iphone.c
-DRV_WPA_OBJS += src/drivers/MobileApple80211.c
-DRV_WPA_LDFLAGS += -framework CoreFoundation
 endif
 
 ifdef CONFIG_DRIVER_ROBOSWITCH
@@ -170,6 +146,29 @@ endif
 
 ifdef CONFIG_DRIVER_CUSTOM
 DRV_CFLAGS += -DCONFIG_DRIVER_CUSTOM
+endif
+
+ifdef CONFIG_VLAN_NETLINK
+ifdef CONFIG_FULL_DYNAMIC_VLAN
+ifdef CONFIG_LIBNL32
+  DRV_LIBS += -lnl-3
+  DRV_LIBS += -lnl-genl-3
+  DRV_LIBS += -lnl-route-3
+  DRV_CFLAGS += -DCONFIG_LIBNL20
+else
+  ifdef CONFIG_LIBNL_TINY
+    DRV_LIBS += -lnl-tiny
+  else
+    DRV_LIBS += -lnl
+  endif
+
+  ifdef CONFIG_LIBNL20
+    DRV_LIBS += -lnl-genl
+    DRV_LIBS += -lnl-route
+    DRV_CFLAGS += -DCONFIG_LIBNL20
+  endif
+endif
+endif
 endif
 
 ##### COMMON VARS

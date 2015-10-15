@@ -1,4 +1,4 @@
-/*	$NetBSD: elink3.c,v 1.134 2012/10/27 17:18:20 chs Exp $	*/
+/*	$NetBSD: elink3.c,v 1.136 2015/04/13 16:33:24 riastradh Exp $	*/
 
 /*-
  * Copyright (c) 1998, 2001 The NetBSD Foundation, Inc.
@@ -62,7 +62,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: elink3.c,v 1.134 2012/10/27 17:18:20 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: elink3.c,v 1.136 2015/04/13 16:33:24 riastradh Exp $");
 
 #include "opt_inet.h"
 
@@ -77,7 +77,7 @@ __KERNEL_RCSID(0, "$NetBSD: elink3.c,v 1.134 2012/10/27 17:18:20 chs Exp $");
 #include <sys/syslog.h>
 #include <sys/select.h>
 #include <sys/device.h>
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 
 #include <net/if.h>
 #include <net/if_dl.h>
@@ -488,7 +488,7 @@ epconfig(struct ep_softc *sc, u_short chipset, u_int8_t *enaddr)
 	GO_WINDOW(1);		/* Window 1 is operating window */
 
 	rnd_attach_source(&sc->rnd_source, device_xname(sc->sc_dev),
-	    RND_TYPE_NET, 0);
+	    RND_TYPE_NET, RND_FLAG_DEFAULT);
 
 	sc->tx_start_thresh = 20;	/* probably a good starting point. */
 

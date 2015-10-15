@@ -1,4 +1,4 @@
-/*	$NetBSD: view.c,v 1.29 2009/10/26 19:16:54 cegger Exp $ */
+/*	$NetBSD: view.c,v 1.32 2015/08/20 14:40:16 christos Exp $ */
 
 /*
  * Copyright (c) 1994 Christian E. Hopps
@@ -38,7 +38,7 @@
  * a interface to graphics. */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: view.c,v 1.29 2009/10/26 19:16:54 cegger Exp $");
+__KERNEL_RCSID(0, "$NetBSD: view.c,v 1.32 2015/08/20 14:40:16 christos Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -55,6 +55,7 @@ __KERNEL_RCSID(0, "$NetBSD: view.c,v 1.29 2009/10/26 19:16:54 cegger Exp $");
 #include <amiga/dev/viewvar.h>
 
 #include "view.h"
+#include "ioconf.h"
 
 static void view_display(struct view_softc *);
 static void view_remove(struct view_softc *);
@@ -62,8 +63,6 @@ static int view_setsize(struct view_softc *, struct view_size *);
 
 int view_get_colormap(struct view_softc *, colormap_t *);
 int view_set_colormap(struct view_softc *, colormap_t *);
-
-void viewattach(int);
 
 struct view_softc views[NVIEW];
 int view_inited;			/* also checked in ite_cc.c */
@@ -80,8 +79,18 @@ dev_type_ioctl(viewioctl);
 dev_type_mmap(viewmmap);
 
 const struct cdevsw view_cdevsw = {
-	viewopen, viewclose, nullread, nullwrite, viewioctl,
-	nostop, notty, nopoll, viewmmap, nokqfilter,
+	.d_open = viewopen,
+	.d_close = viewclose,
+	.d_read = nullread,
+	.d_write = nullwrite,
+	.d_ioctl = viewioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = viewmmap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = 0
 };
 
 /*

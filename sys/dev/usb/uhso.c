@@ -1,4 +1,4 @@
-/*	$NetBSD: uhso.c,v 1.11 2013/01/05 01:30:17 christos Exp $	*/
+/*	$NetBSD: uhso.c,v 1.17 2014/11/15 19:18:19 christos Exp $	*/
 
 /*-
  * Copyright (c) 2009 Iain Hibbert
@@ -37,7 +37,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: uhso.c,v 1.11 2013/01/05 01:30:17 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: uhso.c,v 1.17 2014/11/15 19:18:19 christos Exp $");
 
 #ifdef _KERNEL_OPT
 #include "opt_inet.h"
@@ -112,14 +112,6 @@ Static int uhso_autoswitch = 1;
 SYSCTL_SETUP(sysctl_hw_uhso_setup, "uhso sysctl setup")
 {
 	const struct sysctlnode *node = NULL;
-
-	sysctl_createv(clog, 0, NULL, NULL,
-		CTLFLAG_PERMANENT,
-		CTLTYPE_NODE, "hw",
-		NULL,
-		NULL, 0,
-		NULL, 0,
-		CTL_HW, CTL_EOL);
 
 	sysctl_createv(clog, 0, NULL, &node,
 		CTLFLAG_PERMANENT,
@@ -251,6 +243,7 @@ Static const struct uhso_dev uhso_devs[] = {
     { USB_VENDOR_OPTIONNV, USB_PRODUCT_OPTIONNV_ICON401,     UHSOTYPE_CONFIG },
     { USB_VENDOR_OPTIONNV, USB_PRODUCT_OPTIONNV_GTM382,	     UHSOTYPE_CONFIG },
     { USB_VENDOR_OPTIONNV, USB_PRODUCT_OPTIONNV_GE40X4,      UHSOTYPE_CONFIG },
+    { USB_VENDOR_OPTIONNV, USB_PRODUCT_OPTIONNV_GTHSUPAM,    UHSOTYPE_CONFIG },
     { USB_VENDOR_OPTIONNV, USB_PRODUCT_OPTIONNV_ICONEDGE,    UHSOTYPE_DEFAULT },
     { USB_VENDOR_OPTIONNV, USB_PRODUCT_OPTIONNV_MODHSXPA,    UHSOTYPE_ICON321 },
     { USB_VENDOR_OPTIONNV, USB_PRODUCT_OPTIONNV_ICON321,     UHSOTYPE_ICON321 },
@@ -396,7 +389,8 @@ const struct cdevsw uhso_cdevsw = {
 	.d_poll = uhso_tty_poll,
 	.d_mmap = nommap,
 	.d_kqfilter = ttykqfilter,
-	.d_flag = D_TTY,
+	.d_discard = nodiscard,
+	.d_flag = D_TTY
 };
 
 Static int  uhso_tty_init(struct uhso_port *);
@@ -406,14 +400,14 @@ Static void uhso_tty_start(struct tty *);
 Static int  uhso_tty_param(struct tty *, struct termios *);
 Static int  uhso_tty_control(struct uhso_port *, u_long, int);
 
-#define UHSO_UNIT_MASK		0x0fff0
+#define UHSO_UNIT_MASK		TTUNIT_MASK
 #define UHSO_PORT_MASK		0x0000f
-#define UHSO_DIALOUT_MASK	0x80000
-#define UHSO_CALLUNIT_MASK	0x40000
+#define UHSO_DIALOUT_MASK	TTDIALOUT_MASK
+#define UHSO_CALLUNIT_MASK	TTCALLUNIT_MASK
 
-#define UHSOUNIT(x)	((minor(x) & UHSO_UNIT_MASK) >> 4)
-#define UHSOPORT(x)	(minor(x) & UHSO_PORT_MASK)
-#define UHSODIALOUT(x)	(minor(x) & UHSO_DIALOUT_MASK)
+#define UHSOUNIT(x)	(TTUNIT(x) >> 4)
+#define UHSOPORT(x)	(TTUNIT(x) & UHSO_PORT_MASK)
+#define UHSODIALOUT(x)	TTDIALOUT(x)
 #define UHSOMINOR(u, p)	((((u) << 4) & UHSO_UNIT_MASK) | ((p) & UHSO_UNIT_MASK))
 
 Static void uhso_ifnet_attach(struct uhso_softc *, usbd_interface_handle, int);
@@ -2147,17 +2141,12 @@ uhso_ifnet_input(struct ifnet *ifp, struct mbuf **mb, uint8_t *cp, size_t cc)
 
 		bpf_mtap(ifp, m);
 
-		ifp->if_ipackets++;
-		ifp->if_ibytes += m->m_pkthdr.len;
-
-		if (IF_QFULL(&ipintrq)) {
-			IF_DROP(&ipintrq);
+		if (__predict_false(!pktq_enqueue(ip_pktq, m, 0))) {
 			m_freem(m);
 		} else {
-			IF_ENQUEUE(&ipintrq, m);
-			schednetisr(NETISR_IP);
+			ifp->if_ipackets++;
+			ifp->if_ibytes += got;
 		}
-
 		splx(s);
 	}
 }

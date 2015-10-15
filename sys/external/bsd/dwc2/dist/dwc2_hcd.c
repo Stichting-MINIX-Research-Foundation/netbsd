@@ -1,4 +1,4 @@
-/*	$NetBSD: dwc2_hcd.c,v 1.9 2013/11/24 12:25:19 skrll Exp $	*/
+/*	$NetBSD: dwc2_hcd.c,v 1.16 2015/08/30 12:59:59 skrll Exp $	*/
 
 /*
  * hcd.c - DesignWare HS OTG Controller host-mode routines
@@ -42,7 +42,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: dwc2_hcd.c,v 1.9 2013/11/24 12:25:19 skrll Exp $");
+__KERNEL_RCSID(0, "$NetBSD: dwc2_hcd.c,v 1.16 2015/08/30 12:59:59 skrll Exp $");
 
 #include <sys/types.h>
 #include <sys/kmem.h>
@@ -57,6 +57,7 @@ __KERNEL_RCSID(0, "$NetBSD: dwc2_hcd.c,v 1.9 2013/11/24 12:25:19 skrll Exp $");
 
 #include <linux/kernel.h>
 #include <linux/list.h>
+#include <linux/err.h>
 
 #include <dwc2/dwc2.h>
 #include <dwc2/dwc2var.h>
@@ -267,6 +268,14 @@ static void dwc2_hcd_cleanup_channels(struct dwc2_hsotg *hsotg)
 		 */
 		channel->qh = NULL;
 	}
+	/* All channels have been freed, mark them available */
+	if (hsotg->core_params->uframe_sched > 0) {
+		hsotg->available_host_channels =
+			hsotg->core_params->host_channels;
+	} else {
+		hsotg->non_periodic_channels = 0;
+		hsotg->periodic_channels = 0;
+	}
 }
 
 /**
@@ -328,10 +337,12 @@ void dwc2_hcd_disconnect(struct dwc2_hsotg *hsotg)
  */
 static void dwc2_hcd_rem_wakeup(struct dwc2_hsotg *hsotg)
 {
-	if (hsotg->lx_state == DWC2_L2)
+	if (hsotg->lx_state == DWC2_L2) {
 		hsotg->flags.b.port_suspend_change = 1;
-	else
+		usb_hcd_resume_root_hub(hsotg->priv);
+	} else {
 		hsotg->flags.b.port_l1_change = 1;
+	}
 
 	dwc2_root_intr(hsotg->hsotg_sc);
 }
@@ -361,13 +372,11 @@ void dwc2_hcd_stop(struct dwc2_hsotg *hsotg)
 	DWC2_WRITE_4(hsotg, HPRT0, 0);
 }
 
-int
-dwc2_hcd_urb_enqueue(struct dwc2_hsotg *hsotg, struct dwc2_hcd_urb *urb,
-		     void **ep_handle, gfp_t mem_flags)
+/* Caller must hold driver lock */
+int dwc2_hcd_urb_enqueue(struct dwc2_hsotg *hsotg,
+				struct dwc2_hcd_urb *urb, struct dwc2_qh *qh,
+				struct dwc2_qtd *qtd)
 {
-	struct dwc2_softc *sc = hsotg->hsotg_sc;
-	struct dwc2_qtd *qtd;
-	unsigned long flags;
 	u32 intr_mask;
 	int retval;
 	int dev_speed;
@@ -380,37 +389,33 @@ dwc2_hcd_urb_enqueue(struct dwc2_hsotg *hsotg, struct dwc2_hcd_urb *urb,
 
 	dev_speed = dwc2_host_get_speed(hsotg, urb->priv);
 
-	/* Some core configurations cannot support LS traffic on a FS root port */
+	/* Some configurations cannot support LS traffic on a FS root port */
 	if ((dev_speed == USB_SPEED_LOW) &&
 	    (hsotg->hw_params.fs_phy_type == GHWCFG2_FS_PHY_TYPE_DEDICATED) &&
 	    (hsotg->hw_params.hs_phy_type == GHWCFG2_HS_PHY_TYPE_UTMI)) {
 		u32 hprt0 = DWC2_READ_4(hsotg, HPRT0);
 		u32 prtspd = (hprt0 & HPRT0_SPD_MASK) >> HPRT0_SPD_SHIFT;
 
-		if (prtspd == HPRT0_SPD_FULL_SPEED) {
+		if (prtspd == HPRT0_SPD_FULL_SPEED)
 			return -ENODEV;
-		}
 	}
 
-	qtd = pool_cache_get(sc->sc_qtdpool, PR_NOWAIT);
 	if (!qtd)
-		return -ENOMEM;
+		return -EINVAL;
 
 	memset(qtd, 0, sizeof(*qtd));
 
 	dwc2_hcd_qtd_init(qtd, urb);
-	retval = dwc2_hcd_qtd_add(hsotg, qtd, (struct dwc2_qh **)ep_handle,
-				  mem_flags);
-	if (retval < 0) {
+	retval = dwc2_hcd_qtd_add(hsotg, qtd, qh);
+	if (retval) {
 		dev_err(hsotg->dev,
 			"DWC OTG HCD URB Enqueue failed adding QTD. Error status %d\n",
 			retval);
-		pool_cache_put(sc->sc_qtdpool, qtd);
 		return retval;
 	}
 
 	intr_mask = DWC2_READ_4(hsotg, GINTMSK);
-	if (!(intr_mask & GINTSTS_SOF) && retval == 0) {
+	if (!(intr_mask & GINTSTS_SOF)) {
 		enum dwc2_transaction_type tr_type;
 
 		if (qtd->qh->ep_type == USB_ENDPOINT_XFER_BULK &&
@@ -421,14 +426,12 @@ dwc2_hcd_urb_enqueue(struct dwc2_hsotg *hsotg, struct dwc2_hcd_urb *urb,
 			 */
 			return 0;
 
-		spin_lock_irqsave(&hsotg->lock, flags);
 		tr_type = dwc2_hcd_select_transactions(hsotg);
 		if (tr_type != DWC2_TRANSACTION_NONE)
 			dwc2_hcd_queue_transactions(hsotg, tr_type);
-		spin_unlock_irqrestore(&hsotg->lock, flags);
 	}
 
-	return retval;
+	return 0;
 }
 
 /* Must be called with interrupt disabled and spinlock held */
@@ -668,17 +671,19 @@ static void *dwc2_hc_init_xfer(struct dwc2_hsotg *hsotg,
 }
 
 static int dwc2_hc_setup_align_buf(struct dwc2_hsotg *hsotg, struct dwc2_qh *qh,
-				   struct dwc2_host_chan *chan, void *bufptr)
+				   struct dwc2_host_chan *chan,
+				   struct dwc2_hcd_urb *urb, void *bufptr)
 {
 	u32 buf_size;
 
-	if (chan->ep_type != USB_ENDPOINT_XFER_ISOC)
-		buf_size = hsotg->core_params->max_transfer_size;
-	else
-		buf_size = 4096;
-
 	if (!qh->dw_align_buf) {
 		int err;
+
+		if (chan->ep_type != USB_ENDPOINT_XFER_ISOC)
+			buf_size = hsotg->core_params->max_transfer_size;
+		else
+			/* 3072 = 3 max-size Isoc packets */
+			buf_size = 3072;
 
 		qh->dw_align_buf = NULL;
 		qh->dw_align_buf_dma = 0;
@@ -692,15 +697,25 @@ static int dwc2_hc_setup_align_buf(struct dwc2_hsotg *hsotg, struct dwc2_qh *qh,
 		}
 		if (!qh->dw_align_buf)
 			return -ENOMEM;
+		qh->dw_align_buf_size = buf_size;
 	}
 
-	if (!chan->ep_is_in && chan->xfer_len) {
-		usb_syncmem(chan->xfer_usbdma, 0, buf_size,
-			    BUS_DMASYNC_POSTWRITE);
- 		memcpy(qh->dw_align_buf, bufptr, chan->xfer_len);
-		usb_syncmem(chan->xfer_usbdma, 0, buf_size,
-			    BUS_DMASYNC_PREWRITE);
+	if (chan->xfer_len) {
+		dev_vdbg(hsotg->dev, "%s(): non-aligned buffer\n", __func__);
+		void *usb_urb = urb->priv;
+
+		if (usb_urb) {
+			if (!chan->ep_is_in) {
+				memcpy(qh->dw_align_buf, bufptr,
+				       chan->xfer_len);
+			}
+		} else {
+			dev_warn(hsotg->dev, "no URB in dwc2_urb\n");
+		}
 	}
+
+	usb_syncmem(&qh->dw_align_buf_usbdma, 0, qh->dw_align_buf_size,
+	    chan->ep_is_in ?  BUS_DMASYNC_PREREAD : BUS_DMASYNC_PREWRITE);
 
 	chan->align_buf = qh->dw_align_buf_dma;
 	return 0;
@@ -796,8 +811,8 @@ static int dwc2_assign_and_init_hc(struct dwc2_hsotg *hsotg, struct dwc2_qh *qh)
 
 	/* Non DWORD-aligned buffer case */
 	if (bufptr) {
-		dev_vdbg(hsotg->dev, "Non-aligned buffer%p\n", bufptr);
-		if (dwc2_hc_setup_align_buf(hsotg, qh, chan, bufptr)) {
+		dev_vdbg(hsotg->dev, "Non-aligned buffer\n");
+		if (dwc2_hc_setup_align_buf(hsotg, qh, chan, urb, bufptr)) {
 			dev_err(hsotg->dev,
 				"%s: Failed to allocate memory to handle non-dword aligned buffer\n",
 				__func__);
@@ -890,6 +905,22 @@ enum dwc2_transaction_type dwc2_hcd_select_transactions(
 		if (list_empty(&hsotg->free_hc_list))
 			break;
 		qh = list_entry(qh_ptr, struct dwc2_qh, qh_list_entry);
+
+		/*
+		 * Check to see if this is a NAK'd retransmit, in which case
+		 * ignore for retransmission. We hold off on bulk/control
+		 * retransmissions to reduce NAK interrupt overhead for
+		 * cheeky devices that just hold off using NAKs.
+		 */
+		if (qh->nak_frame != 0xffff &&
+		    dwc2_full_frame_num(qh->nak_frame) ==
+		    dwc2_full_frame_num(dwc2_hcd_get_frame_number(hsotg))) {
+			qh_ptr = qh_ptr->next;
+			continue;
+		} else {
+			qh->nak_frame = 0xffff;
+		}
+
 		if (hsotg->core_params->uframe_sched > 0) {
 			if (hsotg->available_host_channels < 1)
 				break;
@@ -1325,6 +1356,8 @@ dwc2_conn_id_status_change(struct work *work)
 		hsotg->op_state = OTG_STATE_B_PERIPHERAL;
 		dwc2_core_init(hsotg, false);
 		dwc2_enable_global_interrupts(hsotg);
+		s3c_hsotg_core_init_disconnected(hsotg, false);
+		s3c_hsotg_core_connect(hsotg);
 	} else {
 		/* A-Device connector (Host Mode) */
 		dev_dbg(hsotg->dev, "connId A\n");
@@ -1472,7 +1505,7 @@ dwc2_hcd_hub_control(struct dwc2_hsotg *hsotg, u16 typereq,
 			hprt0 |= HPRT0_RES;
 			DWC2_WRITE_4(hsotg, HPRT0, hprt0);
 			hprt0 &= ~HPRT0_SUSP;
-			usleep_range(100000, 150000);
+			msleep(USB_RESUME_TIMEOUT);
 
 			hprt0 &= ~HPRT0_RES;
 			DWC2_WRITE_4(hsotg, HPRT0, hprt0);
@@ -1553,9 +1586,10 @@ dwc2_hcd_hub_control(struct dwc2_hsotg *hsotg, u16 typereq,
 		dev_dbg(hsotg->dev, "GetHubDescriptor\n");
 		hub_desc = (usb_hub_descriptor_t *)buf;
 		hub_desc->bDescLength = 9;
-		hub_desc->bDescriptorType = 0x29;
+		hub_desc->bDescriptorType = USB_DT_HUB;
 		hub_desc->bNbrPorts = 1;
-		USETW(hub_desc->wHubCharacteristics, 0x08);
+		USETW(hub_desc->wHubCharacteristics, HUB_CHAR_COMMON_LPSM |
+				    HUB_CHAR_INDV_PORT_OCPM);
 		hub_desc->bPwrOn2PwrGood = 1;
 		hub_desc->bHubContrCurrent = 0;
 		hub_desc->DeviceRemovable[0] = 0;
@@ -1714,6 +1748,15 @@ dwc2_hcd_hub_control(struct dwc2_hsotg *hsotg, u16 typereq,
 			/* Not supported */
 			break;
 
+		case USB_PORT_FEAT_TEST:
+			hprt0 = dwc2_read_hprt0(hsotg);
+			dev_dbg(hsotg->dev,
+				"SetPortFeature - USB_PORT_FEAT_TEST\n");
+			hprt0 &= ~HPRT0_TSTCTL_MASK;
+			hprt0 |= (windex >> 8) << HPRT0_TSTCTL_SHIFT;
+			DWC2_WRITE_4(hsotg, HPRT0, hprt0);
+			break;
+
 		default:
 			retval = -EINVAL;
 			dev_err(hsotg->dev,
@@ -1748,7 +1791,7 @@ int dwc2_hcd_get_frame_number(struct dwc2_hsotg *hsotg)
 
 int dwc2_hcd_is_b_host(struct dwc2_hsotg *hsotg)
 {
-	return (hsotg->op_state == OTG_STATE_B_HOST);
+	return hsotg->op_state == OTG_STATE_B_HOST;
 }
 
 struct dwc2_hcd_urb *
@@ -1798,7 +1841,7 @@ dwc2_hcd_urb_set_pipeinfo(struct dwc2_hsotg *hsotg, struct dwc2_hcd_urb *urb,
  */
 void dwc2_hcd_dump_state(struct dwc2_hsotg *hsotg)
 {
-#ifdef DEBUG
+#ifdef DWC2_DEBUG
 	struct dwc2_host_chan *chan;
 	struct dwc2_hcd_urb *urb;
 	struct dwc2_qtd *qtd;
@@ -1848,18 +1891,16 @@ void dwc2_hcd_dump_state(struct dwc2_hsotg *hsotg)
 		dev_dbg(hsotg->dev, "    qh: %p\n", chan->qh);
 
 		if (chan->xfer_started) {
-			u32 hfnum, hcchar, hctsiz, hcint, hcintmsk;
-
-			hfnum = DWC2_READ_4(hsotg, HFNUM);
-			hcchar = DWC2_READ_4(hsotg, HCCHAR(i));
-			hctsiz = DWC2_READ_4(hsotg, HCTSIZ(i));
-			hcint = DWC2_READ_4(hsotg, HCINT(i));
-			hcintmsk = DWC2_READ_4(hsotg, HCINTMSK(i));
-			dev_dbg(hsotg->dev, "    hfnum: 0x%08x\n", hfnum);
-			dev_dbg(hsotg->dev, "    hcchar: 0x%08x\n", hcchar);
-			dev_dbg(hsotg->dev, "    hctsiz: 0x%08x\n", hctsiz);
-			dev_dbg(hsotg->dev, "    hcint: 0x%08x\n", hcint);
-			dev_dbg(hsotg->dev, "    hcintmsk: 0x%08x\n", hcintmsk);
+			dev_dbg(hsotg->dev, "    hfnum: 0x%08x\n",
+			    DWC2_READ_4(hsotg, HFNUM));
+			dev_dbg(hsotg->dev, "    hcchar: 0x%08x\n",
+			    DWC2_READ_4(hsotg, HCCHAR(i)));
+			dev_dbg(hsotg->dev, "    hctsiz: 0x%08x\n",
+			    DWC2_READ_4(hsotg, HCTSIZ(i)));
+			dev_dbg(hsotg->dev, "    hcint: 0x%08x\n",
+			    DWC2_READ_4(hsotg, HCINT(i)));
+			dev_dbg(hsotg->dev, "    hcintmsk: 0x%08x\n",
+			    DWC2_READ_4(hsotg, HCINTMSK(i)));
 		}
 
 		if (!(chan->xfer_started && chan->qh))
@@ -2056,7 +2097,6 @@ dwc2_hcd_reset_func(struct work *work)
  * error code on failure.
  */
 
-
 /*
  * Frees secondary storage associated with the dwc2_hsotg structure contained
  * in the struct usb_hcd field
@@ -2131,46 +2171,25 @@ static void dwc2_hcd_release(struct dwc2_hsotg *hsotg)
 }
 
 /*
- * Sets all parameters to the given value.
- *
- * Assumes that the dwc2_core_params struct contains only integers.
- */
-void dwc2_set_all_params(struct dwc2_core_params *params, int value)
-{
-	int *p = (int *)params;
-	size_t size = sizeof(*params) / sizeof(*p);
-	int i;
-
-	for (i = 0; i < size; i++)
-		p[i] = value;
-}
-
-/*
  * Initializes the HCD. This function allocates memory for and initializes the
  * static parts of the usb_hcd and dwc2_hsotg structures. It also registers the
  * USB bus with the core and calls the hc_driver->start() function. It returns
  * a negative error on failure.
  */
-int dwc2_hcd_init(struct dwc2_hsotg *hsotg,
-		  const struct dwc2_core_params *params)
+int dwc2_hcd_init(struct dwc2_hsotg *hsotg)
 {
 	struct dwc2_host_chan *channel;
-	u32 hcfg;
 	int i, num_channels;
 	int err, retval;
 
+	if (usb_disabled())
+		return -ENODEV;
+
 	dev_dbg(hsotg->dev, "DWC OTG HCD INIT\n");
-
-	/* Detect config values from hardware */
-	retval = dwc2_get_hwparams(hsotg);
-
-	if (retval)
-		return retval;
 
 	retval = -ENOMEM;
 
-	hcfg = DWC2_READ_4(hsotg, HCFG);
-	dev_dbg(hsotg->dev, "hcfg=%08x\n", hcfg);
+	dev_dbg(hsotg->dev, "hcfg=%08x\n", DWC2_READ_4(hsotg, HCFG));
 
 #ifdef CONFIG_USB_DWC2_TRACK_MISSED_SOFS
 	hsotg->frame_num_array = kmem_zalloc(sizeof(*hsotg->frame_num_array) *
@@ -2184,15 +2203,6 @@ int dwc2_hcd_init(struct dwc2_hsotg *hsotg,
 		goto error1;
 	hsotg->last_frame_num = HFNUM_MAX_FRNUM;
 #endif
-
-	hsotg->core_params = kmem_zalloc(sizeof(*hsotg->core_params), KM_SLEEP);
-	if (!hsotg->core_params)
-		goto error1;
-
-	dwc2_set_all_params(hsotg->core_params, -1);
-
-	/* Validate parameter values */
-	dwc2_set_parameters(hsotg, params);
 
 	spin_lock_init(&hsotg->lock);
 
@@ -2297,7 +2307,6 @@ int dwc2_hcd_init(struct dwc2_hsotg *hsotg,
 error3:
 	dwc2_hcd_release(hsotg);
 error2:
-error1:
 	kmem_free(hsotg->core_params, sizeof(*hsotg->core_params));
 
 #ifdef CONFIG_USB_DWC2_TRACK_MISSED_SOFS
@@ -2309,4 +2318,31 @@ error1:
 
 	dev_err(hsotg->dev, "%s() FAILED, returning %d\n", __func__, retval);
 	return retval;
+}
+
+/*
+ * Removes the HCD.
+ * Frees memory and resources associated with the HCD and deregisters the bus.
+ */
+void dwc2_hcd_remove(struct dwc2_hsotg *hsotg)
+{
+	struct usb_hcd *hcd;
+
+	dev_dbg(hsotg->dev, "DWC OTG HCD REMOVE\n");
+
+	hcd = dwc2_hsotg_to_hcd(hsotg);
+	dev_dbg(hsotg->dev, "hsotg->hcd = %p\n", hcd);
+
+	if (!hcd) {
+		dev_dbg(hsotg->dev, "%s: dwc2_hsotg_to_hcd(hsotg) NULL!\n",
+			__func__);
+		return;
+	}
+	hsotg->priv = NULL;
+	dwc2_hcd_release(hsotg);
+
+#ifdef CONFIG_USB_DWC2_TRACK_MISSED_SOFS
+	kfree(hsotg->last_frame_num_array);
+	kfree(hsotg->frame_num_array);
+#endif
 }

@@ -1,4 +1,4 @@
-/*	$NetBSD: udl.c,v 1.10 2013/11/14 13:11:50 skrll Exp $	*/
+/*	$NetBSD: udl.c,v 1.12 2014/12/12 05:19:33 msaitoh Exp $	*/
 
 /*-
  * Copyright (c) 2009 FUKAUMI Naoki.
@@ -53,7 +53,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: udl.c,v 1.10 2013/11/14 13:11:50 skrll Exp $");
+__KERNEL_RCSID(0, "$NetBSD: udl.c,v 1.12 2014/12/12 05:19:33 msaitoh Exp $");
 
 #include <sys/param.h>
 #include <sys/device.h>
@@ -314,6 +314,7 @@ static const struct usb_devno udl_devs[] = {
 	{ USB_VENDOR_DISPLAYLINK, USB_PRODUCT_DISPLAYLINK_WSDVI },
 	{ USB_VENDOR_DISPLAYLINK, USB_PRODUCT_DISPLAYLINK_EC008 },
 	{ USB_VENDOR_DISPLAYLINK, USB_PRODUCT_DISPLAYLINK_GXDVIU2 },
+	{ USB_VENDOR_DISPLAYLINK, USB_PRODUCT_DISPLAYLINK_GXDVIU2B },
 	{ USB_VENDOR_DISPLAYLINK, USB_PRODUCT_DISPLAYLINK_LCD4300U },
 	{ USB_VENDOR_DISPLAYLINK, USB_PRODUCT_DISPLAYLINK_LCD8000U },
 	{ USB_VENDOR_DISPLAYLINK, USB_PRODUCT_DISPLAYLINK_HPDOCK },
@@ -1534,7 +1535,7 @@ udl_cmd_send_async_cb(usbd_xfer_handle xfer, usbd_private_handle priv,
 	TAILQ_REMOVE(&sc->sc_xfercmd, cmdq, cq_chain);
 	udl_cmdq_put(sc, cmdq);
 
-	/* wakeup xfer op that sleeps for a free xfer buffer */
+	/* signal xfer op that sleeps for a free xfer buffer */
 	cv_signal(&sc->sc_cv);
 	mutex_exit(&sc->sc_mtx);
 }

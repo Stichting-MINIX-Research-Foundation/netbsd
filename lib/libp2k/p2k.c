@@ -1,4 +1,4 @@
-/*	$NetBSD: p2k.c,v 1.60 2012/11/23 14:27:14 joerg Exp $	*/
+/*	$NetBSD: p2k.c,v 1.66 2015/04/20 23:03:07 riastradh Exp $	*/
 
 /*
  * Copyright (c) 2007, 2008, 2009  Antti Kantee.  All Rights Reserved.
@@ -731,7 +731,6 @@ p2k_node_lookup(struct puffs_usermount *pu, puffs_cookie_t opc,
 		}
 		return rv;
 	}
-	RUMP_VOP_UNLOCK(vp);
 
 	p2n = getp2n(p2m, vp, false, NULL);
 	if (p2n == NULL) {
@@ -755,7 +754,7 @@ needcompat(void)
 
 	/*LINTED*/
 	return __NetBSD_Version__ < VERS_TIMECHANGE
-	    && rump_pub_getversion() >= VERS_TIMECHANGE;
+	    && rump_getversion() >= VERS_TIMECHANGE;
 }
 
 #define DOCOMPAT(va, va_compat)						\
@@ -804,11 +803,11 @@ do_makenode(struct puffs_usermount *pu, struct p2k_node *p2n_dir,
 	} else {
 		rv = symfn(dvp, &vp, cn, va_x, link_target);
 	}
-	assert(RUMP_VOP_ISLOCKED(dvp) == 0);
+	rump_pub_vp_rele(dvp);
+	RUMP_VOP_UNLOCK(dvp);
 	freecn(cn);
 
 	if (rv == 0) {
-		RUMP_VOP_UNLOCK(vp);
 		p2n = getp2n(p2m, vp, true, p2n);
 		puffs_newinfo_setcookie(pni, p2n);
 	} else {
@@ -1055,6 +1054,8 @@ p2k_node_link(struct puffs_usermount *pu, puffs_cookie_t opc,
 	RUMP_VOP_LOCK(dvp, LK_EXCLUSIVE);
 	rump_pub_vp_incref(dvp);
 	rv = RUMP_VOP_LINK(dvp, OPC2VP(targ), cn);
+	rump_pub_vp_rele(dvp);
+	RUMP_VOP_UNLOCK(dvp);
 	freecn(cn);
 
 	return rv;

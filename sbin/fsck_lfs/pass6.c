@@ -1,4 +1,4 @@
-/* $NetBSD: pass6.c,v 1.32 2013/10/19 01:09:58 christos Exp $	 */
+/* $NetBSD: pass6.c,v 1.49 2015/10/03 08:29:21 dholland Exp $	 */
 
 /*-
  * Copyright (c) 2003 The NetBSD Foundation, Inc.
@@ -38,6 +38,7 @@
 #define VU_DIROP 0x01000000 /* XXX XXX from sys/vnode.h */
 #define vnode uvnode
 #include <ufs/lfs/lfs.h>
+#include <ufs/lfs/lfs_accessors.h>
 #include <ufs/lfs/lfs_inode.h>
 #undef vnode
 
@@ -61,9 +62,6 @@
 extern u_int32_t cksum(void *, size_t);
 extern u_int32_t lfs_sb_cksum(struct dlfs *);
 
-extern ulfs_daddr_t badblk;
-extern SEGUSE *seg_table;
-
 static int nnewblocks;
 
 /*
@@ -77,7 +75,7 @@ static int nnewblocks;
  * Account for this change in the segment table.
  */
 static void
-rfw_update_single(struct uvnode *vp, daddr_t lbn, ulfs_daddr_t ndaddr, int size)
+rfw_update_single(struct uvnode *vp, daddr_t lbn, daddr_t ndaddr, size_t size)
 {
 	SEGUSE *sup;
 	struct ubuf *bp;
@@ -102,32 +100,36 @@ rfw_update_single(struct uvnode *vp, daddr_t lbn, ulfs_daddr_t ndaddr, int size)
 	frags = lfs_numfrags(fs, size);
 	switch (num) {
 	case 0:
-		ooff = ip->i_ffs1_db[lbn];
+		ooff = lfs_dino_getdb(fs, ip->i_din, lbn);
 		if (ooff <= 0)
-			ip->i_ffs1_blocks += frags;
+			lfs_dino_setblocks(fs, ip->i_din,
+			    lfs_dino_getblocks(fs, ip->i_din) + frags);
 		else {
 			/* possible fragment truncation or extension */
 			ofrags = lfs_numfrags(fs, ip->i_lfs_fragsize[lbn]);
-			ip->i_ffs1_blocks += (frags - ofrags);
+			lfs_dino_setblocks(fs, ip->i_din,
+			    lfs_dino_getblocks(fs, ip->i_din) + (frags - ofrags));
 		}
-		ip->i_ffs1_db[lbn] = ndaddr;
+		lfs_dino_setdb(fs, ip->i_din, lbn, ndaddr);
 		break;
 	case 1:
-		ooff = ip->i_ffs1_ib[a[0].in_off];
+		ooff = lfs_dino_getib(fs, ip->i_din, a[0].in_off);
 		if (ooff <= 0)
-			ip->i_ffs1_blocks += frags;
-		ip->i_ffs1_ib[a[0].in_off] = ndaddr;
+			lfs_dino_setblocks(fs, ip->i_din,
+			    lfs_dino_getblocks(fs, ip->i_din) + frags);
+		lfs_dino_setib(fs, ip->i_din, a[0].in_off, ndaddr);
 		break;
 	default:
 		ap = &a[num - 1];
-		if (bread(vp, ap->in_lbn, fs->lfs_bsize, NULL, 0, &bp))
+		if (bread(vp, ap->in_lbn, lfs_sb_getbsize(fs), 0, &bp))
 			errx(1, "lfs_updatemeta: bread bno %" PRId64,
 			    ap->in_lbn);
 
-		ooff = ((ulfs_daddr_t *) bp->b_data)[ap->in_off];
+		ooff = lfs_iblock_get(fs, bp->b_data, ap->in_off);
 		if (ooff <= 0)
-			ip->i_ffs1_blocks += frags;
-		((ulfs_daddr_t *) bp->b_data)[ap->in_off] = ndaddr;
+			lfs_dino_setblocks(fs, ip->i_din,
+			    lfs_dino_getblocks(fs, ip->i_din) + frags);
+		lfs_iblock_set(fs, bp->b_data, ap->in_off, ndaddr);
 		(void) VOP_BWRITE(bp);
 	}
 
@@ -140,7 +142,7 @@ rfw_update_single(struct uvnode *vp, daddr_t lbn, ulfs_daddr_t ndaddr, int size)
 		if (lbn >= 0 && lbn < ULFS_NDADDR)
 			osize = ip->i_lfs_fragsize[lbn];
 		else
-			osize = fs->lfs_bsize;
+			osize = lfs_sb_getbsize(fs);
 		LFS_SEGENTRY(sup, fs, oldsn, bp);
 		seg_table[oldsn].su_nbytes -= osize;
 		sup->su_nbytes -= osize;
@@ -152,18 +154,18 @@ rfw_update_single(struct uvnode *vp, daddr_t lbn, ulfs_daddr_t ndaddr, int size)
 	}
 
 	/* If block is beyond EOF, update size */
-	if (lbn >= 0 && ip->i_ffs1_size <= (lbn << fs->lfs_bshift)) {
-		ip->i_ffs1_size = (lbn << fs->lfs_bshift) + 1;
+	if (lbn >= 0 && lfs_dino_getsize(fs, ip->i_din) <= (lbn << lfs_sb_getbshift(fs))) {
+		lfs_dino_setsize(fs, ip->i_din, (lbn << lfs_sb_getbshift(fs)) + 1);
 	}
 
 	/* If block frag size is too large for old EOF, update size */
 	if (lbn < ULFS_NDADDR) {
 		off_t minsize;
 
-		minsize = (lbn << fs->lfs_bshift);
-		minsize += (size - fs->lfs_fsize) + 1;
-		if (ip->i_ffs1_size < minsize)
-			ip->i_ffs1_size = minsize;
+		minsize = (lbn << lfs_sb_getbshift(fs));
+		minsize += (size - lfs_sb_getfsize(fs)) + 1;
+		if (lfs_dino_getsize(fs, ip->i_din) < minsize)
+			lfs_dino_setsize(fs, ip->i_din, minsize);
 	}
 
 	/* Count for the user */
@@ -186,9 +188,9 @@ rfw_update_single(struct uvnode *vp, daddr_t lbn, ulfs_daddr_t ndaddr, int size)
 
 	/* Check bfree accounting as well */
 	if (daddr <= 0) {
-		fs->lfs_bfree -= lfs_btofsb(fs, size);
+		lfs_sb_subbfree(fs, lfs_btofsb(fs, size));
 	} else if (size != osize) {
-		fs->lfs_bfree -= (frags - ofrags);
+		lfs_sb_subbfree(fs, frags - ofrags);
 	}
 
 	/*
@@ -209,21 +211,23 @@ static void
 remove_ino(struct uvnode *vp, ino_t ino)
 {
 	IFILE *ifp;
+	ino_t nextfree;
 	SEGUSE *sup;
 	CLEANERINFO *cip;
 	struct ubuf *bp, *sbp, *cbp;
 	struct inodesc idesc;
-	ulfs_daddr_t daddr;
+	daddr_t daddr;
 
 	if (debug)
 		pwarn("remove ino %d\n", (int)ino);
 
 	LFS_IENTRY(ifp, fs, ino, bp);
-	daddr = ifp->if_daddr;
+	daddr = lfs_if_getdaddr(fs, ifp);
 	if (daddr > 0) {
-		ifp->if_daddr = 0x0;
+		lfs_if_setdaddr(fs, ifp, 0);
 
-		LFS_GET_HEADFREE(fs, cip, cbp, &(ifp->if_nextfree));
+		LFS_GET_HEADFREE(fs, cip, cbp, &nextfree);
+		lfs_if_setnextfree(fs, ifp, nextfree);
 		VOP_BWRITE(bp);
 		LFS_PUT_HEADFREE(fs, cip, cbp, ino);
 		sbdirty();
@@ -232,9 +236,9 @@ remove_ino(struct uvnode *vp, ino_t ino)
 			vp = lfs_raw_vget(fs, ino, fs->lfs_ivnode->v_fd, daddr);
 
 		LFS_SEGENTRY(sup, fs, lfs_dtosn(fs, daddr), sbp);
-		sup->su_nbytes -= LFS_DINODE1_SIZE;
+		sup->su_nbytes -= DINOSIZE(fs);
 		VOP_BWRITE(sbp);
-		seg_table[lfs_dtosn(fs, daddr)].su_nbytes -= LFS_DINODE1_SIZE;
+		seg_table[lfs_dtosn(fs, daddr)].su_nbytes -= DINOSIZE(fs);
 	} else
 		brelse(bp, 0);
 
@@ -253,24 +257,24 @@ remove_ino(struct uvnode *vp, ino_t ino)
  * Use FIP records to update blocks, if the generation number matches.
  */
 static void
-pass6harvest(ulfs_daddr_t daddr, FINFO *fip)
+pass6harvest(daddr_t daddr, FINFO *fip)
 {
 	struct uvnode *vp;
 	int i;
 	size_t size;
 
-	vp = vget(fs, fip->fi_ino);
+	vp = vget(fs, lfs_fi_getino(fs, fip));
 	if (vp && vp != fs->lfs_ivnode &&
-	    VTOI(vp)->i_ffs1_gen == fip->fi_version) {
-		for (i = 0; i < fip->fi_nblocks; i++) {
-			size = (i == fip->fi_nblocks - 1 ?
-				fip->fi_lastlength : fs->lfs_bsize);
+	    lfs_dino_getgen(fs, VTOI(vp)->i_din) == lfs_fi_getversion(fs, fip)) {
+		for (i = 0; i < lfs_fi_getnblocks(fs, fip); i++) {
+			size = (i == lfs_fi_getnblocks(fs, fip) - 1 ?
+				lfs_fi_getlastlength(fs, fip) : lfs_sb_getbsize(fs));
 			if (debug)
-				pwarn("ino %lld lbn %lld -> 0x%lx\n",
-					(long long)fip->fi_ino,
-					(long long)fip->fi_blocks[i],
-					(long)daddr);
-			rfw_update_single(vp, fip->fi_blocks[i], daddr, size);
+				pwarn("ino %ju lbn %jd -> 0x%jx\n",
+					(uintmax_t)lfs_fi_getino(fs, fip),
+					(intmax_t)lfs_fi_getblock(fs, fip, i),
+					(intmax_t)daddr);
+			rfw_update_single(vp, lfs_fi_getblock(fs, fip, i), daddr, size);
 			daddr += lfs_btofsb(fs, size);
 		}
 	}
@@ -292,14 +296,14 @@ pass6check(struct inodesc * idesc)
 	anyout = anynew = 0;
 	for (i = 0; i < idesc->id_numfrags; i++) {
 		sn = lfs_dtosn(fs, idesc->id_blkno + i);
-		if (sn < 0 || sn >= fs->lfs_nseg ||
+		if (sn < 0 || sn >= lfs_sb_getnseg(fs) ||
 		    (seg_table[sn].su_flags & SEGUSE_DIRTY) == 0) {
 			anyout = 1;
 			break;
 		}
 		if (seg_table[sn].su_flags & SEGUSE_ACTIVE) {
-			if (sn != lfs_dtosn(fs, fs->lfs_offset) ||
-			    idesc->id_blkno > fs->lfs_offset) {
+			if (sn != lfs_dtosn(fs, lfs_sb_getoffset(fs)) ||
+			    idesc->id_blkno > lfs_sb_getoffset(fs)) {
 				++anynew;
 			}
 		}
@@ -311,7 +315,7 @@ pass6check(struct inodesc * idesc)
 	}
 	if (anyout) {
 		blkerror(idesc->id_number, "BAD", idesc->id_blkno);
-		if (badblk++ >= MAXBAD) {
+		if (badblkcount++ >= MAXBAD) {
 			pwarn("EXCESSIVE BAD BLKS I=%llu",
 			    (unsigned long long)idesc->id_number);
 			if (preen)
@@ -326,7 +330,7 @@ pass6check(struct inodesc * idesc)
 }
 
 static void
-account_indir(struct uvnode *vp, struct ulfs1_dinode *dp, daddr_t ilbn, daddr_t daddr, int lvl)
+account_indir(struct uvnode *vp, union lfs_dinode *dp, daddr_t ilbn, daddr_t daddr, int lvl)
 {
 	struct ubuf *bp;
 	int32_t *dap, *odap, *buf, *obuf;
@@ -336,21 +340,21 @@ account_indir(struct uvnode *vp, struct ulfs1_dinode *dp, daddr_t ilbn, daddr_t 
 		lbn = -ilbn;
 	else
 		lbn = ilbn + 1;
-	bread(fs->lfs_devvp, LFS_FSBTODB(fs, daddr), fs->lfs_bsize, NULL, 0, &bp);
-	buf = emalloc(fs->lfs_bsize);
-	memcpy(buf, bp->b_data, fs->lfs_bsize);
+	bread(fs->lfs_devvp, LFS_FSBTODB(fs, daddr), lfs_sb_getbsize(fs), 0, &bp);
+	buf = emalloc(lfs_sb_getbsize(fs));
+	memcpy(buf, bp->b_data, lfs_sb_getbsize(fs));
 	brelse(bp, 0);
 
-	obuf = emalloc(fs->lfs_bsize);
+	obuf = emalloc(lfs_sb_getbsize(fs));
 	if (vp) {
-		bread(vp, ilbn, fs->lfs_bsize, NULL, 0, &bp);
-		memcpy(obuf, bp->b_data, fs->lfs_bsize);
+		bread(vp, ilbn, lfs_sb_getbsize(fs), 0, &bp);
+		memcpy(obuf, bp->b_data, lfs_sb_getbsize(fs));
 		brelse(bp, 0);
 	} else
-		memset(obuf, 0, fs->lfs_bsize);
+		memset(obuf, 0, lfs_sb_getbsize(fs));
 
 	for (dap = buf, odap = obuf;
-	     dap < (int32_t *)((char *)buf + fs->lfs_bsize);
+	     dap < (int32_t *)((char *)buf + lfs_sb_getbsize(fs));
 	     ++dap, ++odap) {
 		if (*dap > 0 && *dap != *odap) {
 			rfw_update_single(vp, lbn, *dap, lfs_dblksize(fs, dp, lbn));
@@ -373,32 +377,32 @@ account_indir(struct uvnode *vp, struct ulfs1_dinode *dp, daddr_t ilbn, daddr_t 
  * Account block changes between new found inode and existing inode.
  */
 static void
-account_block_changes(struct ulfs1_dinode *dp)
+account_block_changes(union lfs_dinode *dp)
 {
 	int i;
 	daddr_t lbn, off, odaddr;
 	struct uvnode *vp;
 	struct inode *ip;
 
-	vp = vget(fs, dp->di_inumber);
+	vp = vget(fs, lfs_dino_getinumber(fs, dp));
 	ip = (vp ? VTOI(vp) : NULL);
 
 	/* Check direct block holdings between existing and new */
 	for (i = 0; i < ULFS_NDADDR; i++) {
-		odaddr = (ip ? ip->i_ffs1_db[i] : 0x0);
-		if (dp->di_db[i] > 0 && dp->di_db[i] != odaddr)
-			rfw_update_single(vp, i, dp->di_db[i],
+		odaddr = (ip ? lfs_dino_getdb(fs, ip->i_din, i) : 0x0);
+		if (lfs_dino_getdb(fs, dp, i) > 0 && lfs_dino_getdb(fs, dp, i) != odaddr)
+			rfw_update_single(vp, i, lfs_dino_getdb(fs, dp, i),
 					  lfs_dblksize(fs, dp, i));
 	}
 
 	/* Check indirect block holdings between existing and new */
 	off = 0;
 	for (i = 0; i < ULFS_NIADDR; i++) {
-		odaddr = (ip ? ip->i_ffs1_ib[i] : 0x0);
-		if (dp->di_ib[i] > 0 && dp->di_ib[i] != odaddr) {
+		odaddr = (ip ? lfs_dino_getib(fs, ip->i_din, i) : 0x0);
+		if (lfs_dino_getib(fs, dp, i) > 0 && lfs_dino_getib(fs, dp, i) != odaddr) {
 			lbn = -(ULFS_NDADDR + off + i);
-			rfw_update_single(vp, i, dp->di_ib[i], fs->lfs_bsize);
-			account_indir(vp, dp, lbn, dp->di_ib[i], i);
+			rfw_update_single(vp, i, lfs_dino_getib(fs, dp, i), lfs_sb_getbsize(fs));
+			account_indir(vp, dp, lbn, lfs_dino_getib(fs, dp, i), i);
 		}
 		if (off == 0)
 			off = LFS_NINDIR(fs);
@@ -415,14 +419,14 @@ account_block_changes(struct ulfs1_dinode *dp)
  * free list accounting is done.
  */
 static void
-readdress_inode(struct ulfs1_dinode *dp, ulfs_daddr_t daddr)
+readdress_inode(union lfs_dinode *dp, daddr_t daddr)
 {
 	IFILE *ifp;
 	SEGUSE *sup;
 	struct ubuf *bp;
 	int sn;
-	ulfs_daddr_t odaddr;
-	ino_t thisino = dp->di_inumber;
+	daddr_t odaddr;
+	ino_t thisino = lfs_dino_getinumber(fs, dp);
 	struct uvnode *vp;
 
 	/* Recursively check all block holdings, account changes */
@@ -430,41 +434,42 @@ readdress_inode(struct ulfs1_dinode *dp, ulfs_daddr_t daddr)
 
 	/* Move ifile pointer to this location */
 	LFS_IENTRY(ifp, fs, thisino, bp);
-	odaddr = ifp->if_daddr;
+	odaddr = lfs_if_getdaddr(fs, ifp);
 	assert(odaddr != 0);
-	ifp->if_daddr = daddr;
+	lfs_if_setdaddr(fs, ifp, daddr);
 	VOP_BWRITE(bp);
 
 	if (debug)
-		pwarn("readdress ino %d from 0x%x to 0x%x mode %o nlink %d\n",
-			(int)dp->di_inumber,
-			(unsigned)odaddr,
-			(unsigned)daddr,
-			(int)dp->di_mode, (int)dp->di_nlink);
+		pwarn("readdress ino %ju from 0x%jx to 0x%jx mode %o nlink %d\n",
+			(uintmax_t)lfs_dino_getinumber(fs, dp),
+			(uintmax_t)odaddr,
+			(intmax_t)daddr,
+			(int)lfs_dino_getmode(fs, dp),
+			(int)lfs_dino_getnlink(fs, dp));
 
 	/* Copy over preexisting in-core inode, if any */
 	vp = vget(fs, thisino);
-	memcpy(VTOI(vp)->i_din.ffs1_din, dp, sizeof(*dp));
+	lfs_copy_dinode(fs, VTOI(vp)->i_din, dp);
 
 	/* Finally account the inode itself */
 	sn = lfs_dtosn(fs, odaddr);
 	LFS_SEGENTRY(sup, fs, sn, bp);
-	sup->su_nbytes -= LFS_DINODE1_SIZE;
+	sup->su_nbytes -= DINOSIZE(fs);
 	VOP_BWRITE(bp);
-	seg_table[sn].su_nbytes -= LFS_DINODE1_SIZE;
+	seg_table[sn].su_nbytes -= DINOSIZE(fs);
 
 	sn = lfs_dtosn(fs, daddr);
 	LFS_SEGENTRY(sup, fs, sn, bp);
-	sup->su_nbytes += LFS_DINODE1_SIZE;
+	sup->su_nbytes += DINOSIZE(fs);
 	VOP_BWRITE(bp);
-	seg_table[sn].su_nbytes += LFS_DINODE1_SIZE;
+	seg_table[sn].su_nbytes += DINOSIZE(fs);
 }
 
 /*
  * Allocate the given inode from the free list.
  */
 static void
-alloc_inode(ino_t thisino, ulfs_daddr_t daddr)
+alloc_inode(ino_t thisino, daddr_t daddr)
 {
 	ino_t ino, nextfree, oldhead;
 	IFILE *ifp;
@@ -473,20 +478,20 @@ alloc_inode(ino_t thisino, ulfs_daddr_t daddr)
 	CLEANERINFO *cip;
 
 	if (debug)
-		pwarn("allocating ino %d at 0x%x\n", (int)thisino,
-			(unsigned)daddr);
+		pwarn("allocating ino %ju at 0x%jx\n", (uintmax_t)thisino,
+			(intmax_t)daddr);
 	while (thisino >= maxino) {
 		extend_ifile(fs);
 	}
 
 	LFS_IENTRY(ifp, fs, thisino, bp);
-	if (ifp->if_daddr != 0) {
+	if (lfs_if_getdaddr(fs, ifp) != 0) {
 		pwarn("allocated inode %lld already allocated\n",
 			(long long)thisino);
 	}
-	nextfree = ifp->if_nextfree;
-	ifp->if_nextfree = 0;
-	ifp->if_daddr = daddr;
+	nextfree = lfs_if_getnextfree(fs, ifp);
+	lfs_if_setnextfree(fs, ifp, 0);
+	lfs_if_setdaddr(fs, ifp, daddr);
 	VOP_BWRITE(bp);
 
 	LFS_GET_HEADFREE(fs, cip, cbp, &oldhead);
@@ -501,24 +506,24 @@ alloc_inode(ino_t thisino, ulfs_daddr_t daddr)
 		ino = oldhead;
 		while (ino) {
 			LFS_IENTRY(ifp, fs, ino, bp);
-			assert(ifp->if_nextfree != ino);
-			if (ifp->if_nextfree == thisino) {
-				ifp->if_nextfree = nextfree;
+			assert(lfs_if_getnextfree(fs, ifp) != ino);
+			if (lfs_if_getnextfree(fs, ifp) == thisino) {
+				lfs_if_setnextfree(fs, ifp, nextfree);
 				VOP_BWRITE(bp);
 				if (nextfree == 0)
 					LFS_PUT_TAILFREE(fs, cip, cbp, ino);
 				break;
 			} else
-				ino = ifp->if_nextfree;
+				ino = lfs_if_getnextfree(fs, ifp);
 			brelse(bp, 0);
 		}
 	}
 	
 	/* Account for new location */
 	LFS_SEGENTRY(sup, fs, lfs_dtosn(fs, daddr), bp);
-	sup->su_nbytes += LFS_DINODE1_SIZE;
+	sup->su_nbytes += DINOSIZE(fs);
 	VOP_BWRITE(bp);
-	seg_table[lfs_dtosn(fs, daddr)].su_nbytes += LFS_DINODE1_SIZE;
+	seg_table[lfs_dtosn(fs, daddr)].su_nbytes += DINOSIZE(fs);
 }
 
 /*
@@ -541,15 +546,17 @@ alloc_inode(ino_t thisino, ulfs_daddr_t daddr)
 void
 pass6(void)
 {
-	ulfs_daddr_t daddr, ibdaddr, odaddr, lastgood, *idaddrp;
+	daddr_t daddr, ibdaddr, odaddr, lastgood;
+	IINFO *iip;
 	struct uvnode *vp, *devvp;
 	CLEANERINFO *cip;
 	SEGUSE *sup;
 	SEGSUM *sp;
 	struct ubuf *bp, *ibp, *sbp, *cbp;
-	struct ulfs1_dinode *dp;
+	union lfs_dinode *dp;
 	struct inodesc idesc;
 	int i, j, bc, hassuper;
+	unsigned k;
 	int nnewfiles, ndelfiles, nmvfiles;
 	int sn, curseg;
 	char *ibbuf;
@@ -566,15 +573,15 @@ pass6(void)
 
 	/* Find last valid partial segment */
 	lastgood = try_verify(fs, devvp, 0, debug);
-	if (lastgood == fs->lfs_offset) {
+	if (lastgood == lfs_sb_getoffset(fs)) {
 		if (debug)
 			pwarn("not rolling forward, nothing to recover\n");
 		return;
 	}
 
 	if (debug)
-		pwarn("could roll forward from 0x%" PRIx32 " to 0x%" PRIx32 "\n",
-			fs->lfs_offset, lastgood);
+		pwarn("could roll forward from 0x%jx to 0x%jx\n",
+			(uintmax_t)lfs_sb_getoffset(fs), (uintmax_t)lastgood);
 
 	if (!preen && reply("ROLL FORWARD") == 0)
 		return;
@@ -583,9 +590,9 @@ pass6(void)
 	 * changes to any other inode.
 	 */
 
-	ibbuf = emalloc(fs->lfs_ibsize);
+	ibbuf = emalloc(lfs_sb_getibsize(fs));
 	nnewfiles = ndelfiles = nmvfiles = nnewblocks = 0;
-	daddr = fs->lfs_offset;
+	daddr = lfs_sb_getoffset(fs);
 	hassuper = 0;
 	lastserial = 0;
 	while (daddr != lastgood) {
@@ -596,94 +603,95 @@ pass6(void)
 
 		/* Could be a superblock */
 		if (lfs_sntod(fs, lfs_dtosn(fs, daddr)) == daddr) {
-			if (daddr == fs->lfs_start) {
+			if (daddr == lfs_sb_gets0addr(fs)) {
 				++hassuper;
 				daddr += lfs_btofsb(fs, LFS_LABELPAD);
 			}
 			for (i = 0; i < LFS_MAXNUMSB; i++) {
-				if (daddr == fs->lfs_sboffs[i]) {
+				if (daddr == lfs_sb_getsboff(fs, i)) {
 					++hassuper;
 					daddr += lfs_btofsb(fs, LFS_SBPAD);	
 				}
-				if (daddr < fs->lfs_sboffs[i])
+				if (daddr < lfs_sb_getsboff(fs, i))
 					break;
 			}
 		}
+		KASSERT(hassuper == 0 || hassuper == 1);
 		
 		/* Read in summary block */
-		bread(devvp, LFS_FSBTODB(fs, daddr), fs->lfs_sumsize, NULL, 0, &bp);
+		bread(devvp, LFS_FSBTODB(fs, daddr), lfs_sb_getsumsize(fs), 0, &bp);
 		sp = (SEGSUM *)bp->b_data;
 		if (debug)
-			pwarn("sum at 0x%x: ninos=%d nfinfo=%d\n",
-				(unsigned)daddr, (int)sp->ss_ninos,
-				(int)sp->ss_nfinfo);
+			pwarn("sum at 0x%jx: ninos=%d nfinfo=%d\n",
+				(intmax_t)daddr, (int)lfs_ss_getninos(fs, sp),
+				(int)lfs_ss_getnfinfo(fs, sp));
 
 		/* We have verified that this is a good summary. */
 		LFS_SEGENTRY(sup, fs, lfs_dtosn(fs, daddr), sbp);
 		++sup->su_nsums;
 		VOP_BWRITE(sbp);
-		fs->lfs_bfree -= lfs_btofsb(fs, fs->lfs_sumsize);
-		fs->lfs_dmeta += lfs_btofsb(fs, fs->lfs_sumsize);
+		lfs_sb_subbfree(fs, lfs_btofsb(fs, lfs_sb_getsumsize(fs)));
+		lfs_sb_adddmeta(fs, lfs_btofsb(fs, lfs_sb_getsumsize(fs)));
 		sbdirty();
 		if (lfs_sntod(fs, lfs_dtosn(fs, daddr)) == daddr +
 		    hassuper * lfs_btofsb(fs, LFS_SBPAD) &&
-		    lfs_dtosn(fs, daddr) != lfs_dtosn(fs, fs->lfs_offset)) {
-			--fs->lfs_nclean;
+		    lfs_dtosn(fs, daddr) != lfs_dtosn(fs, lfs_sb_getoffset(fs))) {
+			lfs_sb_subnclean(fs, 1);
 			sbdirty();
 		}
 
 		/* Find inodes, look at generation number. */
-		if (sp->ss_ninos) {
+		if (lfs_ss_getninos(fs, sp)) {
 			LFS_SEGENTRY(sup, fs, lfs_dtosn(fs, daddr), sbp);
-			sup->su_ninos += howmany(sp->ss_ninos, LFS_INOPB(fs));
+			sup->su_ninos += howmany(lfs_ss_getninos(fs, sp), LFS_INOPB(fs));
 			VOP_BWRITE(sbp);
-			fs->lfs_dmeta += lfs_btofsb(fs, howmany(sp->ss_ninos,
+			lfs_sb_adddmeta(fs, lfs_btofsb(fs, howmany(lfs_ss_getninos(fs, sp),
 							    LFS_INOPB(fs)) *
-						fs->lfs_ibsize);
+						lfs_sb_getibsize(fs)));
 		}
-		idaddrp = ((ulfs_daddr_t *)((char *)bp->b_data + fs->lfs_sumsize));
-		for (i = 0; i < howmany(sp->ss_ninos, LFS_INOPB(fs)); i++) {
+		iip = SEGSUM_IINFOSTART(fs, bp->b_data);
+		for (i = 0; i < howmany(lfs_ss_getninos(fs, sp), LFS_INOPB(fs)); i++) {
 			ino_t *inums;
 			
 			inums = ecalloc(LFS_INOPB(fs) + 1, sizeof(*inums));
-			ibdaddr = *--idaddrp;
-			fs->lfs_bfree -= lfs_btofsb(fs, fs->lfs_ibsize);
+			ibdaddr = lfs_ii_getblock(fs, iip);
+			iip = NEXTLOWER_IINFO(fs, iip);
+			lfs_sb_subbfree(fs, lfs_btofsb(fs, lfs_sb_getibsize(fs)));
 			sbdirty();
-			bread(devvp, LFS_FSBTODB(fs, ibdaddr), fs->lfs_ibsize,
-			      NOCRED, 0, &ibp);
-			memcpy(ibbuf, ibp->b_data, fs->lfs_ibsize);
+			bread(devvp, LFS_FSBTODB(fs, ibdaddr),
+			      lfs_sb_getibsize(fs), 0, &ibp);
+			memcpy(ibbuf, ibp->b_data, lfs_sb_getibsize(fs));
 			brelse(ibp, 0);
 
 			j = 0;
-			for (dp = (struct ulfs1_dinode *)ibbuf;
-			     dp < (struct ulfs1_dinode *)ibbuf + LFS_INOPB(fs);
-			     ++dp) {
-				if (dp->di_inumber == 0 ||
-				    dp->di_inumber == fs->lfs_ifile)
+			for (k = 0; k < LFS_INOPB(fs); k++) {
+				dp = DINO_IN_BLOCK(fs, ibbuf, k);
+				if (lfs_dino_getinumber(fs, dp) == 0 ||
+				    lfs_dino_getinumber(fs, dp) == LFS_IFILE_INUM)
 					continue;
 				/* Basic sanity checks */
-				if (dp->di_nlink < 0 
+				if (lfs_dino_getnlink(fs, dp) < 0 
 #if 0
-				    || dp->di_u.inumber < 0
-				    || dp->di_size < 0
+				    || lfs_dino_getinumber(fs, dp) < 0
+				    || lfs_dino_getsize(fs, dp) < 0
 #endif
 				) {
-					pwarn("BAD INODE AT 0x%" PRIx32 "\n",
-						ibdaddr);
+					pwarn("BAD INODE AT 0x%jx\n",
+						(intmax_t)ibdaddr);
 					brelse(bp, 0);
 					free(inums);
 					goto out;
 				}
 
-				vp = vget(fs, dp->di_inumber);
+				vp = vget(fs, lfs_dino_getinumber(fs, dp));
 
 				/*
 				 * Four cases:
 				 * (1) Invalid inode (nlink == 0).
 				 *     If currently allocated, remove.
 				 */
-				if (dp->di_nlink == 0) {
-					remove_ino(vp, dp->di_inumber);
+				if (lfs_dino_getnlink(fs, dp) == 0) {
+					remove_ino(vp, lfs_dino_getinumber(fs, dp));
 					++ndelfiles;
 					continue;
 				}
@@ -694,10 +702,10 @@ pass6(void)
 				 *     loop.
 				 */
 				if (vp == NULL) {
-					if (!(sp->ss_flags & SS_DIROP))
+					if (!(lfs_ss_getflags(fs, sp) & SS_DIROP))
 						pfatal("NEW FILE IN NON-DIROP PARTIAL SEGMENT");
 					else {
-						inums[j++] = dp->di_inumber;
+						inums[j++] = lfs_dino_getinumber(fs, dp);
 						nnewfiles++;
 					}
 					continue;
@@ -707,12 +715,14 @@ pass6(void)
 				 *     allocated inode.  Delete old file
 				 *     and proceed as in (2).
 				 */
-				if (vp && VTOI(vp)->i_ffs1_gen < dp->di_gen) {
-					remove_ino(vp, dp->di_inumber);
-					if (!(sp->ss_flags & SS_DIROP))
+				if (vp &&
+				    lfs_dino_getgen(fs, VTOI(vp)->i_din)
+				    < lfs_dino_getgen(fs, dp)) {
+					remove_ino(vp, lfs_dino_getinumber(fs, dp));
+					if (!(lfs_ss_getflags(fs, sp) & SS_DIROP))
 						pfatal("NEW FILE VERSION IN NON-DIROP PARTIAL SEGMENT");
 					else {
-						inums[j++] = dp->di_inumber;
+						inums[j++] = lfs_dino_getinumber(fs, dp);
 						ndelfiles++;
 						nnewfiles++;
 					}
@@ -725,24 +735,26 @@ pass6(void)
 				 *     only.  We'll pick up any new
 				 *     blocks when we do the block pass.
 				 */
-				if (vp && VTOI(vp)->i_ffs1_gen == dp->di_gen) {
+				if (vp &&
+				    lfs_dino_getgen(fs, VTOI(vp)->i_din)
+				    == lfs_dino_getgen(fs, dp)) {
 					nmvfiles++;
 					readdress_inode(dp, ibdaddr);
 
 					/* Update with new info */
-					VTOD(vp)->di_mode = dp->di_mode;
-					VTOD(vp)->di_nlink = dp->di_nlink;
+					lfs_dino_setmode(fs, VTOD(vp), lfs_dino_getmode(fs, dp));
+					lfs_dino_setnlink(fs, VTOD(vp), lfs_dino_getmode(fs, dp));
 					/* XXX size is important */
-					VTOD(vp)->di_size = dp->di_size;
-					VTOD(vp)->di_atime = dp->di_atime;
-					VTOD(vp)->di_atimensec = dp->di_atimensec;
-					VTOD(vp)->di_mtime = dp->di_mtime;
-					VTOD(vp)->di_mtimensec = dp->di_mtimensec;
-					VTOD(vp)->di_ctime = dp->di_ctime;
-					VTOD(vp)->di_ctimensec = dp->di_ctimensec;
-					VTOD(vp)->di_flags = dp->di_flags;
-					VTOD(vp)->di_uid = dp->di_uid;
-					VTOD(vp)->di_gid = dp->di_gid;
+					lfs_dino_setsize(fs, VTOD(vp), lfs_dino_getsize(fs, dp));
+					lfs_dino_setatime(fs, VTOD(vp), lfs_dino_getatime(fs, dp));
+					lfs_dino_setatimensec(fs, VTOD(vp), lfs_dino_getatimensec(fs, dp));
+					lfs_dino_setmtime(fs, VTOD(vp), lfs_dino_getmtime(fs, dp));
+					lfs_dino_setmtimensec(fs, VTOD(vp), lfs_dino_getmtimensec(fs, dp));
+					lfs_dino_setctime(fs, VTOD(vp), lfs_dino_getctime(fs, dp));
+					lfs_dino_setctimensec(fs, VTOD(vp), lfs_dino_getctimensec(fs, dp));
+					lfs_dino_setflags(fs, VTOD(vp), lfs_dino_getflags(fs, dp));
+					lfs_dino_setuid(fs, VTOD(vp), lfs_dino_getuid(fs, dp));
+					lfs_dino_setgid(fs, VTOD(vp), lfs_dino_getgid(fs, dp));
 					inodirty(VTOI(vp));
 				}
 			}
@@ -753,10 +765,15 @@ pass6(void)
 				/* We'll get the blocks later */
 				if (debug)
 					pwarn("alloc ino %d nlink %d\n",
-						(int)inums[j], VTOD(vp)->di_nlink);
-				memset(VTOD(vp)->di_db, 0, (ULFS_NDADDR + ULFS_NIADDR) *
-				       sizeof(ulfs_daddr_t));
-				VTOD(vp)->di_blocks = 0;
+						(int)inums[j], lfs_dino_getnlink(fs, VTOD(vp)));
+
+				for (k=0; k<ULFS_NDADDR; k++) {
+					lfs_dino_setdb(fs, VTOD(vp), k, 0);
+				}
+				for (k=0; k<ULFS_NIADDR; k++) {
+					lfs_dino_setib(fs, VTOD(vp), k, 0);
+				}
+				lfs_dino_setblocks(fs, VTOD(vp), 0);
 
 				vp->v_uflag |= VU_DIROP;
 				inodirty(VTOI(vp));
@@ -766,22 +783,22 @@ pass6(void)
 
 		bc = check_summary(fs, sp, daddr, debug, devvp, NULL);
 		if (bc == 0) {
-			pwarn("unexpected bad seg ptr at 0x%x with serial=%d\n",
-				(int)daddr, (int)sp->ss_serial);
+			pwarn("unexpected bad seg ptr at 0x%jx with serial=%ju\n",
+				(intmax_t)daddr, (uintmax_t)lfs_ss_getserial(fs, sp));
 			brelse(bp, 0);
 			break;
 		} else {
 			if (debug)
-				pwarn("good seg ptr at 0x%x with serial=%d\n",
-					(int)daddr, (int)sp->ss_serial);
-			lastserial = sp->ss_serial;
+				pwarn("good seg ptr at 0x%jx with serial=%ju\n",
+					(intmax_t)daddr, (uintmax_t)lfs_ss_getserial(fs, sp));
+			lastserial = lfs_ss_getserial(fs, sp);
 		}
 		odaddr = daddr;
-		daddr += lfs_btofsb(fs, fs->lfs_sumsize + bc);
+		daddr += lfs_btofsb(fs, lfs_sb_getsumsize(fs) + bc);
 		if (lfs_dtosn(fs, odaddr) != lfs_dtosn(fs, daddr) ||
 		    lfs_dtosn(fs, daddr) != lfs_dtosn(fs, daddr +
-			lfs_btofsb(fs, fs->lfs_sumsize + fs->lfs_bsize) - 1)) {
-			daddr = ((SEGSUM *)bp->b_data)->ss_next;
+			lfs_btofsb(fs, lfs_sb_getsumsize(fs) + lfs_sb_getbsize(fs)) - 1)) {
+			daddr = lfs_ss_getnext(fs, sp);
 		}
 		brelse(bp, 0);
 	}
@@ -790,7 +807,7 @@ pass6(void)
 	free(ibbuf);
 
 	/* Set serial here, just to be sure (XXX should be right already) */
-	fs->lfs_serial = lastserial + 1;
+	lfs_sb_setserial(fs, lastserial + 1);
 
 	/*
 	 * Check our new vnodes.  Any blocks must lie in segments that
@@ -814,7 +831,7 @@ pass6(void)
 	 * do the pretend-write, though, if we've already seen them
 	 * (the accounting would have been done for us already).
 	 */
-	daddr = fs->lfs_offset;
+	daddr = lfs_sb_getoffset(fs);
 	while (daddr != lastgood) {
 		if (!(seg_table[lfs_dtosn(fs, daddr)].su_flags & SEGUSE_DIRTY)) {
 			seg_table[lfs_dtosn(fs, daddr)].su_flags |= SEGUSE_DIRTY;
@@ -825,35 +842,35 @@ pass6(void)
 
 		/* Could be a superblock */
 		if (lfs_sntod(fs, lfs_dtosn(fs, daddr)) == daddr) {
-			if (daddr == fs->lfs_start)
+			if (daddr == lfs_sb_gets0addr(fs))
 				daddr += lfs_btofsb(fs, LFS_LABELPAD);
 			for (i = 0; i < LFS_MAXNUMSB; i++) {
-				if (daddr == fs->lfs_sboffs[i]) {
+				if (daddr == lfs_sb_getsboff(fs, i)) {
 					daddr += lfs_btofsb(fs, LFS_SBPAD);	
 				}
-				if (daddr < fs->lfs_sboffs[i])
+				if (daddr < lfs_sb_getsboff(fs, i))
 					break;
 			}
 		}
 		
 		/* Read in summary block */
-		bread(devvp, LFS_FSBTODB(fs, daddr), fs->lfs_sumsize, NULL, 0, &bp);
+		bread(devvp, LFS_FSBTODB(fs, daddr), lfs_sb_getsumsize(fs), 0, &bp);
 		sp = (SEGSUM *)bp->b_data;
 		bc = check_summary(fs, sp, daddr, debug, devvp, pass6harvest);
 		if (bc == 0) {
-			pwarn("unexpected bad seg ptr [2] at 0x%x with serial=%d\n",
-				(int)daddr, (int)sp->ss_serial);
+			pwarn("unexpected bad seg ptr [2] at 0x%jx with serial=%ju\n",
+				(intmax_t)daddr, (uintmax_t)lfs_ss_getserial(fs, sp));
 			brelse(bp, 0);
 			break;
 		}
 		odaddr = daddr;
-		daddr += lfs_btofsb(fs, fs->lfs_sumsize + bc);
-		fs->lfs_avail -= lfs_btofsb(fs, fs->lfs_sumsize + bc);
+		daddr += lfs_btofsb(fs, lfs_sb_getsumsize(fs) + bc);
+		lfs_sb_subavail(fs, lfs_btofsb(fs, lfs_sb_getsumsize(fs) + bc));
 		if (lfs_dtosn(fs, odaddr) != lfs_dtosn(fs, daddr) ||
 		    lfs_dtosn(fs, daddr) != lfs_dtosn(fs, daddr +
-			lfs_btofsb(fs, fs->lfs_sumsize + fs->lfs_bsize) - 1)) {
-			fs->lfs_avail -= lfs_sntod(fs, lfs_dtosn(fs, daddr) + 1) - daddr;
-			daddr = ((SEGSUM *)bp->b_data)->ss_next;
+			lfs_btofsb(fs, lfs_sb_getsumsize(fs) + lfs_sb_getbsize(fs)) - 1)) {
+			lfs_sb_subavail(fs, lfs_sntod(fs, lfs_dtosn(fs, daddr) + 1) - daddr);
+			daddr = lfs_ss_getnext(fs, sp);
 		}
 		LFS_CLEANERINFO(cip, fs, cbp);
 		LFS_SYNC_CLEANERINFO(cip, fs, cbp, 0);
@@ -863,21 +880,21 @@ pass6(void)
 
 	/* Final address could also be a superblock */
 	if (lfs_sntod(fs, lfs_dtosn(fs, lastgood)) == lastgood) {
-		if (lastgood == fs->lfs_start)
+		if (lastgood == lfs_sb_gets0addr(fs))
 			lastgood += lfs_btofsb(fs, LFS_LABELPAD);
 		for (i = 0; i < LFS_MAXNUMSB; i++) {
-			if (lastgood == fs->lfs_sboffs[i])
+			if (lastgood == lfs_sb_getsboff(fs, i))
 				lastgood += lfs_btofsb(fs, LFS_SBPAD);	
-			if (lastgood < fs->lfs_sboffs[i])
+			if (lastgood < lfs_sb_getsboff(fs, i))
 				break;
 		}
 	}
 		
 	/* Update offset to point at correct location */
-	fs->lfs_offset = lastgood;
-	fs->lfs_curseg = lfs_sntod(fs, lfs_dtosn(fs, lastgood));
-	for (sn = curseg = lfs_dtosn(fs, fs->lfs_curseg);;) {
-		sn = (sn + 1) % fs->lfs_nseg;
+	lfs_sb_setoffset(fs, lastgood);
+	lfs_sb_setcurseg(fs, lfs_sntod(fs, lfs_dtosn(fs, lastgood)));
+	for (sn = curseg = lfs_dtosn(fs, lfs_sb_getcurseg(fs));;) {
+		sn = (sn + 1) % lfs_sb_getnseg(fs);
 		if (sn == curseg)
 			errx(1, "no clean segments");
 		LFS_SEGENTRY(sup, fs, sn, bp);
@@ -888,7 +905,7 @@ pass6(void)
 		}
 		brelse(bp, 0);
 	}
-	fs->lfs_nextseg = lfs_sntod(fs, sn);
+	lfs_sb_setnextseg(fs, lfs_sntod(fs, sn));
 
 	if (preen) {
 		if (ndelfiles)

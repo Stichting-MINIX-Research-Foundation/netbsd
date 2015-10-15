@@ -1,4 +1,4 @@
-/*	$NetBSD: machdep.c,v 1.346 2013/07/16 07:31:40 jklos Exp $	*/
+/*	$NetBSD: machdep.c,v 1.349 2015/08/30 01:46:03 uebayasi Exp $	*/
 
 /*
  * Copyright (c) 1988 University of Utah.
@@ -74,9 +74,10 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.346 2013/07/16 07:31:40 jklos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.349 2015/08/30 01:46:03 uebayasi Exp $");
 
 #include "opt_adb.h"
+#include "opt_copy_symtab.h"
 #include "opt_ddb.h"
 #include "opt_ddbparam.h"
 #include "opt_kgdb.h"
@@ -116,6 +117,7 @@ __KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.346 2013/07/16 07:31:40 jklos Exp $");
 #define ELFSIZE 32
 #include <sys/exec_elf.h>
 #include <sys/device.h>
+#include <sys/cpu.h>
 
 #include <m68k/cacheops.h>
 
@@ -960,7 +962,7 @@ getenvvars(u_long flag, char *buf)
 	 * Get end of symbols for kernel debugging
 	 */
 	esym = (int *)getenv("END_SYM");
-#ifndef SYMTAB_SPACE
+#ifndef makeoptions_COPY_SYMTAB
 	if (esym == (int *)0)
 #endif
 		esym = (int *)&end;
@@ -1880,8 +1882,6 @@ struct intvid_info_t {
  * 	...?
  */
 
-char	cpu_model[120];		/* for sysctl() */
-
 int	mach_cputype(void);
 
 int
@@ -1910,11 +1910,11 @@ identifycpu(void)
 		mpu = ("(unknown processor)");
 		break;
 	}
-	sprintf(cpu_model, "Apple Macintosh %s%s %s",
+	cpu_setmodel("Apple Macintosh %s%s %s",
 	    cpu_models[mac68k_machine.cpu_model_index].model_major,
 	    cpu_models[mac68k_machine.cpu_model_index].model_minor,
 	    mpu);
-	printf("%s\n", cpu_model);
+	printf("%s\n", cpu_getmodel());
 	printf("cpu: delay factor %d\n", delay_factor);
 	initfpu();
 }

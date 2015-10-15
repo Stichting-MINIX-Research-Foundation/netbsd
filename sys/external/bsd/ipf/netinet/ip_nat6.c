@@ -1,4 +1,4 @@
-/*	$NetBSD: ip_nat6.c,v 1.6 2013/09/14 12:39:09 joerg Exp $	*/
+/*	$NetBSD: ip_nat6.c,v 1.9 2015/10/06 10:21:08 prlw1 Exp $	*/
 
 /*
  * Copyright (C) 2012 by Darren Reed.
@@ -109,7 +109,7 @@ extern struct ifnet vpnif;
 #undef	SOCKADDR_IN
 #define	SOCKADDR_IN	struct sockaddr_in
 
-__KERNEL_RCSID(0, "@(#)Id: ip_nat6.c,v 1.1.1.2 2012/07/22 13:45:29 darrenr Exp");
+__KERNEL_RCSID(0, "Id: ip_nat6.c,v 1.1.1.2 2012/07/22 13:45:29 darrenr Exp");
 
 #ifdef USE_INET6
 static struct hostmap *ipf_nat6_hostmap(ipf_nat_softc_t *, ipnat_t *,
@@ -2398,8 +2398,9 @@ find_out_wild_ports:
 /* Function:    ipf_nat6_lookupredir                                        */
 /* Returns:     nat6_t* - NULL == no match,                                 */
 /*                       else pointer to matching NAT entry                 */
-/* Parameters:  np(I) - pointer to description of packet to find NAT table  */
-/*                      entry for.                                          */
+/* Parameters:  softc(I) - pointer to soft context main structure           */
+/*              np(I)    - pointer to description of packet to find NAT     */
+/*                         table entry for.                                 */
 /*                                                                          */
 /* Lookup the NAT tables to search for a matching redirect                  */
 /* The contents of natlookup_t should imitate those found in a packet that  */
@@ -2414,12 +2415,13 @@ find_out_wild_ports:
 /*     nl_out* = destination information (translated)                       */
 /* ------------------------------------------------------------------------ */
 nat_t *
-ipf_nat6_lookupredir(natlookup_t *np)
+ipf_nat6_lookupredir(ipf_main_softc_t *softc, natlookup_t *np)
 {
 	fr_info_t fi;
 	nat_t *nat;
 
 	bzero((char *)&fi, sizeof(fi));
+	fi.fin_main_soft = softc;
 	if (np->nl_flags & IPN_IN) {
 		fi.fin_data[0] = ntohs(np->nl_realport);
 		fi.fin_data[1] = ntohs(np->nl_outport);

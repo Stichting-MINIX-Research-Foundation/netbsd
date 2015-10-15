@@ -1,4 +1,4 @@
-/*      $NetBSD: prog_ops.h,v 1.2 2010/12/13 19:19:10 pooka Exp $	*/
+/*      $NetBSD: prog_ops.h,v 1.3 2014/11/06 21:29:32 christos Exp $	*/
 
 /*
  * Copyright (c) 2010 The NetBSD Foundation, Inc.
@@ -32,8 +32,12 @@
 #include <sys/types.h>
 
 #ifndef CRUNCHOPS
+/* XXX: Keep same order with netstat! */
 struct prog_ops {
 	int (*op_init)(void);
+
+	int (*op_sysctl)(const int *, u_int, void *, size_t *,
+			 const void *, size_t);
 
 	int (*op_socket)(int, int, int);
 	int (*op_open)(const char *, int, ...);
@@ -42,8 +46,6 @@ struct prog_ops {
 	ssize_t (*op_read)(int, void *, size_t);
 	ssize_t (*op_write)(int, const void *, size_t);
 
-	int (*op_sysctl)(const int *, u_int, void *, size_t *,
-			 const void *, size_t);
 
 	int (*op_shutdown)(int, int);
 };

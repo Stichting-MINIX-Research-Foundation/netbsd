@@ -1,4 +1,3 @@
-
 /*******************************************************************************
  *
  * Module Name: hwregs - Read/write access functions for the various ACPI
@@ -7,7 +6,7 @@
  ******************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -43,8 +42,6 @@
  * POSSIBILITY OF SUCH DAMAGES.
  */
 
-#define __HWREGS_C__
-
 #include "acpi.h"
 #include "accommon.h"
 #include "acevents.h"
@@ -52,6 +49,8 @@
 #define _COMPONENT          ACPI_HARDWARE
         ACPI_MODULE_NAME    ("hwregs")
 
+
+#if (!ACPI_REDUCED_HARDWARE)
 
 /* Local Prototypes */
 
@@ -67,6 +66,7 @@ AcpiHwWriteMultiple (
     ACPI_GENERIC_ADDRESS    *RegisterA,
     ACPI_GENERIC_ADDRESS    *RegisterB);
 
+#endif /* !ACPI_REDUCED_HARDWARE */
 
 /******************************************************************************
  *
@@ -170,6 +170,7 @@ AcpiHwRead (
     ACPI_GENERIC_ADDRESS    *Reg)
 {
     UINT64                  Address;
+    UINT64                  Value64;
     ACPI_STATUS             Status;
 
 
@@ -195,7 +196,9 @@ AcpiHwRead (
     if (Reg->SpaceId == ACPI_ADR_SPACE_SYSTEM_MEMORY)
     {
         Status = AcpiOsReadMemory ((ACPI_PHYSICAL_ADDRESS)
-                    Address, Value, Reg->BitWidth);
+                    Address, &Value64, Reg->BitWidth);
+
+        *Value = (UINT32) Value64;
     }
     else /* ACPI_ADR_SPACE_SYSTEM_IO, validated earlier */
     {
@@ -254,7 +257,7 @@ AcpiHwWrite (
     if (Reg->SpaceId == ACPI_ADR_SPACE_SYSTEM_MEMORY)
     {
         Status = AcpiOsWriteMemory ((ACPI_PHYSICAL_ADDRESS)
-                    Address, Value, Reg->BitWidth);
+                    Address, (UINT64) Value, Reg->BitWidth);
     }
     else /* ACPI_ADR_SPACE_SYSTEM_IO, validated earlier */
     {
@@ -271,6 +274,7 @@ AcpiHwWrite (
 }
 
 
+#if (!ACPI_REDUCED_HARDWARE)
 /*******************************************************************************
  *
  * FUNCTION:    AcpiHwClearAcpiStatus
@@ -304,24 +308,26 @@ AcpiHwClearAcpiStatus (
 
     Status = AcpiHwRegisterWrite (ACPI_REGISTER_PM1_STATUS,
                 ACPI_BITMASK_ALL_FIXED_STATUS);
+
+    AcpiOsReleaseLock (AcpiGbl_HardwareLock, LockFlags);
+
     if (ACPI_FAILURE (Status))
     {
-        goto UnlockAndExit;
+        goto Exit;
     }
 
     /* Clear the GPE Bits in all GPE registers in all GPE blocks */
 
     Status = AcpiEvWalkGpeList (AcpiHwClearGpeBlock, NULL);
 
-UnlockAndExit:
-    AcpiOsReleaseLock (AcpiGbl_HardwareLock, LockFlags);
+Exit:
     return_ACPI_STATUS (Status);
 }
 
 
 /*******************************************************************************
  *
- * FUNCTION:    AcpiHwGetRegisterBitMask
+ * FUNCTION:    AcpiHwGetBitRegisterInfo
  *
  * PARAMETERS:  RegisterId          - Index of ACPI Register to access
  *
@@ -424,14 +430,12 @@ AcpiHwRegisterRead (
                     &AcpiGbl_XPm1bStatus);
         break;
 
-
     case ACPI_REGISTER_PM1_ENABLE:           /* PM1 A/B: 16-bit access each */
 
         Status = AcpiHwReadMultiple (&Value,
                     &AcpiGbl_XPm1aEnable,
                     &AcpiGbl_XPm1bEnable);
         break;
-
 
     case ACPI_REGISTER_PM1_CONTROL:          /* PM1 A/B: 16-bit access each */
 
@@ -447,26 +451,23 @@ AcpiHwRegisterRead (
         Value &= ~ACPI_PM1_CONTROL_WRITEONLY_BITS;
         break;
 
-
     case ACPI_REGISTER_PM2_CONTROL:          /* 8-bit access */
 
         Status = AcpiHwRead (&Value, &AcpiGbl_FADT.XPm2ControlBlock);
         break;
-
 
     case ACPI_REGISTER_PM_TIMER:             /* 32-bit access */
 
         Status = AcpiHwRead (&Value, &AcpiGbl_FADT.XPmTimerBlock);
         break;
 
-
     case ACPI_REGISTER_SMI_COMMAND_BLOCK:    /* 8-bit access */
 
         Status = AcpiHwReadPort (AcpiGbl_FADT.SmiCommand, &Value, 8);
         break;
 
-
     default:
+
         ACPI_ERROR ((AE_INFO, "Unknown Register ID: 0x%X",
             RegisterId));
         Status = AE_BAD_PARAMETER;
@@ -540,7 +541,6 @@ AcpiHwRegisterWrite (
                     &AcpiGbl_XPm1bStatus);
         break;
 
-
     case ACPI_REGISTER_PM1_ENABLE:           /* PM1 A/B: 16-bit access each */
 
         Status = AcpiHwWriteMultiple (Value,
@@ -548,9 +548,7 @@ AcpiHwRegisterWrite (
                     &AcpiGbl_XPm1bEnable);
         break;
 
-
     case ACPI_REGISTER_PM1_CONTROL:          /* PM1 A/B: 16-bit access each */
-
         /*
          * Perform a read first to preserve certain bits (per ACPI spec)
          * Note: This includes SCI_EN, we never want to change this bit
@@ -574,9 +572,7 @@ AcpiHwRegisterWrite (
                     &AcpiGbl_FADT.XPm1bControlBlock);
         break;
 
-
     case ACPI_REGISTER_PM2_CONTROL:          /* 8-bit access */
-
         /*
          * For control registers, all reserved bits must be preserved,
          * as per the ACPI spec.
@@ -594,12 +590,10 @@ AcpiHwRegisterWrite (
         Status = AcpiHwWrite (Value, &AcpiGbl_FADT.XPm2ControlBlock);
         break;
 
-
     case ACPI_REGISTER_PM_TIMER:             /* 32-bit access */
 
         Status = AcpiHwWrite (Value, &AcpiGbl_FADT.XPmTimerBlock);
         break;
-
 
     case ACPI_REGISTER_SMI_COMMAND_BLOCK:    /* 8-bit access */
 
@@ -608,8 +602,8 @@ AcpiHwRegisterWrite (
         Status = AcpiHwWritePort (AcpiGbl_FADT.SmiCommand, Value, 8);
         break;
 
-
     default:
+
         ACPI_ERROR ((AE_INFO, "Unknown Register ID: 0x%X",
             RegisterId));
         Status = AE_BAD_PARAMETER;
@@ -731,3 +725,4 @@ AcpiHwWriteMultiple (
     return (Status);
 }
 
+#endif /* !ACPI_REDUCED_HARDWARE */

@@ -1,4 +1,4 @@
-/* $NetBSD: mpii.c,v 1.4 2013/10/17 21:06:15 christos Exp $ */
+/* $NetBSD: mpii.c,v 1.6 2015/03/12 15:33:10 christos Exp $ */
 /*	OpenBSD: mpii.c,v 1.51 2012/04/11 13:29:14 naddy Exp 	*/
 /*
  * Copyright (c) 2010 Mike Belopuhov <mkb@crypt.org.ru>
@@ -20,7 +20,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: mpii.c,v 1.4 2013/10/17 21:06:15 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: mpii.c,v 1.6 2015/03/12 15:33:10 christos Exp $");
 
 #include "bio.h"
 
@@ -2134,6 +2134,7 @@ mpii_attach(device_t parent, device_t self, void *aux)
 	struct scsipi_adapter *adapt = &sc->sc_adapt;
 	struct scsipi_channel *chan = &sc->sc_chan;
 	char wkname[15];
+	char intrbuf[PCI_INTRSTR_LEN];
 
 	pci_aprint_devinfo(pa, NULL);
 
@@ -2195,7 +2196,7 @@ mpii_attach(device_t parent, device_t self, void *aux)
 		aprint_error_dev(self, "unable to map interrupt\n");
 		goto unmap;
 	}
-	intrstr = pci_intr_string(pa->pa_pc, ih);
+	intrstr = pci_intr_string(pa->pa_pc, ih, intrbuf, sizeof(intrbuf));
 
 	if (mpii_init(sc) != 0) {
 		aprint_error_dev(self, "unable to initialize ioc\n");
@@ -5570,29 +5571,7 @@ mpii_refresh_sensors(struct sysmon_envsys *sme, envsys_data_t *edata)
 	splx(s);
 	KERNEL_UNLOCK_ONE(curlwp);
 	if (error)
-		return;
-	switch(bv.bv_status) {
-	case BIOC_SVOFFLINE:
-		edata->value_cur = ENVSYS_DRIVE_FAIL;
-		edata->state = ENVSYS_SCRITICAL;
-		break;
-	case BIOC_SVDEGRADED:
-		edata->value_cur = ENVSYS_DRIVE_PFAIL;
-		edata->state = ENVSYS_SCRITICAL;
-		break;
-	case BIOC_SVREBUILD:
-		edata->value_cur = ENVSYS_DRIVE_REBUILD;
-		edata->state = ENVSYS_SVALID;
-		break;
-	case BIOC_SVONLINE:
-		edata->value_cur = ENVSYS_DRIVE_ONLINE;
-		edata->state = ENVSYS_SVALID;
-		break;
-	case BIOC_SVINVALID:
-		/* FALLTHROUGH */
-	default:
-		edata->value_cur = 0; /* unknown */
-		edata->state = ENVSYS_SINVALID;
-	}
+		bv.bv_status = BIOC_SVINVALID;
+	bio_vol_to_envsys(edata, &bv);
 }
 #endif /* NBIO > 0 */

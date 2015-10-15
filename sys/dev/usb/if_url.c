@@ -1,4 +1,4 @@
-/*	$NetBSD: if_url.c,v 1.47 2013/01/22 12:40:43 jmcneill Exp $	*/
+/*	$NetBSD: if_url.c,v 1.49 2015/04/13 16:33:25 riastradh Exp $	*/
 
 /*
  * Copyright (c) 2001, 2002
@@ -44,7 +44,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_url.c,v 1.47 2013/01/22 12:40:43 jmcneill Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_url.c,v 1.49 2015/04/13 16:33:25 riastradh Exp $");
 
 #ifdef _KERNEL_OPT
 #include "opt_inet.h"
@@ -58,7 +58,7 @@ __KERNEL_RCSID(0, "$NetBSD: if_url.c,v 1.47 2013/01/22 12:40:43 jmcneill Exp $")
 #include <sys/socket.h>
 
 #include <sys/device.h>
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 
 #include <net/if.h>
 #include <net/if_arp.h>
@@ -315,7 +315,7 @@ url_attach(device_t parent, device_t self, void *aux)
 	ether_ifattach(ifp, eaddr);
 
 	rnd_attach_source(&sc->rnd_source, device_xname(self),
-	    RND_TYPE_NET, 0);
+	    RND_TYPE_NET, RND_FLAG_DEFAULT);
 
 	callout_init(&sc->sc_stat_ch, 0);
 	sc->sc_attached = 1;

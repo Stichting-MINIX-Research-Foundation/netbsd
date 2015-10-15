@@ -2,14 +2,8 @@
  * SHA1 hash implementation and interface functions
  * Copyright (c) 2003-2005, Jouni Malinen <j@w1.fi>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #include "includes.h"
@@ -25,6 +19,7 @@ typedef struct SHA1Context SHA1_CTX;
 void SHA1Transform(u32 state[5], const unsigned char buffer[64]);
 
 
+#ifdef CONFIG_CRYPTO_INTERNAL
 /**
  * sha1_vector - SHA-1 hash for data vector
  * @num_elem: Number of elements in the data vector
@@ -44,6 +39,7 @@ int sha1_vector(size_t num_elem, const u8 *addr[], const size_t *len, u8 *mac)
 	SHA1Final(mac, &ctx);
 	return 0;
 }
+#endif /* CONFIG_CRYPTO_INTERNAL */
 
 
 /* ===== start - public domain SHA1 implementation ===== */

@@ -1,4 +1,4 @@
-/*	$NetBSD: linux_misc.c,v 1.228 2013/11/18 01:32:52 chs Exp $	*/
+/*	$NetBSD: linux_misc.c,v 1.231 2015/03/14 08:32:08 njoly Exp $	*/
 
 /*-
  * Copyright (c) 1995, 1998, 1999, 2008 The NetBSD Foundation, Inc.
@@ -57,7 +57,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: linux_misc.c,v 1.228 2013/11/18 01:32:52 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: linux_misc.c,v 1.231 2015/03/14 08:32:08 njoly Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -465,6 +465,7 @@ linux_to_bsd_mmap_args(struct sys_mmap_args *cma, const struct linux_sys_mmap_ar
 	flags |= cvtto_bsd_mask(fl, LINUX_MAP_PRIVATE, MAP_PRIVATE);
 	flags |= cvtto_bsd_mask(fl, LINUX_MAP_FIXED, MAP_FIXED);
 	flags |= cvtto_bsd_mask(fl, LINUX_MAP_ANON, MAP_ANON);
+	flags |= cvtto_bsd_mask(fl, LINUX_MAP_LOCKED, MAP_WIRED);
 	/* XXX XAX ERH: Any other flags here?  There are more defined... */
 
 	SCARG(cma, addr) = (void *)SCARG(uap, addr);
@@ -928,7 +929,7 @@ linux_sys_ppoll(struct lwp *l,
 {
 	/* {
 		syscallarg(struct pollfd *) fds;
-		syscallarg(int) nfds;
+		syscallarg(u_int) nfds;
 		syscallarg(struct linux_timespec *) timeout;
 		syscallarg(linux_sigset_t *) sigset;
 	} */
@@ -1377,34 +1378,6 @@ linux_sys_getpriority(struct lwp *l, const struct linux_sys_getpriority_args *ua
         *retval = NZERO - *retval;
 
         return 0;
-}
-
-int
-linux_sys_utimes(struct lwp *l, const struct linux_sys_utimes_args *uap, register_t *retval)
-{
-	/* {
-		syscallarg(const char *) path;
-		syscallarg(const struct linux_timeval) *times;
-	} */
-	struct linux_timeval ltv[2];
-	struct timeval tv[2];
-	struct timeval *tptr = NULL;
-	int error;
-
-	if (SCARG(uap, times)) {
-		if ((error = copyin(SCARG(uap, times), &ltv, sizeof(ltv))))
-			return error;
-
-		tv[0].tv_sec = ltv[0].tv_sec;
-		tv[0].tv_usec = ltv[0].tv_usec;
-		tv[1].tv_sec = ltv[1].tv_sec;
-		tv[1].tv_usec = ltv[1].tv_usec;
-
-		tptr = tv;
-	}
-
-	return do_sys_utimes(l, NULL, SCARG(uap, path), FOLLOW,
-	    tptr, UIO_SYSSPACE);
 }
 
 int

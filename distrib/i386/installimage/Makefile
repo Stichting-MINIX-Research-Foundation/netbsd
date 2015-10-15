@@ -1,11 +1,11 @@
-#	$NetBSD: Makefile,v 1.3 2012/11/03 14:25:33 tsutsui Exp $
+#	$NetBSD: Makefile,v 1.7 2015/03/09 18:12:47 christos Exp $
 
 .include <bsd.own.mk>
 
 INSTIMGBASE=	NetBSD-${DISTRIBVER}-i386-install	# gives ${IMGBASE}.img
 
 BOOTDISK=	sd0			# for USB flash etc.
-INSTIMAGEMB?=	512			# for all installation binaries
+INSTIMAGEMB?=	550			# for all installation binaries
 
 PRIMARY_BOOT=		bootxx_ffsv1
 SECONDARY_BOOT=		boot
@@ -22,12 +22,10 @@ prepare_md_post:
 	    < ${.CURDIR}/boot.cfg.in > boot.cfg
 
 DISTRIBDIR!= cd ${.CURDIR}/../.. ; pwd
-SYSINSTDIR!= cd ${DISTRIBDIR}/utils/sysinst/arch/${MACHINE} && ${PRINTOBJDIR}
+SYSINSTDIR!= cd ${.CURDIR}/../../../usr.sbin/sysinst/arch/${MACHINE} && ${PRINTOBJDIR}
 
 SPEC_EXTRA=		${.CURDIR}/spec.inst
 IMGFILE_EXTRA=								\
-	${DISTRIBDIR}/common/10-resolv.conf	libexec/dhcpcd-hooks	\
-	${DISTRIBDIR}/common/99-print-sysinst	libexec/dhcpcd-hooks	\
 	${.CURDIR}/etc.ttys		etc/ttys			\
 	${.CURDIR}/etc.rc		etc/rc				\
 	${.CURDIR}/install.sh		.				\

@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -41,7 +41,7 @@
  * POSSIBILITY OF SUCH DAMAGES.
  */
 
-
+#include "aslcompiler.h"
 #include "acpi.h"
 #include "accommon.h"
 #include "acapps.h"
@@ -100,7 +100,7 @@ AdGenerateFilename (
 
     FilenameBuf[i] = 0;
     strcat (FilenameBuf, ACPI_TABLE_FILE_SUFFIX);
-    return FilenameBuf;
+    return (FilenameBuf);
 }
 
 
@@ -124,19 +124,24 @@ AdWriteBuffer (
     char                    *Buffer,
     UINT32                  Length)
 {
-    FILE                    *fp;
+    FILE                    *File;
     ACPI_SIZE               Actual;
 
 
-    fp = fopen (Filename, "wb");
-    if (!fp)
+    File = fopen (Filename, "wb");
+    if (!File)
     {
-        printf ("Couldn't open %s\n", Filename);
+        printf ("Could not open file %s\n", Filename);
         return (-1);
     }
 
-    Actual = fwrite (Buffer, (size_t) Length, 1, fp);
-    fclose (fp);
+    Actual = fwrite (Buffer, 1, (size_t) Length, File);
+    if (Actual != Length)
+    {
+        printf ("Could not write to file %s\n", Filename);
+    }
+
+    fclose (File);
     return ((INT32) Actual);
 }
 
@@ -183,7 +188,7 @@ AdWriteTable (
  * RETURN:      New filename containing the original base + the new suffix
  *
  * DESCRIPTION: Generate a new filename from the ASL source filename and a new
- *              extension.  Used to create the *.LST, *.TXT, etc. files.
+ *              extension. Used to create the *.LST, *.TXT, etc. files.
  *
  ******************************************************************************/
 
@@ -194,20 +199,28 @@ FlGenerateFilename (
 {
     char                    *Position;
     char                    *NewFilename;
+    char                    *DirectoryPosition;
 
 
     /*
-     * Copy the original filename to a new buffer. Leave room for the worst case
-     * where we append the suffix, an added dot and the null terminator.
+     * Copy the original filename to a new buffer. Leave room for the worst
+     * case where we append the suffix, an added dot and the null terminator.
      */
-    NewFilename = ACPI_ALLOCATE_ZEROED ((ACPI_SIZE)
+    NewFilename = UtStringCacheCalloc ((ACPI_SIZE)
         strlen (InputFilename) + strlen (Suffix) + 2);
+    if (!NewFilename)
+    {
+        return (NULL);
+    }
+
     strcpy (NewFilename, InputFilename);
 
     /* Try to find the last dot in the filename */
 
+    DirectoryPosition = strrchr (NewFilename, '/');
     Position = strrchr (NewFilename, '.');
-    if (Position)
+
+    if (Position && (Position > DirectoryPosition))
     {
         /* Tack on the new suffix */
 
@@ -223,7 +236,7 @@ FlGenerateFilename (
         strcat (NewFilename, Suffix);
     }
 
-    return NewFilename;
+    return (NewFilename);
 }
 
 
@@ -242,7 +255,7 @@ FlStrdup (
     char                *NewString;
 
 
-    NewString = ACPI_ALLOCATE ((ACPI_SIZE) strlen (String) + 1);
+    NewString = UtStringCacheCalloc ((ACPI_SIZE) strlen (String) + 1);
     if (!NewString)
     {
         return (NULL);
@@ -282,8 +295,10 @@ FlSplitInputPathname (
     char                    *Filename;
 
 
-    *OutDirectoryPath = NULL;
-    *OutFilename = NULL;
+    if (OutDirectoryPath)
+    {
+        *OutDirectoryPath = NULL;
+    }
 
     if (!InputPath)
     {
@@ -298,20 +313,24 @@ FlSplitInputPathname (
         return (AE_NO_MEMORY);
     }
 
-    Substring = strrchr (DirectoryPath, '\\');
+    /* Convert backslashes to slashes in the entire path */
+
+    UtConvertBackslashes (DirectoryPath);
+
+    /* Backup to last slash or colon */
+
+    Substring = strrchr (DirectoryPath, '/');
     if (!Substring)
     {
-        Substring = strrchr (DirectoryPath, '/');
-        if (!Substring)
-        {
-            Substring = strrchr (DirectoryPath, ':');
-        }
+        Substring = strrchr (DirectoryPath, ':');
     }
+
+    /* Extract the simple filename */
 
     if (!Substring)
     {
+        Filename = FlStrdup (DirectoryPath);
         DirectoryPath[0] = 0;
-        Filename = FlStrdup (InputPath);
     }
     else
     {
@@ -324,10 +343,16 @@ FlSplitInputPathname (
         return (AE_NO_MEMORY);
     }
 
-    *OutDirectoryPath = DirectoryPath;
-    *OutFilename = Filename;
+    if (OutDirectoryPath)
+    {
+        *OutDirectoryPath = DirectoryPath;
+    }
+
+    if (OutFilename)
+    {
+        *OutFilename = Filename;
+        return (AE_OK);
+    }
 
     return (AE_OK);
 }
-
-

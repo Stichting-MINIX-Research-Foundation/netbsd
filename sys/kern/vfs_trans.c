@@ -1,4 +1,4 @@
-/*	$NetBSD: vfs_trans.c,v 1.29 2013/11/23 13:35:36 christos Exp $	*/
+/*	$NetBSD: vfs_trans.c,v 1.34 2015/08/24 22:50:32 pooka Exp $	*/
 
 /*-
  * Copyright (c) 2007 The NetBSD Foundation, Inc.
@@ -30,13 +30,15 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: vfs_trans.c,v 1.29 2013/11/23 13:35:36 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: vfs_trans.c,v 1.34 2015/08/24 22:50:32 pooka Exp $");
 
 /*
  * File system transaction operations.
  */
 
+#ifdef _KERNEL_OPT
 #include "opt_ddb.h"
+#endif
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -51,7 +53,6 @@ __KERNEL_RCSID(0, "$NetBSD: vfs_trans.c,v 1.29 2013/11/23 13:35:36 christos Exp 
 #include <sys/proc.h>
 
 #include <miscfs/specfs/specdev.h>
-#include <miscfs/syncfs/syncfs.h>
 
 struct fscow_handler {
 	LIST_ENTRY(fscow_handler) ch_list;
@@ -82,7 +83,6 @@ static kcondvar_t fstrans_count_cv;	/* Fstrans or cow count changed. */
 static pserialize_t fstrans_psz;	/* Pserialize state. */
 static LIST_HEAD(fstrans_lwp_head, fstrans_lwp_info) fstrans_fli_head;
 					/* List of all fstrans_lwp_info. */
-static pool_cache_t fstrans_cache;	/* Pool of struct fstrans_lwp_info. */
 
 static void fstrans_lwp_dtor(void *);
 static void fstrans_mount_dtor(struct mount *);
@@ -110,8 +110,6 @@ fstrans_init(void)
 	cv_init(&fstrans_count_cv, "fstcnt");
 	fstrans_psz = pserialize_create();
 	LIST_INIT(&fstrans_fli_head);
-	fstrans_cache = pool_cache_init(sizeof(struct fstrans_lwp_info), 0, 0,
-	    0, "fstrans", NULL, IPL_NONE, NULL, NULL, NULL);
 }
 
 /*
@@ -122,17 +120,16 @@ fstrans_lwp_dtor(void *arg)
 {
 	struct fstrans_lwp_info *fli, *fli_next;
 
-	mutex_enter(&fstrans_lock);
 	for (fli = arg; fli; fli = fli_next) {
 		KASSERT(fli->fli_trans_cnt == 0);
 		KASSERT(fli->fli_cow_cnt == 0);
 		if (fli->fli_mount != NULL)
 			fstrans_mount_dtor(fli->fli_mount);
 		fli_next = fli->fli_succ;
-		LIST_REMOVE(fli, fli_list);
-		pool_cache_put(fstrans_cache, fli);
+		fli->fli_mount = NULL;
+		membar_sync();
+		fli->fli_self = NULL;
 	}
-	mutex_exit(&fstrans_lock);
 }
 
 /*
@@ -164,19 +161,18 @@ int
 fstrans_mount(struct mount *mp)
 {
 	int error;
-	struct fstrans_mount_info *new;
+	struct fstrans_mount_info *newfmi;
 
 	error = vfs_busy(mp, NULL);
 	if (error)
 		return error;
-	if ((new = kmem_alloc(sizeof(*new), KM_SLEEP)) == NULL)
-		return ENOMEM;
-	new->fmi_state = FSTRANS_NORMAL;
-	new->fmi_ref_cnt = 1;
-	LIST_INIT(&new->fmi_cow_handler);
-	new->fmi_cow_change = false;
+	newfmi = kmem_alloc(sizeof(*newfmi), KM_SLEEP);
+	newfmi->fmi_state = FSTRANS_NORMAL;
+	newfmi->fmi_ref_cnt = 1;
+	LIST_INIT(&newfmi->fmi_cow_handler);
+	newfmi->fmi_cow_change = false;
 
-	mp->mnt_transinfo = new;
+	mp->mnt_transinfo = newfmi;
 	mp->mnt_iflag |= IMNT_HAS_TRANS;
 
 	vfs_unbusy(mp, true, NULL);
@@ -237,7 +233,21 @@ fstrans_get_lwp_info(struct mount *mp, bool do_alloc)
 		}
 	}
 	if (fli == NULL) {
-		fli = pool_cache_get(fstrans_cache, PR_WAITOK);
+		mutex_enter(&fstrans_lock);
+		LIST_FOREACH(fli, &fstrans_fli_head, fli_list) {
+			if (fli->fli_self == NULL) {
+				KASSERT(fli->fli_trans_cnt == 0);
+				KASSERT(fli->fli_cow_cnt == 0);
+				fli->fli_self = curlwp;
+				fli->fli_succ = lwp_getspecific(lwp_data_key);
+				lwp_setspecific(lwp_data_key, fli);
+				break;
+			}
+		}
+		mutex_exit(&fstrans_lock);
+	}
+	if (fli == NULL) {
+		fli = kmem_alloc(sizeof(*fli), KM_SLEEP);
 		mutex_enter(&fstrans_lock);
 		memset(fli, 0, sizeof(*fli));
 		fli->fli_self = curlwp;
@@ -586,7 +596,7 @@ fscow_establish(struct mount *mp, int (*func)(void *, struct buf *, bool),
     void *arg)
 {
 	struct fstrans_mount_info *fmi;
-	struct fscow_handler *new;
+	struct fscow_handler *newch;
 
 	if ((mp->mnt_iflag & IMNT_HAS_TRANS) == 0)
 		return EINVAL;
@@ -594,13 +604,12 @@ fscow_establish(struct mount *mp, int (*func)(void *, struct buf *, bool),
 	fmi = mp->mnt_transinfo;
 	KASSERT(fmi != NULL);
 
-	if ((new = kmem_alloc(sizeof(*new), KM_SLEEP)) == NULL)
-		return ENOMEM;
-	new->ch_func = func;
-	new->ch_arg = arg;
+	newch = kmem_alloc(sizeof(*newch), KM_SLEEP);
+	newch->ch_func = func;
+	newch->ch_arg = arg;
 
 	cow_change_enter(mp);
-	LIST_INSERT_HEAD(&fmi->fmi_cow_handler, new, ch_list);
+	LIST_INSERT_HEAD(&fmi->fmi_cow_handler, newch, ch_list);
 	cow_change_done(mp);
 
 	return 0;

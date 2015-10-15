@@ -1,6 +1,6 @@
 /* Read ELF (Executable and Linking Format) object files for GDB.
 
-   Copyright (C) 1991-2013 Free Software Foundation, Inc.
+   Copyright (C) 1991-2015 Free Software Foundation, Inc.
 
    Written by Fred Fish at Cygnus Support.
 
@@ -21,7 +21,6 @@
 
 #include "defs.h"
 #include "bfd.h"
-#include "gdb_string.h"
 #include "elf-bfd.h"
 #include "elf/common.h"
 #include "elf/internal.h"
@@ -45,6 +44,7 @@
 #include "regcache.h"
 #include "bcache.h"
 #include "gdb_bfd.h"
+#include "build-id.h"
 
 extern void _initialize_elfread (void);
 
@@ -59,13 +59,12 @@ static const struct sym_fns elf_sym_fns_lazy_psyms;
 struct elfinfo
   {
     asection *stabsect;		/* Section pointer for .stab section */
-    asection *stabindexsect;	/* Section pointer for .stab.index section */
     asection *mdebugsect;	/* Section pointer for .mdebug section */
   };
 
-/* Per-objfile data for probe info.  */
+/* Per-BFD data for probe info.  */
 
-static const struct objfile_data *probe_key = NULL;
+static const struct bfd_data *probe_key = NULL;
 
 static void free_elfinfo (void *);
 
@@ -105,10 +104,10 @@ elf_symfile_segments (bfd *abfd)
   if (num_segments == 0)
     return NULL;
 
-  data = XZALLOC (struct symfile_segment_data);
+  data = XCNEW (struct symfile_segment_data);
   data->num_segments = num_segments;
-  data->segment_bases = XCALLOC (num_segments, CORE_ADDR);
-  data->segment_sizes = XCALLOC (num_segments, CORE_ADDR);
+  data->segment_bases = XCNEWVEC (CORE_ADDR, num_segments);
+  data->segment_sizes = XCNEWVEC (CORE_ADDR, num_segments);
 
   for (i = 0; i < num_segments; i++)
     {
@@ -117,7 +116,7 @@ elf_symfile_segments (bfd *abfd)
     }
 
   num_sections = bfd_count_sections (abfd);
-  data->segment_info = XCALLOC (num_sections, int);
+  data->segment_info = XCNEWVEC (int, num_sections);
 
   for (i = 0, sect = abfd->sections; sect != NULL; i++, sect = sect->next)
     {
@@ -185,10 +184,6 @@ elf_locate_sections (bfd *ignore_abfd, asection *sectp, void *eip)
     {
       ei->stabsect = sectp;
     }
-  else if (strcmp (sectp->name, ".stab.index") == 0)
-    {
-      ei->stabindexsect = sectp;
-    }
   else if (strcmp (sectp->name, ".mdebug") == 0)
     {
       ei->mdebugsect = sectp;
@@ -208,8 +203,10 @@ record_minimal_symbol (const char *name, int name_len, int copy_name,
     address = gdbarch_addr_bits_remove (gdbarch, address);
 
   return prim_record_minimal_symbol_full (name, name_len, copy_name, address,
-					  ms_type, bfd_section->index,
-					  bfd_section, objfile);
+					  ms_type,
+					  gdb_bfd_section_index (objfile->obfd,
+								 bfd_section),
+					  objfile);
 }
 
 /* Read the symbol table of an ELF file.
@@ -250,6 +247,8 @@ elf_symtab_read (struct objfile *objfile, int type,
   const char *filesymname = "";
   struct dbx_symfile_info *dbx = DBX_SYMFILE_INFO (objfile);
   int stripped = (bfd_get_symcount (objfile->obfd) == 0);
+  int elf_make_msymbol_special_p
+    = gdbarch_elf_make_msymbol_special_p (gdbarch);
 
   for (i = 0; i < number_of_symbols; i++)
     {
@@ -271,7 +270,8 @@ elf_symtab_read (struct objfile *objfile, int type,
 	  continue;
 	}
 
-      offset = ANOFFSET (objfile->section_offsets, sym->section->index);
+      offset = ANOFFSET (objfile->section_offsets,
+			 gdb_bfd_section_index (objfile->obfd, sym->section));
       if (type == ST_DYNAMIC
 	  && sym->section == bfd_und_section_ptr
 	  && (sym->flags & BSF_FUNCTION))
@@ -326,13 +326,15 @@ elf_symtab_read (struct objfile *objfile, int type,
 	      && bfd_get_section_by_name (abfd, ".plt") != NULL)
 	    continue;
 
-	  symaddr += ANOFFSET (objfile->section_offsets, sect->index);
-
 	  msym = record_minimal_symbol
 	    (sym->name, strlen (sym->name), copy_names,
 	     symaddr, mst_solib_trampoline, sect, objfile);
 	  if (msym != NULL)
-	    msym->filename = filesymname;
+	    {
+	      msym->filename = filesymname;
+	      if (elf_make_msymbol_special_p)
+		gdbarch_elf_make_msymbol_special (gdbarch, sym, msym);
+	    }
 	  continue;
 	}
 
@@ -367,13 +369,6 @@ elf_symtab_read (struct objfile *objfile, int type,
 	     interested in will have a section.  */
 	  /* Bfd symbols are section relative.  */
 	  symaddr = sym->value + sym->section->vma;
-	  /* Relocate all non-absolute and non-TLS symbols by the
-	     section offset.  */
-	  if (sym->section != bfd_abs_section_ptr
-	      && !(sym->section->flags & SEC_THREAD_LOCAL))
-	    {
-	      symaddr += offset;
-	    }
 	  /* For non-absolute symbols, use the type of the section
 	     they are relative to, to intuit text/data.  Bfd provides
 	     no way of figuring this out for absolute symbols.  */
@@ -409,7 +404,6 @@ elf_symtab_read (struct objfile *objfile, int type,
 		{
 		  if (sym->name[0] == '.')
 		    continue;
-		  symaddr += offset;
 		}
 	    }
 	  else if (sym->section->flags & SEC_CODE)
@@ -567,7 +561,23 @@ elf_symtab_read (struct objfile *objfile, int type,
 		}
 
 	      msym->filename = filesymname;
-	      gdbarch_elf_make_msymbol_special (gdbarch, sym, msym);
+	      if (elf_make_msymbol_special_p)
+		gdbarch_elf_make_msymbol_special (gdbarch, sym, msym);
+	    }
+
+	  /* If we see a default versioned symbol, install it under
+	     its version-less name.  */
+	  if (msym != NULL)
+	    {
+	      const char *atsign = strchr (sym->name, '@');
+
+	      if (atsign != NULL && atsign[1] == '@' && atsign > sym->name)
+		{
+		  int len = atsign - sym->name;
+
+		  record_minimal_symbol (sym->name, len, 1, symaddr,
+					 ms_type, sym->section, objfile);
+		}
 	    }
 
 	  /* For @plt symbols, also record a trampoline to the
@@ -591,7 +601,9 @@ elf_symtab_read (struct objfile *objfile, int type,
 		      SET_MSYMBOL_SIZE (mtramp, MSYMBOL_SIZE (msym));
 		      mtramp->created_by_gdb = 1;
 		      mtramp->filename = filesymname;
-		      gdbarch_elf_make_msymbol_special (gdbarch, sym, mtramp);
+		      if (elf_make_msymbol_special_p)
+			gdbarch_elf_make_msymbol_special (gdbarch,
+							  sym, mtramp);
 		    }
 		}
 	    }
@@ -617,7 +629,7 @@ elf_rel_plt_read (struct objfile *objfile, asymbol **dyn_symbol_table)
   char *string_buffer = NULL;
   size_t string_buffer_size = 0;
   struct cleanup *back_to;
-  struct gdbarch *gdbarch = objfile->gdbarch;
+  struct gdbarch *gdbarch = get_objfile_arch (objfile);
   struct type *ptr_type = builtin_type (gdbarch)->builtin_data_ptr;
   size_t ptr_size = TYPE_LENGTH (ptr_type);
 
@@ -631,7 +643,12 @@ elf_rel_plt_read (struct objfile *objfile, asymbol **dyn_symbol_table)
 
   got_plt = bfd_get_section_by_name (obfd, ".got.plt");
   if (got_plt == NULL)
-    return;
+    {
+      /* For platforms where there is no separate .got.plt.  */
+      got_plt = bfd_get_section_by_name (obfd, ".got");
+      if (got_plt == NULL)
+	return;
+    }
 
   /* This search algorithm is from _bfd_elf_canonicalize_dynamic_reloc.  */
   for (relplt = obfd->sections; relplt != NULL; relplt = relplt->next)
@@ -735,7 +752,7 @@ elf_gnu_ifunc_cache_eq (const void *a_voidp, const void *b_voidp)
 static int
 elf_gnu_ifunc_record_cache (const char *name, CORE_ADDR addr)
 {
-  struct minimal_symbol *msym;
+  struct bound_minimal_symbol msym;
   asection *sect;
   struct objfile *objfile;
   htab_t htab;
@@ -743,13 +760,13 @@ elf_gnu_ifunc_record_cache (const char *name, CORE_ADDR addr)
   void **slot;
 
   msym = lookup_minimal_symbol_by_pc (addr);
-  if (msym == NULL)
+  if (msym.minsym == NULL)
     return 0;
-  if (SYMBOL_VALUE_ADDRESS (msym) != addr)
+  if (BMSYMBOL_VALUE_ADDRESS (msym) != addr)
     return 0;
   /* minimal symbols have always SYMBOL_OBJ_SECTION non-NULL.  */
-  sect = SYMBOL_OBJ_SECTION (msym)->the_bfd_section;
-  objfile = SYMBOL_OBJ_SECTION (msym)->objfile;
+  sect = MSYMBOL_OBJ_SECTION (msym.objfile, msym.minsym)->the_bfd_section;
+  objfile = msym.objfile;
 
   /* If .plt jumps back to .plt the symbol is still deferred for later
      resolution and it has no use for GDB.  Besides ".text" this symbol can
@@ -778,7 +795,7 @@ elf_gnu_ifunc_record_cache (const char *name, CORE_ADDR addr)
   if (*slot != NULL)
     {
       struct elf_gnu_ifunc_cache *entry_found_p = *slot;
-      struct gdbarch *gdbarch = objfile->gdbarch;
+      struct gdbarch *gdbarch = get_objfile_arch (objfile);
 
       if (entry_found_p->addr != addr)
 	{
@@ -858,32 +875,33 @@ elf_gnu_ifunc_resolve_by_got (const char *name, CORE_ADDR *addr_p)
   ALL_PSPACE_OBJFILES (current_program_space, objfile)
     {
       bfd *obfd = objfile->obfd;
-      struct gdbarch *gdbarch = objfile->gdbarch;
+      struct gdbarch *gdbarch = get_objfile_arch (objfile);
       struct type *ptr_type = builtin_type (gdbarch)->builtin_data_ptr;
       size_t ptr_size = TYPE_LENGTH (ptr_type);
       CORE_ADDR pointer_address, addr;
       asection *plt;
       gdb_byte *buf = alloca (ptr_size);
-      struct minimal_symbol *msym;
+      struct bound_minimal_symbol msym;
 
       msym = lookup_minimal_symbol (name_got_plt, NULL, objfile);
-      if (msym == NULL)
+      if (msym.minsym == NULL)
 	continue;
-      if (MSYMBOL_TYPE (msym) != mst_slot_got_plt)
+      if (MSYMBOL_TYPE (msym.minsym) != mst_slot_got_plt)
 	continue;
-      pointer_address = SYMBOL_VALUE_ADDRESS (msym);
+      pointer_address = BMSYMBOL_VALUE_ADDRESS (msym);
 
       plt = bfd_get_section_by_name (obfd, ".plt");
       if (plt == NULL)
 	continue;
 
-      if (MSYMBOL_SIZE (msym) != ptr_size)
+      if (MSYMBOL_SIZE (msym.minsym) != ptr_size)
 	continue;
       if (target_read_memory (pointer_address, buf, ptr_size) != 0)
 	continue;
       addr = extract_typed_address (buf, ptr_type);
       addr = gdbarch_convert_from_func_ptr_addr (gdbarch, addr,
 						 &current_target);
+      addr = gdbarch_addr_bits_remove (gdbarch, addr);
 
       if (addr_p)
 	*addr_p = addr;
@@ -947,6 +965,7 @@ elf_gnu_ifunc_resolve_addr (struct gdbarch *gdbarch, CORE_ADDR pc)
   address = value_as_address (address_val);
   address = gdbarch_convert_from_func_ptr_addr (gdbarch, address,
 						&current_target);
+  address = gdbarch_addr_bits_remove (gdbarch, address);
 
   if (name_at_pc)
     elf_gnu_ifunc_record_cache (name_at_pc, address);
@@ -1055,6 +1074,7 @@ elf_gnu_ifunc_resolver_return_stop (struct breakpoint *b)
   resolved_pc = gdbarch_convert_from_func_ptr_addr (gdbarch,
 						    resolved_address,
 						    &current_target);
+  resolved_pc = gdbarch_addr_bits_remove (gdbarch, resolved_pc);
 
   gdb_assert (current_program_space == b->pspace || b->pspace == NULL);
   elf_gnu_ifunc_record_cache (b->addr_string, resolved_pc);
@@ -1068,164 +1088,14 @@ elf_gnu_ifunc_resolver_return_stop (struct breakpoint *b)
   update_breakpoint_locations (b, sals, sals_end);
 }
 
-/* Locate NT_GNU_BUILD_ID from ABFD and return its content.  */
-
-static const struct elf_build_id *
-build_id_bfd_get (bfd *abfd)
-{
-  if (!bfd_check_format (abfd, bfd_object)
-      || bfd_get_flavour (abfd) != bfd_target_elf_flavour
-      || elf_tdata (abfd)->build_id == NULL)
-    return NULL;
-
-  return elf_tdata (abfd)->build_id;
-}
-
-/* Return if FILENAME has NT_GNU_BUILD_ID matching the CHECK value.  */
-
-static int
-build_id_verify (const char *filename, const struct elf_build_id *check)
-{
-  bfd *abfd;
-  const struct elf_build_id *found;
-  int retval = 0;
-
-  /* We expect to be silent on the non-existing files.  */
-  abfd = gdb_bfd_open_maybe_remote (filename);
-  if (abfd == NULL)
-    return 0;
-
-  found = build_id_bfd_get (abfd);
-
-  if (found == NULL)
-    warning (_("File \"%s\" has no build-id, file skipped"), filename);
-  else if (found->size != check->size
-           || memcmp (found->data, check->data, found->size) != 0)
-    warning (_("File \"%s\" has a different build-id, file skipped"),
-	     filename);
-  else
-    retval = 1;
-
-  gdb_bfd_unref (abfd);
-
-  return retval;
-}
-
-static char *
-build_id_to_debug_filename (const struct elf_build_id *build_id)
-{
-  char *link, *debugdir, *retval = NULL;
-  VEC (char_ptr) *debugdir_vec;
-  struct cleanup *back_to;
-  int ix;
-
-  /* DEBUG_FILE_DIRECTORY/.build-id/ab/cdef */
-  link = alloca (strlen (debug_file_directory) + (sizeof "/.build-id/" - 1) + 1
-		 + 2 * build_id->size + (sizeof ".debug" - 1) + 1);
-
-  /* Keep backward compatibility so that DEBUG_FILE_DIRECTORY being "" will
-     cause "/.build-id/..." lookups.  */
-
-  debugdir_vec = dirnames_to_char_ptr_vec (debug_file_directory);
-  back_to = make_cleanup_free_char_ptr_vec (debugdir_vec);
-
-  for (ix = 0; VEC_iterate (char_ptr, debugdir_vec, ix, debugdir); ++ix)
-    {
-      size_t debugdir_len = strlen (debugdir);
-      const gdb_byte *data = build_id->data;
-      size_t size = build_id->size;
-      char *s;
-
-      memcpy (link, debugdir, debugdir_len);
-      s = &link[debugdir_len];
-      s += sprintf (s, "/.build-id/");
-      if (size > 0)
-	{
-	  size--;
-	  s += sprintf (s, "%02x", (unsigned) *data++);
-	}
-      if (size > 0)
-	*s++ = '/';
-      while (size-- > 0)
-	s += sprintf (s, "%02x", (unsigned) *data++);
-      strcpy (s, ".debug");
-
-      /* lrealpath() is expensive even for the usually non-existent files.  */
-      if (access (link, F_OK) == 0)
-	retval = lrealpath (link);
-
-      if (retval != NULL && !build_id_verify (retval, build_id))
-	{
-	  xfree (retval);
-	  retval = NULL;
-	}
-
-      if (retval != NULL)
-	break;
-    }
-
-  do_cleanups (back_to);
-  return retval;
-}
-
-static char *
-find_separate_debug_file_by_buildid (struct objfile *objfile)
-{
-  const struct elf_build_id *build_id;
-
-  build_id = build_id_bfd_get (objfile->obfd);
-  if (build_id != NULL)
-    {
-      char *build_id_name;
-
-      build_id_name = build_id_to_debug_filename (build_id);
-      /* Prevent looping on a stripped .debug file.  */
-      if (build_id_name != NULL
-	  && filename_cmp (build_id_name, objfile->name) == 0)
-        {
-	  warning (_("\"%s\": separate debug info file has no debug info"),
-		   build_id_name);
-	  xfree (build_id_name);
-	}
-      else if (build_id_name != NULL)
-        return build_id_name;
-    }
-  return NULL;
-}
-
-/* Scan and build partial symbols for a symbol file.
-   We have been initialized by a call to elf_symfile_init, which
-   currently does nothing.
-
-   SECTION_OFFSETS is a set of offsets to apply to relocate the symbols
-   in each section.  We simplify it down to a single offset for all
-   symbols.  FIXME.
-
-   This function only does the minimum work necessary for letting the
-   user "name" things symbolically; it does not read the entire symtab.
-   Instead, it reads the external and static symbols and puts them in partial
-   symbol tables.  When more extensive information is requested of a
-   file, the corresponding partial symbol table is mutated into a full
-   fledged symbol table by going back and reading the symbols
-   for real.
-
-   We look for sections with specific names, to tell us what debug
-   format to look for:  FIXME!!!
-
-   elfstab_build_psymtabs() handles STABS symbols;
-   mdebug_build_psymtabs() handles ECOFF debugging information.
-
-   Note that ELF files have a "minimal" symbol table, which looks a lot
-   like a COFF symbol table, but has only the minimal information necessary
-   for linking.  We process this also, and use the information to
-   build gdb's minimal symbol table.  This gives us some minimal debugging
-   capability even for files compiled without -g.  */
+/* A helper function for elf_symfile_read that reads the minimal
+   symbols.  */
 
 static void
-elf_symfile_read (struct objfile *objfile, int symfile_flags)
+elf_read_minimal_symbols (struct objfile *objfile, int symfile_flags,
+			  const struct elfinfo *ei)
 {
   bfd *synth_abfd, *abfd = objfile->obfd;
-  struct elfinfo ei;
   struct cleanup *back_to;
   long symcount = 0, dynsymcount = 0, synthcount, storage_needed;
   asymbol **symbol_table = NULL, **dyn_symbol_table = NULL;
@@ -1236,13 +1106,26 @@ elf_symfile_read (struct objfile *objfile, int symfile_flags)
     {
       fprintf_unfiltered (gdb_stdlog,
 			  "Reading minimal symbols of objfile %s ...\n",
-			  objfile->name);
+			  objfile_name (objfile));
+    }
+
+  /* If we already have minsyms, then we can skip some work here.
+     However, if there were stabs or mdebug sections, we go ahead and
+     redo all the work anyway, because the psym readers for those
+     kinds of debuginfo need extra information found here.  This can
+     go away once all types of symbols are in the per-BFD object.  */
+  if (objfile->per_bfd->minsyms_read
+      && ei->stabsect == NULL
+      && ei->mdebugsect == NULL)
+    {
+      if (symtab_create_debug)
+	fprintf_unfiltered (gdb_stdlog,
+			    "... minimal symbols previously read\n");
+      return;
     }
 
   init_minimal_symbol_collection ();
   back_to = make_cleanup_discard_minimal_symbols ();
-
-  memset ((char *) &ei, 0, sizeof (ei));
 
   /* Allocate struct to keep track of the symfile.  */
   dbx = XCNEW (struct dbx_symfile_info);
@@ -1345,11 +1228,44 @@ elf_symfile_read (struct objfile *objfile, int symfile_flags)
   install_minimal_symbols (objfile);
   do_cleanups (back_to);
 
-  /* Now process debugging information, which is contained in
-     special ELF sections.  */
+  if (symtab_create_debug)
+    fprintf_unfiltered (gdb_stdlog, "Done reading minimal symbols.\n");
+}
 
-  /* We first have to find them...  */
+/* Scan and build partial symbols for a symbol file.
+   We have been initialized by a call to elf_symfile_init, which
+   currently does nothing.
+
+   This function only does the minimum work necessary for letting the
+   user "name" things symbolically; it does not read the entire symtab.
+   Instead, it reads the external and static symbols and puts them in partial
+   symbol tables.  When more extensive information is requested of a
+   file, the corresponding partial symbol table is mutated into a full
+   fledged symbol table by going back and reading the symbols
+   for real.
+
+   We look for sections with specific names, to tell us what debug
+   format to look for:  FIXME!!!
+
+   elfstab_build_psymtabs() handles STABS symbols;
+   mdebug_build_psymtabs() handles ECOFF debugging information.
+
+   Note that ELF files have a "minimal" symbol table, which looks a lot
+   like a COFF symbol table, but has only the minimal information necessary
+   for linking.  We process this also, and use the information to
+   build gdb's minimal symbol table.  This gives us some minimal debugging
+   capability even for files compiled without -g.  */
+
+static void
+elf_symfile_read (struct objfile *objfile, int symfile_flags)
+{
+  bfd *abfd = objfile->obfd;
+  struct elfinfo ei;
+
+  memset ((char *) &ei, 0, sizeof (ei));
   bfd_map_over_sections (abfd, elf_locate_sections, (void *) & ei);
+
+  elf_read_minimal_symbols (objfile, symfile_flags, &ei);
 
   /* ELF debugging information is inserted into the psymtab in the
      order of least informative first - most informative last.  Since
@@ -1389,9 +1305,6 @@ elf_symfile_read (struct objfile *objfile, int symfile_flags)
 				bfd_section_size (abfd, str_sect));
     }
 
-  if (symtab_create_debug)
-    fprintf_unfiltered (gdb_stdlog, "Done reading minimal symbols.\n");
-
   if (dwarf2_has_info (objfile, NULL))
     {
       /* elf_sym_fns_gdb_index cannot handle simultaneous non-DWARF debug
@@ -1400,14 +1313,14 @@ elf_symfile_read (struct objfile *objfile, int symfile_flags)
 
       if (!objfile_has_partial_symbols (objfile)
 	  && dwarf2_initialize_objfile (objfile))
-	objfile->sf = &elf_sym_fns_gdb_index;
+	objfile_set_sym_fns (objfile, &elf_sym_fns_gdb_index);
       else
 	{
 	  /* It is ok to do this even if the stabs reader made some
 	     partial symbols, because OBJF_PSYMTABS_READ has not been
 	     set, and so our lazy reader function will still be called
 	     when needed.  */
-	  objfile->sf = &elf_sym_fns_lazy_psyms;
+	  objfile_set_sym_fns (objfile, &elf_sym_fns_lazy_psyms);
 	}
     }
   /* If the file has its own symbol tables it has no separate debug
@@ -1439,7 +1352,7 @@ elf_symfile_read (struct objfile *objfile, int symfile_flags)
 	  bfd *abfd = symfile_bfd_open (debugfile);
 
 	  make_cleanup_bfd_unref (abfd);
-	  symbol_file_add_separate (abfd, symfile_flags, objfile);
+	  symbol_file_add_separate (abfd, debugfile, symfile_flags, objfile);
 	  do_cleanups (cleanup);
 	}
     }
@@ -1501,14 +1414,7 @@ elf_symfile_finish (struct objfile *objfile)
   dwarf2_free_objfile (objfile);
 }
 
-/* ELF specific initialization routine for reading symbols.
-
-   It is passed a pointer to a struct sym_fns which contains, among other
-   things, the BFD for the file whose symbols are being read, and a slot for
-   a pointer to "private data" which we can fill with goodies.
-
-   For now at least, we have nothing in particular to do, so this function is
-   just a stub.  */
+/* ELF specific initialization routine for reading symbols.  */
 
 static void
 elf_symfile_init (struct objfile *objfile)
@@ -1587,12 +1493,12 @@ elfstab_offset_sections (struct objfile *objfile, struct partial_symtab *pst)
 static VEC (probe_p) *
 elf_get_probes (struct objfile *objfile)
 {
-  VEC (probe_p) *probes_per_objfile;
+  VEC (probe_p) *probes_per_bfd;
 
   /* Have we parsed this objfile's probes already?  */
-  probes_per_objfile = objfile_data (objfile, probe_key);
+  probes_per_bfd = bfd_data (objfile->obfd, probe_key);
 
-  if (!probes_per_objfile)
+  if (!probes_per_bfd)
     {
       int ix;
       const struct probe_ops *probe_ops;
@@ -1601,69 +1507,25 @@ elf_get_probes (struct objfile *objfile)
 	 objfile.  */
       for (ix = 0; VEC_iterate (probe_ops_cp, all_probe_ops, ix, probe_ops);
 	   ix++)
-	probe_ops->get_probes (&probes_per_objfile, objfile);
+	probe_ops->get_probes (&probes_per_bfd, objfile);
 
-      if (probes_per_objfile == NULL)
+      if (probes_per_bfd == NULL)
 	{
-	  VEC_reserve (probe_p, probes_per_objfile, 1);
-	  gdb_assert (probes_per_objfile != NULL);
+	  VEC_reserve (probe_p, probes_per_bfd, 1);
+	  gdb_assert (probes_per_bfd != NULL);
 	}
 
-      set_objfile_data (objfile, probe_key, probes_per_objfile);
+      set_bfd_data (objfile->obfd, probe_key, probes_per_bfd);
     }
 
-  return probes_per_objfile;
-}
-
-/* Implementation of `sym_get_probe_argument_count', as documented in
-   symfile.h.  */
-
-static unsigned
-elf_get_probe_argument_count (struct probe *probe)
-{
-  return probe->pops->get_probe_argument_count (probe);
-}
-
-/* Implementation of `sym_evaluate_probe_argument', as documented in
-   symfile.h.  */
-
-static struct value *
-elf_evaluate_probe_argument (struct probe *probe, unsigned n)
-{
-  return probe->pops->evaluate_probe_argument (probe, n);
-}
-
-/* Implementation of `sym_compile_to_ax', as documented in symfile.h.  */
-
-static void
-elf_compile_to_ax (struct probe *probe,
-		   struct agent_expr *expr,
-		   struct axs_value *value,
-		   unsigned n)
-{
-  probe->pops->compile_to_ax (probe, expr, value, n);
-}
-
-/* Implementation of `sym_relocate_probe', as documented in symfile.h.  */
-
-static void
-elf_symfile_relocate_probe (struct objfile *objfile,
-			    struct section_offsets *new_offsets,
-			    struct section_offsets *delta)
-{
-  int ix;
-  VEC (probe_p) *probes = objfile_data (objfile, probe_key);
-  struct probe *probe;
-
-  for (ix = 0; VEC_iterate (probe_p, probes, ix, probe); ix++)
-    probe->pops->relocate (probe, ANOFFSET (delta, SECT_OFF_TEXT (objfile)));
+  return probes_per_bfd;
 }
 
 /* Helper function used to free the space allocated for storing SystemTap
    probe information.  */
 
 static void
-probe_key_free (struct objfile *objfile, void *d)
+probe_key_free (bfd *abfd, void *d)
 {
   int ix;
   VEC (probe_p) *probes = d;
@@ -1681,18 +1543,13 @@ probe_key_free (struct objfile *objfile, void *d)
 
 static const struct sym_probe_fns elf_probe_fns =
 {
-  elf_get_probes,		/* sym_get_probes */
-  elf_get_probe_argument_count,	/* sym_get_probe_argument_count */
-  elf_evaluate_probe_argument,	/* sym_evaluate_probe_argument */
-  elf_compile_to_ax,		/* sym_compile_to_ax */
-  elf_symfile_relocate_probe,	/* sym_relocate_probe */
+  elf_get_probes,		    /* sym_get_probes */
 };
 
 /* Register that we are able to handle ELF object file formats.  */
 
 static const struct sym_fns elf_sym_fns =
 {
-  bfd_target_elf_flavour,
   elf_new_init,			/* init anything gbl to entire symtab */
   elf_symfile_init,		/* read initial info, setup for sym_read() */
   elf_symfile_read,		/* read a symbol file into symtab */
@@ -1711,7 +1568,6 @@ static const struct sym_fns elf_sym_fns =
 
 static const struct sym_fns elf_sym_fns_lazy_psyms =
 {
-  bfd_target_elf_flavour,
   elf_new_init,			/* init anything gbl to entire symtab */
   elf_symfile_init,		/* read initial info, setup for sym_read() */
   elf_symfile_read,		/* read a symbol file into symtab */
@@ -1729,7 +1585,6 @@ static const struct sym_fns elf_sym_fns_lazy_psyms =
    DWARF-specific GNU index rather than psymtab.  */
 static const struct sym_fns elf_sym_fns_gdb_index =
 {
-  bfd_target_elf_flavour,
   elf_new_init,			/* init anything gbl to entire symab */
   elf_symfile_init,		/* read initial info, setup for sym_red() */
   elf_symfile_read,		/* read a symbol file into symtab */
@@ -1756,8 +1611,8 @@ static const struct gnu_ifunc_fns elf_gnu_ifunc_fns =
 void
 _initialize_elfread (void)
 {
-  probe_key = register_objfile_data_with_cleanup (NULL, probe_key_free);
-  add_symtab_fns (&elf_sym_fns);
+  probe_key = register_bfd_data_with_cleanup (NULL, probe_key_free);
+  add_symtab_fns (bfd_target_elf_flavour, &elf_sym_fns);
 
   elf_objfile_gnu_ifunc_cache_data = register_objfile_data ();
   gnu_ifunc_fns_p = &elf_gnu_ifunc_fns;

@@ -1,4 +1,4 @@
-/*        $NetBSD: dm_target_snapshot.c,v 1.15 2011/10/14 09:23:30 hannken Exp $      */
+/*        $NetBSD: dm_target_snapshot.c,v 1.17 2014/08/18 17:16:19 agc Exp $      */
 
 /*
  * Copyright (c) 2008 The NetBSD Foundation, Inc.
@@ -221,8 +221,7 @@ dm_target_snapshot_init(dm_dev_t * dmv, void **target_config, char *params)
 	if ((dmp_snap = dm_pdev_insert(argv[0])) == NULL)
 		return ENOENT;
 
-	if ((tsc = kmem_alloc(sizeof(dm_target_snapshot_config_t), KM_NOSLEEP))
-	    == NULL)
+	if ((tsc = kmem_alloc(sizeof(*tsc), KM_NOSLEEP)) == NULL)
 		return 1;
 
 	tsc->tsc_persistent_dev = 0;
@@ -232,8 +231,10 @@ dm_target_snapshot_init(dm_dev_t * dmv, void **target_config, char *params)
 		tsc->tsc_persistent_dev = 1;
 
 		/* Insert cow device to global pdev list */
-		if ((dmp_cow = dm_pdev_insert(argv[1])) == NULL)
+		if ((dmp_cow = dm_pdev_insert(argv[1])) == NULL) {
+			kmem_free(tsc, sizeof(*tsc));
 			return ENOENT;
+		}
 	}
 	tsc->tsc_chunk_size = atoi(argv[3]);
 
@@ -348,33 +349,18 @@ dm_target_snapshot_deps(dm_table_entry_t * table_en,
     prop_array_t prop_array)
 {
 	dm_target_snapshot_config_t *tsc;
-	struct vattr va;
-
-	int error;
 
 	if (table_en->target_config == NULL)
 		return 0;
 
 	tsc = table_en->target_config;
 
-	vn_lock(tsc->tsc_snap_dev->pdev_vnode, LK_SHARED | LK_RETRY);
-	error = VOP_GETATTR(tsc->tsc_snap_dev->pdev_vnode, &va, curlwp->l_cred);
-	VOP_UNLOCK(tsc->tsc_snap_dev->pdev_vnode);
-	if (error != 0)
-		return error;
-
-	prop_array_add_uint64(prop_array, (uint64_t) va.va_rdev);
+	prop_array_add_uint64(prop_array,
+	    (uint64_t) tsc->tsc_snap_dev->pdev_vnode->v_rdev);
 
 	if (tsc->tsc_persistent_dev) {
-
-		vn_lock(tsc->tsc_cow_dev->pdev_vnode, LK_SHARED | LK_RETRY);
-		error = VOP_GETATTR(tsc->tsc_cow_dev->pdev_vnode, &va,
-		    curlwp->l_cred);
-		VOP_UNLOCK(tsc->tsc_cow_dev->pdev_vnode);
-		if (error != 0)
-			return error;
-
-		prop_array_add_uint64(prop_array, (uint64_t) va.va_rdev);
+		prop_array_add_uint64(prop_array,
+		    (uint64_t) tsc->tsc_cow_dev->pdev_vnode->v_rdev);
 
 	}
 	return 0;

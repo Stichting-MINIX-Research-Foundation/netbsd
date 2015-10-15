@@ -1,4 +1,4 @@
-#	$NetBSD: bsd.dep.mk,v 1.79 2013/10/31 01:55:03 mrg Exp $
+#	$NetBSD: bsd.dep.mk,v 1.82 2014/12/01 01:34:30 erh Exp $
 
 ##### Basic targets
 realdepend:	beforedepend .depend afterdepend
@@ -9,7 +9,7 @@ beforedepend .depend afterdepend: # ensure existence
 ##### Default values
 MKDEP?=			mkdep
 MKDEPCXX?=		mkdep
-MKDEP_SUFFIXES?=	.o
+MKDEP_SUFFIXES?=	.o .d
 
 ##### Build rules
 # some of the rules involve .h sources, so remove them from mkdep line
@@ -61,7 +61,7 @@ _MKDEP_FILEFLAGS=
 .c.d:
 	${_MKTARGET_CREATE}
 	${MKDEP} -f ${.TARGET}.tmp ${_MKDEP_FILEFLAGS} -- ${MKDEPFLAGS} \
-	    ${CFLAGS:C/-([IDU])[  ]*/-\1/Wg:M-[IDU]*} \
+	    ${CFLAGS:M-std=*} ${CFLAGS:C/-([IDU])[  ]*/-\1/Wg:M-[IDU]*} \
 	    ${CPPFLAGS} ${COPTS.${.IMPSRC:T}} ${CPUFLAGS.${.IMPSRC:T}} \
 	    ${CPPFLAGS.${.IMPSRC:T}} ${.IMPSRC} && \
 	    mv ${.TARGET}.tmp ${.TARGET}
@@ -85,7 +85,7 @@ _MKDEP_FILEFLAGS=
 .C.d .cc.d .cpp.d .cxx.d:
 	${_MKTARGET_CREATE}
 	${MKDEPCXX} -f ${.TARGET}.tmp ${_MKDEP_FILEFLAGS} -- ${MKDEPFLAGS} \
-	    ${CXXFLAGS:C/-([IDU])[  ]*/-\1/Wg:M-[IDU]*} \
+	    ${CXXFLAGS:M-std=*} ${CXXFLAGS:C/-([IDU])[  ]*/-\1/Wg:M-[IDU]*} \
 	    ${CPPFLAGS} ${COPTS.${.IMPSRC:T}} ${CPUFLAGS.${.IMPSRC:T}} \
 	    ${CPPFLAGS.${.IMPSRC:T}} ${.IMPSRC} && \
 	    mv ${.TARGET}.tmp ${.TARGET}
@@ -101,6 +101,7 @@ CLEANDIRFILES+= .depend ${__DPSRCS.d} ${__DPSRCS.d:.d=.d.tmp} ${.CURDIR}/tags ${
 .if !target(tags)
 tags: ${SRCS}
 .if defined(SRCS) && !empty(SRCS)
+	${_MKTARGET_CREATE}
 	-cd "${.CURDIR}"; ctags -f /dev/stdout ${.ALLSRC:N*.h} | \
 	    ${TOOL_SED} "s;\${.CURDIR}/;;" > tags
 .endif

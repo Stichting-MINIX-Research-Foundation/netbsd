@@ -11,26 +11,42 @@
 # compile options, and prevents pollution of the source code.
 #
 include ../Makefile.config
-PROG = acpixtract
-
-OBJS = \
-    acpixtract.o
+FINAL_PROG = ../$(BINDIR)/acpixtract
+PROG = $(OBJDIR)/acpixtract
 
 #
-# Root rule
+# Search paths for source files
 #
-$(PROG) : $(OBJS)
-	$(CC) $(LDFLAGS) $(OBJS) -o $(PROG)
+vpath %.c \
+    $(ACPIXTRACT)\
+    $(ACPICA_UTILITIES)\
+    $(ACPICA_COMMON)\
+    $(ACPICA_OSL)
+
+HEADERS = \
+    $(wildcard $(ACPIXTRACT)/*.h)
+
+OBJECTS = \
+    $(OBJDIR)/acpixtract.o\
+    $(OBJDIR)/axmain.o\
+    $(OBJDIR)/getopt.o\
+    $(OBJDIR)/oslibcfs.o\
+    $(OBJDIR)/osunixxf.o\
+    $(OBJDIR)/utdebug.o\
+    $(OBJDIR)/utexcep.o\
+    $(OBJDIR)/utglobal.o\
+    $(OBJDIR)/utmath.o\
+    $(OBJDIR)/utnonansi.o\
+    $(OBJDIR)/utprint.o\
+    $(OBJDIR)/utxferror.o
 
 #
-# acpixtract source
+# Flags specific to acpixtract
 #
-acpixtract.o :          $(ACPICA_TOOLS)/acpixtract/acpixtract.c
-	$(COMPILE)
+CFLAGS += \
+    -DACPI_XTRACT_APP
 
-
-clean :
-	rm -f $(PROG) $(PROG).exe
-
-install :
-	$(INSTALLPROG)
+#
+# Common Rules
+#
+include ../Makefile.rules

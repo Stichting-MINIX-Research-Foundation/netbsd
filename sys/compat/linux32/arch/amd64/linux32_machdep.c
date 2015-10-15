@@ -1,4 +1,4 @@
-/*	$NetBSD: linux32_machdep.c,v 1.33 2013/12/01 01:05:16 christos Exp $ */
+/*	$NetBSD: linux32_machdep.c,v 1.36 2014/02/19 21:45:01 dsl Exp $ */
 
 /*-
  * Copyright (c) 2006 Emmanuel Dreyfus, all rights reserved.
@@ -31,7 +31,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: linux32_machdep.c,v 1.33 2013/12/01 01:05:16 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: linux32_machdep.c,v 1.36 2014/02/19 21:45:01 dsl Exp $");
 
 #include <sys/param.h>
 #include <sys/proc.h>
@@ -40,6 +40,8 @@ __KERNEL_RCSID(0, "$NetBSD: linux32_machdep.c,v 1.33 2013/12/01 01:05:16 christo
 #include <machine/vmparam.h>
 #include <machine/cpufunc.h>
 #include <machine/netbsd32_machdep.h>
+
+#include <x86/fpu.h>
 
 #include <compat/netbsd32/netbsd32.h>
 #include <compat/netbsd32/netbsd32_syscallargs.h>
@@ -273,22 +275,16 @@ linux32_setregs(struct lwp *l, struct exec_package *pack, u_long stack)
 	struct trapframe *tf;
 	struct proc *p = l->l_proc;
 
-	/* If we were using the FPU, forget about it. */
-	if (pcb->pcb_fpcpu != NULL)
-		fpusave_lwp(l, 0);
-
 #if defined(USER_LDT) && 0
 	pmap_ldt_cleanup(p);
 #endif
 
 	netbsd32_adjust_limits(p);
 
-	l->l_md.md_flags &= ~MDL_USEDFPU;
+	fpu_save_area_clear(l, __Linux_NPXCW__);
+
 	l->l_md.md_flags |= MDL_COMPAT32;	/* Forces iret not sysret */
 	pcb->pcb_flags = PCB_COMPAT32;
-	pcb->pcb_savefpu.fp_fxsave.fx_fcw = __Linux_NPXCW__;
-	pcb->pcb_savefpu.fp_fxsave.fx_mxcsr = __INITIAL_MXCSR__;
-	pcb->pcb_savefpu.fp_fxsave.fx_mxcsr_mask = __INITIAL_MXCSR_MASK__;
 
 	p->p_flag |= PK_32;
 

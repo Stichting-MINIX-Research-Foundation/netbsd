@@ -1,8 +1,11 @@
-/*	$NetBSD: strdup.c,v 1.1.1.1 2009/12/13 16:57:25 kardel Exp $	*/
+/*	$NetBSD: strdup.c,v 1.3 2015/07/10 14:20:35 christos Exp $	*/
 
 /*
  * Platforms without strdup ?!?!?!
  */
+
+static char *
+strdup( char const *s );
 
 static char *
 strdup( char const *s )

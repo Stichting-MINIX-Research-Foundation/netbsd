@@ -1,4 +1,4 @@
-/*	$NetBSD: ieee80211_output.c,v 1.51 2011/12/31 20:41:58 christos Exp $	*/
+/*	$NetBSD: ieee80211_output.c,v 1.53 2015/08/24 22:21:26 pooka Exp $	*/
 /*-
  * Copyright (c) 2001 Atsushi Onoe
  * Copyright (c) 2002-2005 Sam Leffler, Errno Consulting
@@ -36,10 +36,12 @@
 __FBSDID("$FreeBSD: src/sys/net80211/ieee80211_output.c,v 1.34 2005/08/10 16:22:29 sam Exp $");
 #endif
 #ifdef __NetBSD__
-__KERNEL_RCSID(0, "$NetBSD: ieee80211_output.c,v 1.51 2011/12/31 20:41:58 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ieee80211_output.c,v 1.53 2015/08/24 22:21:26 pooka Exp $");
 #endif
 
+#ifdef _KERNEL_OPT
 #include "opt_inet.h"
+#endif
 
 #ifdef __NetBSD__
 #endif /* __NetBSD__ */
@@ -2059,7 +2061,7 @@ ieee80211_pwrsave(struct ieee80211com *ic, struct ieee80211_node *ni,
 		return;
 	}
 	/*
-	 * Tag the frame with it's expiry time and insert
+	 * Tag the frame with its expiry time and insert
 	 * it in the queue.  The aging interval is 4 times
 	 * the listen interval specified by the station. 
 	 * Frames that sit around too long are reclaimed

@@ -1,4 +1,4 @@
-/*	$NetBSD: machdep.c,v 1.9 2013/11/10 18:27:15 christos Exp $	*/
+/*	$NetBSD: machdep.c,v 1.11 2015/06/11 08:22:08 matt Exp $	*/
 
 /*
  * Copyright (c) 1988 University of Utah.
@@ -39,7 +39,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.9 2013/11/10 18:27:15 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.11 2015/06/11 08:22:08 matt Exp $");
 
 #include "opt_ddb.h"
 
@@ -56,6 +56,7 @@ __KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.9 2013/11/10 18:27:15 christos Exp $")
 #include <sys/ksyms.h>
 #include <sys/proc.h>
 #include <sys/device.h>
+#include <sys/cpu.h>
 
 #include <uvm/uvm_extern.h>
 
@@ -81,8 +82,8 @@ __KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.9 2013/11/10 18:27:15 christos Exp $")
 #include <ddb/db_extern.h>
 #endif
 
-extern vaddr_t iospace;
-extern vsize_t iospace_size;
+vaddr_t iospace = 64 * 1024; /* BUGBUG make it an option? */
+vsize_t iospace_size;
 
 #include "ksyms.h"
 
@@ -314,7 +315,8 @@ mach_init(int argc, char *argv[], int code, intptr_t cv, u_int bim, char *bip)
 	/*
 	 * Initialize the virtual memory system.
 	 */
-	iospace_size = 64*1024; /* BUGBUG make it an option? */
+	iospace = pmap_limits.virtual_start;
+	pmap_limits.virtual_start += iospace_size;
 	pmap_bootstrap();
 
 	mips_init_lwp0_uarea();
@@ -436,7 +438,7 @@ cpu_startup(void)
 	 * Good {morning,afternoon,evening,night}.
 	 */
 	printf("%s%s", copyright, version);
-	printf("%s\n", cpu_model);
+	printf("%s\n", cpu_getmodel());
 	format_bytes(pbuf, sizeof(pbuf), ctob(physmem));
 	printf("total memory = %s\n", pbuf);
 

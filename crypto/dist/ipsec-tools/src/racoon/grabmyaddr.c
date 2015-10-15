@@ -1,4 +1,4 @@
-/*	$NetBSD: grabmyaddr.c,v 1.32 2013/07/18 17:02:58 christos Exp $	*/
+/*	$NetBSD: grabmyaddr.c,v 1.34 2014/06/14 22:39:36 christos Exp $	*/
 /*
  * Copyright (C) 1995, 1996, 1997, and 1998 WIDE Project.
  * Copyright (C) 2008 Timo Teras <timo.teras@iki.fi>.
@@ -782,6 +782,9 @@ kernel_handle_message(msg)
 #endif
 #ifdef RTM_IFANNOUNCE
 	case RTM_IFANNOUNCE:
+#endif
+#ifdef RTM_IEEE80211
+	case RTM_IEEE80211:
 #endif
 		break;
 	default:

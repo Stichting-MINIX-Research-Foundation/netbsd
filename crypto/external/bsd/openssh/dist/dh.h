@@ -1,5 +1,5 @@
-/*	$NetBSD: dh.h,v 1.2 2009/06/07 22:38:46 christos Exp $	*/
-/* $OpenBSD: dh.h,v 1.10 2008/06/26 09:19:40 djm Exp $ */
+/*	$NetBSD: dh.h,v 1.5 2015/07/03 01:00:00 christos Exp $	*/
+/* $OpenBSD: dh.h,v 1.13 2015/05/27 23:39:18 dtucker Exp $ */
 
 /*
  * Copyright (c) 2000 Niels Provos.  All rights reserved.
@@ -38,12 +38,14 @@ DH	*dh_new_group_asc(const char *, const char *);
 DH	*dh_new_group(BIGNUM *, BIGNUM *);
 DH	*dh_new_group1(void);
 DH	*dh_new_group14(void);
+DH	*dh_new_group_fallback(int);
 
-void	 dh_gen_key(DH *, int);
+int	 dh_gen_key(DH *, int);
 int	 dh_pub_is_valid(DH *, BIGNUM *);
 
-int	 dh_estimate(int);
+u_int	 dh_estimate(int);
 
+/* Min and max values from RFC4419. */
 #define DH_GRP_MIN	1024
 #define DH_GRP_MAX	8192
 

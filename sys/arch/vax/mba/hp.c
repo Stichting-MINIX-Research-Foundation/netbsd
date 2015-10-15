@@ -1,4 +1,4 @@
-/*	$NetBSD: hp.c,v 1.48 2010/12/14 23:38:30 matt Exp $ */
+/*	$NetBSD: hp.c,v 1.52 2014/12/31 20:37:52 christos Exp $ */
 /*
  * Copyright (c) 1996 Ludd, University of Lule}, Sweden.
  * All rights reserved.
@@ -42,7 +42,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: hp.c,v 1.48 2010/12/14 23:38:30 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: hp.c,v 1.52 2014/12/31 20:37:52 christos Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -101,6 +101,7 @@ const struct bdevsw hp_bdevsw = {
 	.d_ioctl = hpioctl,
 	.d_dump = nulldump,
 	.d_psize = hppsize,
+	.d_discard = nodiscard,
 	.d_flag = D_DISK
 };
 
@@ -115,6 +116,7 @@ const struct cdevsw hp_cdevsw = {
 	.d_poll = nopoll,
 	.d_mmap = nommap,
 	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
 	.d_flag = D_DISK
 };
 
@@ -322,17 +324,11 @@ hpioctl(dev_t dev, u_long cmd, void *addr, int flag, struct lwp *l)
 	struct disklabel * const lp = sc->sc_disk.dk_label;
 	int	error;
 
+	error = disk_ioctl(&sc->sc_disk, dev, cmd, addr, flag, l); 
+	if (error != EPASSTHROUGH)
+		return error;
+
 	switch (cmd) {
-	case DIOCGDINFO:
-		*(struct disklabel *)addr = *lp;
-		return 0;
-
-	case DIOCGPART:
-		((struct partinfo *)addr)->disklab = lp;
-		((struct partinfo *)addr)->part =
-		    &lp->d_partitions[DISKPART(dev)];
-		break;
-
 	case DIOCSDINFO:
 		if ((flag & FWRITE) == 0)
 			return EBADF;

@@ -1,6 +1,6 @@
 /* Target-dependent code for GNU/Linux, architecture independent.
 
-   Copyright (C) 2009-2013 Free Software Foundation, Inc.
+   Copyright (C) 2009-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -32,9 +32,76 @@
 #include "cli/cli-utils.h"
 #include "arch-utils.h"
 #include "gdb_obstack.h"
-#include "cli/cli-utils.h"
+#include "observer.h"
+#include "objfiles.h"
+#include "infcall.h"
 
 #include <ctype.h>
+
+/* This enum represents the signals' numbers on a generic architecture
+   running the Linux kernel.  The definition of "generic" comes from
+   the file <include/uapi/asm-generic/signal.h>, from the Linux kernel
+   tree, which is the "de facto" implementation of signal numbers to
+   be used by new architecture ports.
+
+   For those architectures which have differences between the generic
+   standard (e.g., Alpha), we define the different signals (and *only*
+   those) in the specific target-dependent file (e.g.,
+   alpha-linux-tdep.c, for Alpha).  Please refer to the architecture's
+   tdep file for more information.
+
+   ARM deserves a special mention here.  On the file
+   <arch/arm/include/uapi/asm/signal.h>, it defines only one different
+   (and ARM-only) signal, which is SIGSWI, with the same number as
+   SIGRTMIN.  This signal is used only for a very specific target,
+   called ArthurOS (from RISCOS).  Therefore, we do not handle it on
+   the ARM-tdep file, and we can safely use the generic signal handler
+   here for ARM targets.
+
+   As stated above, this enum is derived from
+   <include/uapi/asm-generic/signal.h>, from the Linux kernel
+   tree.  */
+
+enum
+  {
+    LINUX_SIGHUP = 1,
+    LINUX_SIGINT = 2,
+    LINUX_SIGQUIT = 3,
+    LINUX_SIGILL = 4,
+    LINUX_SIGTRAP = 5,
+    LINUX_SIGABRT = 6,
+    LINUX_SIGIOT = 6,
+    LINUX_SIGBUS = 7,
+    LINUX_SIGFPE = 8,
+    LINUX_SIGKILL = 9,
+    LINUX_SIGUSR1 = 10,
+    LINUX_SIGSEGV = 11,
+    LINUX_SIGUSR2 = 12,
+    LINUX_SIGPIPE = 13,
+    LINUX_SIGALRM = 14,
+    LINUX_SIGTERM = 15,
+    LINUX_SIGSTKFLT = 16,
+    LINUX_SIGCHLD = 17,
+    LINUX_SIGCONT = 18,
+    LINUX_SIGSTOP = 19,
+    LINUX_SIGTSTP = 20,
+    LINUX_SIGTTIN = 21,
+    LINUX_SIGTTOU = 22,
+    LINUX_SIGURG = 23,
+    LINUX_SIGXCPU = 24,
+    LINUX_SIGXFSZ = 25,
+    LINUX_SIGVTALRM = 26,
+    LINUX_SIGPROF = 27,
+    LINUX_SIGWINCH = 28,
+    LINUX_SIGIO = 29,
+    LINUX_SIGPOLL = LINUX_SIGIO,
+    LINUX_SIGPWR = 30,
+    LINUX_SIGSYS = 31,
+    LINUX_SIGUNUSED = 31,
+
+    LINUX_SIGRTMIN = 32,
+    LINUX_SIGRTMAX = 64,
+  };
 
 static struct gdbarch_data *linux_gdbarch_data_handle;
 
@@ -53,6 +120,72 @@ static struct linux_gdbarch_data *
 get_linux_gdbarch_data (struct gdbarch *gdbarch)
 {
   return gdbarch_data (gdbarch, linux_gdbarch_data_handle);
+}
+
+/* Per-inferior data key.  */
+static const struct inferior_data *linux_inferior_data;
+
+/* Linux-specific cached data.  This is used by GDB for caching
+   purposes for each inferior.  This helps reduce the overhead of
+   transfering data from a remote target to the local host.  */
+struct linux_info
+{
+  /* Cache of the inferior's vsyscall/vDSO mapping range.  Only valid
+     if VSYSCALL_RANGE_P is positive.  This is cached because getting
+     at this info requires an auxv lookup (which is itself cached),
+     and looking through the inferior's mappings (which change
+     throughout execution and therefore cannot be cached).  */
+  struct mem_range vsyscall_range;
+
+  /* Zero if we haven't tried looking up the vsyscall's range before
+     yet.  Positive if we tried looking it up, and found it.  Negative
+     if we tried looking it up but failed.  */
+  int vsyscall_range_p;
+};
+
+/* Frees whatever allocated space there is to be freed and sets INF's
+   linux cache data pointer to NULL.  */
+
+static void
+invalidate_linux_cache_inf (struct inferior *inf)
+{
+  struct linux_info *info;
+
+  info = inferior_data (inf, linux_inferior_data);
+  if (info != NULL)
+    {
+      xfree (info);
+      set_inferior_data (inf, linux_inferior_data, NULL);
+    }
+}
+
+/* Handles the cleanup of the linux cache for inferior INF.  ARG is
+   ignored.  Callback for the inferior_appeared and inferior_exit
+   events.  */
+
+static void
+linux_inferior_data_cleanup (struct inferior *inf, void *arg)
+{
+  invalidate_linux_cache_inf (inf);
+}
+
+/* Fetch the linux cache info for INF.  This function always returns a
+   valid INFO pointer.  */
+
+static struct linux_info *
+get_linux_inferior_data (void)
+{
+  struct linux_info *info;
+  struct inferior *inf = current_inferior ();
+
+  info = inferior_data (inf, linux_inferior_data);
+  if (info == NULL)
+    {
+      info = XCNEW (struct linux_info);
+      set_inferior_data (inf, linux_inferior_data, info);
+    }
+
+  return info;
 }
 
 /* This function is suitable for architectures that don't
@@ -176,19 +309,22 @@ linux_get_siginfo_type (struct gdbarch *gdbarch)
   return siginfo_type;
 }
 
+/* Return true if the target is running on uClinux instead of normal
+   Linux kernel.  */
+
+int
+linux_is_uclinux (void)
+{
+  CORE_ADDR dummy;
+
+  return (target_auxv_search (&current_target, AT_NULL, &dummy) > 0
+	  && target_auxv_search (&current_target, AT_PAGESZ, &dummy) == 0);
+}
+
 static int
 linux_has_shared_address_space (struct gdbarch *gdbarch)
 {
-  /* Determine whether we are running on uClinux or normal Linux
-     kernel.  */
-  CORE_ADDR dummy;
-  int target_is_uclinux;
-
-  target_is_uclinux
-    = (target_auxv_search (&current_target, AT_NULL, &dummy) > 0
-       && target_auxv_search (&current_target, AT_PAGESZ, &dummy) == 0);
-
-  return target_is_uclinux;
+  return linux_is_uclinux ();
 }
 
 /* This is how we want PTIDs from core files to be printed.  */
@@ -248,7 +384,7 @@ read_mapping (const char *line,
 /* Implement the "info proc" command.  */
 
 static void
-linux_info_proc (struct gdbarch *gdbarch, char *args,
+linux_info_proc (struct gdbarch *gdbarch, const char *args,
 		 enum info_proc_what what)
 {
   /* A long is used for pid instead of an int to avoid a loss of precision
@@ -261,11 +397,16 @@ linux_info_proc (struct gdbarch *gdbarch, char *args,
   int status_f = (what == IP_STATUS || what == IP_ALL);
   int stat_f = (what == IP_STAT || what == IP_ALL);
   char filename[100];
-  gdb_byte *data;
+  char *data;
   int target_errno;
 
   if (args && isdigit (args[0]))
-    pid = strtoul (args, &args, 10);
+    {
+      char *tem;
+
+      pid = strtoul (args, &tem, 10);
+      args = tem;
+    }
   else
     {
       if (!target_has_execution)
@@ -276,7 +417,7 @@ linux_info_proc (struct gdbarch *gdbarch, char *args,
       pid = current_inferior ()->pid;
     }
 
-  args = skip_spaces (args);
+  args = skip_spaces_const (args);
   if (args && args[0])
     error (_("Too many parameters: %s"), args);
 
@@ -409,7 +550,9 @@ linux_info_proc (struct gdbarch *gdbarch, char *args,
 	  p = skip_spaces_const (p);
 	  if (*p == '(')
 	    {
-	      const char *ep = strchr (p, ')');
+	      /* ps command also relies on no trailing fields
+		 ever contain ')'.  */
+	      const char *ep = strrchr (p, ')');
 	      if (ep != NULL)
 		{
 		  printf_filtered ("Exec file: %.*s\n",
@@ -534,7 +677,7 @@ linux_info_proc (struct gdbarch *gdbarch, char *args,
 /* Implement "info proc mappings" for a corefile.  */
 
 static void
-linux_core_info_proc_mappings (struct gdbarch *gdbarch, char *args)
+linux_core_info_proc_mappings (struct gdbarch *gdbarch, const char *args)
 {
   asection *section;
   ULONGEST count, page_size;
@@ -637,7 +780,7 @@ linux_core_info_proc_mappings (struct gdbarch *gdbarch, char *args)
 /* Implement "info proc" for a corefile.  */
 
 static void
-linux_core_info_proc (struct gdbarch *gdbarch, char *args,
+linux_core_info_proc (struct gdbarch *gdbarch, const char *args,
 		      enum info_proc_what what)
 {
   int exe_f = (what == IP_MINIMAL || what == IP_EXE || what == IP_ALL);
@@ -676,7 +819,7 @@ linux_find_memory_regions_full (struct gdbarch *gdbarch,
 				void *obfd)
 {
   char mapsfilename[100];
-  gdb_byte *data;
+  char *data;
 
   /* We need to know the real target PID to access /proc.  */
   if (current_inferior ()->fake_pid_p)
@@ -993,8 +1136,8 @@ linux_make_mappings_corefile_notes (struct gdbarch *gdbarch, bfd *obfd,
   if (mapping_data.file_count != 0)
     {
       /* Write the count to the obstack.  */
-      pack_long (obstack_base (&data_obstack), long_type,
-		 mapping_data.file_count);
+      pack_long ((gdb_byte *) obstack_base (&data_obstack),
+		 long_type, mapping_data.file_count);
 
       /* Copy the filenames to the data obstack.  */
       obstack_grow (&data_obstack, obstack_base (&filename_obstack),
@@ -1010,6 +1153,56 @@ linux_make_mappings_corefile_notes (struct gdbarch *gdbarch, bfd *obfd,
   return note_data;
 }
 
+/* Structure for passing information from
+   linux_collect_thread_registers via an iterator to
+   linux_collect_regset_section_cb. */
+
+struct linux_collect_regset_section_cb_data
+{
+  struct gdbarch *gdbarch;
+  const struct regcache *regcache;
+  bfd *obfd;
+  char *note_data;
+  int *note_size;
+  unsigned long lwp;
+  enum gdb_signal stop_signal;
+  int abort_iteration;
+};
+
+/* Callback for iterate_over_regset_sections that records a single
+   regset in the corefile note section.  */
+
+static void
+linux_collect_regset_section_cb (const char *sect_name, int size,
+				 const struct regset *regset,
+				 const char *human_name, void *cb_data)
+{
+  char *buf;
+  struct linux_collect_regset_section_cb_data *data = cb_data;
+
+  if (data->abort_iteration)
+    return;
+
+  gdb_assert (regset && regset->collect_regset);
+
+  buf = xmalloc (size);
+  regset->collect_regset (regset, data->regcache, -1, buf, size);
+
+  /* PRSTATUS still needs to be treated specially.  */
+  if (strcmp (sect_name, ".reg") == 0)
+    data->note_data = (char *) elfcore_write_prstatus
+      (data->obfd, data->note_data, data->note_size, data->lwp,
+       gdb_signal_to_host (data->stop_signal), buf);
+  else
+    data->note_data = (char *) elfcore_write_register_note
+      (data->obfd, data->note_data, data->note_size,
+       sect_name, buf, size);
+  xfree (buf);
+
+  if (data->note_data == NULL)
+    data->abort_iteration = 1;
+}
+
 /* Records the thread's register state for the corefile note
    section.  */
 
@@ -1020,47 +1213,25 @@ linux_collect_thread_registers (const struct regcache *regcache,
 				enum gdb_signal stop_signal)
 {
   struct gdbarch *gdbarch = get_regcache_arch (regcache);
-  struct core_regset_section *sect_list;
-  unsigned long lwp;
+  struct linux_collect_regset_section_cb_data data;
 
-  sect_list = gdbarch_core_regset_sections (gdbarch);
-  gdb_assert (sect_list);
+  data.gdbarch = gdbarch;
+  data.regcache = regcache;
+  data.obfd = obfd;
+  data.note_data = note_data;
+  data.note_size = note_size;
+  data.stop_signal = stop_signal;
+  data.abort_iteration = 0;
 
   /* For remote targets the LWP may not be available, so use the TID.  */
-  lwp = ptid_get_lwp (ptid);
-  if (!lwp)
-    lwp = ptid_get_tid (ptid);
+  data.lwp = ptid_get_lwp (ptid);
+  if (!data.lwp)
+    data.lwp = ptid_get_tid (ptid);
 
-  while (sect_list->sect_name != NULL)
-    {
-      const struct regset *regset;
-      char *buf;
-
-      regset = gdbarch_regset_from_core_section (gdbarch,
-						 sect_list->sect_name,
-						 sect_list->size);
-      gdb_assert (regset && regset->collect_regset);
-
-      buf = xmalloc (sect_list->size);
-      regset->collect_regset (regset, regcache, -1, buf, sect_list->size);
-
-      /* PRSTATUS still needs to be treated specially.  */
-      if (strcmp (sect_list->sect_name, ".reg") == 0)
-	note_data = (char *) elfcore_write_prstatus
-			       (obfd, note_data, note_size, lwp,
-				gdb_signal_to_host (stop_signal), buf);
-      else
-	note_data = (char *) elfcore_write_register_note
-			       (obfd, note_data, note_size,
-				sect_list->sect_name, buf, sect_list->size);
-      xfree (buf);
-      sect_list++;
-
-      if (!note_data)
-	return NULL;
-    }
-
-  return note_data;
+  gdbarch_iterate_over_regset_sections (gdbarch,
+					linux_collect_regset_section_cb,
+					&data, regcache);
+  return data.note_data;
 }
 
 /* Fetch the siginfo data for the current thread, if it exists.  If
@@ -1108,9 +1279,7 @@ struct linux_corefile_thread_data
   bfd *obfd;
   char *note_data;
   int *note_size;
-  int num_notes;
   enum gdb_signal stop_signal;
-  linux_collect_thread_registers_ftype collect;
 };
 
 /* Called by gdbthread.c once per thread.  Records the thread's
@@ -1121,12 +1290,17 @@ linux_corefile_thread_callback (struct thread_info *info, void *data)
 {
   struct linux_corefile_thread_data *args = data;
 
+  /* It can be current thread
+     which cannot be removed by update_thread_list.  */
+  if (info->state == THREAD_EXITED)
+    return 0;
+
   if (ptid_get_pid (info->ptid) == args->pid)
     {
       struct cleanup *old_chain;
       struct regcache *regcache;
       gdb_byte *siginfo_data;
-      LONGEST siginfo_size;
+      LONGEST siginfo_size = 0;
 
       regcache = get_thread_arch_regcache (info->ptid, args->gdbarch);
 
@@ -1138,20 +1312,19 @@ linux_corefile_thread_callback (struct thread_info *info, void *data)
 
       old_chain = make_cleanup (xfree, siginfo_data);
 
-      args->note_data = args->collect (regcache, info->ptid, args->obfd,
-				       args->note_data, args->note_size,
-				       args->stop_signal);
-      args->num_notes++;
+      args->note_data = linux_collect_thread_registers
+	(regcache, info->ptid, args->obfd, args->note_data,
+	 args->note_size, args->stop_signal);
 
-      if (siginfo_data != NULL)
-	{
+      /* Don't return anything if we got no register information above,
+         such a core file is useless.  */
+      if (args->note_data != NULL)
+	if (siginfo_data != NULL)
 	  args->note_data = elfcore_write_note (args->obfd,
 						args->note_data,
 						args->note_size,
 						"CORE", NT_SIGINFO,
 						siginfo_data, siginfo_size);
-	  args->num_notes++;
-	}
 
       do_cleanups (old_chain);
     }
@@ -1266,12 +1439,14 @@ linux_fill_prpsinfo (struct elf_internal_linux_prpsinfo *p)
 
   proc_stat = skip_spaces (proc_stat);
 
-  /* Getting rid of the executable name, since we already have it.  We
-     know that this name will be in parentheses, so we can safely look
-     for the close-paren.  */
-  while (*proc_stat != ')')
-    ++proc_stat;
-  ++proc_stat;
+  /* ps command also relies on no trailing fields ever contain ')'.  */
+  proc_stat = strrchr (proc_stat, ')');
+  if (proc_stat == NULL)
+    {
+      do_cleanups (c);
+      return 1;
+    }
+  proc_stat++;
 
   proc_stat = skip_spaces (proc_stat);
 
@@ -1359,18 +1534,21 @@ linux_fill_prpsinfo (struct elf_internal_linux_prpsinfo *p)
   return 1;
 }
 
-/* Fills the "to_make_corefile_note" target vector.  Builds the note
-   section for a corefile, and returns it in a malloc buffer.  */
+/* Build the note section for a corefile, and return it in a malloc
+   buffer.  */
 
-char *
-linux_make_corefile_notes (struct gdbarch *gdbarch, bfd *obfd, int *note_size,
-			   linux_collect_thread_registers_ftype collect)
+static char *
+linux_make_corefile_notes (struct gdbarch *gdbarch, bfd *obfd, int *note_size)
 {
   struct linux_corefile_thread_data thread_args;
   struct elf_internal_linux_prpsinfo prpsinfo;
   char *note_data = NULL;
   gdb_byte *auxv;
   int auxv_len;
+  volatile struct gdb_exception e;
+
+  if (! gdbarch_iterate_over_regset_sections_p (gdbarch))
+    return NULL;
 
   if (linux_fill_prpsinfo (&prpsinfo))
     {
@@ -1394,14 +1572,18 @@ linux_make_corefile_notes (struct gdbarch *gdbarch, bfd *obfd, int *note_size,
     }
 
   /* Thread register information.  */
+  TRY_CATCH (e, RETURN_MASK_ERROR)
+    {
+      update_thread_list ();
+    }
+  if (e.reason < 0)
+    exception_print (gdb_stderr, e);
   thread_args.gdbarch = gdbarch;
   thread_args.pid = ptid_get_pid (inferior_ptid);
   thread_args.obfd = obfd;
   thread_args.note_data = note_data;
   thread_args.note_size = note_size;
-  thread_args.num_notes = 0;
   thread_args.stop_signal = find_stop_signal ();
-  thread_args.collect = collect;
   iterate_over_threads (linux_corefile_thread_callback, &thread_args);
   note_data = thread_args.note_data;
   if (!note_data)
@@ -1429,22 +1611,362 @@ linux_make_corefile_notes (struct gdbarch *gdbarch, bfd *obfd, int *note_size,
   note_data = linux_make_mappings_corefile_notes (gdbarch, obfd,
 						  note_data, note_size);
 
-  make_cleanup (xfree, note_data);
   return note_data;
 }
 
-static char *
-linux_make_corefile_notes_1 (struct gdbarch *gdbarch, bfd *obfd, int *note_size)
-{
-  /* FIXME: uweigand/2011-10-06: Once all GNU/Linux architectures have been
-     converted to gdbarch_core_regset_sections, we no longer need to fall back
-     to the target method at this point.  */
+/* Implementation of `gdbarch_gdb_signal_from_target', as defined in
+   gdbarch.h.  This function is not static because it is exported to
+   other -tdep files.  */
 
-  if (!gdbarch_core_regset_sections (gdbarch))
-    return target_make_corefile_notes (obfd, note_size);
-  else
-    return linux_make_corefile_notes (gdbarch, obfd, note_size,
-				      linux_collect_thread_registers);
+enum gdb_signal
+linux_gdb_signal_from_target (struct gdbarch *gdbarch, int signal)
+{
+  switch (signal)
+    {
+    case 0:
+      return GDB_SIGNAL_0;
+
+    case LINUX_SIGHUP:
+      return GDB_SIGNAL_HUP;
+
+    case LINUX_SIGINT:
+      return GDB_SIGNAL_INT;
+
+    case LINUX_SIGQUIT:
+      return GDB_SIGNAL_QUIT;
+
+    case LINUX_SIGILL:
+      return GDB_SIGNAL_ILL;
+
+    case LINUX_SIGTRAP:
+      return GDB_SIGNAL_TRAP;
+
+    case LINUX_SIGABRT:
+      return GDB_SIGNAL_ABRT;
+
+    case LINUX_SIGBUS:
+      return GDB_SIGNAL_BUS;
+
+    case LINUX_SIGFPE:
+      return GDB_SIGNAL_FPE;
+
+    case LINUX_SIGKILL:
+      return GDB_SIGNAL_KILL;
+
+    case LINUX_SIGUSR1:
+      return GDB_SIGNAL_USR1;
+
+    case LINUX_SIGSEGV:
+      return GDB_SIGNAL_SEGV;
+
+    case LINUX_SIGUSR2:
+      return GDB_SIGNAL_USR2;
+
+    case LINUX_SIGPIPE:
+      return GDB_SIGNAL_PIPE;
+
+    case LINUX_SIGALRM:
+      return GDB_SIGNAL_ALRM;
+
+    case LINUX_SIGTERM:
+      return GDB_SIGNAL_TERM;
+
+    case LINUX_SIGCHLD:
+      return GDB_SIGNAL_CHLD;
+
+    case LINUX_SIGCONT:
+      return GDB_SIGNAL_CONT;
+
+    case LINUX_SIGSTOP:
+      return GDB_SIGNAL_STOP;
+
+    case LINUX_SIGTSTP:
+      return GDB_SIGNAL_TSTP;
+
+    case LINUX_SIGTTIN:
+      return GDB_SIGNAL_TTIN;
+
+    case LINUX_SIGTTOU:
+      return GDB_SIGNAL_TTOU;
+
+    case LINUX_SIGURG:
+      return GDB_SIGNAL_URG;
+
+    case LINUX_SIGXCPU:
+      return GDB_SIGNAL_XCPU;
+
+    case LINUX_SIGXFSZ:
+      return GDB_SIGNAL_XFSZ;
+
+    case LINUX_SIGVTALRM:
+      return GDB_SIGNAL_VTALRM;
+
+    case LINUX_SIGPROF:
+      return GDB_SIGNAL_PROF;
+
+    case LINUX_SIGWINCH:
+      return GDB_SIGNAL_WINCH;
+
+    /* No way to differentiate between SIGIO and SIGPOLL.
+       Therefore, we just handle the first one.  */
+    case LINUX_SIGIO:
+      return GDB_SIGNAL_IO;
+
+    case LINUX_SIGPWR:
+      return GDB_SIGNAL_PWR;
+
+    case LINUX_SIGSYS:
+      return GDB_SIGNAL_SYS;
+
+    /* SIGRTMIN and SIGRTMAX are not continuous in <gdb/signals.def>,
+       therefore we have to handle them here.  */
+    case LINUX_SIGRTMIN:
+      return GDB_SIGNAL_REALTIME_32;
+
+    case LINUX_SIGRTMAX:
+      return GDB_SIGNAL_REALTIME_64;
+    }
+
+  if (signal >= LINUX_SIGRTMIN + 1 && signal <= LINUX_SIGRTMAX - 1)
+    {
+      int offset = signal - LINUX_SIGRTMIN + 1;
+
+      return (enum gdb_signal) ((int) GDB_SIGNAL_REALTIME_33 + offset);
+    }
+
+  return GDB_SIGNAL_UNKNOWN;
+}
+
+/* Implementation of `gdbarch_gdb_signal_to_target', as defined in
+   gdbarch.h.  This function is not static because it is exported to
+   other -tdep files.  */
+
+int
+linux_gdb_signal_to_target (struct gdbarch *gdbarch,
+			    enum gdb_signal signal)
+{
+  switch (signal)
+    {
+    case GDB_SIGNAL_0:
+      return 0;
+
+    case GDB_SIGNAL_HUP:
+      return LINUX_SIGHUP;
+
+    case GDB_SIGNAL_INT:
+      return LINUX_SIGINT;
+
+    case GDB_SIGNAL_QUIT:
+      return LINUX_SIGQUIT;
+
+    case GDB_SIGNAL_ILL:
+      return LINUX_SIGILL;
+
+    case GDB_SIGNAL_TRAP:
+      return LINUX_SIGTRAP;
+
+    case GDB_SIGNAL_ABRT:
+      return LINUX_SIGABRT;
+
+    case GDB_SIGNAL_FPE:
+      return LINUX_SIGFPE;
+
+    case GDB_SIGNAL_KILL:
+      return LINUX_SIGKILL;
+
+    case GDB_SIGNAL_BUS:
+      return LINUX_SIGBUS;
+
+    case GDB_SIGNAL_SEGV:
+      return LINUX_SIGSEGV;
+
+    case GDB_SIGNAL_SYS:
+      return LINUX_SIGSYS;
+
+    case GDB_SIGNAL_PIPE:
+      return LINUX_SIGPIPE;
+
+    case GDB_SIGNAL_ALRM:
+      return LINUX_SIGALRM;
+
+    case GDB_SIGNAL_TERM:
+      return LINUX_SIGTERM;
+
+    case GDB_SIGNAL_URG:
+      return LINUX_SIGURG;
+
+    case GDB_SIGNAL_STOP:
+      return LINUX_SIGSTOP;
+
+    case GDB_SIGNAL_TSTP:
+      return LINUX_SIGTSTP;
+
+    case GDB_SIGNAL_CONT:
+      return LINUX_SIGCONT;
+
+    case GDB_SIGNAL_CHLD:
+      return LINUX_SIGCHLD;
+
+    case GDB_SIGNAL_TTIN:
+      return LINUX_SIGTTIN;
+
+    case GDB_SIGNAL_TTOU:
+      return LINUX_SIGTTOU;
+
+    case GDB_SIGNAL_IO:
+      return LINUX_SIGIO;
+
+    case GDB_SIGNAL_XCPU:
+      return LINUX_SIGXCPU;
+
+    case GDB_SIGNAL_XFSZ:
+      return LINUX_SIGXFSZ;
+
+    case GDB_SIGNAL_VTALRM:
+      return LINUX_SIGVTALRM;
+
+    case GDB_SIGNAL_PROF:
+      return LINUX_SIGPROF;
+
+    case GDB_SIGNAL_WINCH:
+      return LINUX_SIGWINCH;
+
+    case GDB_SIGNAL_USR1:
+      return LINUX_SIGUSR1;
+
+    case GDB_SIGNAL_USR2:
+      return LINUX_SIGUSR2;
+
+    case GDB_SIGNAL_PWR:
+      return LINUX_SIGPWR;
+
+    case GDB_SIGNAL_POLL:
+      return LINUX_SIGPOLL;
+
+    /* GDB_SIGNAL_REALTIME_32 is not continuous in <gdb/signals.def>,
+       therefore we have to handle it here.  */
+    case GDB_SIGNAL_REALTIME_32:
+      return LINUX_SIGRTMIN;
+
+    /* Same comment applies to _64.  */
+    case GDB_SIGNAL_REALTIME_64:
+      return LINUX_SIGRTMAX;
+    }
+
+  /* GDB_SIGNAL_REALTIME_33 to _64 are continuous.  */
+  if (signal >= GDB_SIGNAL_REALTIME_33
+      && signal <= GDB_SIGNAL_REALTIME_63)
+    {
+      int offset = signal - GDB_SIGNAL_REALTIME_33;
+
+      return LINUX_SIGRTMIN + 1 + offset;
+    }
+
+  return -1;
+}
+
+/* Rummage through mappings to find a mapping's size.  */
+
+static int
+find_mapping_size (CORE_ADDR vaddr, unsigned long size,
+		   int read, int write, int exec, int modified,
+		   void *data)
+{
+  struct mem_range *range = data;
+
+  if (vaddr == range->start)
+    {
+      range->length = size;
+      return 1;
+    }
+  return 0;
+}
+
+/* Helper for linux_vsyscall_range that does the real work of finding
+   the vsyscall's address range.  */
+
+static int
+linux_vsyscall_range_raw (struct gdbarch *gdbarch, struct mem_range *range)
+{
+  if (target_auxv_search (&current_target, AT_SYSINFO_EHDR, &range->start) <= 0)
+    return 0;
+
+  /* This is installed by linux_init_abi below, so should always be
+     available.  */
+  gdb_assert (gdbarch_find_memory_regions_p (target_gdbarch ()));
+
+  range->length = 0;
+  gdbarch_find_memory_regions (gdbarch, find_mapping_size, range);
+  return 1;
+}
+
+/* Implementation of the "vsyscall_range" gdbarch hook.  Handles
+   caching, and defers the real work to linux_vsyscall_range_raw.  */
+
+static int
+linux_vsyscall_range (struct gdbarch *gdbarch, struct mem_range *range)
+{
+  struct linux_info *info = get_linux_inferior_data ();
+
+  if (info->vsyscall_range_p == 0)
+    {
+      if (linux_vsyscall_range_raw (gdbarch, &info->vsyscall_range))
+	info->vsyscall_range_p = 1;
+      else
+	info->vsyscall_range_p = -1;
+    }
+
+  if (info->vsyscall_range_p < 0)
+    return 0;
+
+  *range = info->vsyscall_range;
+  return 1;
+}
+
+/* Symbols for linux_infcall_mmap's ARG_FLAGS; their Linux MAP_* system
+   definitions would be dependent on compilation host.  */
+#define GDB_MMAP_MAP_PRIVATE	0x02		/* Changes are private.  */
+#define GDB_MMAP_MAP_ANONYMOUS	0x20		/* Don't use a file.  */
+
+/* See gdbarch.sh 'infcall_mmap'.  */
+
+static CORE_ADDR
+linux_infcall_mmap (CORE_ADDR size, unsigned prot)
+{
+  struct objfile *objf;
+  /* Do there still exist any Linux systems without "mmap64"?
+     "mmap" uses 64-bit off_t on x86_64 and 32-bit off_t on i386 and x32.  */
+  struct value *mmap_val = find_function_in_inferior ("mmap64", &objf);
+  struct value *addr_val;
+  struct gdbarch *gdbarch = get_objfile_arch (objf);
+  CORE_ADDR retval;
+  enum
+    {
+      ARG_ADDR, ARG_LENGTH, ARG_PROT, ARG_FLAGS, ARG_FD, ARG_OFFSET, ARG_LAST
+    };
+  struct value *arg[ARG_LAST];
+
+  arg[ARG_ADDR] = value_from_pointer (builtin_type (gdbarch)->builtin_data_ptr,
+				      0);
+  /* Assuming sizeof (unsigned long) == sizeof (size_t).  */
+  arg[ARG_LENGTH] = value_from_ulongest
+		    (builtin_type (gdbarch)->builtin_unsigned_long, size);
+  gdb_assert ((prot & ~(GDB_MMAP_PROT_READ | GDB_MMAP_PROT_WRITE
+			| GDB_MMAP_PROT_EXEC))
+	      == 0);
+  arg[ARG_PROT] = value_from_longest (builtin_type (gdbarch)->builtin_int, prot);
+  arg[ARG_FLAGS] = value_from_longest (builtin_type (gdbarch)->builtin_int,
+				       GDB_MMAP_MAP_PRIVATE
+				       | GDB_MMAP_MAP_ANONYMOUS);
+  arg[ARG_FD] = value_from_longest (builtin_type (gdbarch)->builtin_int, -1);
+  arg[ARG_OFFSET] = value_from_longest (builtin_type (gdbarch)->builtin_int64,
+					0);
+  addr_val = call_function_by_hand (mmap_val, ARG_LAST, arg);
+  retval = value_as_address (addr_val);
+  if (retval == (CORE_ADDR) -1)
+    error (_("Failed inferior mmap call for %s bytes, errno is changed."),
+	   pulongest (size));
+  return retval;
 }
 
 /* To be called from the various GDB_OSABI_LINUX handlers for the
@@ -1457,9 +1979,15 @@ linux_init_abi (struct gdbarch_info info, struct gdbarch *gdbarch)
   set_gdbarch_info_proc (gdbarch, linux_info_proc);
   set_gdbarch_core_info_proc (gdbarch, linux_core_info_proc);
   set_gdbarch_find_memory_regions (gdbarch, linux_find_memory_regions);
-  set_gdbarch_make_corefile_notes (gdbarch, linux_make_corefile_notes_1);
+  set_gdbarch_make_corefile_notes (gdbarch, linux_make_corefile_notes);
   set_gdbarch_has_shared_address_space (gdbarch,
 					linux_has_shared_address_space);
+  set_gdbarch_gdb_signal_from_target (gdbarch,
+				      linux_gdb_signal_from_target);
+  set_gdbarch_gdb_signal_to_target (gdbarch,
+				    linux_gdb_signal_to_target);
+  set_gdbarch_vsyscall_range (gdbarch, linux_vsyscall_range);
+  set_gdbarch_infcall_mmap (gdbarch, linux_infcall_mmap);
 }
 
 /* Provide a prototype to silence -Wmissing-prototypes.  */
@@ -1470,4 +1998,11 @@ _initialize_linux_tdep (void)
 {
   linux_gdbarch_data_handle =
     gdbarch_data_register_post_init (init_linux_gdbarch_data);
+
+  /* Set a cache per-inferior.  */
+  linux_inferior_data
+    = register_inferior_data_with_cleanup (NULL, linux_inferior_data_cleanup);
+  /* Observers used to invalidate the cache when needed.  */
+  observer_attach_inferior_exit (invalidate_linux_cache_inf);
+  observer_attach_inferior_appeared (invalidate_linux_cache_inf);
 }

@@ -1,4 +1,4 @@
-/* $NetBSD: vmt.c,v 1.8 2013/03/16 01:26:53 jmmv Exp $ */
+/* $NetBSD: vmt.c,v 1.11 2015/04/23 23:23:00 pgoyette Exp $ */
 /* $OpenBSD: vmt.c,v 1.11 2011/01/27 21:29:25 dtucker Exp $ */
 
 /*
@@ -806,7 +806,7 @@ vmt_tclo_tick(void *xarg)
 
 		/* find first available ipv4 address */
 		guest_ip = NULL;
-		TAILQ_FOREACH(iface, &ifnet, if_list) {
+		IFNET_FOREACH(iface) {
 			struct ifaddr *iface_addr;
 
 			/* skip loopback */
@@ -815,7 +815,7 @@ vmt_tclo_tick(void *xarg)
 				continue;
 			}
 
-			TAILQ_FOREACH(iface_addr, &iface->if_addrlist, ifa_list) {
+			IFADDR_FOREACH(iface_addr, iface) {
 				if (iface_addr->ifa_addr->sa_family != AF_INET) {
 					continue;
 				}
@@ -1300,7 +1300,7 @@ vm_rpc_send_rpci_tx(struct vmt_softc *sc, const char *fmt, ...)
  * match the register values to the various constants in this file.
  */
 
-MODULE(MODULE_CLASS_DRIVER, vmt, NULL);
+MODULE(MODULE_CLASS_DRIVER, vmt, "sysmon_power,sysmon_taskq");
 
 #ifdef _MODULE
 #include "ioconf.c"

@@ -1,6 +1,6 @@
 /* Definitions for targets which report shared library events.
 
-   Copyright (C) 2007-2013 Free Software Foundation, Inc.
+   Copyright (C) 2007-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -25,8 +25,6 @@
 #include "target.h"
 #include "vec.h"
 #include "solib-target.h"
-
-#include "gdb_string.h"
 
 /* Private data for each loaded library.  */
 struct lm_info
@@ -119,7 +117,7 @@ library_list_start_library (struct gdb_xml_parser *parser,
 			    void *user_data, VEC(gdb_xml_value_s) *attributes)
 {
   VEC(lm_info_p) **list = user_data;
-  struct lm_info *item = XZALLOC (struct lm_info);
+  struct lm_info *item = XCNEW (struct lm_info);
   const char *name = xml_find_attribute (attributes, "name")->value;
 
   item->name = xstrdup (name);
@@ -274,7 +272,7 @@ solib_target_current_sos (void)
   /* Build a struct so_list for each entry on the list.  */
   for (ix = 0; VEC_iterate (lm_info_p, library_list, ix, info); ix++)
     {
-      new_solib = XZALLOC (struct so_list);
+      new_solib = XCNEW (struct so_list);
       strncpy (new_solib->so_name, info->name, SO_NAME_MAX_PATH_SIZE - 1);
       new_solib->so_name[SO_NAME_MAX_PATH_SIZE - 1] = '\0';
       strncpy (new_solib->so_original_name, info->name,
@@ -339,7 +337,7 @@ solib_target_relocate_section_addresses (struct so_list *so,
      it any earlier, since we need to open the file first.  */
   if (so->lm_info->offsets == NULL)
     {
-      int num_sections = bfd_count_sections (so->abfd);
+      int num_sections = gdb_bfd_count_sections (so->abfd);
 
       so->lm_info->offsets = xzalloc (SIZEOF_N_SECTION_OFFSETS (num_sections));
 
@@ -456,7 +454,9 @@ Could not relocate shared library \"%s\": bad offsets"), so->so_name);
 	}
     }
 
-  offset = so->lm_info->offsets->offsets[sec->the_bfd_section->index];
+  offset = so->lm_info->offsets->offsets[gdb_bfd_section_index
+					 (sec->the_bfd_section->owner,
+					  sec->the_bfd_section)];
   sec->addr += offset;
   sec->endaddr += offset;
 }
@@ -475,7 +475,7 @@ solib_target_in_dynsym_resolve_code (CORE_ADDR pc)
   /* We don't have a range of addresses for the dynamic linker; there
      may not be one in the program's address space.  So only report
      PLT entries (which may be import stubs).  */
-  return in_plt_section (pc, NULL);
+  return in_plt_section (pc);
 }
 
 struct target_so_ops solib_target_so_ops;

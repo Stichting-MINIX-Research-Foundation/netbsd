@@ -1,4 +1,4 @@
-/*	$NetBSD: npf_show.c,v 1.8 2013/11/22 18:42:02 rmind Exp $	*/
+/*	$NetBSD: npf_show.c,v 1.19 2015/06/03 23:36:05 rmind Exp $	*/
 
 /*-
  * Copyright (c) 2013 The NetBSD Foundation, Inc.
@@ -36,7 +36,7 @@
  */
 
 #include <sys/cdefs.h>
-__RCSID("$NetBSD: npf_show.c,v 1.8 2013/11/22 18:42:02 rmind Exp $");
+__RCSID("$NetBSD: npf_show.c,v 1.19 2015/06/03 23:36:05 rmind Exp $");
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -53,13 +53,22 @@ __RCSID("$NetBSD: npf_show.c,v 1.8 2013/11/22 18:42:02 rmind Exp $");
 
 #include "npfctl.h"
 
+#define	SEEN_SRC	0x01
+#define	SEEN_DST	0x02
+
 typedef struct {
 	nl_config_t *	conf;
 	FILE *		fp;
 	long		fpos;
+	u_int		flags;
+	uint32_t	curmark;
 } npf_conf_info_t;
 
-static npf_conf_info_t	stdout_ctx = { .fp = stdout, .fpos = 0 };
+static npf_conf_info_t	stdout_ctx = {
+	.fp = stdout,
+	.fpos = 0,
+	.flags = 0
+};
 
 static void	print_indent(npf_conf_info_t *, u_int);
 static void	print_linesep(npf_conf_info_t *);
@@ -111,7 +120,7 @@ print_family(npf_conf_info_t *ctx, const uint32_t *words)
 
 	switch (af) {
 	case AF_INET:
-		return estrdup("inet");
+		return estrdup("inet4");
 	case AF_INET6:
 		return estrdup("inet6");
 	default:
@@ -201,12 +210,18 @@ static char *
 print_portrange(npf_conf_info_t *ctx, const uint32_t *words)
 {
 	u_int fport = words[0], tport = words[1];
+	const char *any_str = "";
 	char *p;
 
+	if (ctx->curmark == BM_SRC_PORTS && (ctx->flags & SEEN_SRC) == 0)
+		any_str = "from any ";
+	if (ctx->curmark == BM_DST_PORTS && (ctx->flags & SEEN_DST) == 0)
+		any_str = "to any ";
+
 	if (fport != tport) {
-		easprintf(&p, "%u:%u", fport, tport);
+		easprintf(&p, "%sport %u:%u", any_str, fport, tport);
 	} else {
-		easprintf(&p, "%u", fport);
+		easprintf(&p, "%sport %u", any_str, fport);
 	}
 	return p;
 }
@@ -218,6 +233,7 @@ print_portrange(npf_conf_info_t *ctx, const uint32_t *words)
  */
 
 #define	F(name)		__CONCAT(NPF_RULE_, name)
+#define	STATEFUL_ENDS	(NPF_RULE_STATEFUL | NPF_RULE_MULTIENDS)
 #define	NAME_AT		2
 
 static const struct attr_keyword_mapent {
@@ -232,7 +248,8 @@ static const struct attr_keyword_mapent {
 	{ F(RETRST)|F(RETICMP),	F(RETRST)|F(RETICMP),	"return"	},
 	{ F(RETRST)|F(RETICMP),	F(RETRST),		"return-rst"	},
 	{ F(RETRST)|F(RETICMP),	F(RETICMP),		"return-icmp"	},
-	{ F(STATEFUL),		F(STATEFUL),		"stateful"	},
+	{ STATEFUL_ENDS,	F(STATEFUL),		"stateful"	},
+	{ STATEFUL_ENDS,	STATEFUL_ENDS,		"stateful-ends"	},
 	{ F(DIMASK),		F(IN),			"in"		},
 	{ F(DIMASK),		F(OUT),			"out"		},
 	{ F(FINAL),		F(FINAL),		"final"		},
@@ -242,22 +259,23 @@ static const struct mark_keyword_mapent {
 	u_int		mark;
 	const char *	token;
 	const char *	sep;
+	u_int		set_flags;
 	char *		(*printfn)(npf_conf_info_t *, const uint32_t *);
 	u_int		fwords;
 } mark_keyword_map[] = {
-	{ BM_IPVER,	"family %s",	NULL,		print_family,	1 },
-	{ BM_PROTO,	"proto %s",	NULL,		print_proto,	1 },
-	{ BM_TCPFL,	"flags %s",	NULL,		print_tcpflags,	2 },
-	{ BM_ICMP_TYPE,	"icmp-type %s",	NULL,		print_number,	1 },
-	{ BM_ICMP_CODE,	"code %s",	NULL,		print_number,	1 },
+	{ BM_IPVER,	"family %s",	NULL, 0,	print_family,	1 },
+	{ BM_PROTO,	"proto %s",	", ", 0,	print_proto,	1 },
+	{ BM_TCPFL,	"flags %s",	NULL, 0,	print_tcpflags,	2 },
+	{ BM_ICMP_TYPE,	"icmp-type %s",	NULL, 0,	print_number,	1 },
+	{ BM_ICMP_CODE,	"code %s",	NULL, 0,	print_number,	1 },
 
-	{ BM_SRC_CIDR,	"from %s",	", ",		print_address,	6 },
-	{ BM_SRC_TABLE,	"from <%s>",	NULL,		print_table,	1 },
-	{ BM_SRC_PORTS,	"port %s",	", ",		print_portrange,2 },
+	{ BM_SRC_CIDR,	"from %s",	", ", SEEN_SRC,	print_address,	6 },
+	{ BM_SRC_TABLE,	"from <%s>",	NULL, SEEN_SRC,	print_table,	1 },
+	{ BM_SRC_PORTS,	"%s",		", ", 0,	print_portrange,2 },
 
-	{ BM_DST_CIDR,	"to %s",	", ",		print_address,	6 },
-	{ BM_DST_TABLE,	"to <%s>",	NULL,		print_table,	1 },
-	{ BM_DST_PORTS,	"port %s",	", ",		print_portrange,2 },
+	{ BM_DST_CIDR,	"to %s",	", ", SEEN_DST,	print_address,	6 },
+	{ BM_DST_TABLE,	"to <%s>",	NULL, SEEN_DST,	print_table,	1 },
+	{ BM_DST_PORTS,	"%s",		", ", 0,	print_portrange,2 },
 };
 
 static const char * __attribute__((format_arg(2)))
@@ -283,6 +301,10 @@ scan_marks(npf_conf_info_t *ctx, const struct mark_keyword_mapent *mk,
 			errx(EXIT_FAILURE, "byte-code marking inconsistency");
 		}
 		if (m == mk->mark) {
+			/* Set the current mark and the flags. */
+			ctx->flags |= mk->set_flags;
+			ctx->curmark = m;
+
 			/* Value is processed by the print function. */
 			assert(mk->fwords == nwords);
 			vals[nvals++] = mk->printfn(ctx, marks);
@@ -314,10 +336,26 @@ static void
 npfctl_print_filter(npf_conf_info_t *ctx, nl_rule_t *rl)
 {
 	const void *marks;
-	size_t mlen;
+	size_t mlen, len;
+	const void *code;
+	int type;
 
-	/* BPF filter criteria described by the byte-code marks. */
 	marks = npf_rule_getinfo(rl, &mlen);
+	if (!marks && (code = npf_rule_getcode(rl, &type, &len)) != NULL) {
+		/*
+		 * No marks, but the byte-code is present.  This must
+		 * have been filled by libpcap(3) or possibly an unknown
+		 * to us byte-code.
+		 */
+		fprintf(ctx->fp, "%s ", type == NPF_CODE_BPF ?
+		    "pcap-filter \"...\"" : "unrecognized-bytecode");
+		return;
+	}
+	ctx->flags = 0;
+
+	/*
+	 * BPF filter criteria described by the byte-code marks.
+	 */
 	for (u_int i = 0; i < __arraycount(mark_keyword_map); i++) {
 		const struct mark_keyword_mapent *mk = &mark_keyword_map[i];
 		char *val;
@@ -354,7 +392,7 @@ npfctl_print_rule(npf_conf_info_t *ctx, nl_rule_t *rl)
 		fprintf(ctx->fp, "on %s ", ifname);
 	}
 
-	if ((attr & (NPF_RULE_GROUP | NPF_RULE_DYNAMIC)) == NPF_RULE_GROUP) {
+	if ((attr & NPF_DYNAMIC_GROUP) == NPF_RULE_GROUP) {
 		/* Group; done. */
 		fputs("\n", ctx->fp);
 		return;
@@ -365,8 +403,15 @@ npfctl_print_rule(npf_conf_info_t *ctx, nl_rule_t *rl)
 
 	/* Rule procedure. */
 	if ((rproc = npf_rule_getproc(rl)) != NULL) {
-		fprintf(ctx->fp, "apply \"%s\"", rproc);
+		fprintf(ctx->fp, "apply \"%s\" ", rproc);
 	}
+
+	/* If dynamic rule - print its ID. */
+	if ((attr & NPF_DYNAMIC_GROUP) == NPF_RULE_DYNAMIC) {
+		uint64_t id = npf_rule_getid(rl);
+		fprintf(ctx->fp, "# id = \"%" PRIx64 "\" ", id);
+	}
+
 	fputs("\n", ctx->fp);
 }
 
@@ -378,6 +423,7 @@ npfctl_print_nat(npf_conf_info_t *ctx, nl_nat_t *nt)
 	npf_addr_t addr;
 	in_port_t port;
 	size_t alen;
+	u_int flags;
 	char *seg;
 
 	/* Get the interface. */
@@ -389,7 +435,7 @@ npfctl_print_nat(npf_conf_info_t *ctx, nl_nat_t *nt)
 	seg = npfctl_print_addrmask(alen, &addr, NPF_NO_NETMASK);
 	if (port) {
 		char *p;
-		easprintf(&p, "%s port %u", seg, port);
+		easprintf(&p, "%s port %u", seg, ntohs(port));
 		free(seg), seg = p;
 	}
 	seg1 = seg2 = "any";
@@ -405,12 +451,14 @@ npfctl_print_nat(npf_conf_info_t *ctx, nl_nat_t *nt)
 		seg2 = seg;
 		break;
 	default:
-		assert(false);
+		abort();
 	}
+	flags = npf_nat_getflags(nt);
 
 	/* Print out the NAT policy with the filter criteria. */
-	fprintf(ctx->fp, "map %s dynamic %s %s %s pass ",
-	    ifname, seg1, arrow, seg2);
+	fprintf(ctx->fp, "map %s %s %s %s %s pass ",
+	    ifname, (flags & NPF_NAT_STATIC) ? "static" : "dynamic",
+	    seg1, arrow, seg2);
 	npfctl_print_filter(ctx, rl);
 	fputs("\n", ctx->fp);
 	free(seg);
@@ -420,17 +468,19 @@ static void
 npfctl_print_table(npf_conf_info_t *ctx, nl_table_t *tl)
 {
 	const char *name = npf_table_getname(tl);
-	const int type = npf_table_gettype(tl);
+	const unsigned type = npf_table_gettype(tl);
+	const char *table_types[] = {
+		[NPF_TABLE_HASH] = "hash",
+		[NPF_TABLE_TREE] = "tree",
+		[NPF_TABLE_CDB]  = "cdb",
+	};
 
 	if (name[0] == '.') {
 		/* Internal tables use dot and are hidden. */
 		return;
 	}
-
-	fprintf(ctx->fp, "table <%s> type %s\n", name,
-	    (type == NPF_TABLE_HASH) ? "hash" :
-	    (type == NPF_TABLE_TREE) ? "tree" :
-	    "unknown");
+	assert(type < __arraycount(table_types));
+	fprintf(ctx->fp, "table <%s> type %s\n", name, table_types[type]);
 }
 
 int
@@ -445,7 +495,7 @@ npfctl_config_show(int fd)
 		if (ncf == NULL) {
 			return errno;
 		}
-		fprintf(ctx->fp, "Filtering:\t%s\nConfiguration:\t%s\n",
+		fprintf(ctx->fp, "# filtering:\t%s\n# config:\t%s\n",
 		    active ? "active" : "inactive",
 		    loaded ? "loaded" : "empty");
 		print_linesep(ctx);

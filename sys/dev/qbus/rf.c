@@ -1,4 +1,4 @@
-/*	$NetBSD: rf.c,v 1.25 2012/10/27 17:18:37 chs Exp $	*/
+/*	$NetBSD: rf.c,v 1.32 2015/04/26 15:15:20 mlelstv Exp $	*/
 /*
  * Copyright (c) 2002 Jochen Kunz.
  * All rights reserved.
@@ -32,11 +32,11 @@
 TODO:
 - Better LBN bound checking, block padding for SD disks.
 - Formatting / "Set Density"
-- Better error handling / detailed error reason reportnig.
+- Better error handling / detailed error reason reporting.
 */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: rf.c,v 1.25 2012/10/27 17:18:37 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: rf.c,v 1.32 2015/04/26 15:15:20 mlelstv Exp $");
 
 /* autoconfig stuff */
 #include <sys/param.h>
@@ -117,27 +117,29 @@ dev_type_size(rfsize);
 
 /* Entries in block and character major device number switch table. */
 const struct bdevsw rf_bdevsw = {
-	rfopen,
-	rfclose,
-	rfstrategy,
-	rfioctl,
-	rfdump,
-	rfsize,
-	D_DISK
+	.d_open = rfopen,
+	.d_close = rfclose,
+	.d_strategy = rfstrategy,
+	.d_ioctl = rfioctl,
+	.d_dump = rfdump,
+	.d_psize = rfsize,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
 const struct cdevsw rf_cdevsw = {
-	rfopen,
-	rfclose,
-	rfread,
-	rfwrite,
-	rfioctl,
-	nostop,
-	notty,
-	nopoll,
-	nommap,
-	nokqfilter,
-	D_DISK
+	.d_open = rfopen,
+	.d_close = rfclose,
+	.d_read = rfread,
+	.d_write = rfwrite,
+	.d_ioctl = rfioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
 
@@ -200,7 +202,7 @@ struct rfc_attach_args {
 
 
 const struct dkdriver rfdkdriver = {
-	rfstrategy
+	.d_strategy = rfstrategy
 };
 
 
@@ -458,7 +460,7 @@ rf_attach(device_t parent, device_t self, void *aux)
 	disk_init(&rf_sc->sc_disk, device_xname(rf_sc->sc_dev), &rfdkdriver);
 	disk_attach(&rf_sc->sc_disk);
 	dl = rf_sc->sc_disk.dk_label;
-	dl->d_type = DTYPE_FLOPPY;		/* drive type */
+	dl->d_type = DKTYPE_FLOPPY;		/* drive type */
 	dl->d_magic = DISKMAGIC;		/* the magic number */
 	dl->d_magic2 = DISKMAGIC;
 	dl->d_typename[0] = 'R';
@@ -1088,27 +1090,22 @@ int
 rfioctl(dev_t dev, u_long cmd, void *data, int fflag, struct lwp *l)
 {
 	struct rf_softc *rf_sc = device_lookup_private(&rf_cd, DISKUNIT(dev));
+	int error;
 
 	/* We are going to operate on a non-open dev? PANIC! */
 	if ((rf_sc->sc_state & 1 << (DISKPART(dev) + RFS_OPEN_SHIFT)) == 0)
 		panic("rfioctl: can not operate on non-open drive %s "
 		    "partition %"PRIu32, device_xname(rf_sc->sc_dev), DISKPART(dev));
+	error = disk_ioctl(&rf_sc->sc_disk, dev, cmd, data, fflag, l);
+	if (error != EPASSTHROUGH)
+		return error;
+
 	switch (cmd) {
 	/* get and set disklabel; DIOCGPART used internally */
-	case DIOCGDINFO: /* get */
-		memcpy(data, rf_sc->sc_disk.dk_label,
-		    sizeof(struct disklabel));
-		return(0);
 	case DIOCSDINFO: /* set */
 		return(0);
 	case DIOCWDINFO: /* set, update disk */
 		return(0);
-	case DIOCGPART:  /* get partition */
-		((struct partinfo *)data)->disklab = rf_sc->sc_disk.dk_label;
-		((struct partinfo *)data)->part =
-		    &rf_sc->sc_disk.dk_label->d_partitions[DISKPART(dev)];
-		return(0);
-
 	/* do format operation, read or write */
 	case DIOCRFORMAT:
 	break;

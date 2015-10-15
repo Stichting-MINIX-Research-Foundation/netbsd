@@ -1,4 +1,4 @@
-/*	$NetBSD: if_iwivar.h,v 1.16 2010/01/19 22:07:00 pooka Exp $ */
+/*	$NetBSD: if_iwivar.h,v 1.18 2015/09/06 06:01:00 dholland Exp $ */
 
 /*-
  * Copyright (c) 2004, 2005
@@ -26,6 +26,8 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
+
+#include <sys/ioccom.h>
 
 struct iwi_firmware {
 	void	*boot;
@@ -123,6 +125,7 @@ struct iwi_softc {
 	struct iwi_firmware	fw;
 	const char		*sc_fwname;
 	char			*sc_blob;
+	size_t			sc_blobsize;
 
 	uint32_t		flags;
 #define IWI_FLAG_FW_CACHED	(1 << 0)

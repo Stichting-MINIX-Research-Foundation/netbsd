@@ -1,4 +1,4 @@
-/*	$NetBSD: imx51_axi.c,v 1.3 2012/04/17 09:33:31 bsh Exp $	*/
+/*	$NetBSD: imx51_axi.c,v 1.5 2015/05/07 04:13:47 hkenken Exp $	*/
 
 /*-
  * Copyright (c) 2010 SHIMIZU Ryo <ryo@nerv.org>
@@ -27,7 +27,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: imx51_axi.c,v 1.3 2012/04/17 09:33:31 bsh Exp $");
+__KERNEL_RCSID(0, "$NetBSD: imx51_axi.c,v 1.5 2015/05/07 04:13:47 hkenken Exp $");
 
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -76,7 +76,7 @@ axi_attach(device_t parent __unused, device_t self, void *aux __unused)
 	aprint_naive("\n");
 
 	sc = device_private(self);
-	sc->sc_iot = &imx_bs_tag;
+	sc->sc_iot = &armv7_generic_bs_tag;
 #if NBUS_DMA_GENERIC > 0
 	sc->sc_dmat = &imx_bus_dma_tag;
 #else
@@ -95,10 +95,8 @@ static int
 axi_critical_search(device_t parent, struct cfdata *cf,
     const int *ldesc __unused, void *aux)
 {
-	struct axi_softc *sc;
 	struct axi_attach_args *aa;
 
-	sc = device_private(parent);
 	aa = aux;
 
 	if ((strcmp(cf->cf_name, "tzic") != 0) &&
@@ -125,10 +123,8 @@ static int
 axi_search(device_t parent, struct cfdata *cf, const int *ldesc __unused,
     void *aux)
 {
-	struct axi_softc *sc;
 	struct axi_attach_args *aa;
 
-	sc = device_private(parent);
 	aa = aux;
 
 	aa->aa_addr = cf->cf_loc[AXICF_ADDR];

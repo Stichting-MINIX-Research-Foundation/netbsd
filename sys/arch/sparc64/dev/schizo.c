@@ -1,4 +1,4 @@
-/*	$NetBSD: schizo.c,v 1.31 2013/06/21 20:09:58 nakayama Exp $	*/
+/*	$NetBSD: schizo.c,v 1.33 2015/10/02 05:22:52 msaitoh Exp $	*/
 /*	$OpenBSD: schizo.c,v 1.55 2008/08/18 20:29:37 brad Exp $	*/
 
 /*
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: schizo.c,v 1.31 2013/06/21 20:09:58 nakayama Exp $");
+__KERNEL_RCSID(0, "$NetBSD: schizo.c,v 1.33 2015/10/02 05:22:52 msaitoh Exp $");
 
 #include <sys/param.h>
 #include <sys/device.h>
@@ -195,6 +195,7 @@ schizo_attach(device_t parent, device_t self, void *aux)
 			  ma->ma_reg[0].ur_len,
 			  BUS_SPACE_MAP_LINEAR, &pbm->sp_intrh)) {
 		aprint_error(": failed to interrupt map registers\n");
+		kmem_free(pbm, sizeof(*pbm));
 		return;
 	}
 
@@ -496,7 +497,7 @@ schizo_conf_read(pci_chipset_tag_t pc, pcitag_t tag, int reg)
 	int s;
 
 	DPRINTF(SDB_CONF, ("%s: tag %lx reg %x ", __func__, (long)tag, reg));
-	if (PCITAG_NODE(tag) != -1) {
+	if (PCITAG_NODE(tag) != -1 && (unsigned int)reg < PCI_CONF_SIZE) {
 		s = splhigh();
 		ci->ci_pci_probe = true;
 		membar_Sync();
@@ -525,6 +526,9 @@ schizo_conf_write(pci_chipset_tag_t pc, pcitag_t tag, int reg, pcireg_t data)
 		DPRINTF(SDB_CONF, (" .. bad addr\n"));
 		return;
 	}
+
+	if ((unsigned int)reg >= PCI_CONF_SIZE)
+		return;
 
         bus_space_write_4(sp->sp_cfgt, sp->sp_cfgh,
 	    PCITAG_OFFSET(tag) + reg, data);

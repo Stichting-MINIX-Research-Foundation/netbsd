@@ -1,4 +1,4 @@
-/*	$NetBSD: iyonix_machdep.c,v 1.22 2013/08/18 21:50:31 matt Exp $	*/
+/*	$NetBSD: iyonix_machdep.c,v 1.24 2014/09/13 18:08:39 matt Exp $	*/
 
 /*
  * Copyright (c) 2001, 2002, 2003 Wasabi Systems, Inc.
@@ -73,7 +73,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: iyonix_machdep.c,v 1.22 2013/08/18 21:50:31 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: iyonix_machdep.c,v 1.24 2014/09/13 18:08:39 matt Exp $");
 
 #include "opt_ddb.h"
 #include "opt_kgdb.h"
@@ -133,12 +133,12 @@ struct bootconfig bootconfig;		/* Boot config storage */
 
 char *boot_args;
 
-vm_offset_t physical_start;
-vm_offset_t physical_freestart;
-vm_offset_t physical_freeend;
-vm_offset_t physical_end;
+vaddr_t physical_start;
+vaddr_t physical_freestart;
+vaddr_t physical_freeend;
+vaddr_t physical_end;
 u_int free_pages;
-vm_offset_t pagetables_start;
+vaddr_t pagetables_start;
 
 /*int debug_flags;*/
 #ifndef PMAP_STATIC_L1S
@@ -148,7 +148,7 @@ int max_processes = 64;			/* Default number */
 /* Physical and virtual addresses for some global pages */
 pv_addr_t minidataclean;
 
-vm_offset_t msgbufphys;
+paddr_t msgbufphys;
 
 #ifdef PMAP_DEBUG
 extern int pmap_debug_level;
@@ -441,8 +441,8 @@ initarm(void *arg)
 	int loop;
 	int loop1;
 	u_int l1pagetable;
-	paddr_t memstart;
-	psize_t memsize;
+	paddr_t memstart = 0;
+	psize_t memsize = 0;
 
 	/* Calibrate the delay loop. */
 	i80321_calibrate_delay();

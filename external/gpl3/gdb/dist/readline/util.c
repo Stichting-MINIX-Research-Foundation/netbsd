@@ -389,7 +389,7 @@ _rl_strnicmp (string1, string2, count)
         break;
       s2++;
     }
-  while (--count != 0)
+  while (--count != 0);
 
   return (0);
 }
@@ -507,7 +507,7 @@ _rl_tropen ()
 
   if (_rl_tracefp)
     fclose (_rl_tracefp);
-  sprintf (fnbuf, "/var/tmp/rltrace.%ld", getpid());
+  snprintf (fnbuf, sizeof(fnbuf), "/var/tmp/rltrace.%ld", (long)getpid());
   unlink(fnbuf);
   _rl_tracefp = fopen (fnbuf, "w+");
   return _rl_tracefp != 0;

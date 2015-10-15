@@ -1,7 +1,7 @@
-/*	$NetBSD: npf.h,v 1.21 2013/11/22 00:25:51 rmind Exp $	*/
+/*	$NetBSD: npf.h,v 1.28 2015/02/02 00:55:28 rmind Exp $	*/
 
 /*-
- * Copyright (c) 2011-2013 The NetBSD Foundation, Inc.
+ * Copyright (c) 2011-2014 The NetBSD Foundation, Inc.
  * All rights reserved.
  *
  * This material is based upon work partially supported by The
@@ -74,9 +74,12 @@ typedef void (*nl_table_callback_t)(unsigned, int);
 #define	NPF_MAX_TABLE_ID	(16)
 
 nl_config_t *	npf_config_create(void);
-int		npf_config_submit(nl_config_t *, int);
 void		npf_config_destroy(nl_config_t *);
+
+int		npf_config_submit(nl_config_t *, int);
 nl_config_t *	npf_config_retrieve(int, bool *, bool *);
+nl_config_t *	npf_config_import(const char *);
+int		npf_config_export(const nl_config_t *, const char *);
 int		npf_config_flush(int);
 
 int		npf_ruleset_add(int, const char *, nl_rule_t *, uint64_t *);
@@ -87,6 +90,7 @@ int		npf_ruleset_flush(int, const char *);
 nl_ext_t *	npf_ext_construct(const char *name);
 void		npf_ext_param_u32(nl_ext_t *, const char *, uint32_t);
 void		npf_ext_param_bool(nl_ext_t *, const char *, bool);
+void		npf_ext_param_string(nl_ext_t *, const char *, const char *);
 
 nl_rule_t *	npf_rule_create(const char *, uint32_t, const char *);
 int		npf_rule_setcode(nl_rule_t *, int, const void *, size_t);
@@ -105,13 +109,13 @@ bool		npf_rproc_exists_p(nl_config_t *, const char *);
 int		npf_rproc_insert(nl_config_t *, nl_rproc_t *);
 
 nl_nat_t *	npf_nat_create(int, u_int, const char *,
-		    npf_addr_t *, int, in_port_t);
+		    int, npf_addr_t *, npf_netmask_t, in_port_t);
 int		npf_nat_insert(nl_config_t *, nl_nat_t *, pri_t);
 
 nl_table_t *	npf_table_create(const char *, u_int, int);
 int		npf_table_add_entry(nl_table_t *, int,
 		    const npf_addr_t *, const npf_netmask_t);
-bool		npf_table_exists_p(nl_config_t *, const char *);
+int		npf_table_setdata(nl_table_t *, const void *, size_t);
 int		npf_table_insert(nl_config_t *, nl_table_t *);
 void		npf_table_destroy(nl_table_t *);
 
@@ -119,15 +123,14 @@ void		npf_table_destroy(nl_table_t *);
 
 #include <ifaddrs.h>
 
-int		npf_sessions_send(int, const char *);
-int		npf_sessions_recv(int, const char *);
-
 nl_rule_t *	npf_rule_iterate(nl_config_t *, unsigned *);
 const char *	npf_rule_getname(nl_rule_t *);
 uint32_t	npf_rule_getattr(nl_rule_t *);
 const char *	npf_rule_getinterface(nl_rule_t *);
 const void *	npf_rule_getinfo(nl_rule_t *, size_t *);
 const char *	npf_rule_getproc(nl_rule_t *);
+uint64_t	npf_rule_getid(nl_rule_t *);
+const void *	npf_rule_getcode(nl_rule_t *, int *, size_t *);
 
 nl_table_t *	npf_table_iterate(nl_config_t *);
 const char *	npf_table_getname(nl_table_t *);
@@ -136,7 +139,11 @@ int		npf_table_gettype(nl_table_t *);
 
 nl_nat_t *	npf_nat_iterate(nl_config_t *);
 int		npf_nat_gettype(nl_nat_t *);
+unsigned	npf_nat_getflags(nl_nat_t *);
 void		npf_nat_getmap(nl_nat_t *, npf_addr_t *, size_t *, in_port_t *);
+
+int		npf_nat_setalgo(nl_nat_t *, u_int);
+int		npf_nat_setnpt66(nl_nat_t *, uint16_t);
 
 nl_rproc_t *	npf_rproc_iterate(nl_config_t *);
 const char *	npf_rproc_getname(nl_rproc_t *);

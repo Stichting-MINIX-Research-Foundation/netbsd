@@ -1,4 +1,4 @@
-/*	$NetBSD: subr_pcq.c,v 1.6 2012/01/31 20:40:09 alnsn Exp $	*/
+/*	$NetBSD: subr_pcq.c,v 1.9 2015/01/08 23:39:57 riastradh Exp $	*/
 
 /*-
  * Copyright (c) 2009 The NetBSD Foundation, Inc.
@@ -34,7 +34,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: subr_pcq.c,v 1.6 2012/01/31 20:40:09 alnsn Exp $");
+__KERNEL_RCSID(0, "$NetBSD: subr_pcq.c,v 1.9 2015/01/08 23:39:57 riastradh Exp $");
 
 #include <sys/param.h>
 #include <sys/types.h>
@@ -60,6 +60,7 @@ struct pcq {
  * Consumer (c) - in the higher 16 bits.
  *
  * We have a limitation of 16 bits i.e. 0xffff items in the queue.
+ * The PCQ_MAXLEN constant is set accordingly.
  */
 
 static inline void
@@ -115,7 +116,7 @@ pcq_put(pcq_t *pcq, void *item)
 	 * that the caller made to the data item are globally visible
 	 * before we put it onto the list.
 	 */
-#ifndef _HAVE_ATOMIC_AS_MEMBAR
+#ifndef __HAVE_ATOMIC_AS_MEMBAR
 	membar_producer();
 #endif
 	pcq->pcq_items[op] = item;
@@ -140,7 +141,8 @@ pcq_peek(pcq_t *pcq)
 	pcq_split(v, &p, &c);
 
 	/* See comment on race below in pcq_get(). */
-	return (p == c) ? NULL : pcq->pcq_items[c];
+	return (p == c) ? NULL :
+	    (membar_datadep_consumer(), pcq->pcq_items[c]);
 }
 
 /*
@@ -161,6 +163,8 @@ pcq_get(pcq_t *pcq)
 		/* Queue is empty: nothing to return. */
 		return NULL;
 	}
+	/* Make sure we read pcq->pcq_pc before pcq->pcq_items[c].  */
+	membar_datadep_consumer();
 	item = pcq->pcq_items[c];
 	if (item == NULL) {
 		/*
@@ -180,7 +184,7 @@ pcq_get(pcq_t *pcq)
 	 * after it, we could in theory wipe out a modification made
 	 * to pcq_items[] by pcq_put().
 	 */
-#ifndef _HAVE_ATOMIC_AS_MEMBAR
+#ifndef __HAVE_ATOMIC_AS_MEMBAR
 	membar_producer();
 #endif
 	while (__predict_false(atomic_cas_32(&pcq->pcq_pc, v, nv) != v)) {
@@ -197,7 +201,7 @@ pcq_create(size_t nitems, km_flag_t kmflags)
 {
 	pcq_t *pcq;
 
-	KASSERT(nitems > 0 || nitems <= 0xffff);
+	KASSERT(nitems > 0 || nitems <= PCQ_MAXLEN);
 
 	pcq = kmem_zalloc(offsetof(pcq_t, pcq_items[nitems]), kmflags);
 	if (pcq == NULL) {

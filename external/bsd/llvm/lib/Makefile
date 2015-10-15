@@ -1,4 +1,4 @@
-# $NetBSD: Makefile,v 1.36 2013/11/28 14:19:59 joerg Exp $
+# $NetBSD: Makefile,v 1.42 2015/01/29 20:41:34 joerg Exp $
 
 .include <bsd.own.mk>
 
@@ -22,6 +22,7 @@ SUBDIR=	\
 	libLLVMObjCARC \
 	libLLVMObject \
 	libLLVMOption \
+	libLLVMProfileData \
 	libLLVMScalarOpts \
 	libLLVMSelectionDAG \
 	libLLVMSupport \
@@ -63,10 +64,14 @@ SUBDIR+= \
 SUBDIR+= \
 	libLLVMPowerPCAsmParser \
 	libLLVMPowerPCAsmPrinter \
+	libLLVMPowerPCDisassembler \
 	libLLVMPowerPCMCTargetDesc \
 	libLLVMPowerPCTargetInfo
 
 SUBDIR+= \
+	libLLVMSparcAsmParser \
+	libLLVMSparcAsmPrinter \
+	libLLVMSparcDisassembler \
 	libLLVMSparcMCTargetDesc \
 	libLLVMSparcTargetInfo
 
@@ -81,20 +86,23 @@ SUBDIR+= \
 .if ${NO_LLVM_DEVELOPER:Uno} == "no" && (${LLVM_DEVELOPER:U} == "yes" || ${MKLLDB} == "yes")
 SUBDIR+= \
 	libLLVMExecutionEngine \
-	libLLVMJIT \
 	libLLVMMCJIT \
 	libLLVMRuntimeDyld
 .endif
 
+.if (${NO_LLVM_DEVELOPER:Uno} == "no" && ${LLVM_DEVELOPER:U} == "yes") || ${MKLLD} == "yes"
+SUBDIR+= \
+	libLLVMDebugInfo
+.endif
 
 .if ${NO_LLVM_DEVELOPER:Uno} == "no" && ${LLVM_DEVELOPER:U} == "yes"
 SUBDIR+= \
-	libLLVMDebugInfo \
 	libLLVMCppBackend \
 	libLLVMCppBackendInfo \
 	libLLVMHello \
 	libLLVMInterpreter \
-	libLLVMLTO
+	libLLVMLTO \
+	libLLVMLineEditor
 .endif
 
 SUBDIR+= \
@@ -106,11 +114,11 @@ SUBDIR+= \
 	libclangDriver \
 	libclangEdit \
 	libclangFrontend \
+	libclangFrontendRewrite \
 	libclangFrontendTool \
 	libclangLex \
 	libclangParse \
-	libclangRewriteFrontend \
-	libclangRewriteCore \
+	libclangRewrite \
 	libclangSema \
 	libclangSerialization \
 	libclangStaticAnalyzerCheckers \
@@ -124,17 +132,21 @@ SUBDIR+= \
 	libclangASTMatchersDynamic \
 	libclangFormat \
 	libclangIndex \
-	libclangTooling
+	libclangTooling \
+	libclangToolingCore
 .endif
 
 .if ${MKLLD} != "no"
 SUBDIR+= \
+	liblldConfig \
 	liblldCore \
 	liblldDriver \
 	liblldPasses \
 	liblldReaderWriter \
 	liblldReaderWriterELF \
+	liblldReaderWriterELFAArch64 \
 	liblldReaderWriterELFHexagon \
+	liblldReaderWriterELFMips \
 	liblldReaderWriterELFPPC \
 	liblldReaderWriterELFX86 \
 	liblldReaderWriterELFX86_64 \
@@ -178,22 +190,31 @@ SUBDIR+= \
 	liblldbInterpreter \
 	liblldbLog \
 	liblldbPluginABIMacOSX_arm \
+	liblldbPluginABIMacOSX_arm64 \
 	liblldbPluginABIMacOSX_i386 \
+	liblldbPluginABISysV_hexagon \
+	liblldbPluginABISysV_ppc \
+	liblldbPluginABISysV_ppc64 \
 	liblldbPluginABISysV_x86_64 \
 	liblldbPluginAppleObjCRuntime \
 	liblldbPluginCXXItaniumABI \
 	liblldbPluginDisassemblerLLVM \
+	liblldbPluginDynamicLoaderHexagonDYLD \
 	liblldbPluginDynamicLoaderMacOSXDYLD \
 	liblldbPluginDynamicLoaderPosixDYLD \
 	liblldbPluginDynamicLoaderStatic \
 	liblldbPluginInstructionARM \
+	liblldbPluginInstructionARM64 \
+	liblldbPluginJITLoaderGDB \
 	liblldbPluginObjectContainerBSDArchive \
 	liblldbPluginObjectContainerMachOArchive \
 	liblldbPluginObjectFileELF \
+	liblldbPluginObjectFileJIT \
 	liblldbPluginObjectFileMachO \
 	liblldbPluginObjectFilePECOFF \
 	liblldbPluginPlatformNetBSD \
 	liblldbPluginPlatformGDB \
+	liblldbPluginPlatformKalimba \
 	liblldbPluginPlatformLinux \
 	liblldbPluginPlatformMacOSX \
 	liblldbPluginPlatformPOSIX \

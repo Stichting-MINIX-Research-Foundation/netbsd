@@ -1,4 +1,4 @@
-#	$NetBSD: files.vax,v 1.118 2011/06/12 03:35:49 rmind Exp $
+#	$NetBSD: files.vax,v 1.120 2015/07/05 03:06:27 matt Exp $
 #
 # new style config file for vax architecture
 #
@@ -185,6 +185,22 @@ device	smg: displaydev, wsemuldisplaydev
 attach	smg at vsbus
 file	arch/vax/vsa/smg.c		smg needs-flag
 
+# Monochrome QVSS framebuffer on qbus (VCB01)
+device	qv {}: displaydev, wsemuldisplaydev
+attach	qv at uba
+attach  genfb at qv with genfb_qv
+file	arch/vax/uba/qv.c		qv|genfb_qv needs-flag
+
+device	qvaux { line=-1 }: tty
+attach	qvaux at qv 
+file	arch/vax/uba/qvaux.c		qvaux needs-flag
+
+attach	lkkbd at qvaux with qvkbd
+file	arch/vax/uba/qvkbd.c		qvkbd needs-flag
+
+attach	lkms at qvaux with qvms
+file	arch/vax/uba/qvms.c		qvms needs-flag
+
 # Color framebuffer on VS4000/60.
 device	lcg: displaydev, wsemuldisplaydev
 attach	lcg at vsbus
@@ -290,11 +306,6 @@ device	vp
 attach	vp at uba
 file	arch/vax/uba/vp.c		vp needs-flag
 
-# QVSS at UBA
-device	qv
-attach	qv at uba
-file	arch/vax/uba/qv.c		qv needs-flag
-
 # ACC LH/DH IMP on UBA
 device	acc: ifnet
 attach	acc at uba
@@ -314,6 +325,11 @@ file	arch/vax/uba/ad.c		ad needs-flag
 device	dh # XXX?
 attach	dh at uba
 file	arch/vax/uba/dh.c		dh needs-flag
+
+# Vaxstation 4000 audio
+device	vsaudio: audiobus, am7930
+attach	vsaudio at vsbus
+file	arch/vax/vsa/vsaudio.c		vsaudio needs-flag
 
 # These are general files needed for compilation.
 file	dev/cons.c

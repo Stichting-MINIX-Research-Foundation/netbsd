@@ -1,4 +1,4 @@
-/*	$NetBSD: nl_in.c,v 1.1.1.1 2009/12/13 16:56:26 kardel Exp $	*/
+/*	$NetBSD: nl_in.c,v 1.3 2015/07/10 14:20:33 christos Exp $	*/
 
 #include <config.h>
 #include "ntpdc.h"

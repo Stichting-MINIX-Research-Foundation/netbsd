@@ -1,4 +1,4 @@
-.\"	$NetBSD: pcictl.8,v 1.10 2011/02/25 21:40:48 jmcneill Exp $
+.\"	$NetBSD: pcictl.8,v 1.16 2014/09/10 21:13:50 wiz Exp $
 .\"
 .\" Copyright 2001 Wasabi Systems, Inc.
 .\" All rights reserved.
@@ -33,7 +33,7 @@
 .\" ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 .\" POSSIBILITY OF SUCH DAMAGE.
 .\"
-.Dd February 25, 2011
+.Dd August 31, 2014
 .Dt PCICTL 8
 .Os
 .Sh NAME
@@ -54,8 +54,8 @@ on a PCI bus.
 .Pp
 The following commands are available:
 .Pp
-.Nm list
-.Op Fl n
+.Cm list
+.Op Fl Nn
 .Op Fl b Ar bus
 .Op Fl d Ar device
 .Op Fl f Ar function
@@ -68,8 +68,12 @@ numbers may be specified by flags.
 Any locator not specified defaults
 to a wildcard, or may be explicitly wildcarded by specifying
 .Dq any .
+If
+.Fl N
+is given, the driver name for this PCI device will be listed
+if any driver is attached.
 .Pp
-.Nm dump
+.Cm dump
 .Op Fl b Ar bus
 .Fl d Ar device
 .Op Fl f Ar function
@@ -79,6 +83,49 @@ at the specified bus, device, and function.
 If the bus is not specified, it defaults to the bus number of the
 PCI bus specified on the command line.
 If the function is not specified, it defaults to 0.
+.Pp
+.Cm read
+.Op Fl b Ar bus
+.Fl d Ar device
+.Op Fl f Ar function
+.Ar reg
+.Pp
+Read the specified 32-bit aligned PCI configuration register and print
+it in hexadecimal to standard output.
+If the bus is not specified, it defaults to the bus number of the
+PCI bus specified on the command line.
+If the function is not specified, it defaults to 0.
+.Pp
+.Em WARNING:
+.Nm
+.Cm read
+is a dangerous command that can damage hardware and panic the operating
+system, even though it appears to be a harmless read-only operation.
+It is meant as a diagnostic tool for experiments or to debug device
+drivers.
+Do not use it as a substitute for a device driver!
+.Pp
+.Cm write
+.Op Fl b Ar bus
+.Fl d Ar device
+.Op Fl f Ar function
+.Ar reg
+.Ar value
+.Pp
+Write the specified value to the specified 32-bit aligned PCI
+configuration register.
+If the bus is not specified, it defaults to the bus number of the
+PCI bus specified on the command line.
+If the function is not specified, it defaults to 0.
+.Pp
+.Em WARNING:
+.Nm
+.Cm write
+is a dangerous command that can damage hardware and panic the operating
+system.
+It is meant as a diagnostic tool for experiments or to debug device
+drivers.
+Do not use it as a substitute for a device driver!
 .Sh FILES
 .Pa /dev/pci*
 - PCI bus device nodes

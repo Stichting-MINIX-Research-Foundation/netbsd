@@ -1,4 +1,4 @@
-/*	$NetBSD: linux_errno.h,v 1.13 2008/04/28 20:23:43 martin Exp $	*/
+/*	$NetBSD: linux_errno.h,v 1.15 2014/11/22 15:47:42 njoly Exp $	*/
 
 /*-
  * Copyright (c) 1995, 1998 The NetBSD Foundation, Inc.
@@ -66,7 +66,6 @@
 #define LINUX_EPIPE		32
 #define LINUX_EDOM		33
 #define LINUX_ERANGE		34
-#define LINUX_EDEADLK		35
 
 
 /* Error numbers after here vary wildly    */
@@ -86,8 +85,12 @@
 #elif defined(__amd64__)
 #include <compat/linux/arch/amd64/linux_errno.h>
 #else
-#include <compat/linux/arch/i386/linux_errno.h> /* XXX:Allow kdump to compile */
+#define LINUX_SCERR_SIGN -
+#include <compat/linux/common/linux_errno_generic.h>
 #endif
+
+/* Linux has no ENOTSUP error code.  */
+#define LINUX_ENOTSUP		LINUX_EOPNOTSUPP
 
 extern const int native_to_linux_errno[];
 

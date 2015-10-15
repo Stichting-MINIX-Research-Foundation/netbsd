@@ -1,4 +1,4 @@
-/*	$NetBSD: if_xi.c,v 1.73 2012/07/22 14:33:05 matt Exp $ */
+/*	$NetBSD: if_xi.c,v 1.75 2015/05/25 08:29:01 ozaki-r Exp $ */
 /*	OpenBSD: if_xe.c,v 1.9 1999/09/16 11:28:42 niklas Exp 	*/
 
 /*
@@ -55,10 +55,9 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_xi.c,v 1.73 2012/07/22 14:33:05 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_xi.c,v 1.75 2015/05/25 08:29:01 ozaki-r Exp $");
 
 #include "opt_inet.h"
-#include "opt_ipx.h"
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -83,12 +82,6 @@ __KERNEL_RCSID(0, "$NetBSD: if_xi.c,v 1.73 2012/07/22 14:33:05 matt Exp $");
 #include <netinet/ip.h>
 #include <netinet/if_inarp.h>
 #endif
-
-#ifdef IPX
-#include <netipx/ipx.h>
-#include <netipx/ipx_if.h>
-#endif
-
 
 #include <net/bpf.h>
 #include <net/bpfdesc.h>
@@ -249,7 +242,7 @@ xi_attach(struct xi_softc *sc, u_int8_t *myea)
 	ifmedia_set(&sc->sc_mii.mii_media, IFM_ETHER | IFM_AUTO);
 
 	rnd_attach_source(&sc->sc_rnd_source, device_xname(sc->sc_dev),
-			  RND_TYPE_NET, 0);
+			  RND_TYPE_NET, RND_FLAG_DEFAULT);
 }
 
 int

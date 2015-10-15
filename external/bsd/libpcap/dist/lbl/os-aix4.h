@@ -1,4 +1,4 @@
-/*	$NetBSD: os-aix4.h,v 1.1.1.3 2013/04/06 15:57:52 christos Exp $	*/
+/*	$NetBSD: os-aix4.h,v 1.2 2014/11/19 19:33:31 christos Exp $	*/
 
 /*
  * Copyright (c) 1993, 1994, 1995, 1996, 1997
@@ -19,8 +19,6 @@
  * THIS SOFTWARE IS PROVIDED ``AS IS'' AND WITHOUT ANY EXPRESS OR IMPLIED
  * WARRANTIES, INCLUDING, WITHOUT LIMITATION, THE IMPLIED WARRANTIES OF
  * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE.
- *
- * @(#) Header: /tcpdump/master/libpcap/lbl/os-aix4.h,v 1.1 2002-06-01 09:37:40 guy Exp 
  */
 
 /* Prototypes missing in AIX 4.x */

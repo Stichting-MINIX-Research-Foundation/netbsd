@@ -1,4 +1,4 @@
-/*	$NetBSD: kgdb_stub.c,v 1.26 2013/05/11 15:44:46 skrll Exp $	*/
+/*	$NetBSD: kgdb_stub.c,v 1.29 2015/06/26 14:26:38 christos Exp $	*/
 
 /*
  * Copyright (c) 1990, 1993
@@ -45,7 +45,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: kgdb_stub.c,v 1.26 2013/05/11 15:44:46 skrll Exp $");
+__KERNEL_RCSID(0, "$NetBSD: kgdb_stub.c,v 1.29 2015/06/26 14:26:38 christos Exp $");
 
 #include "opt_ddb.h"
 #include "opt_kgdb.h"
@@ -85,8 +85,17 @@ static void *kgdb_ioarg;
 static u_char buffer[KGDB_BUFLEN];
 static kgdb_reg_t gdb_regs[KGDB_NUMREGS];
 
-#define GETC()	((*kgdb_getc)(kgdb_ioarg))
-#define PUTC(c)	((*kgdb_putc)(kgdb_ioarg, c))
+#define GETC()	kgdb_waitc(kgdb_ioarg)
+#define PUTC(c)	(*kgdb_putc)(kgdb_ioarg, c)
+
+static int
+kgdb_waitc(void *arg)
+{
+	int c;
+	while ((c = (*kgdb_getc)(arg)) == -1)
+		continue;
+	return c;
+}
 
 /*
  * db_trap_callback can be hooked by MD port code to handle special
@@ -304,6 +313,7 @@ kgdb_recv(u_char *bp, int maxlen)
 			break;
 		}
 		DPRINTF((" Bad(wanted %x, off by %d)- ", tmpcsum, csum));
+		__USE(tmpcsum);
 		PUTC(KGDB_BADP);
 	} while (1);
 	DPRINTF(("kgdb_recv: %s\n", bp));
@@ -464,9 +474,9 @@ kgdb_trap(int type, db_regs_t *regs)
 				kgdb_send("E05");
 				continue;
 			}
-			db_read_bytes(addr, (size_t)len,
-					(char *)buffer + sizeof(buffer) / 2);
-			mem2hex(buffer, buffer + sizeof(buffer) / 2, len);
+			char *ptr = (char *)buffer + sizeof(buffer) / 2;
+			db_read_bytes(addr, len, ptr);
+			mem2hex(buffer, ptr, len);
 			kgdb_send(buffer);
 			continue;
 
@@ -495,7 +505,7 @@ kgdb_trap(int type, db_regs_t *regs)
 				kgdb_send("E0A");
 				continue;
 			}
-			db_write_bytes(addr, (size_t)len, (char *)buffer);
+			db_write_bytes(addr, len, (char *)buffer);
 			kgdb_send("OK");
 			continue;
 

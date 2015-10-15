@@ -1,9 +1,8 @@
-#	$NetBSD: Makefile,v 1.25 2011/07/10 08:42:55 mrg Exp $
+#	$NetBSD: Makefile,v 1.30 2015/06/23 20:54:43 matt Exp $
 
 NOMAN= # defined
 
 .include <bsd.own.mk>
-.include <bsd.sys.mk>		# for HOST_SH
 
 S=	${.CURDIR}/../../../..
 MIPS=	${S}/arch/mips
@@ -16,6 +15,7 @@ BINMODE?= 444
 
 # XXX SHOULD NOT NEED TO DEFINE THESE!
 LIBCRT0=
+LIBCRTI=
 LIBC=
 LIBCRTBEGIN=
 LIBCRTEND=
@@ -53,10 +53,12 @@ CPPFLAGS+=	-DSUPPORT_DHCP -DSUPPORT_BOOTP
 #CPPFLAGS+=	-DRPC_DEBUG -DRARP_DEBUG -DNET_DEBUG -DDEBUG -DPARANOID
 
 # compiler flags for smallest code size
-CFLAGS=		-O2 -mmemcpy -ffreestanding -mno-abicalls -msoft-float -G 128
+CFLAGS=		-Os -mmemcpy -ffreestanding -mno-abicalls -msoft-float -G 128
+AFLAGS+=	-mips3
+CFLAGS+=	-mips3
 .if ${MACHINE_ARCH} == "mips64el"
-AFLAGS+=	-mips3 -mabi=32
-CFLAGS+=	-mips3 -mabi=32
+AFLAGS+=	-mabi=32
+CFLAGS+=	-mabi=32
 LINKFORMAT=	-m elf32ltsmip
 .endif
 
@@ -108,7 +110,7 @@ vers.c: ${.CURDIR}/version
 ${PROG}: ${LDSCRIPT} ${OBJS} ${LIBS}
 	${LD} ${LINKFORMAT} -Map ${PROG}.map -N -x -Ttext ${LOAD_ADDRESS} \
 	    -T ${LDSCRIPT} -e start -o ${PROG} ${OBJS} ${LIBS}
-	${TOOL_GZIP} -c9 ${PROG} > ${PROG}.gz
+	${TOOL_GZIP_N} -c9 ${PROG} > ${PROG}.gz
 	@${SIZE} ${PROG}
 
 CLEANFILES+=	${PROG}.map ${PROG}.elf ${PROG}.gz

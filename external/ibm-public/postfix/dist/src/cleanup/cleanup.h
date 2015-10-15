@@ -1,4 +1,4 @@
-/*	$NetBSD: cleanup.h,v 1.5 2013/01/02 19:18:33 tron Exp $	*/
+/*	$NetBSD: cleanup.h,v 1.7 2015/01/24 18:10:52 tron Exp $	*/
 
 /*++
 /* NAME
@@ -63,6 +63,7 @@ typedef struct CLEANUP_STATE {
     char   *orig_rcpt;			/* original recipient address */
     char   *return_receipt;		/* return-receipt address */
     char   *errors_to;			/* errors-to address */
+    ARGV   *auto_hdrs;			/* MTA's own header(s) */
     int     flags;			/* processing options, status flags */
     int     qmgr_opts;			/* qmgr processing options */
     int     errs;			/* any badness experienced */
@@ -116,6 +117,7 @@ typedef struct CLEANUP_STATE {
     VSTRING *milter_err_text;		/* milter call-back reply */
     HBC_CHECKS *milter_hbc_checks;	/* Milter header checks */
     VSTRING *milter_hbc_reply;		/* Milter header checks reply */
+    VSTRING *milter_orcpt_buf;		/* add_rcpt_par() orcpt */
 
     /*
      * Support for Milter body replacement requests.

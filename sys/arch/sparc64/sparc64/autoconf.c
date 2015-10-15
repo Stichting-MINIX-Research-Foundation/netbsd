@@ -1,4 +1,4 @@
-/*	$NetBSD: autoconf.c,v 1.192 2013/09/24 18:11:54 jdc Exp $ */
+/*	$NetBSD: autoconf.c,v 1.205 2015/09/06 16:45:09 martin Exp $ */
 
 /*
  * Copyright (c) 1996
@@ -48,7 +48,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: autoconf.c,v 1.192 2013/09/24 18:11:54 jdc Exp $");
+__KERNEL_RCSID(0, "$NetBSD: autoconf.c,v 1.205 2015/09/06 16:45:09 martin Exp $");
 
 #include "opt_ddb.h"
 #include "opt_kgdb.h"
@@ -139,15 +139,13 @@ void *bootinfo = 0;
 int kgdb_break_at_attach;
 #endif
 
-/* Default to sun4u */
-int cputyp = CPU_SUN4U;
-
 #define	OFPATHLEN	128
 #define	OFNODEKEY	"OFpnode"
 
 char	machine_banner[100];
 char	machine_model[100];
 char	ofbootpath[OFPATHLEN], *ofboottarget, *ofbootpartition;
+char	ofbootargs[OFPATHLEN], *ofbootfile, *ofbootflags;
 int	ofbootpackage;
 
 static	int mbprint(void *, const char *);
@@ -160,7 +158,8 @@ static	void get_bootpath_from_prom(void);
  * Kernel 4MB mappings.
  */
 struct tlb_entry *kernel_tlbs;
-int kernel_tlb_slots;
+int kernel_dtlb_slots;
+int kernel_itlb_slots;
 
 /* Global interrupt mappings for all device types.  Match against the OBP
  * 'device_type' property. 
@@ -344,12 +343,11 @@ die_old_boot_loader:
 #endif
 #endif
 #endif
-
 	if (OF_getprop(findroot(), "compatible", buf, sizeof(buf)) > 0) {
 		if (strcmp(buf, "sun4us") == 0)
-			cputyp = CPU_SUN4US;
+			setcputyp(CPU_SUN4US);
 		else if (strcmp(buf, "sun4v") == 0)
-			cputyp = CPU_SUN4V;
+			setcputyp(CPU_SUN4V);
 	}
 
 	bi_howto = lookup_bootinfo(BTINFO_BOOTHOWTO);
@@ -357,7 +355,11 @@ die_old_boot_loader:
 		boothowto = bi_howto->boothowto;
 
 	LOOKUP_BOOTINFO(bi_count, BTINFO_DTLB_SLOTS);
-	kernel_tlb_slots = bi_count->count;
+	kernel_dtlb_slots = bi_count->count;
+	kernel_itlb_slots = kernel_dtlb_slots-1;
+	bi_count = lookup_bootinfo(BTINFO_ITLB_SLOTS);
+	if (bi_count)
+		kernel_itlb_slots = bi_count->count;
 	LOOKUP_BOOTINFO(bi_tlb, BTINFO_DTLB);
 	kernel_tlbs = &bi_tlb->tlb[0];
 
@@ -421,8 +423,9 @@ get_bootpath_from_prom(void)
 	/* Setup pointer to boot flags */
 	if (OF_getprop(chosen, "bootargs", sbuf, sizeof(sbuf)) == -1)
 		return;
+	strcpy(ofbootargs, sbuf);
 
-	cp = sbuf;
+	cp = ofbootargs;
 
 	/* Find start of boot flags */
 	while (*cp) {
@@ -430,8 +433,12 @@ get_bootpath_from_prom(void)
 		if (*cp == '-' || *cp == '\0')
 			break;
 		while(*cp != ' ' && *cp != '\t' && *cp != '\0') cp++;
-		
+		if (*cp != '\0')
+			*cp++ = '\0';
 	}
+	if (cp != ofbootargs)
+		ofbootfile = ofbootargs;
+	ofbootflags = cp;
 	if (*cp != '-')
 		return;
 
@@ -473,6 +480,7 @@ get_bootpath_from_prom(void)
 void
 cpu_configure(void)
 {
+	
 	bool userconf = (boothowto & RB_USERCONF) != 0;
 
 	/* fetch boot device settings */
@@ -514,19 +522,15 @@ cpu_rootconf(void)
 char *
 clockfreq(long freq)
 {
-	char *p;
-	static char sbuf[10];
+	static char buf[10];
+	size_t len;
 
 	freq /= 1000;
-	sprintf(sbuf, "%ld", freq / 1000);
+	len = snprintf(buf, sizeof(buf), "%ld", freq / 1000);
 	freq %= 1000;
-	if (freq) {
-		freq += 1000;	/* now in 1000..1999 */
-		p = sbuf + strlen(sbuf);
-		sprintf(p, "%ld", freq);
-		*p = '.';	/* now sbuf = %d.%3d */
-	}
-	return (sbuf);
+	if (freq)
+		snprintf(buf + len, sizeof(buf) - len, ".%03ld", freq);
+	return buf;
 }
 
 /* ARGSUSED */
@@ -759,7 +763,7 @@ romgetcursoraddr(int **rowp, int **colp)
 
 /*
  * Match a device_t against the bootpath, by
- * comparing it's firmware package handle. If they match
+ * comparing its firmware package handle. If they match
  * exactly, we found the boot device.
  */
 static void
@@ -775,7 +779,7 @@ dev_path_exact_match(device_t dev, int ofnode)
 
 /*
  * Match a device_t against the bootpath, by
- * comparing it's firmware package handle and calculating
+ * comparing its firmware package handle and calculating
  * the target/lun suffix and comparing that against
  * the bootpath remainder.
  */
@@ -783,7 +787,7 @@ static void
 dev_path_drive_match(device_t dev, int ctrlnode, int target,
     uint64_t wwn, int lun)
 {
-	int child = 0;
+	int child = 0, ide_node = 0;
 	char buf[OFPATHLEN];
 
 	DPRINTF(ACDB_BOOTDEV, ("dev_path_drive_match: %s, controller %x, "
@@ -799,6 +803,27 @@ dev_path_drive_match(device_t dev, int ctrlnode, int target,
 		if (child == ofbootpackage)
 			break;
 
+	if (child != ofbootpackage) {
+		/*
+		 * Try Mac firmware style (also used by QEMU/OpenBIOS):
+		 * below the controller there is an intermediate node
+		 * for each IDE channel, and individual targets always
+		 * are "@0"
+		 */
+		for (ide_node = prom_firstchild(ctrlnode); ide_node != 0;
+		    ide_node = prom_nextsibling(ide_node)) {
+			const char * name = prom_getpropstring(ide_node,
+			    "device_type");
+			if (strcmp(name, "ide") != 0) continue;
+			for (child = prom_firstchild(ide_node); child != 0;
+			    child = prom_nextsibling(child))
+				if (child == ofbootpackage)
+					break;
+			if (child == ofbootpackage)
+				break;
+		}
+	}
+
 	if (child == ofbootpackage) {
 		const char * name = prom_getpropstring(child, "name");
 
@@ -811,10 +836,14 @@ dev_path_drive_match(device_t dev, int ctrlnode, int target,
 		 * what we realy do here is to match "target" and "lun".
 		 */
 		if (wwn)
-			sprintf(buf, "%s@w%016" PRIx64 ",%d", name, wwn,
-			    lun);
+			snprintf(buf, sizeof(buf), "%s@w%016" PRIx64 ",%d",
+			    name, wwn, lun);
+		else if (ide_node)
+			snprintf(buf, sizeof(buf), "%s@0",
+			    device_is_a(dev, "cd") ? "cdrom" : "disk");
 		else
-			sprintf(buf, "%s@%d,%d", name, target, lun);
+			snprintf(buf, sizeof(buf), "%s@%d,%d",
+			    name, target, lun);
 		if (ofboottarget && strcmp(buf, ofboottarget) == 0) {
 			booted_device = dev;
 			if (ofbootpartition)
@@ -1192,7 +1221,7 @@ device_register_post_config(device_t dev, void *aux)
 
 		/*
 		 * If this is a FC-AL drive it will have
-		 * aquired it's WWN device property by now,
+		 * aquired its WWN device property by now,
 		 * so we can properly match it.
 		 */
 		if (prop_dictionary_get_uint64(device_properties(dev),

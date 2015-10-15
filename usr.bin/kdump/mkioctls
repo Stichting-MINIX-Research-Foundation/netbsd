@@ -1,5 +1,5 @@
 #!/bin/sh
-#	$NetBSD: mkioctls,v 1.41 2013/04/04 22:32:12 dsl Exp $
+#	$NetBSD: mkioctls,v 1.44 2015/09/27 03:37:16 christos Exp $
 #
 # Copyright (c) 1994
 #	The Regents of the University of California.  All rights reserved.
@@ -48,6 +48,7 @@ echo "struct crap { int _xxx; };" # XXX arm video lossage
 echo "typedef struct crap videomemory_t;" # XXX arm video lossage
 echo "typedef struct crap RF_AccTotals_t;" # XXX Raidframe lossage
 echo "struct rf_test_acc { int _xxx; };" # XXX Raidframe lossage
+echo "struct map_info { int _xxx[22]; };" # XXX Xorg lossage
 echo "#include <stdio.h>"
 echo "#include <sys/types.h>"
 echo "#include <sys/param.h>"
@@ -59,6 +60,7 @@ echo "#include <sys/dkbad.h>"
 echo "#include <sys/mount.h>"
 echo "#include <sys/termios.h>"
 echo "#include <sys/disklabel.h>"
+echo "#include <sys/exec_elf.h>"
 echo "#include <net/if.h>"
 echo "#include <net/if_ether.h>"
 echo "#include <net/route.h>"
@@ -82,7 +84,13 @@ do
 	echo "#include <$i>"
 done | ${SED} -e "s,${DESTDIR}/usr/include/,,g"
 
-${CC} -E -nostdinc -isystem ${DESTDIR}/usr/include -dM ${1+"$@"} | \
+grep -v "<sys/modctl.h>" ${1+"$@"} | \
+${CC} -E -nostdinc -isystem ${DESTDIR}/usr/include \
+    -I${DESTDIR}/usr/X11R7/include \
+    -I${DESTDIR}/usr/X11R7/include/pixman-1 \
+    -I${DESTDIR}/usr/X11R7/include/libdrm \
+    -D_VIA_DRM_H_ \
+    -dM - | \
 ${AWK} '
 BEGIN {
 	keep["SLIOCGUNIT"] = 1;	# Same as PPPIOCGASYNCMAP
@@ -170,7 +178,7 @@ BEGIN {
 	print "\tswitch (val) {\n"
 }
 
-/^#[ 	]*define[ 	]*[A-Z0-9_]*[ 	]*_IO[W]*[R]*[ 	]*\(/ {
+/^#[ 	]*define[ 	]*[A-Z0-9_]*[ 	]*[D]*[R]*[M]*_IO[W]*[R]*[ 	]*\(/ {
 	
 	# find where the name starts
 	for (i = 1; i <= NF; i++)

@@ -1,4 +1,4 @@
-/*	$NetBSD: ixdp425_machdep.c,v 1.34 2013/08/18 15:58:20 matt Exp $ */
+/*	$NetBSD: ixdp425_machdep.c,v 1.36 2015/03/05 08:09:44 skrll Exp $ */
 /*
  * Copyright (c) 2003
  *	Ichiro FUKUHARA <ichiro@ichiro.org>.
@@ -64,7 +64,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ixdp425_machdep.c,v 1.34 2013/08/18 15:58:20 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ixdp425_machdep.c,v 1.36 2015/03/05 08:09:44 skrll Exp $");
 
 #include "opt_ddb.h"
 #include "opt_kgdb.h"
@@ -125,16 +125,16 @@ BootConfig bootconfig;		/* Boot config storage */
 char *boot_args = NULL;
 char *boot_file = NULL;
 
-vm_offset_t physical_start;
-vm_offset_t physical_freestart;
-vm_offset_t physical_freeend;
-vm_offset_t physical_end;
+vaddr_t physical_start;
+vaddr_t physical_freestart;
+vaddr_t physical_freeend;
+vaddr_t physical_end;
 u_int free_pages;
 
 /* Physical and virtual addresses for some global pages */
 pv_addr_t minidataclean;
 
-vm_offset_t msgbufphys;
+paddr_t msgbufphys;
 
 extern int end;
 
@@ -726,7 +726,7 @@ initarm(void *arg)
 #endif
 	ixp425_intr_init();
 #ifdef VERBOSE_INIT_ARM
-	printf("\nAll initialize done!\nNow Starting NetBSD, Hear we go!\n");
+	printf("\nAll initialization done!\nNow Starting NetBSD, Here we go!\n");
 #endif
 
 #ifdef BOOTHOWTO

@@ -2,14 +2,8 @@
  * X.509v3 certificate parsing and processing (RFC 3280 profile)
  * Copyright (c) 2006-2011, Jouni Malinen <j@w1.fi>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #include "includes.h"
@@ -449,17 +443,16 @@ static int x509_parse_name(const u8 *buf, size_t len, struct x509_name *name,
 			return -1;
 		}
 
-		val = os_malloc(hdr.length + 1);
+		val = dup_binstr(hdr.payload, hdr.length);
 		if (val == NULL) {
 			x509_free_name(name);
 			return -1;
 		}
-		os_memcpy(val, hdr.payload, hdr.length);
-		val[hdr.length] = '\0';
 		if (os_strlen(val) != hdr.length) {
 			wpa_printf(MSG_INFO, "X509: Reject certificate with "
 				   "embedded NUL byte in a string (%s[NUL])",
 				   val);
+			os_free(val);
 			x509_free_name(name);
 			return -1;
 		}
@@ -519,7 +512,7 @@ void x509_name_string(struct x509_name *name, char *buf, size_t len)
 		ret = os_snprintf(pos, end - pos, "%s=%s, ",
 				  x509_name_attr_str(name->attr[i].type),
 				  name->attr[i].value);
-		if (ret < 0 || ret >= end - pos)
+		if (os_snprintf_error(end - pos, ret))
 			goto done;
 		pos += ret;
 	}
@@ -534,7 +527,7 @@ void x509_name_string(struct x509_name *name, char *buf, size_t len)
 	if (name->email) {
 		ret = os_snprintf(pos, end - pos, "/emailAddress=%s",
 				  name->email);
-		if (ret < 0 || ret >= end - pos)
+		if (os_snprintf_error(end - pos, ret))
 			goto done;
 		pos += ret;
 	}
@@ -1355,7 +1348,8 @@ static int x509_parse_tbs_certificate(const u8 *buf, size_t len,
 		wpa_printf(MSG_DEBUG, "X509: issuerUniqueID");
 		/* TODO: parse UniqueIdentifier ::= BIT STRING */
 
-		if (hdr.payload + hdr.length == end)
+		pos = hdr.payload + hdr.length;
+		if (pos == end)
 			return 0;
 
 		if (asn1_get_next(pos, end - pos, &hdr) < 0 ||
@@ -1373,7 +1367,8 @@ static int x509_parse_tbs_certificate(const u8 *buf, size_t len,
 		wpa_printf(MSG_DEBUG, "X509: subjectUniqueID");
 		/* TODO: parse UniqueIdentifier ::= BIT STRING */
 
-		if (hdr.payload + hdr.length == end)
+		pos = hdr.payload + hdr.length;
+		if (pos == end)
 			return 0;
 
 		if (asn1_get_next(pos, end - pos, &hdr) < 0 ||
@@ -1781,9 +1776,18 @@ skip_digest_oid:
 	}
 
 	if (hdr.length != hash_len ||
-	    os_memcmp(hdr.payload, hash, hdr.length) != 0) {
+	    os_memcmp_const(hdr.payload, hash, hdr.length) != 0) {
 		wpa_printf(MSG_INFO, "X509: Certificate Digest does not match "
 			   "with calculated tbsCertificate hash");
+		os_free(data);
+		return -1;
+	}
+
+	if (hdr.payload + hdr.length < data + data_len) {
+		wpa_hexdump(MSG_INFO,
+			    "X509: Extra data after certificate signature hash",
+			    hdr.payload + hdr.length,
+			    data + data_len - hdr.payload - hdr.length);
 		os_free(data);
 		return -1;
 	}

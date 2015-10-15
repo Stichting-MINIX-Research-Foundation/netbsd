@@ -1,4 +1,4 @@
-#	$NetBSD: files.sparc64,v 1.142 2013/08/27 13:11:12 macallan Exp $
+#	$NetBSD: files.sparc64,v 1.149 2015/10/06 16:40:36 martin Exp $
 
 # @(#)files.sparc64	8.1 (Berkeley) 7/19/93
 # sparc64-specific configuration info
@@ -8,7 +8,7 @@ maxpartitions 8
 
 maxusers 2 8 1024
 
-defflag	opt_sparc_arch.h	SUN4U
+defflag	opt_sparc_arch.h	SUN4U SUN4V
 
 define mainbus {}
 device mainbus: mainbus
@@ -32,15 +32,18 @@ file	arch/sparc64/dev/sbus.c			sbus
 
 device	psycho: pcibus, sysmon_power, sysmon_taskq
 attach	psycho at mainbus
-device	schizo: pcibus, sysmon_power, sysmon_taskq
+device	schizo: pcibus
 attach	schizo at mainbus
-device	pyro: pcibus, sysmon_power, sysmon_taskq
+device	pyro: pcibus
 attach	pyro at mainbus
+device	vpci: pcibus
+attach	vpci at mainbus
 include "dev/pci/files.pci"
 file	arch/sparc64/dev/psycho.c		psycho needs-flag
 file	arch/sparc64/dev/schizo.c		schizo
 file	arch/sparc64/dev/pyro.c			pyro
-file	arch/sparc64/dev/pci_machdep.c		psycho | schizo | pyro
+file	arch/sparc64/dev/vpci.c			vpci
+file	arch/sparc64/dev/pci_machdep.c		psycho | schizo | pyro | vpci
 
 define  central {}
 device	central: central
@@ -56,7 +59,7 @@ file	arch/sparc64/dev/fhc_central.c		fhc_central
 file	arch/sparc64/dev/fhc_mainbus.c		fhc_mainbus
 
 # IOMMU is for both
-file	arch/sparc64/dev/iommu.c		sbus | psycho | schizo | pyro
+file	arch/sparc64/dev/iommu.c		sbus | psycho | schizo | pyro | vpci
 
 include "dev/ata/files.ata"
 
@@ -76,7 +79,7 @@ device rtc: mc146818
 attach rtc at ebus with rtc_ebus
 file	arch/sparc64/dev/rtc.c			rtc
 
-device psm: sysmon_envsys, sysmon_power
+device psm: sysmon_power
 attach psm at ebus
 file	arch/sparc64/dev/psm.c			psm
 
@@ -87,15 +90,15 @@ device power
 attach power at sbus, ebus
 file	arch/sparc64/dev/power.c		power
 
-device	tda
+device	tda: sysmon_envsys
 attach	tda at iic
 file	arch/sparc64/dev/tda.c			tda
 
-device pcfiic: sysmon_envsys, pcf8584, i2cbus
+device pcfiic: pcf8584, i2cbus
 attach pcfiic at ebus
 file	arch/sparc64/dev/pcfiic_ebus.c		pcfiic
 
-device ecadc
+device ecadc: sysmon_envsys
 attach ecadc at iic
 file	arch/sparc64/dev/pcf8591_envctrl.c	ecadc
 
@@ -111,6 +114,8 @@ device	auxio
 attach	auxio at ebus with auxio_ebus
 attach	auxio at sbus with auxio_sbus
 file	arch/sparc64/dev/auxio.c		auxio
+file	arch/sparc64/dev/auxio_sbus.c		auxio_sbus
+file	arch/sparc64/dev/auxio_ebus.c		auxio_ebus
 
 defflag	opt_auxio.h	BLINK
 
@@ -248,6 +253,8 @@ file	arch/sparc64/sparc64/trap.c
 file	arch/sparc64/sparc64/vm_machdep.c
 file	arch/sparc64/sparc64/ipifuncs.c		multiprocessor
 file	arch/sparc64/sparc64/lock_stubs.s
+file	arch/sparc64/sparc64/hvcall.S		sun4v
+file	arch/sparc64/sparc64/mdesc.c		sun4v
 
 file	arch/sparc64/sparc64/db_interface.c	ddb | kgdb
 file	arch/sparc64/sparc64/db_machdep.c	ddb
@@ -263,6 +270,9 @@ include "dev/bluetooth/files.bluetooth"
 
 # IEEE1394 Support
 include "dev/ieee1394/files.ieee1394"
+
+# Stack-less Just-In-Time compiler
+include "external/bsd/sljit/conf/files.sljit"
 
 #
 # Compatibility modules

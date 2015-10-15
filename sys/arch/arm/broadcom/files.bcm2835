@@ -1,7 +1,9 @@
-#	$NetBSD: files.bcm2835,v 1.20 2013/11/01 12:23:12 skrll Exp $
+#	$NetBSD: files.bcm2835,v 1.25 2015/03/13 22:48:41 jmcneill Exp $
 #
 # Configuration info for Broadcom BCM2835 ARM Peripherals
 #
+
+defflag	opt_bcm283x.h			BCM2836
 
 include "arch/arm/pic/files.pic"
 
@@ -21,7 +23,12 @@ file	arch/arm/broadcom/bcm2835_obio.c	obio needs-count
 file	arch/arm/broadcom/bcm2835_space.c	obio
 file	arch/arm/arm/bus_space_a4x.S		obio
 
-# Interrupt Controller (BCM2835_ARMICU_BASE)
+# ARMv7 Generic Timer
+device	armgtmr
+attach	armgtmr at obio
+file	arch/arm/cortex/gtmr.c			armgtmr
+
+# Interrupt Controller (BCM2835_ARMICU_BASE) #, pic_splfuncs
 device	bcmicu: pic, pic_splfuncs
 attach	bcmicu at obio with bcmicu
 file	arch/arm/broadcom/bcm2835_intr.c	bcmicu
@@ -34,7 +41,7 @@ file	arch/arm/broadcom/bcm2835_mbox.c	bcmmbox
 # System Timer (BCM2835_TIMER_BASE)
 device	bcmtmr
 attach	bcmtmr at obio with bcmtmr_amba
-file	arch/arm/broadcom/bcm2835_tmr.c		bcmtmr
+file	arch/arm/broadcom/bcm2835_tmr.c		bcmtmr & !bcm2836
 
 # Power Management, Reset Controller, and Watchdog (BCM2835_PM_BASE)
 device	bcmpm: sysmon_wdog
@@ -53,6 +60,11 @@ file	arch/arm/broadcom/bcm2835_plcom.c	bcmplcom
 # External Mass Media Controller (BCM2835_EMMC_BASE)
 attach	sdhc at obio with bcmemmc
 file	arch/arm/broadcom/bcm2835_emmc.c	bcmemmc
+
+# DMA Controller (BCM2835_DMA0_BASE)
+device	bcmdmac
+attach	bcmdmac at obio with bcmdmac_amba
+file	arch/arm/broadcom/bcm2835_dmac.c	bcmdmac		needs-flag
 
 # USB (BCM2835_USB_BASE)
 attach dwctwo at obio with bcmdwctwo
@@ -80,6 +92,11 @@ file	arch/arm/broadcom/bcm2835_genfb.c	bcmgenfb	needs-flag
 include "external/bsd/vchiq/conf/files.vchiq"
 
 # VC audio
-device	vcaudio: audiobus, auconv, mulaw, aurateconv
+device	vcaudio: audiobus, auconv, mulaw, aurateconv, auvolconv
 attach	vcaudio at vchiqbus
 file	arch/arm/broadcom/bcm2835_vcaudio.c	vcaudio
+
+# GPIO
+device	bcmgpio: gpiobus
+attach	bcmgpio at obio
+file	arch/arm/broadcom/bcm2835_gpio.c

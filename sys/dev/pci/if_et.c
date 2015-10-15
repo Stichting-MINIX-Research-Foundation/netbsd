@@ -1,4 +1,4 @@
-/*	$NetBSD: if_et.c,v 1.7 2013/03/30 03:21:04 christos Exp $	*/
+/*	$NetBSD: if_et.c,v 1.9 2015/06/29 12:27:41 maxv Exp $	*/
 /*	$OpenBSD: if_et.c,v 1.11 2008/06/08 06:18:07 jsg Exp $	*/
 /*
  * Copyright (c) 2007 The DragonFly Project.  All rights reserved.
@@ -37,7 +37,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_et.c,v 1.7 2013/03/30 03:21:04 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_et.c,v 1.9 2015/06/29 12:27:41 maxv Exp $");
 
 #include "opt_inet.h"
 #include "vlan.h"
@@ -191,6 +191,7 @@ et_attach(device_t parent, device_t self, void *aux)
 	struct ifnet *ifp = &sc->sc_ethercom.ec_if;
 	pcireg_t memtype;
 	int error;
+	char intrbuf[PCI_INTRSTR_LEN];
 
 	pci_aprint_devinfo(pa, "Ethernet controller");
 
@@ -216,7 +217,7 @@ et_attach(device_t parent, device_t self, void *aux)
 		goto fail;
 	}
 
-	intrstr = pci_intr_string(pc, ih);
+	intrstr = pci_intr_string(pc, ih, intrbuf, sizeof(intrbuf));
 	sc->sc_irq_handle = pci_intr_establish(pc, ih, IPL_NET, et_intr, sc);
 	if (sc->sc_irq_handle == NULL) {
 		aprint_error_dev(self, "could not establish interrupt");
@@ -1822,7 +1823,6 @@ et_encap(struct et_softc *sc, struct mbuf **m0)
 
 		MGETHDR(m_new, M_DONTWAIT, MT_DATA);
 		if (m_new == NULL) {
-			m_freem(m);
 			aprint_error_dev(sc->sc_dev, "can't defrag TX mbuf\n");
 			error = ENOBUFS;
 			goto back;
@@ -1832,7 +1832,6 @@ et_encap(struct et_softc *sc, struct mbuf **m0)
 		if (m->m_pkthdr.len > MHLEN) {
 			MCLGET(m_new, M_DONTWAIT);
 			if (!(m_new->m_flags & M_EXT)) {
-				m_freem(m);
 				m_freem(m_new);
 				error = ENOBUFS;
 			}

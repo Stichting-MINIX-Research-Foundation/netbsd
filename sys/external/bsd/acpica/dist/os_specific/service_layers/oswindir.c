@@ -1,4 +1,3 @@
-
 /******************************************************************************
  *
  * Module Name: oswindir - Windows directory access interfaces
@@ -6,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -107,6 +106,7 @@ AcpiOsOpenDirectory (
     if (!FullWildcardSpec)
     {
         printf ("Could not allocate buffer for wildcard pathname\n");
+        free (SearchInfo);
         return (NULL);
     }
 
@@ -215,6 +215,7 @@ AcpiOsGetNextFilename (
             break;
 
         default:
+
             return (NULL);
         }
     }
@@ -248,4 +249,3 @@ AcpiOsCloseDirectory (
     free (SearchInfo->FullWildcardSpec);
     free (DirHandle);
 }
-

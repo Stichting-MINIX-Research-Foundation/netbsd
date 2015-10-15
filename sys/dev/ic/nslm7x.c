@@ -1,4 +1,4 @@
-/*	$NetBSD: nslm7x.c,v 1.60 2013/10/20 21:13:15 christos Exp $ */
+/*	$NetBSD: nslm7x.c,v 1.62 2015/04/23 23:23:00 pgoyette Exp $ */
 
 /*-
  * Copyright (c) 2000 The NetBSD Foundation, Inc.
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: nslm7x.c,v 1.60 2013/10/20 21:13:15 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: nslm7x.c,v 1.62 2015/04/23 23:23:00 pgoyette Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -1703,7 +1703,7 @@ lm_attach(struct lm_softc *lmsc)
 void
 lm_detach(struct lm_softc *lmsc)
 {
-	callout_stop(&lmsc->sc_callout);
+	callout_halt(&lmsc->sc_callout, NULL);
 	callout_destroy(&lmsc->sc_callout);
 	sysmon_envsys_unregister(lmsc->sc_sme);
 }
@@ -2262,7 +2262,7 @@ as_refresh_temp(struct lm_softc *sc, int n)
 	    __func__, n, data, sc->sensors[n].value_cur));
 }
 
-MODULE(MODULE_CLASS_DRIVER, lm, NULL);
+MODULE(MODULE_CLASS_DRIVER, lm, "sysmon_envsys");
 
 static int
 lm_modcmd(modcmd_t cmd, void *opaque)

@@ -1,4 +1,4 @@
-/*	$NetBSD: npf.c,v 1.18 2013/11/08 00:38:26 rmind Exp $	*/
+/*	$NetBSD: npf.c,v 1.23 2015/08/20 14:40:19 christos Exp $	*/
 
 /*-
  * Copyright (c) 2009-2013 The NetBSD Foundation, Inc.
@@ -34,7 +34,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: npf.c,v 1.18 2013/11/08 00:38:26 rmind Exp $");
+__KERNEL_RCSID(0, "$NetBSD: npf.c,v 1.23 2015/08/20 14:40:19 christos Exp $");
 
 #include <sys/param.h>
 #include <sys/types.h>
@@ -52,13 +52,14 @@ __KERNEL_RCSID(0, "$NetBSD: npf.c,v 1.18 2013/11/08 00:38:26 rmind Exp $");
 #include <sys/uio.h>
 
 #include "npf_impl.h"
+#include "npf_conn.h"
+
+#include "ioconf.h"
 
 /*
  * Module and device structures.
  */
 MODULE(MODULE_CLASS_DRIVER, npf, NULL);
-
-void		npfattach(int);
 
 static int	npf_fini(void);
 static int	npf_dev_open(dev_t, int, int, lwp_t *);
@@ -73,8 +74,18 @@ static percpu_t *		npf_stats_percpu	__read_mostly;
 static struct sysctllog *	npf_sysctl		__read_mostly;
 
 const struct cdevsw npf_cdevsw = {
-	npf_dev_open, npf_dev_close, npf_dev_read, nowrite, npf_dev_ioctl,
-	nostop, notty, npf_dev_poll, nommap, nokqfilter, D_OTHER | D_MPSAFE
+	.d_open = npf_dev_open,
+	.d_close = npf_dev_close,
+	.d_read = npf_dev_read,
+	.d_write = nowrite,
+	.d_ioctl = npf_dev_ioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = npf_dev_poll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_OTHER | D_MPSAFE
 };
 
 static int
@@ -91,7 +102,7 @@ npf_init(void)
 	npf_bpf_sysinit();
 	npf_worker_sysinit();
 	npf_tableset_sysinit();
-	npf_session_sysinit();
+	npf_conn_sysinit();
 	npf_nat_sysinit();
 	npf_alg_sysinit();
 	npf_ext_sysinit();
@@ -119,16 +130,13 @@ npf_fini(void)
 	devsw_detach(NULL, &npf_cdevsw);
 #endif
 	npf_pfil_unregister(true);
-
-	/* Flush all sessions, destroy configuration (ruleset, etc). */
-	npf_session_tracking(false);
 	npf_config_fini();
 
 	/* Finally, safe to destroy the subsystems. */
 	npf_ext_sysfini();
 	npf_alg_sysfini();
 	npf_nat_sysfini();
-	npf_session_sysfini();
+	npf_conn_sysfini();
 	npf_tableset_sysfini();
 	npf_bpf_sysfini();
 
@@ -210,23 +218,17 @@ npf_dev_ioctl(dev_t dev, u_long cmd, void *data, int flag, lwp_t *l)
 	case IOC_NPF_RULE:
 		error = npfctl_rule(cmd, data);
 		break;
-	case IOC_NPF_GETCONF:
-		error = npfctl_getconf(cmd, data);
-		break;
 	case IOC_NPF_STATS:
 		error = npfctl_stats(data);
 		break;
-	case IOC_NPF_SESSIONS_SAVE:
-		error = npfctl_sessions_save(cmd, data);
-		break;
-	case IOC_NPF_SESSIONS_LOAD:
-		error = npfctl_sessions_load(cmd, data);
+	case IOC_NPF_SAVE:
+		error = npfctl_save(cmd, data);
 		break;
 	case IOC_NPF_SWITCH:
 		error = npfctl_switch(data);
 		break;
-	case IOC_NPF_RELOAD:
-		error = npfctl_reload(cmd, data);
+	case IOC_NPF_LOAD:
+		error = npfctl_load(cmd, data);
 		break;
 	case IOC_NPF_VERSION:
 		*(int *)data = NPF_VERSION;

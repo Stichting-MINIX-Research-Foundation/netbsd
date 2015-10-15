@@ -1,7 +1,7 @@
-/*	$NetBSD: acl.c,v 1.5 2013/07/27 19:23:12 christos Exp $	*/
+/*	$NetBSD: acl.c,v 1.7 2014/12/10 04:37:58 christos Exp $	*/
 
 /*
- * Copyright (C) 2004-2009, 2011, 2013  Internet Systems Consortium, Inc. ("ISC")
+ * Copyright (C) 2004-2009, 2011, 2013, 2014  Internet Systems Consortium, Inc. ("ISC")
  * Copyright (C) 1999-2002  Internet Software Consortium.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
@@ -30,6 +30,7 @@
 
 #include <dns/acl.h>
 #include <dns/iptable.h>
+
 
 /*
  * Create a new ACL, including an IP table and an array with room
@@ -292,9 +293,12 @@ dns_acl_merge(dns_acl_t *dest, dns_acl_t *source, isc_boolean_t pos)
 		if (newmem == NULL)
 			return (ISC_R_NOMEMORY);
 
+		/* Zero. */
+		memset(newmem, 0, newalloc * sizeof(dns_aclelement_t));
+
 		/* Copy in the original elements */
-		memcpy(newmem, dest->elements,
-		       dest->length * sizeof(dns_aclelement_t));
+		memmove(newmem, dest->elements,
+			dest->length * sizeof(dns_aclelement_t));
 
 		/* Release the memory for the old elements array */
 		isc_mem_put(dest->mctx, dest->elements,
@@ -337,6 +341,14 @@ dns_acl_merge(dns_acl_t *dest, dns_acl_t *source, isc_boolean_t pos)
 			if (result != ISC_R_SUCCESS)
 				return result;
 		}
+
+#ifdef HAVE_GEOIP
+		/* Duplicate GeoIP data */
+		if (source->elements[i].type == dns_aclelementtype_geoip) {
+			dest->elements[nelem + i].geoip_elem =
+				source->elements[i].geoip_elem;
+		}
+#endif
 
 		/* reverse sense of positives if this is a negative acl */
 		if (!pos && source->elements[i].negative == ISC_FALSE) {
@@ -388,9 +400,8 @@ dns_aclelement_match(const isc_netaddr_t *reqaddr,
 			if (matchelt != NULL)
 				*matchelt = e;
 			return (ISC_TRUE);
-		} else {
+		} else
 			return (ISC_FALSE);
-		}
 
 	case dns_aclelementtype_nestedacl:
 		inner = e->nestedacl;
@@ -408,6 +419,12 @@ dns_aclelement_match(const isc_netaddr_t *reqaddr,
 		inner = env->localnets;
 		break;
 
+#ifdef HAVE_GEOIP
+	case dns_aclelementtype_geoip:
+		if (env == NULL || env->geoip == NULL)
+			return (ISC_FALSE);
+		return (dns_geoip_match(reqaddr, env->geoip, &e->geoip_elem));
+#endif
 	default:
 		/* Should be impossible. */
 		INSIST(0);
@@ -562,7 +579,7 @@ dns_acl_isinsecure(const dns_acl_t *a) {
 	insecure = insecure_prefix_found;
 	UNLOCK(&insecure_prefix_lock);
 	if (insecure)
-		return(ISC_TRUE);
+		return (ISC_TRUE);
 
 	/* Now check non-radix elements */
 	for (i = 0; i < a->length; i++) {
@@ -611,6 +628,9 @@ dns_aclenv_init(isc_mem_t *mctx, dns_aclenv_t *env) {
 	if (result != ISC_R_SUCCESS)
 		goto cleanup_localhost;
 	env->match_mapped = ISC_FALSE;
+#ifdef HAVE_GEOIP
+	env->geoip = NULL;
+#endif
 	return (ISC_R_SUCCESS);
 
  cleanup_localhost:

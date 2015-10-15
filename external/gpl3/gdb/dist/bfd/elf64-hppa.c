@@ -1,7 +1,5 @@
 /* Support for HPPA 64-bit ELF
-   Copyright 1999, 2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008,
-   2009, 2010, 2011, 2012
-   Free Software Foundation, Inc.
+   Copyright (C) 1999-2015 Free Software Foundation, Inc.
 
    This file is part of BFD, the Binary File Descriptor library.
 
@@ -193,9 +191,6 @@ static int elf64_hppa_link_output_symbol_hook
 static bfd_boolean elf64_hppa_finish_dynamic_symbol
   (bfd *, struct bfd_link_info *,
    struct elf_link_hash_entry *, Elf_Internal_Sym *);
-
-static enum elf_reloc_type_class elf64_hppa_reloc_type_class
-  (const Elf_Internal_Rela *);
 
 static bfd_boolean elf64_hppa_finish_dynamic_sections
   (bfd *, struct bfd_link_info *);
@@ -647,6 +642,9 @@ elf64_hppa_check_relocs (bfd *abfd,
 		 || hh->eh.root.type == bfd_link_hash_warning)
 	    hh = hppa_elf_hash_entry (hh->eh.root.u.i.link);
 
+	  /* PR15323, ref flags aren't set for references in the same
+	     object.  */
+	  hh->eh.root.non_ir_ref = 1;
 	  hh->eh.ref_regular = 1;
 	}
       else
@@ -1582,7 +1580,7 @@ elf64_hppa_size_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
 
   /* Set up DLT, PLT and OPD offsets for local syms, and space for local
      dynamic relocs.  */
-  for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link_next)
+  for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
     {
       bfd_signed_vma *local_dlt;
       bfd_signed_vma *end_local_dlt;
@@ -2446,7 +2444,9 @@ elf64_hppa_finalize_dynreloc (struct elf_link_hash_entry *eh,
    dynamic linker, before writing them out.  */
 
 static enum elf_reloc_type_class
-elf64_hppa_reloc_type_class (const Elf_Internal_Rela *rela)
+elf64_hppa_reloc_type_class (const struct bfd_link_info *info ATTRIBUTE_UNUSED,
+			     const asection *rel_sec ATTRIBUTE_UNUSED,
+			     const Elf_Internal_Rela *rela)
 {
   if (ELF64_R_SYM (rela->r_info) == STN_UNDEF)
     return reloc_class_relative;
@@ -2522,6 +2522,8 @@ elf64_hppa_finish_dynamic_sections (bfd *output_bfd,
 		 area at the start of the .data section.  So all we have to
 		 to is find the start of the .data section.  */
 	      s = bfd_get_section_by_name (output_bfd, ".data");
+	      if (!s)
+		return FALSE;
 	      dyn.d_un.d_ptr = s->vma;
 	      bfd_elf64_swap_dyn_out (output_bfd, &dyn, dyncon);
 	      break;
@@ -3273,7 +3275,7 @@ elf_hppa_final_link_relocate (Elf_Internal_Rela *rel,
 	    && value + addend + max_branch_offset >= 2*max_branch_offset)
 	  {
 	    (*_bfd_error_handler)
-	      (_("%B(%A+0x" BFD_VMA_FMT "x): cannot reach %s"),
+	      (_("%B(%A+0x%" BFD_VMA_FMT "x): cannot reach %s"),
 	      input_bfd,
 	      input_section,
 	      offset,
@@ -3866,6 +3868,11 @@ elf64_hppa_relocate_section (bfd *output_bfd,
 
 	  eh = sym_hashes[r_symndx - symtab_hdr->sh_info];
 
+	  if (info->wrap_hash != NULL
+	      && (input_section->flags & SEC_DEBUGGING) != 0)
+	    eh = ((struct elf_link_hash_entry *)
+		  unwrap_hash_lookup (info, input_bfd, &eh->root));
+
 	  while (eh->root.type == bfd_link_hash_indirect
 		 || eh->root.type == bfd_link_hash_warning)
 	    eh = (struct elf_link_hash_entry *) eh->root.u.i.link;
@@ -4012,7 +4019,7 @@ const struct elf_size_info hppa64_elf_size_info =
   bfd_elf64_swap_reloca_out
 };
 
-#define TARGET_BIG_SYM			bfd_elf64_hppa_vec
+#define TARGET_BIG_SYM			hppa_elf64_vec
 #define TARGET_BIG_NAME			"elf64-hppa"
 #define ELF_ARCH			bfd_arch_hppa
 #define ELF_TARGET_ID			HPPA64_ELF_DATA
@@ -4094,13 +4101,11 @@ const struct elf_size_info hppa64_elf_size_info =
 #include "elf64-target.h"
 
 #undef TARGET_BIG_SYM
-#define TARGET_BIG_SYM			bfd_elf64_hppa_linux_vec
+#define TARGET_BIG_SYM			hppa_elf64_linux_vec
 #undef TARGET_BIG_NAME
 #define TARGET_BIG_NAME			"elf64-hppa-linux"
 #undef ELF_OSABI
 #define ELF_OSABI			ELFOSABI_GNU
-#undef elf_backend_post_process_headers
-#define elf_backend_post_process_headers _bfd_elf_set_osabi
 #undef elf64_bed
 #define elf64_bed			elf64_hppa_linux_bed
 

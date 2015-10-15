@@ -1,13 +1,10 @@
-#	$NetBSD: Makefile,v 1.2 2011/08/28 15:48:19 jmcneill Exp $
+#	$NetBSD: Makefile,v 1.6 2015/03/28 14:48:53 jmcneill Exp $
+
+# This file is used by modules and rump kernels
 
 .include "../Makefile.inc"
-
-.PATH:	${S}/dev/pci/hdaudio
+.include "${.CURDIR}/Makefile.inc"
 
 KMOD=	hdaudio
-IOCONF=	hdaudio.ioconf
-SRCS=	hdaudio.c
-SRCS+=	hdaudio_ids.c
-SRCS+=	hdaudio_pci.c
 
 .include <bsd.kmodule.mk>

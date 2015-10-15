@@ -1,37 +1,37 @@
-/*	$NetBSD: db_trace.c,v 1.28 2013/01/18 07:34:39 skrll Exp $	*/
+/*	$NetBSD: db_trace.c,v 1.31 2015/01/24 15:44:32 skrll Exp $	*/
 
-/* 
+/*
  * Copyright (c) 2000, 2001 Ben Harris
  * Copyright (c) 1996 Scott K. Stevens
  *
  * Mach Operating System
  * Copyright (c) 1991,1990 Carnegie Mellon University
  * All Rights Reserved.
- * 
+ *
  * Permission to use, copy, modify and distribute this software and its
  * documentation is hereby granted, provided that both the copyright
  * notice and this permission notice appear in all copies of the
  * software, derivative works or modified versions, and any portions
  * thereof, and that both notices appear in supporting documentation.
- * 
+ *
  * CARNEGIE MELLON ALLOWS FREE USE OF THIS SOFTWARE IN ITS "AS IS"
  * CONDITION.  CARNEGIE MELLON DISCLAIMS ANY LIABILITY OF ANY KIND FOR
  * ANY DAMAGES WHATSOEVER RESULTING FROM THE USE OF THIS SOFTWARE.
- * 
+ *
  * Carnegie Mellon requests users of this software to return to
- * 
+ *
  *  Software Distribution Coordinator  or  Software.Distribution@CS.CMU.EDU
  *  School of Computer Science
  *  Carnegie Mellon University
  *  Pittsburgh PA 15213-3890
- * 
+ *
  * any improvements or extensions that they make and grant Carnegie the
  * rights to redistribute these changes.
  */
 
 #include <sys/param.h>
 
-__KERNEL_RCSID(0, "$NetBSD: db_trace.c,v 1.28 2013/01/18 07:34:39 skrll Exp $");
+__KERNEL_RCSID(0, "$NetBSD: db_trace.c,v 1.31 2015/01/24 15:44:32 skrll Exp $");
 
 #include <sys/proc.h>
 #include <arm/armreg.h>
@@ -53,7 +53,7 @@ __KERNEL_RCSID(0, "$NetBSD: db_trace.c,v 1.28 2013/01/18 07:34:39 skrll Exp $");
  * a structure to represent them is a good idea.
  *
  * Here's the diagram from the APCS.  Increasing address is _up_ the page.
- * 
+ *
  *          save code pointer       [fp]        <- fp points to here
  *          return link value       [fp, #-4]
  *          return sp value         [fp, #-8]
@@ -70,9 +70,9 @@ __KERNEL_RCSID(0, "$NetBSD: db_trace.c,v 1.28 2013/01/18 07:34:39 skrll Exp $");
  *          [saved a2 value]
  *          [saved a1 value]
  *
- * The save code pointer points twelve bytes beyond the start of the 
- * code sequence (usually a single STM) that created the stack frame.  
- * We have to disassemble it if we want to know which of the optional 
+ * The save code pointer points twelve bytes beyond the start of the
+ * code sequence (usually a single STM) that created the stack frame.
+ * We have to disassemble it if we want to know which of the optional
  * fields are actually present.
  */
 
@@ -109,9 +109,12 @@ db_stack_trace_print(db_expr_t addr, bool have_addr,
 			trace_full = true;
 	}
 
+#ifdef _KERNEL
 	if (!have_addr)
 		frame = (uint32_t *)(DDB_REGS->tf_r11);
-	else {
+	else
+#endif
+	{
 		if (trace_thread) {
 			struct pcb *pcb;
 			proc_t p;
@@ -152,8 +155,18 @@ db_stack_trace_print(db_expr_t addr, bool have_addr,
 		} else
 			frame = (uint32_t *)(addr);
 	}
-	lastframe = NULL;
 	scp_offset = -(get_pc_str_offset() >> 2);
+
+	if (frame == NULL)
+		return;
+
+	lastframe = frame;
+#ifndef _KERNEL
+	uint32_t frameb[4];
+	db_read_bytes((db_addr_t)(frame - 3), sizeof(frameb),
+	    (char *)frameb);
+	frame = frameb + 3;
+#endif
 
 	/*
 	 * In theory, the SCP isn't guaranteed to be in the function
@@ -166,7 +179,7 @@ db_stack_trace_print(db_expr_t addr, bool have_addr,
 #endif
 	pc = scp;
 
-	while (count-- && frame != NULL) {
+	while (count--) {
 		uint32_t	savecode;
 		int		r;
 		uint32_t	*rp;
@@ -177,14 +190,8 @@ db_stack_trace_print(db_expr_t addr, bool have_addr,
 #else
 		scp = frame[FR_SCP];
 #endif
-		lastframe = frame;
-		(*pr)("%p: ", frame);
-#ifndef _KERNEL
-		uint32_t frameb[4];
-		db_read_bytes((db_addr_t)(frame - 3), sizeof(frameb),
-		    (char *)frameb);
-		frame = frameb + 3;
-#endif
+		(*pr)("%p: ", lastframe);
+
 		db_printsym(pc, DB_STGY_PROC, pr);
 		if (trace_full) {
 			(*pr)("\n\t");
@@ -238,8 +245,11 @@ db_stack_trace_print(db_expr_t addr, bool have_addr,
 #else
 		pc = frame[FR_RLV];
 #endif
-		
+
 		frame = (uint32_t *)(frame[FR_RFP]);
+
+		if (frame == NULL)
+			break;
 
 		if (INKERNEL((int)frame)) {
 			/* staying in kernel */
@@ -259,5 +269,11 @@ db_stack_trace_print(db_expr_t addr, bool have_addr,
 				break;
 			}
 		}
+		lastframe = frame;
+#ifndef _KERNEL
+		db_read_bytes((db_addr_t)(frame - 3), sizeof(frameb),
+		    (char *)frameb);
+		frame = frameb + 3;
+#endif
 	}
 }

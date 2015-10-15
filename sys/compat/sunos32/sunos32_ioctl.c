@@ -1,4 +1,4 @@
-/*	$NetBSD: sunos32_ioctl.c,v 1.29 2008/05/29 14:51:26 mrg Exp $	*/
+/*	$NetBSD: sunos32_ioctl.c,v 1.32 2015/09/26 04:13:39 christos Exp $	*/
 /* from: NetBSD: sunos_ioctl.c,v 1.35 2001/02/03 22:20:02 mrg Exp 	*/
 
 /*
@@ -54,7 +54,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: sunos32_ioctl.c,v 1.29 2008/05/29 14:51:26 mrg Exp $");
+__KERNEL_RCSID(0, "$NetBSD: sunos32_ioctl.c,v 1.32 2015/09/26 04:13:39 christos Exp $");
 
 #if defined(_KERNEL_OPT)
 #include "opt_compat_netbsd32.h"
@@ -435,15 +435,15 @@ sunos32_do_ioctl(int fd, int cmd, void *arg, struct lwp *l)
 	struct vnode *vp;
 	int error;
 
-	if ((fp = fd_getfile(fd)) == NULL)
-		return EBADF;
+	if ((error = fd_getvnode(fd, &fp)) != 0)
+		return error;
 	if ((fp->f_flag & (FREAD|FWRITE)) == 0) {
 		fd_putfile(fd);
 		return EBADF;
 	}
 	error = fp->f_ops->fo_ioctl(fp, cmd, arg);
 	if (error == EIO && cmd == TIOCGPGRP) {
-		vp = (struct vnode *)fp->f_data;
+		vp = fp->f_vnode;
 		if (vp != NULL && vp->v_type == VCHR && major(vp->v_rdev) == 21)
 			error = ENOTTY;
 	}
@@ -866,7 +866,7 @@ sunos32_sys_ioctl(struct lwp *l, const struct sunos32_sys_ioctl_args *uap, regis
 	 * (which was from the old sparc/scsi/sun_disklabel.c), and
 	 * modified to suite.
 	 */
-	case DKIOCGGEOM:
+	case SUN_DKIOCGGEOM:
             {
 		struct disklabel dl;
 
@@ -890,13 +890,13 @@ sunos32_sys_ioctl(struct lwp *l, const struct sunos32_sys_ioctl_args *uap, regis
 		break;
 	    }
 
-	case DKIOCINFO:
+	case SUN_DKIOCINFO:
 		/* Homey don't do DKIOCINFO */
 		/* XXX can't do memset() on a user address (dsl) */
 		memset(SCARG_P32(uap, data), 0, sizeof(struct sun_dkctlr));
 		break;
 
-	case DKIOCGPART:
+	case SUN_DKIOCGPART:
             {
 		struct partinfo pi;
 

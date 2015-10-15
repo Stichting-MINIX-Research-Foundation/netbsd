@@ -1,4 +1,4 @@
-/*	$NetBSD: ntp_scanner.h,v 1.1.1.2 2012/01/31 21:26:44 kardel Exp $	*/
+/*	$NetBSD: ntp_scanner.h,v 1.3 2015/07/10 14:20:32 christos Exp $	*/
 
 /* ntp_scanner.h
  *
@@ -12,6 +12,8 @@
 
 #ifndef NTP_SCANNER_H
 #define NTP_SCANNER_H
+
+#include "ntp_config.h"
 
 /*
  * ntp.conf syntax is slightly irregular in that some tokens such as
@@ -83,39 +85,40 @@ typedef enum {
 
 typedef u_int32 scan_state;
 
+struct LCPOS {
+	int nline;
+	int ncol;
+};
 
-/* Structure to hold a filename, file pointer and positional info */
+/* Structure to hold a filename, file pointer and positional info.
+ * Instances are dynamically allocated, and the file name is copied by
+ * value into a dynamic extension of the 'fname' array. (Which *must* be
+ * the last field for that reason!)
+ */
 struct FILE_INFO {
-	const char *	fname;			/* Path to the file */
-	FILE *		fd;			/* File Descriptor */
-	int		line_no;		/* Line Number */
-	int		col_no;			/* Column Number */
-	int		prev_line_col_no;	/* Col No on the 
-						   previous line when a
-						   '\n' was seen */
-	int		prev_token_line_no;	/* Line at start of
-						   token */
-	int		prev_token_col_no;	/* Col No at start of
-						   token */
-	int		err_line_no;
-	int		err_col_no;
+	struct FILE_INFO * st_next;	/* next on stack */
+	FILE *		   fpi;		/* File Descriptor */
+	int                force_eof;	/* locked or not */
+	int                backch;	/* ungetch buffer */
+	
+	struct LCPOS       curpos;	/* current scan position */
+	struct LCPOS       bakpos;	/* last line end for ungetc */
+	struct LCPOS       tokpos;	/* current token position */
+	struct LCPOS       errpos;	/* error position */
+
+	char               fname[1];	/* (formal only) buffered name */
 };
 
 
 /* SCANNER GLOBAL VARIABLES 
  * ------------------------
  */
-extern struct config_tree cfgt;	  /* Parser output stored here */
-extern int curr_include_level;    /* The current include level */
-
-extern struct FILE_INFO *ip_file; /* Pointer to the configuration file stream */
+extern config_tree cfgt;	  /* Parser output stored here */
 
 /* VARIOUS EXTERNAL DECLARATIONS
  * -----------------------------
  */
 extern int old_config_style;
-extern int input_from_file;
-extern struct FILE_INFO *fp[];
 
 /* VARIOUS SUBROUTINE DECLARATIONS
  * -------------------------------
@@ -124,11 +127,18 @@ extern const char *keyword(int token);
 extern char *quote_if_needed(char *str);
 int yylex(void);
 
-struct FILE_INFO *F_OPEN(const char *path, const char *mode);
-int FGETC(struct FILE_INFO *stream);
-int UNGETC(int ch, struct FILE_INFO *stream);
-int FCLOSE(struct FILE_INFO *stream);
+/* managing the input source stack itself */
+extern int/*BOOL*/ lex_init_stack(const char * path, const char * mode);
+extern void        lex_drop_stack(void);
+extern int/*BOOL*/ lex_flush_stack(void);
 
-void push_back_char(int ch);
+/* add/remove a nested input source */
+extern int/*BOOL*/ lex_push_file(const char * path, const char * mode);
+extern int/*BOOL*/ lex_pop_file(void);
+
+/* input stack state query functions */
+extern size_t      lex_level(void);
+extern int/*BOOL*/ lex_from_file(void);
+extern struct FILE_INFO * lex_current(void);
 
 #endif	/* NTP_SCANNER_H */

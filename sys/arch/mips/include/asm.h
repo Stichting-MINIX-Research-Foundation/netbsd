@@ -1,4 +1,4 @@
-/*	$NetBSD: asm.h,v 1.46 2011/11/10 00:37:38 joerg Exp $	*/
+/*	$NetBSD: asm.h,v 1.48 2014/09/17 16:49:20 joerg Exp $	*/
 
 /*
  * Copyright (c) 1992, 1993
@@ -117,7 +117,7 @@
  *	No profilable local leaf routine.
  */
 #define	STATIC_LEAF_NOPROFILE(x)	\
-	.ent	_C_LABEL(x), 0;		\
+	.ent	_C_LABEL(x);		\
 _C_LABEL(x): ;				\
 	.frame sp, 0, ra
 
@@ -169,7 +169,7 @@ _C_LABEL(x):
  *	No profilable local nested routine.
  */
 #define	STATIC_NESTED_NOPROFILE(x, fsize, retpc)	\
-	.ent	_C_LABEL(x), 0;			\
+	.ent	_C_LABEL(x);			\
 _C_LABEL(x): ;					\
 	.frame	sp, fsize, retpc
 
@@ -234,7 +234,7 @@ _C_LABEL(x):
  *	XXX: regmask should be used to generate .mask
  */
 #define	VECTOR(x, regmask)		\
-	.ent	_C_LABEL(x),0;		\
+	.ent	_C_LABEL(x);		\
 	EXPORT(x);			\
 
 #define	VECTOR_END(x)			\
@@ -259,11 +259,11 @@ _C_LABEL(x):
 
 #define	MSG(msg)			\
 	.rdata;				\
-9:	.asciiz	msg;			\
+9:	.asciz	msg;			\
 	.text
 
 #define	ASMSTR(str)			\
-	.asciiz str;			\
+	.asciz str;			\
 	.align	3
 
 #define	RCSID(name)	.pushsection ".ident"; .asciz name; .popsection

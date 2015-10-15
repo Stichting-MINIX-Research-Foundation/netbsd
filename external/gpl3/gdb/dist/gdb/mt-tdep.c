@@ -1,6 +1,6 @@
 /* Target-dependent code for Morpho mt processor, for GDB.
 
-   Copyright (C) 2005-2013 Free Software Foundation, Inc.
+   Copyright (C) 2005-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -27,7 +27,6 @@
 #include "dis-asm.h"
 #include "arch-utils.h"
 #include "gdbtypes.h"
-#include "gdb_string.h"
 #include "regcache.h"
 #include "reggroups.h"
 #include "gdbcore.h"
@@ -35,7 +34,6 @@
 #include "inferior.h"
 #include "dwarf2-frame.h"
 #include "infcall.h"
-#include "gdb_assert.h"
 #include "language.h"
 #include "valprint.h"
 
@@ -718,7 +716,7 @@ mt_registers_info (struct gdbarch *gdbarch,
 	  print_spaces_filtered (15 - strlen (gdbarch_register_name
 					        (gdbarch, regnum)),
 				 file);
-	  get_raw_print_options (&opts);
+	  get_no_prettyformat_print_options (&opts);
 	  opts.deref_ref = 1;
 	  val_print (register_type (gdbarch, regnum), buf,
 		     0, 0, file, 0, NULL,
@@ -1149,7 +1147,7 @@ mt_gdbarch_init (struct gdbarch_info info, struct gdbarch_list *arches)
 
   /* None found, create a new architecture from the information
      provided.  */
-  tdep = XCALLOC (1, struct gdbarch_tdep);
+  tdep = XCNEW (struct gdbarch_tdep);
   gdbarch = gdbarch_alloc (&info, tdep);
 
   set_gdbarch_float_format (gdbarch, floatformats_ieee_single);

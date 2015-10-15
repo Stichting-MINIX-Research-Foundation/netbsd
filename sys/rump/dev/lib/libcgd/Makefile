@@ -1,13 +1,13 @@
-#	$NetBSD: Makefile,v 1.3 2010/02/16 20:42:44 pooka Exp $
+#	$NetBSD: Makefile,v 1.5 2015/08/20 11:51:12 christos Exp $
 #
 
 .PATH:	${.CURDIR}/../../../../dev
 
 LIB=	rumpdev_cgd
-
+IOCONF=	CGD.ioconf
 SRCS=   cgd.c cgd_crypto.c
 
-SRCS+=	component.c
+SRCS+=	cgd_component.c
 
 CPPFLAGS+=	-I${RUMPTOP}/librump/rumpvfs
 

@@ -1,6 +1,6 @@
 /* Native-dependent code for PowerPC's running FreeBSD, for GDB.
 
-   Copyright (C) 2013 Free Software Foundation, Inc.
+   Copyright (C) 2013-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -22,8 +22,6 @@
 #include "inferior.h"
 #include "regcache.h"
 
-#include "gdb_assert.h"
-#include <stddef.h>
 #include <sys/types.h>
 #include <sys/procfs.h>
 #include <sys/ptrace.h>
@@ -123,7 +121,7 @@ ppcfbsd_fetch_inferior_registers (struct target_ops *ops,
 {
   gdb_gregset_t regs;
 
-  if (ptrace (PT_GETREGS, PIDGET (inferior_ptid),
+  if (ptrace (PT_GETREGS, ptid_get_pid (inferior_ptid),
 	      (PTRACE_TYPE_ARG3) &regs, 0) == -1)
     perror_with_name (_("Couldn't get registers"));
 
@@ -134,7 +132,7 @@ ppcfbsd_fetch_inferior_registers (struct target_ops *ops,
       const struct regset *fpregset = ppc_fbsd_fpregset ();
       gdb_fpregset_t fpregs;
 
-      if (ptrace (PT_GETFPREGS, PIDGET (inferior_ptid),
+      if (ptrace (PT_GETFPREGS, ptid_get_pid (inferior_ptid),
 		  (PTRACE_TYPE_ARG3) &fpregs, 0) == -1)
 	perror_with_name (_("Couldn't get FP registers"));
 
@@ -151,13 +149,13 @@ ppcfbsd_store_inferior_registers (struct target_ops *ops,
 {
   gdb_gregset_t regs;
 
-  if (ptrace (PT_GETREGS, PIDGET (inferior_ptid),
+  if (ptrace (PT_GETREGS, ptid_get_pid (inferior_ptid),
 	      (PTRACE_TYPE_ARG3) &regs, 0) == -1)
     perror_with_name (_("Couldn't get registers"));
 
   fill_gregset (regcache, &regs, regno);
 
-  if (ptrace (PT_SETREGS, PIDGET (inferior_ptid),
+  if (ptrace (PT_SETREGS, ptid_get_pid (inferior_ptid),
 	      (PTRACE_TYPE_ARG3) &regs, 0) == -1)
     perror_with_name (_("Couldn't write registers"));
 
@@ -165,13 +163,13 @@ ppcfbsd_store_inferior_registers (struct target_ops *ops,
     {
       gdb_fpregset_t fpregs;
 
-      if (ptrace (PT_GETFPREGS, PIDGET (inferior_ptid),
+      if (ptrace (PT_GETFPREGS, ptid_get_pid (inferior_ptid),
 		  (PTRACE_TYPE_ARG3) &fpregs, 0) == -1)
 	perror_with_name (_("Couldn't get FP registers"));
 
       fill_fpregset (regcache, &fpregs, regno);
 
-      if (ptrace (PT_SETFPREGS, PIDGET (inferior_ptid),
+      if (ptrace (PT_SETFPREGS, ptid_get_pid (inferior_ptid),
 		  (PTRACE_TYPE_ARG3) &fpregs, 0) == -1)
 	perror_with_name (_("Couldn't set FP registers"));
     }
@@ -216,7 +214,6 @@ _initialize_ppcfbsd_nat (void)
   t->to_store_registers = ppcfbsd_store_inferior_registers;
   t->to_pid_to_exec_file = fbsd_pid_to_exec_file;
   t->to_find_memory_regions = fbsd_find_memory_regions;
-  t->to_make_corefile_notes = fbsd_make_corefile_notes;
   add_target (t);
 
   /* Support debugging kernel virtual memory images.  */

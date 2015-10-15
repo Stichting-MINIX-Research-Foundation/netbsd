@@ -1,4 +1,4 @@
-/*	$NetBSD: if_eg.c,v 1.86 2013/10/18 08:09:37 apb Exp $	*/
+/*	$NetBSD: if_eg.c,v 1.88 2015/04/13 16:33:24 riastradh Exp $	*/
 
 /*
  * Copyright (c) 1993 Dean Huxley <dean@fsa.ca>
@@ -40,7 +40,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_eg.c,v 1.86 2013/10/18 08:09:37 apb Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_eg.c,v 1.88 2015/04/13 16:33:24 riastradh Exp $");
 
 #include "opt_inet.h"
 
@@ -53,7 +53,7 @@ __KERNEL_RCSID(0, "$NetBSD: if_eg.c,v 1.86 2013/10/18 08:09:37 apb Exp $");
 #include <sys/syslog.h>
 #include <sys/select.h>
 #include <sys/device.h>
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 
 #include <net/if.h>
 #include <net/if_dl.h>
@@ -465,7 +465,7 @@ egattach(device_t parent, device_t self, void *aux)
 	    IST_EDGE, IPL_NET, egintr, sc);
 
 	rnd_attach_source(&sc->rnd_source, device_xname(sc->sc_dev),
-			  RND_TYPE_NET, 0);
+			  RND_TYPE_NET, RND_FLAG_DEFAULT);
 }
 
 void

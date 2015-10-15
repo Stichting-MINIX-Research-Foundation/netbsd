@@ -1,6 +1,5 @@
 /* Generic BFD support for file formats.
-   Copyright 1990, 1991, 1992, 1993, 1994, 1995, 1999, 2000, 2001, 2002,
-   2003, 2005, 2007, 2008, 2009 Free Software Foundation, Inc.
+   Copyright (C) 1990-2015 Free Software Foundation, Inc.
    Written by Cygnus Support.
 
    This file is part of BFD, the Binary File Descriptor library.
@@ -376,6 +375,9 @@ bfd_check_format_matches (bfd *abfd, bfd_format format, char ***matching)
 	}
     }
 
+  /* We have more than one equally good match.  If any of the best
+     matches is a target in config.bfd targ_defvec or targ_selvecs,
+     choose it.  */
   if (match_count > 1)
     {
       const bfd_target * const *assoc = bfd_associated_vector;
@@ -385,7 +387,8 @@ bfd_check_format_matches (bfd *abfd, bfd_format format, char ***matching)
 	  int i = match_count;
 
 	  while (--i >= 0)
-	    if (matching_vector[i] == right_targ)
+	    if (matching_vector[i] == right_targ
+		&& right_targ->match_priority <= best_match)
 	      break;
 
 	  if (i >= 0)
@@ -394,6 +397,22 @@ bfd_check_format_matches (bfd *abfd, bfd_format format, char ***matching)
 	      break;
 	    }
 	}
+    }
+
+  /* We still have more than one equally good match, and at least some
+     of the targets support match priority.  Choose the first of the
+     best matches.  */
+  if (matching_vector && match_count > 1 && best_count != match_count)
+    {
+      int i;
+
+      for (i = 0; i < match_count; i++)
+	{
+	  right_targ = matching_vector[i];
+	  if (right_targ->match_priority <= best_match)
+	    break;
+	}
+      match_count = 1;
     }
 
   /* There is way too much undoing of half-known state here.  We

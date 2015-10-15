@@ -1,4 +1,3 @@
-
 /******************************************************************************
  *
  * Module Name: asldefine.h - Common defines for the iASL compiler
@@ -6,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -42,7 +41,6 @@
  * POSSIBILITY OF SUCH DAMAGES.
  */
 
-
 #ifndef __ASLDEFINE_H
 #define __ASLDEFINE_H
 
@@ -50,20 +48,20 @@
 /*
  * Compiler versions and names
  */
-#define ASL_REVISION                ACPI_CA_VERSION
-#define ASL_COMPILER_NAME           "ASL Optimizing Compiler"
-#define AML_DISASSEMBLER_NAME       "AML Disassembler"
+#define ASL_COMPILER_NAME           "ASL+ Optimizing Compiler"
+#define AML_DISASSEMBLER_NAME       "AML/ASL+ Disassembler"
 #define ASL_INVOCATION_NAME         "iasl"
 #define ASL_CREATOR_ID              "INTL"
+#define ASL_DEFINE                  "__IASL__"
 
-#define ASL_COMPLIANCE              "Supports ACPI Specification Revision 4.0a"
+#define ASL_COMPLIANCE              "Supports ACPI Specification Revision 6.0"
 
 
 /* Configuration constants */
 
 #define ASL_MAX_ERROR_COUNT         200
-#define ASL_NODE_CACHE_SIZE         1024
-#define ASL_STRING_CACHE_SIZE       32768
+#define ASL_PARSEOP_CACHE_SIZE      (1024 * 16)
+#define ASL_STRING_CACHE_SIZE       (1024 * 64)
 
 #define ASL_FIRST_PARSE_OPCODE      PARSEOP_ACCESSAS
 #define ASL_PARSE_OPCODE_BASE       PARSEOP_ACCESSAS        /* First Lex type */
@@ -108,8 +106,10 @@
 
 /* filename suffixes for output files */
 
-#define FILE_SUFFIX_PREPROCESSOR    "i"
+#define FILE_SUFFIX_PREPROC_USER    "i  "
+#define FILE_SUFFIX_PREPROCESSOR    "pre"
 #define FILE_SUFFIX_AML_CODE        "aml"
+#define FILE_SUFFIX_MAP             "map"
 #define FILE_SUFFIX_LISTING         "lst"
 #define FILE_SUFFIX_HEX_DUMP        "hex"
 #define FILE_SUFFIX_DEBUG           "txt"
@@ -121,13 +121,15 @@
 #define FILE_SUFFIX_ASM_INCLUDE     "inc"
 #define FILE_SUFFIX_C_INCLUDE       "h"
 #define FILE_SUFFIX_ASL_CODE        "asl"
+#define FILE_SUFFIX_C_OFFSET        "offset.h"
 
 
 /* Types for input files */
 
 #define ASL_INPUT_TYPE_BINARY       0
-#define ASL_INPUT_TYPE_ASCII_ASL    1
-#define ASL_INPUT_TYPE_ASCII_DATA   2
+#define ASL_INPUT_TYPE_ACPI_TABLE   1
+#define ASL_INPUT_TYPE_ASCII_ASL    2
+#define ASL_INPUT_TYPE_ASCII_DATA   3
 
 
 /* Misc */
@@ -136,6 +138,13 @@
 #define ASL_ABORT                   TRUE
 #define ASL_NO_ABORT                FALSE
 #define ASL_EOF                     ACPI_UINT32_MAX
+#define ASL_WITHIN_COMMENT          (ACPI_UINT32_MAX -1)
+#define ASL_BLANK_LINE              (ACPI_UINT32_MAX -1)
+
+
+/* Listings */
+
+#define ASL_LISTING_LINE_PREFIX         ":  "
 
 
 /* Support for reserved method names */
@@ -147,11 +156,24 @@
 #define ACPI_COMPILER_RESERVED_NAME     (ACPI_UINT32_MAX - 3)
 
 
-/* String to Integer conversion */
+/* Helper macros for resource tag creation */
 
-#define NEGATIVE                    1
-#define POSITIVE                    0
+#define RsCreateMultiBitField \
+    RsCreateResourceField
 
+#define RsCreateBitField(Op, Name, ByteOffset, BitOffset) \
+    RsCreateResourceField (Op, Name, ByteOffset, BitOffset, 1)
+
+#define RsCreateByteField(Op, Name, ByteOffset) \
+    RsCreateResourceField (Op, Name, ByteOffset, 0, 8);
+
+#define RsCreateWordField(Op, Name, ByteOffset) \
+    RsCreateResourceField (Op, Name, ByteOffset, 0, 16);
+
+#define RsCreateDwordField(Op, Name, ByteOffset) \
+    RsCreateResourceField (Op, Name, ByteOffset, 0, 32);
+
+#define RsCreateQwordField(Op, Name, ByteOffset) \
+    RsCreateResourceField (Op, Name, ByteOffset, 0, 64);
 
 #endif /* ASLDEFINE.H */
-

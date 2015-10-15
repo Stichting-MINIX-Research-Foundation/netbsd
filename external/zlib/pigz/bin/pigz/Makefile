@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.7 2011/05/26 12:56:27 joerg Exp $
+#	$NetBSD: Makefile,v 1.9 2015/04/07 17:48:13 christos Exp $
 
 .include <bsd.own.mk>
 
@@ -12,10 +12,14 @@ PROG=		pigz
 SRCS=		pigz.c yarn.c
 MAN=		pigz.1
 
+# pigz 2.3.1 brings zopfli support
+SRCS+=		deflate.c blocksplitter.c tree.c lz77.c cache.c hash.c util.c \
+		squeeze.c katajainen.c
+
 .if !defined(HOSTPROG)
 DPADD=		${LIBM} ${LIBPTHREAD}
 .endif
-LDADD=		-lz -lpthread
+LDADD=		-lm -lz -lpthread
 
 .if ${MKPIGZGZIP} != "no"
 # these ones are from mrg's gzip
@@ -29,7 +33,8 @@ MLINKS+=	pigz.1 gzip.1 \
 		pigz.1 zcat.1 \
 		zdiff.1 zcmp.1 \
 		zgrep.1 zegrep.1 \
-		zgrep.1 zfgrep.1
+		zgrep.1 zfgrep.1 \
+		zmore.1 zless.1
 
 LINKS+=		${BINDIR}/pigz ${BINDIR}/gzip \
 		${BINDIR}/pigz ${BINDIR}/gunzip \
@@ -37,13 +42,14 @@ LINKS+=		${BINDIR}/pigz ${BINDIR}/gzip \
 		${BINDIR}/pigz ${BINDIR}/zcat \
 		${BINDIR}/zdiff ${BINDIR}/zcmp \
 		${BINDIR}/zgrep ${BINDIR}/zegrep \
-		${BINDIR}/zgrep ${BINDIR}/zfgrep
+		${BINDIR}/zgrep ${BINDIR}/zfgrep \
+		${BINDIR}/zmore ${BINDIR}/zless
 .endif
 
 .include <bsd.prog.mk>
 
 DIST=		${NETBSDSRCDIR}/external/zlib/pigz/dist
-.PATH:	${DIST}
+.PATH:	${DIST} ${DIST}/zopfli
 
 .if ${MKPIGZGZIP} != "no"
 GZIPDIST=	${NETBSDSRCDIR}/usr.bin/gzip

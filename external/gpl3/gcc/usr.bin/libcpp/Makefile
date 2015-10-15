@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.5 2013/08/22 00:17:48 matt Exp $
+#	$NetBSD: Makefile,v 1.7 2014/03/05 21:37:02 tron Exp $
 
 LIBISPRIVATE=	yes
 
@@ -11,8 +11,16 @@ CPPFLAGS+=	-I${.CURDIR} -I${.CURDIR}/arch/${GCC_MACHINE_ARCH} \
 		${G_INCLUDES:M-I*:N-I.*} \
 		-DPREFIX=\"/usr\"
 
+HOSTPROG_CXX=	1
+
 .include <bsd.lib.mk>
+
 COPTS+=	-Wno-stack-protector
+
+# Force using C++ for this
+HOST_CC:=	${HOST_CXX}
+CC:=		${CXX}
+CFLAGS:=	${CXXFLAGS}
 
 ${OBJS}: ${G_LIBCPP_DEPS}
 

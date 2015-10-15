@@ -1,4 +1,3 @@
-
 /******************************************************************************
  *
  * Module Name: exresop - AML Interpreter operand/object resolution
@@ -6,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -41,8 +40,6 @@
  * IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGES.
  */
-
-#define __EXRESOP_C__
 
 #include "acpi.h"
 #include "accommon.h"
@@ -98,7 +95,7 @@ AcpiExCheckObjectType (
     {
         /*
          * Allow the AML "Constant" opcodes (Zero, One, etc.) to be reference
-         * objects and thus allow them to be targets.  (As per the ACPI
+         * objects and thus allow them to be targets. (As per the ACPI
          * specification, a store to a constant is a noop.)
          */
         if ((ThisType == ACPI_TYPE_INTEGER) &&
@@ -225,7 +222,6 @@ AcpiExResolveOperands (
             }
             break;
 
-
         case ACPI_DESC_TYPE_OPERAND:
 
             /* ACPI internal object */
@@ -278,7 +274,6 @@ AcpiExResolveOperands (
             }
             break;
 
-
         default:
 
             /* Invalid descriptor */
@@ -325,7 +320,6 @@ AcpiExResolveOperands (
         case ARGI_TARGETREF:     /* Allows implicit conversion rules before store */
         case ARGI_FIXED_TARGET:  /* No implicit conversion before store to target */
         case ARGI_SIMPLE_TARGET: /* Name, Local, or Arg - no implicit conversion  */
-
             /*
              * Need an operand of type ACPI_TYPE_LOCAL_REFERENCE
              * A Namespace Node is OK as-is
@@ -343,9 +337,7 @@ AcpiExResolveOperands (
             }
             goto NextOperand;
 
-
         case ARGI_DATAREFOBJ:  /* Store operator only */
-
             /*
              * We don't want to resolve IndexOp reference objects during
              * a store because this would be an implicit DeRefOf operation.
@@ -361,7 +353,9 @@ AcpiExResolveOperands (
             break;
 
         default:
+
             /* All cases covered above */
+
             break;
         }
 
@@ -454,9 +448,7 @@ AcpiExResolveOperands (
             }
             goto NextOperand;
 
-
         case ARGI_BUFFER:
-
             /*
              * Need an operand of type ACPI_TYPE_BUFFER,
              * But we can implicitly convert from a STRING or INTEGER
@@ -483,9 +475,7 @@ AcpiExResolveOperands (
             }
             goto NextOperand;
 
-
         case ARGI_STRING:
-
             /*
              * Need an operand of type ACPI_TYPE_STRING,
              * But we can implicitly convert from a BUFFER or INTEGER
@@ -513,7 +503,6 @@ AcpiExResolveOperands (
             }
             goto NextOperand;
 
-
         case ARGI_COMPUTEDATA:
 
             /* Need an operand of type INTEGER, STRING or BUFFER */
@@ -535,7 +524,6 @@ AcpiExResolveOperands (
                 return_ACPI_STATUS (AE_AML_OPERAND_TYPE);
             }
             goto NextOperand;
-
 
         case ARGI_BUFFER_OR_STRING:
 
@@ -574,7 +562,6 @@ AcpiExResolveOperands (
             }
             goto NextOperand;
 
-
         case ARGI_DATAOBJECT:
             /*
              * ARGI_DATAOBJECT is only used by the SizeOf operator.
@@ -594,6 +581,7 @@ AcpiExResolveOperands (
                 break;
 
             default:
+
                 ACPI_ERROR ((AE_INFO,
                     "Needed [Buffer/String/Package/Reference], found [%s] %p",
                     AcpiUtGetObjectTypeName (ObjDesc), ObjDesc));
@@ -601,7 +589,6 @@ AcpiExResolveOperands (
                 return_ACPI_STATUS (AE_AML_OPERAND_TYPE);
             }
             goto NextOperand;
-
 
         case ARGI_COMPLEXOBJ:
 
@@ -617,6 +604,7 @@ AcpiExResolveOperands (
                 break;
 
             default:
+
                 ACPI_ERROR ((AE_INFO,
                     "Needed [Buffer/String/Package], found [%s] %p",
                     AcpiUtGetObjectTypeName (ObjDesc), ObjDesc));
@@ -624,7 +612,6 @@ AcpiExResolveOperands (
                 return_ACPI_STATUS (AE_AML_OPERAND_TYPE);
             }
             goto NextOperand;
-
 
         case ARGI_REGION_OR_BUFFER: /* Used by Load() only */
 
@@ -639,6 +626,7 @@ AcpiExResolveOperands (
                 break;
 
             default:
+
                 ACPI_ERROR ((AE_INFO,
                     "Needed [Region/Buffer], found [%s] %p",
                     AcpiUtGetObjectTypeName (ObjDesc), ObjDesc));
@@ -646,7 +634,6 @@ AcpiExResolveOperands (
                 return_ACPI_STATUS (AE_AML_OPERAND_TYPE);
             }
             goto NextOperand;
-
 
         case ARGI_DATAREFOBJ:
 
@@ -674,7 +661,7 @@ AcpiExResolveOperands (
                 {
                     /*
                      * Enable original behavior of Store(), allowing any and all
-                     * objects as the source operand.  The ACPI spec does not
+                     * objects as the source operand. The ACPI spec does not
                      * allow this, however.
                      */
                     break;
@@ -694,7 +681,6 @@ AcpiExResolveOperands (
                 return_ACPI_STATUS (AE_AML_OPERAND_TYPE);
             }
             goto NextOperand;
-
 
         default:
 
@@ -734,5 +720,3 @@ NextOperand:
 
     return_ACPI_STATUS (Status);
 }
-
-

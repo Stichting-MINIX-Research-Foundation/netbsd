@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile.buildboot,v 1.19 2013/11/04 21:25:22 christos Exp $
+#	$NetBSD: Makefile.buildboot,v 1.21 2014/01/12 15:26:28 tsutsui Exp $
 
 S?=	${.CURDIR}/../../../..
 
@@ -13,6 +13,7 @@ FILESDIR=/usr/mdec
 
 # XXX SHOULD NOT NEED TO DEFINE THESE!
 LIBCRT0=
+LIBCRTI=
 LIBC=
 LIBCRTBEGIN=
 LIBCRTEND=
@@ -33,7 +34,7 @@ CPUFLAGS=
 CPPFLAGS+=	-D_STANDALONE -DHIMEM=0x28000
 CPPFLAGS+=	-I. -I${.CURDIR}/../../.. -I${.CURDIR}/../../../..
 CPPFLAGS+=	-I${.CURDIR}/../lib
-CPPFLAGS+=	-mabi=apcs-gnu -mfloat-abi=soft -march=armv2
+CPPFLAGS+=	${ARM_APCS_FLAGS} -march=armv2
 .if ${HAVE_GCC} < 48
 CPPFLAGS+=	-mno-thumb -mno-thumb-interwork
 .else

@@ -1,4 +1,4 @@
-/*	$NetBSD: cmos.c,v 1.9 2011/07/01 18:11:24 dyoung Exp $	*/
+/*	$NetBSD: cmos.c,v 1.12 2015/08/20 14:40:16 christos Exp $	*/
 
 /*
  * Copyright (C) 2003 JONE System Co., Inc.
@@ -59,7 +59,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: cmos.c,v 1.9 2011/07/01 18:11:24 dyoung Exp $");
+__KERNEL_RCSID(0, "$NetBSD: cmos.c,v 1.12 2015/08/20 14:40:16 christos Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -79,6 +79,8 @@ __KERNEL_RCSID(0, "$NetBSD: cmos.c,v 1.9 2011/07/01 18:11:24 dyoung Exp $");
 #include <dev/ic/mc146818reg.h>
 #include <i386/isa/nvram.h>
 
+#include "ioconf.h"
+
 #define	CMOS_SUM	32
 #define	CMOS_BIOSSPEC	34	/* start of BIOS-specific configuration data */
 
@@ -87,7 +89,6 @@ __KERNEL_RCSID(0, "$NetBSD: cmos.c,v 1.9 2011/07/01 18:11:24 dyoung Exp $");
 
 #define	CMOS_SIZE	NVRAM_BIOSSPEC
 
-void cmosattach(int);
 dev_type_open(cmos_open);
 dev_type_read(cmos_read);
 dev_type_write(cmos_write);
@@ -95,10 +96,18 @@ dev_type_write(cmos_write);
 static void cmos_sum(uint8_t *, int, int, int);
 
 const struct cdevsw cmos_cdevsw = {
-	.d_open = cmos_open, .d_close = nullclose, .d_read = cmos_read,
-	.d_write = cmos_write, .d_ioctl = noioctl,
-	.d_stop = nostop, .d_tty = notty, .d_poll = nopoll, .d_mmap = nommap,
-	.d_kqfilter = nokqfilter, .d_flag = D_OTHER | D_MPSAFE
+	.d_open = cmos_open,
+	.d_close = nullclose,
+	.d_read = cmos_read,
+	.d_write = cmos_write,
+	.d_ioctl = noioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_OTHER | D_MPSAFE
 };
 
 static kmutex_t cmos_lock;

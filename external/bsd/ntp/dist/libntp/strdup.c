@@ -1,9 +1,10 @@
-/*	$NetBSD: strdup.c,v 1.1.1.2 2012/01/31 21:23:56 kardel Exp $	*/
+/*	$NetBSD: strdup.c,v 1.3 2015/07/10 14:20:32 christos Exp $	*/
 
 #include <config.h>
 
-#include <string.h>
+#include <ntp_assert.h>
 #include "ntp_malloc.h"
+#include <string.h>
 
 #ifndef HAVE_STRDUP
 
@@ -17,15 +18,13 @@ strdup(
 	size_t	octets;
 	char *	cp;
 
-	if (s) {
-		octets = 1 + strlen(s);
-		cp = malloc(octets);
-		if (NULL != cp)
-			memcpy(cp, s, octets);
-	else
-		cp = NULL;
+	REQUIRE(s);
+	octets = strlen(s) + 1;
+	if ((cp = malloc(octets)) == NULL)
+		return NULL;
+	memcpy(cp, s, octets);
 
-	return(cp);
+	return cp;
 }
 #else
 int strdup_c_nonempty_compilation_unit;

@@ -1,4 +1,4 @@
-/*	$NetBSD: cons.c,v 1.69 2012/03/13 18:40:29 elad Exp $	*/
+/*	$NetBSD: cons.c,v 1.75 2015/05/29 16:26:45 macallan Exp $	*/
 
 /*
  * Copyright (c) 1988 University of Utah.
@@ -39,7 +39,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: cons.c,v 1.69 2012/03/13 18:40:29 elad Exp $");
+__KERNEL_RCSID(0, "$NetBSD: cons.c,v 1.75 2015/05/29 16:26:45 macallan Exp $");
 
 #include <sys/param.h>
 #include <sys/proc.h>
@@ -56,6 +56,8 @@ __KERNEL_RCSID(0, "$NetBSD: cons.c,v 1.69 2012/03/13 18:40:29 elad Exp $");
 
 #include <dev/cons.h>
 
+#include "nullcons.h"
+
 dev_type_open(cnopen);
 dev_type_close(cnclose);
 dev_type_read(cnread);
@@ -67,8 +69,18 @@ dev_type_kqfilter(cnkqfilter);
 static bool cn_redirect(dev_t *, int, int *);
 
 const struct cdevsw cons_cdevsw = {
-	cnopen, cnclose, cnread, cnwrite, cnioctl,
-	nostop, notty, cnpoll, nommap, cnkqfilter, D_TTY
+	.d_open = cnopen,
+	.d_close = cnclose,
+	.d_read = cnread,
+	.d_write = cnwrite,
+	.d_ioctl = cnioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = cnpoll,
+	.d_mmap = nommap,
+	.d_kqfilter = cnkqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_TTY
 };
 
 struct	tty *constty = NULL;	/* virtual console output device */
@@ -94,6 +106,11 @@ cnopen(dev_t dev, int flag, int mode, struct lwp *l)
 	 * open() calls.
 	 */
 	cndev = cn_tab->cn_dev;
+#if NNULLCONS > 0
+	if (cndev == NODEV) {
+		nullconsattach(0);
+	}
+#else /* NNULLCONS > 0 */
 	if (cndev == NODEV) {
 		/*
 		 * This is most likely an error in the console attach
@@ -102,6 +119,7 @@ cnopen(dev_t dev, int flag, int mode, struct lwp *l)
 		 */
 		panic("cnopen: no console device");
 	}
+#endif /* NNULLCONS > 0 */
 	if (dev == cndev) {
 		/*
 		 * This causes cnopen() to be called recursively, which
@@ -239,7 +257,15 @@ cngetc(void)
 {
 	if (cn_tab == NULL)
 		return (0);
-	return ((*cn_tab->cn_getc)(cn_tab->cn_dev));
+	int s = splhigh();
+	for (;;) {
+		const int rv = (*cn_tab->cn_getc)(cn_tab->cn_dev);
+		if (rv >= 0) {
+			splx(s);
+			return rv;
+		}
+		docritpollhooks();
+	}
 }
 
 int
@@ -295,11 +321,29 @@ cnputc(int c)
 	if (cn_tab == NULL)
 		return;
 
+/*
+ * XXX
+ * for some reason this causes ARCS firmware to output an endless stream of
+ * whitespaces with n32 kernels, so use the pre-1.74 code for now until I can
+ * figure out why this happens
+ */
+#ifndef sgimips
+	if (c) {
+		if (c == '\n') {
+			(*cn_tab->cn_putc)(cn_tab->cn_dev, '\r');
+			docritpollhooks();
+		}
+		(*cn_tab->cn_putc)(cn_tab->cn_dev, c);
+	}
+#else
 	if (c) {
 		(*cn_tab->cn_putc)(cn_tab->cn_dev, c);
-		if (c == '\n')
+		if (c == '\n') {
+			docritpollhooks();
 			(*cn_tab->cn_putc)(cn_tab->cn_dev, '\r');
+		}
 	}
+#endif
 }
 
 void

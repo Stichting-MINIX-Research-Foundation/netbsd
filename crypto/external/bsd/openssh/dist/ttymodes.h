@@ -1,4 +1,4 @@
-/*	$NetBSD: ttymodes.h,v 1.2 2009/06/07 22:38:48 christos Exp $	*/
+/*	$NetBSD: ttymodes.h,v 1.4 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: ttymodes.h,v 1.14 2006/03/25 22:22:43 djm Exp $ */
 
 /*

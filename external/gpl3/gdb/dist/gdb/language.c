@@ -1,6 +1,6 @@
 /* Multiple source language support for GDB.
 
-   Copyright (C) 1991-2013 Free Software Foundation, Inc.
+   Copyright (C) 1991-2015 Free Software Foundation, Inc.
 
    Contributed by the Department of Computer Science at the State University
    of New York at Buffalo.
@@ -30,25 +30,25 @@
 
 #include "defs.h"
 #include <ctype.h>
-#include "gdb_string.h"
-
 #include "symtab.h"
 #include "gdbtypes.h"
 #include "value.h"
 #include "gdbcmd.h"
 #include "expression.h"
 #include "language.h"
+#include "varobj.h"
 #include "target.h"
 #include "parser-defs.h"
 #include "jv-lang.h"
 #include "demangle.h"
 #include "symfile.h"
+#include "cp-support.h"
 
 extern void _initialize_language (void);
 
 static void unk_lang_error (char *);
 
-static int unk_lang_parser (void);
+static int unk_lang_parser (struct parser_state *);
 
 static void show_check (char *, int);
 
@@ -483,7 +483,7 @@ language_def (enum language lang)
 }
 
 /* Return the language as a string.  */
-char *
+const char *
 language_str (enum language lang)
 {
   int i;
@@ -503,7 +503,7 @@ set_check (char *ignore, int from_tty)
 {
   printf_unfiltered (
      "\"set check\" must be followed by the name of a check subcommand.\n");
-  help_list (setchecklist, "set check ", -1, gdb_stdout);
+  help_list (setchecklist, "set check ", all_commands, gdb_stdout);
 }
 
 static void
@@ -518,7 +518,7 @@ void
 add_language (const struct language_defn *lang)
 {
   /* For the "set language" command.  */
-  static char **language_names = NULL;
+  static const char **language_names = NULL;
   /* For the "help set language" command.  */
   char *language_set_doc = NULL;
 
@@ -692,7 +692,7 @@ default_get_string (struct value *value, gdb_byte **buffer, int *length,
 /* Define the language that is no language.  */
 
 static int
-unk_lang_parser (void)
+unk_lang_parser (struct parser_state *ps)
 {
   return 1;
 }
@@ -764,7 +764,7 @@ static CORE_ADDR unk_lang_trampoline (struct frame_info *frame, CORE_ADDR pc)
 /* Unknown languages just use the cplus demangler.  */
 static char *unk_lang_demangle (const char *mangled, int options)
 {
-  return cplus_demangle (mangled, options);
+  return gdb_demangle (mangled, options);
 }
 
 static char *unk_lang_class_name (const char *mangled)
@@ -790,6 +790,7 @@ unknown_language_arch_info (struct gdbarch *gdbarch,
 const struct language_defn unknown_language_defn =
 {
   "unknown",
+  "Unknown",
   language_unknown,
   range_check_off,
   case_sensitive_on,
@@ -825,6 +826,9 @@ const struct language_defn unknown_language_defn =
   default_get_string,
   NULL,				/* la_get_symbol_name_cmp */
   iterate_over_symbols,
+  &default_varobj_ops,
+  NULL,
+  NULL,
   LANG_MAGIC
 };
 
@@ -833,6 +837,7 @@ const struct language_defn unknown_language_defn =
 const struct language_defn auto_language_defn =
 {
   "auto",
+  "Auto",
   language_auto,
   range_check_off,
   case_sensitive_on,
@@ -868,12 +873,16 @@ const struct language_defn auto_language_defn =
   default_get_string,
   NULL,				/* la_get_symbol_name_cmp */
   iterate_over_symbols,
+  &default_varobj_ops,
+  NULL,
+  NULL,
   LANG_MAGIC
 };
 
 const struct language_defn local_language_defn =
 {
   "local",
+  "Local",
   language_auto,
   range_check_off,
   case_sensitive_on,
@@ -909,6 +918,9 @@ const struct language_defn local_language_defn =
   default_get_string,
   NULL,				/* la_get_symbol_name_cmp */
   iterate_over_symbols,
+  &default_varobj_ops,
+  NULL,
+  NULL,
   LANG_MAGIC
 };
 
@@ -975,23 +987,138 @@ language_bool_type (const struct language_defn *la,
   return ld->arch_info[la->la_language].bool_type_default;
 }
 
+/* Helper function for primitive type lookup.  */
+
+static struct type **
+language_lookup_primitive_type_1 (const struct language_arch_info *lai,
+				  const char *name)
+{
+  struct type **p;
+
+  for (p = lai->primitive_type_vector; (*p) != NULL; p++)
+    {
+      if (strcmp (TYPE_NAME (*p), name) == 0)
+	return p;
+    }
+  return NULL;
+}
+
+/* See language.h.  */
+
 struct type *
-language_lookup_primitive_type_by_name (const struct language_defn *la,
-					struct gdbarch *gdbarch,
-					const char *name)
+language_lookup_primitive_type (const struct language_defn *la,
+				struct gdbarch *gdbarch,
+				const char *name)
 {
   struct language_gdbarch *ld = gdbarch_data (gdbarch,
 					      language_gdbarch_data);
-  struct type *const *p;
+  struct type **typep;
 
-  for (p = ld->arch_info[la->la_language].primitive_type_vector;
-       (*p) != NULL;
-       p++)
+  typep = language_lookup_primitive_type_1 (&ld->arch_info[la->la_language],
+					    name);
+  if (typep == NULL)
+    return NULL;
+  return *typep;
+}
+
+/* Helper function for type lookup as a symbol.
+   Create the symbol corresponding to type TYPE in language LANG.  */
+
+static struct symbol *
+language_alloc_type_symbol (enum language lang, struct type *type)
+{
+  struct symbol *symbol;
+  struct gdbarch *gdbarch;
+
+  gdb_assert (!TYPE_OBJFILE_OWNED (type));
+
+  gdbarch = TYPE_OWNER (type).gdbarch;
+  symbol = GDBARCH_OBSTACK_ZALLOC (gdbarch, struct symbol);
+
+  symbol->ginfo.name = TYPE_NAME (type);
+  symbol->ginfo.language = lang;
+  symbol->owner.arch = gdbarch;
+  SYMBOL_OBJFILE_OWNED (symbol) = 0;
+  SYMBOL_TYPE (symbol) = type;
+  SYMBOL_DOMAIN (symbol) = VAR_DOMAIN;
+  SYMBOL_ACLASS_INDEX (symbol) = LOC_TYPEDEF;
+
+  return symbol;
+}
+
+/* Initialize the primitive type symbols of language LD.
+   The primitive type vector must have already been initialized.  */
+
+static void
+language_init_primitive_type_symbols (struct language_arch_info *lai,
+				      const struct language_defn *la,
+				      struct gdbarch *gdbarch)
+{
+  int n;
+  struct compunit_symtab *cust;
+  struct symtab *symtab;
+  struct block *static_block, *global_block;
+
+  gdb_assert (lai->primitive_type_vector != NULL);
+
+  for (n = 0; lai->primitive_type_vector[n] != NULL; ++n)
+    continue;
+
+  lai->primitive_type_symbols
+    = GDBARCH_OBSTACK_CALLOC (gdbarch, n + 1, struct symbol *);
+
+  for (n = 0; lai->primitive_type_vector[n] != NULL; ++n)
     {
-      if (strcmp (TYPE_NAME (*p), name) == 0)
-	return (*p);
+      lai->primitive_type_symbols[n]
+	= language_alloc_type_symbol (la->la_language,
+				      lai->primitive_type_vector[n]);
     }
-  return (NULL);
+
+  /* Note: The result of symbol lookup is normally a symbol *and* the block
+     it was found in (returned in global block_found).  Builtin types don't
+     live in blocks.  We *could* give them one, but there is no current need
+     so to keep things simple symbol lookup is extended to allow for
+     BLOCK_FOUND to be NULL.  */
+}
+
+/* See language.h.  */
+
+struct symbol *
+language_lookup_primitive_type_as_symbol (const struct language_defn *la,
+					  struct gdbarch *gdbarch,
+					  const char *name)
+{
+  struct language_gdbarch *ld = gdbarch_data (gdbarch,
+					      language_gdbarch_data);
+  struct language_arch_info *lai = &ld->arch_info[la->la_language];
+  struct type **typep;
+  struct symbol *sym;
+
+  if (symbol_lookup_debug)
+    {
+      fprintf_unfiltered (gdb_stdlog,
+			  "language_lookup_primitive_type_as_symbol"
+			  " (%s, %s, %s)",
+			  la->la_name, host_address_to_string (gdbarch), name);
+    }
+
+  typep = language_lookup_primitive_type_1 (lai, name);
+  if (typep == NULL)
+    {
+      if (symbol_lookup_debug)
+	fprintf_unfiltered (gdb_stdlog, " = NULL\n");
+      return NULL;
+    }
+
+  /* The set of symbols is lazily initialized.  */
+  if (lai->primitive_type_symbols == NULL)
+    language_init_primitive_type_symbols (lai, la, gdbarch);
+
+  sym = lai->primitive_type_symbols[typep - lai->primitive_type_vector];
+
+  if (symbol_lookup_debug)
+    fprintf_unfiltered (gdb_stdlog, " = %s\n", host_address_to_string (sym));
+  return sym;
 }
 
 /* Initialize the language routines.  */

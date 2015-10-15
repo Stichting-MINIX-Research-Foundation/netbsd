@@ -1,4 +1,4 @@
-/* $NetBSD: bcm2835_genfb.c,v 1.5 2013/05/11 07:42:34 skrll Exp $ */
+/* $NetBSD: bcm2835_genfb.c,v 1.7 2014/09/05 21:15:42 macallan Exp $ */
 
 /*-
  * Copyright (c) 2013 Jared D. McNeill <jmcneill@invisible.ca>
@@ -31,7 +31,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: bcm2835_genfb.c,v 1.5 2013/05/11 07:42:34 skrll Exp $");
+__KERNEL_RCSID(0, "$NetBSD: bcm2835_genfb.c,v 1.7 2014/09/05 21:15:42 macallan Exp $");
 
 #include <sys/param.h>
 #include <sys/types.h>
@@ -61,9 +61,11 @@ static paddr_t	bcmgenfb_mmap(void *, void *, off_t, int);
 static bool	bcmgenfb_shutdown(device_t, int);
 
 void		bcmgenfb_set_console_dev(device_t);
+void		bcmgenfb_set_ioctl(int(*)(void *, void *, u_long, void *, int, struct lwp *));
 void		bcmgenfb_ddb_trap_callback(int);
 
 static device_t bcmgenfb_console_dev = NULL;
+int (*bcmgenfb_ioctl_handler)(void *, void *, u_long, void *, int, struct lwp *) = NULL;
 
 CFATTACH_DECL_NEW(bcmgenfb, sizeof(struct bcmgenfb_softc),
     bcmgenfb_match, bcmgenfb_attach, NULL, NULL);
@@ -82,7 +84,8 @@ bcmgenfb_attach(device_t parent, device_t self, void *aux)
 	struct bcmgenfb_softc *sc = device_private(self);
 	struct amba_attach_args *aaa = aux;
 	prop_dictionary_t dict = device_properties(self);
-	struct genfb_ops ops;
+	static const struct genfb_ops zero_ops;
+	struct genfb_ops ops = zero_ops;
 	bool is_console = false;
 	int error;
 
@@ -113,7 +116,6 @@ bcmgenfb_attach(device_t parent, device_t self, void *aux)
 	}
 	sc->sc_gen.sc_fbaddr = bus_space_vaddr(sc->sc_iot, sc->sc_ioh);
 
-	memset(&ops, 0, sizeof(ops));
 	ops.genfb_ioctl = bcmgenfb_ioctl;
 	ops.genfb_mmap = bcmgenfb_mmap;
 
@@ -152,6 +154,8 @@ bcmgenfb_ioctl(void *v, void *vs, u_long cmd, void *data, int flag, lwp_t *l)
 			return ret;
 		}
 	default:
+		if (bcmgenfb_ioctl_handler != NULL)
+			return bcmgenfb_ioctl_handler(v, vs, cmd, data, flag, l);
 		return EPASSTHROUGH;
 	}
 }
@@ -179,6 +183,12 @@ bcmgenfb_set_console_dev(device_t dev)
 {
 	KASSERT(bcmgenfb_console_dev == NULL);
 	bcmgenfb_console_dev = dev;
+}
+
+void
+bcmgenfb_set_ioctl(int(*boo)(void *, void *, u_long, void *, int, struct lwp *))
+{
+	bcmgenfb_ioctl_handler = boo;
 }
 
 void

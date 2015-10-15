@@ -1,4 +1,4 @@
-/*	$NetBSD: fd.c,v 1.87 2012/10/27 17:17:28 chs Exp $ */
+/*	$NetBSD: fd.c,v 1.96 2015/04/26 15:15:19 mlelstv Exp $ */
 
 /*
  * Copyright (c) 1994 Christian E. Hopps
@@ -33,7 +33,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: fd.c,v 1.87 2012/10/27 17:17:28 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: fd.c,v 1.96 2015/04/26 15:15:19 mlelstv Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -254,15 +254,34 @@ dev_type_ioctl(fdioctl);
 dev_type_strategy(fdstrategy);
 
 const struct bdevsw fd_bdevsw = {
-	fdopen, fdclose, fdstrategy, fdioctl, nodump, nosize, D_DISK
+	.d_open = fdopen,
+	.d_close = fdclose,
+	.d_strategy = fdstrategy,
+	.d_ioctl = fdioctl,
+	.d_dump = nodump,
+	.d_psize = nosize,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
 const struct cdevsw fd_cdevsw = {
-	fdopen, fdclose, fdread, fdwrite, fdioctl,
-	nostop, notty, nopoll, nommap, nokqfilter, D_DISK
+	.d_open = fdopen,
+	.d_close = fdclose,
+	.d_read = fdread,
+	.d_write = fdwrite,
+	.d_ioctl = fdioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
-struct dkdriver fddkdriver = { fdstrategy };
+struct dkdriver fddkdriver = {
+	.d_strategy = fdstrategy
+};
 
 CFATTACH_DECL_NEW(fdc, 0,
     fdcmatch, fdcattach, NULL, NULL);
@@ -556,6 +575,10 @@ fdioctl(dev_t dev, u_long cmd, void *addr, int flag, struct lwp *l)
 	if ((sc->flags & FDF_HAVELABEL) == 0)
 		return(EBADF);
 
+	error = disk_ioctl(&sc->dkdev, dev, cmd, addr, flag, l);
+	if (error != EPASSTHROUGH)
+		return error;
+
 	switch (cmd) {
 	case DIOCSBAD:
 		return(EINVAL);
@@ -568,14 +591,6 @@ fdioctl(dev_t dev, u_long cmd, void *addr, int flag, struct lwp *l)
 		if (*(int *)addr < FDSTEPDELAY)
 			return(EINVAL);
 		sc->dkdev.dk_label->d_trkseek = sc->stepdelay = *(int *)addr;
-		return(0);
-	case DIOCGDINFO:
-		*(struct disklabel *)addr = *(sc->dkdev.dk_label);
-		return(0);
-	case DIOCGPART:
-		((struct partinfo *)addr)->disklab = sc->dkdev.dk_label;
-		((struct partinfo *)addr)->part =
-		    &sc->dkdev.dk_label->d_partitions[FDPART(dev)];
 		return(0);
 	case DIOCSDINFO:
 		if ((flag & FWRITE) == 0)
@@ -644,12 +659,10 @@ fdidxintr(void)
 void
 fdstrategy(struct buf *bp)
 {
-	struct disklabel *lp;
 	struct fd_softc *sc;
-	int unit, part, s;
+	int unit, s;
 
 	unit = FDUNIT(bp->b_dev);
-	part = FDPART(bp->b_dev);
 	sc = getsoftc(fd_cd, unit);
 
 #ifdef FDDEBUG
@@ -658,7 +671,6 @@ fdstrategy(struct buf *bp)
 	/*
 	 * check for valid partition and bounds
 	 */
-	lp = sc->dkdev.dk_label;
 	if ((sc->flags & FDF_HAVELABEL) == 0) {
 		bp->b_error = EIO;
 		goto done;
@@ -733,7 +745,7 @@ fdgetdefaultlabel(struct fd_softc *sc, struct disklabel *lp, int part)
 	lp->d_ncylinders = sc->type->ncylinders;
 	lp->d_nsectors = sc->nsectors;
 	lp->d_secpercyl = lp->d_ntracks * lp->d_nsectors;
-	lp->d_type = DTYPE_FLOPPY;
+	lp->d_type = DKTYPE_FLOPPY;
 	lp->d_secperunit = lp->d_secpercyl * lp->d_ncylinders;
 	lp->d_rpm = 300; 		/* good guess I suppose. */
 	lp->d_interleave = 1;		/* should change when adding msdos */
@@ -1653,12 +1665,11 @@ void
 fdminphys(struct buf *bp)
 {
 	struct fd_softc *sc;
-	int trk, sec, toff, tsz;
+	int sec, toff, tsz;
 
 	if ((sc = getsoftc(fd_cd, FDUNIT(bp->b_dev))) == NULL)
 		panic("fdminphys: couldn't get softc");
 
-	trk = bp->b_blkno / sc->nsectors;
 	sec = bp->b_blkno % sc->nsectors;
 
 	toff = sec * FDSECSIZE;
@@ -1705,7 +1716,7 @@ void
 amcachetoraw(struct fd_softc *sc)
 {
 	static u_long mfmnull[4];
-	u_long *rp, *crp, *dp, hcksum, dcksum, info, zero;
+	u_long *rp, *crp, *dp, hcksum, dcksum, info;
 	int sec, i;
 
 	rp = fdc_dmap;
@@ -1720,7 +1731,6 @@ amcachetoraw(struct fd_softc *sc)
 	 * process sectors
 	 */
 	dp = sc->cachep;
-	zero = 0;
 	info = 0xff000000 | (sc->cachetrk << 16) | sc->nsectors;
 	for (sec = 0; sec < sc->nsectors; sec++, info += (1 << 8) - 1) {
 		hcksum = dcksum = 0;
@@ -1839,7 +1849,7 @@ again:
 		 * if we are at gap then we can no longer be sure
 		 * of correct sync marks
 		 */
-		if ((info && 0xff) == 1)
+		if ((info & 0xff) == 1)
 			doagain = 1;
 		else
 			doagain = 0;
@@ -1938,11 +1948,11 @@ mscachetoraw(struct fd_softc *sc)
 int
 msrawtocache(struct fd_softc *sc)
 {
-	u_short *rp, *srp, *erp;
+	u_short *rp, *erp;
 	u_char tb[5], *cp;
 	int ct, sec, retry;
 
-	srp = rp = (u_short *)fdc_dmap;
+	rp = (u_short *)fdc_dmap;
 	erp = rp + sc->type->nreadw;
 	cp = sc->cachep;
 

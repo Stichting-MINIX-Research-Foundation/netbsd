@@ -1,4 +1,4 @@
-/*	$NetBSD: marvell_start.S,v 1.4 2013/10/02 12:41:06 kiyohara Exp $ */
+/*	$NetBSD: marvell_start.S,v 1.8 2014/08/30 13:28:07 kiyohara Exp $ */
 /*
  * Copyright (C) 2005, 2006 WIDE Project and SOUM Corporation.
  * All rights reserved.
@@ -63,9 +63,10 @@
 #include "opt_mvsoc.h"
 #include <machine/asm.h>
 #include <arm/armreg.h>
+#include <evbarm/marvell/marvellreg.h>
 #include "assym.h"
 
-RCSID("$NetBSD: marvell_start.S,v 1.4 2013/10/02 12:41:06 kiyohara Exp $")
+RCSID("$NetBSD: marvell_start.S,v 1.8 2014/08/30 13:28:07 kiyohara Exp $")
 
 #ifndef SDRAM_START
 #define SDRAM_START	0x00000000
@@ -123,6 +124,15 @@ sheeva_l2_disable:
 	mrc	p15, 1, r5, c15, c1, 0	@ Get Marvell Extra Features Register
 	bic	r5, r5, #0x00400000	@ disable L2 cache
 	mcr	p15, 1, r5, c15, c1, 0
+
+#ifdef SHEEVA_L2_CACHE_WT
+	/* L2 WT Mode */
+	ldr	r5, =0xf1020128		/* CPU L2 Configuration Register */
+	ldr	r6, [r5]
+	bic	r6, r6, #0x10		/* Force Write Through */
+	str	r6, [r5]
+#endif
+
 1:
 
 	/* save u-boot's args */
@@ -135,35 +145,25 @@ sheeva_l2_disable:
 	nop
 	nop
 
-	/* Check SoC mapped address */
-	mov	r4, #0x1100
-	orr	r4, r4, #0x00ab		/* Marvell Vendor ID (0x11ab) */
-	adr	r5, marvell_interregs_pbase_list_start
-	adr	r6, marvell_interregs_pbase_list_end
-0:
-	cmp	r5, r6
-	beq	1f
-	ldmia	r5!, {r7}
-	add	r8, r7, #0x40000
-	ldr	r8, [r8]		/* Read vend/prod reg from PCI config */
-	bic	r8, r8, #0xff000000
-	bic	r8, r8, #0x00ff0000
-	cmp	r4, r8
-	bne	0b
-	adr	r6, marvell_interregs_pbase
-	str	r7, [r6]
 #if defined(MVSOC_FIXUP_DEVID) && MVSOC_FIXUP_DEVID > 0
+	adr	r6, marvell_interregs_pbase
+	ldr	r7, [r6]
+	add	r7, r7, #0x40000
+	ldr	r6, [r7]
+	bic	r6, r6, 0xff000000
+	bic	r6, r6, 0x00ff0000
 	/*
 	 * Some SoC returns ugly DeviceID.  Fixup it.
 	 */
 	adr	r5, devid
 	ldr	r5, [r5]
-	orr	r8, r8, r5, lsl #16
-	add	r7, r7, #0x40000
-	str	r8, [r7]
+	orr	r6, r6, r5, lsl #16
+	str	r6, [r7]
 	b	1f
 devid:
 	.word	MVSOC_FIXUP_DEVID
+marvell_interregs_pbase:
+	.word	MARVELL_INTERREGS_PBASE
 #endif
 1:
 
@@ -185,8 +185,13 @@ devid:
 
 	mcr	p15, 0, r0, c2, c0, 0	/* Set TTB */
 	mcr	p15, 0, r0, c8, c7, 0	/* Flush TLB */
-	mov	r0, #0
 	cmp	r8, #PJ4B
+	mcreq	p15, 0, r0, c2, c0, 1	/* Set TTB1 */
+	moveq	r1, #TTBCR_S_N_1
+	mcreq	p15, 0, r1, c2, c0, 2	/* Set TTBCR */
+	mov	r0, #0
+	mcreq	p15, 0, r0, c8, c7, 0	/* Flush TLB */
+
 	mcreq	p15, 0, r0, c13, c0, 1	/* Set ASID to 0 */
 	mcr	p15, 0, r0, c7, c6, 0	/* Invalidate D cache */
 	mcr	p15, 0, r0, c7, c10, 4	/* Drain write-buffer */
@@ -237,14 +242,6 @@ cores_start:
 	.word	0,			0
 cores_end:
 
-	.globl	_C_LABEL(marvell_interregs_pbase)
-marvell_interregs_pbase:
-	.word	0x00000000
-marvell_interregs_pbase_list_start:
-	.word	0xd0000000
-	.word	0xf1000000
-marvell_interregs_pbase_list_end:
-
 #define MMU_INIT(va,pa,n_sec,attr) \
 	.word	n_sec					    ; \
 	.word	4 * ((va) >> L1_S_SHIFT)		    ; \
@@ -259,8 +256,8 @@ mmu_init_table:
 	MMU_INIT(SDRAM_START, SDRAM_START,
 	    128, L1_TYPE_S | L1_S_C | L1_S_AP_KRW)
 
-	/* map VA 0xc0000000..0xc7ffffff to PA 0x00000000..0x07ffffff */
-	MMU_INIT(0xc0000000, SDRAM_START,
+	/* map VA KERNEL_BASE_EXT..KERNEL_BASE_EXT+7ffffff to PA 0x00000000..0x07ffffff */
+	MMU_INIT(KERNEL_BASE_EXT, SDRAM_START,
 	    128, L1_TYPE_S | L1_S_C | L1_S_AP_KRW)
 
 	.word	0			/* end of table */

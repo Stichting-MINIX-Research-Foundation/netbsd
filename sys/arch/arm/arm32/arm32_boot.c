@@ -1,4 +1,4 @@
-/*	$NetBSD: arm32_boot.c,v 1.5 2013/08/18 06:28:18 matt Exp $	*/
+/*	$NetBSD: arm32_boot.c,v 1.16 2015/05/17 05:34:53 matt Exp $	*/
 
 /*
  * Copyright (c) 2002, 2003, 2005  Genetec Corporation.  All rights reserved.
@@ -123,15 +123,18 @@
 
 #include <sys/cdefs.h>
 
-__KERNEL_RCSID(1, "$NetBSD: arm32_boot.c,v 1.5 2013/08/18 06:28:18 matt Exp $");
+__KERNEL_RCSID(1, "$NetBSD: arm32_boot.c,v 1.16 2015/05/17 05:34:53 matt Exp $");
 
 #include "opt_ddb.h"
 #include "opt_kgdb.h"
+#include "opt_multiprocessor.h"
 
 #include <sys/param.h>
 #include <sys/reboot.h>
 #include <sys/cpu.h>
 #include <sys/intr.h>
+#include <sys/atomic.h>
+#include <sys/device.h>
 
 #include <uvm/uvm_extern.h>
 
@@ -146,6 +149,10 @@ __KERNEL_RCSID(1, "$NetBSD: arm32_boot.c,v 1.5 2013/08/18 06:28:18 matt Exp $");
 
 #ifdef KGDB
 #include <sys/kgdb.h>
+#endif
+
+#ifdef MULTIPROCESSOR
+static kmutex_t cpu_hatch_lock;
 #endif
 
 vaddr_t
@@ -297,6 +304,10 @@ initarm_common(vaddr_t kvm_base, vsize_t kvm_size,
 		Debugger();
 #endif
 
+#ifdef MULTIPROCESSOR
+	mutex_init(&cpu_hatch_lock, MUTEX_DEFAULT, IPL_NONE);
+#endif
+
 #ifdef VERBOSE_INIT_ARM
 	printf("done.\n");
 #endif
@@ -320,36 +331,61 @@ cpu_hatch(struct cpu_info *ci, cpuid_t cpuid, void (*md_cpu_init)(struct cpu_inf
 	 */
 	splhigh();
 
+#ifdef CPU_CORTEX
+	KASSERTMSG(armreg_auxctl_read() & CORTEXA9_AUXCTL_SMP, "auxctl %#x",
+	    armreg_auxctl_read());
+#endif
+
+#ifdef VERBOSE_INIT_ARM
 	printf("%s(%s): ", __func__, ci->ci_data.cpu_name);
+#endif
+	uint32_t mpidr = armreg_mpidr_read();
+	if (mpidr & MPIDR_MT) {
+		ci->ci_data.cpu_smt_id = mpidr & MPIDR_AFF0;
+		ci->ci_data.cpu_core_id = mpidr & MPIDR_AFF1;
+		ci->ci_data.cpu_package_id = mpidr & MPIDR_AFF2;
+	} else {
+		ci->ci_data.cpu_core_id = mpidr & MPIDR_AFF0;
+		ci->ci_data.cpu_package_id = mpidr & MPIDR_AFF1;
+	}
 
 	/*
 	 * Make sure we have the right vector page.
 	 */
+#ifdef VERBOSE_INIT_ARM
 	printf(" vectors");
+#endif
 	arm32_vector_init(systempage.pv_va, ARM_VEC_ALL);
 
 	/*
-	 * Initialize the stack for each mode (we are already running on the SVC32
-	 * stack of the idlelwp).
+	 * Initialize the stack for each mode (we are already running on the
+	 * SVC32 stack of the idlelwp).
 	 */
+#ifdef VERBOSE_INIT_ARM
 	printf(" stacks");
-	set_stackptr(PSR_FIQ32_MODE,
-	    fiqstack.pv_va + cpu_index(ci) * FIQ_STACK_SIZE * PAGE_SIZE);
-	set_stackptr(PSR_IRQ32_MODE,
-	    irqstack.pv_va + cpu_index(ci) * IRQ_STACK_SIZE * PAGE_SIZE);
-	set_stackptr(PSR_ABT32_MODE,
-	    abtstack.pv_va + cpu_index(ci) * ABT_STACK_SIZE * PAGE_SIZE);
-	set_stackptr(PSR_UND32_MODE,
-	    undstack.pv_va + cpu_index(ci) * UND_STACK_SIZE * PAGE_SIZE);
-
-#if 0
-	/*
-	 * Now that we are going to apart of the kernel,
-	 * take out the kernel lock.
-	 */
-	printf(" kernel_lock");
-	KERNEL_LOCK(1, NULL);
 #endif
+	set_stackptr(PSR_FIQ32_MODE,
+	    fiqstack.pv_va + (cpu_index(ci) + 1) * FIQ_STACK_SIZE * PAGE_SIZE);
+	set_stackptr(PSR_IRQ32_MODE,
+	    irqstack.pv_va + (cpu_index(ci) + 1) * IRQ_STACK_SIZE * PAGE_SIZE);
+	set_stackptr(PSR_ABT32_MODE,
+	    abtstack.pv_va + (cpu_index(ci) + 1) * ABT_STACK_SIZE * PAGE_SIZE);
+	set_stackptr(PSR_UND32_MODE,
+	    undstack.pv_va + (cpu_index(ci) + 1) * UND_STACK_SIZE * PAGE_SIZE);
+
+	ci->ci_lastlwp = NULL;
+	ci->ci_pmap_lastuser = NULL;
+#ifdef ARM_MMU_EXTENDED
+#ifdef VERBOSE_INIT_ARM
+	printf(" tlb");
+#endif
+	/*
+	 * Attach to the tlb.
+	 */
+	ci->ci_pmap_cur = pmap_kernel();
+	ci->ci_pmap_asid_cur = KERNEL_PID;
+#endif
+
 #ifdef CPU_CORTEX
 	if (CPU_ID_CORTEX_P(ci->ci_arm_cpuid)) {
 		/*
@@ -360,24 +396,37 @@ cpu_hatch(struct cpu_info *ci, cpuid_t cpuid, void (*md_cpu_init)(struct cpu_inf
 	}
 #endif
 
+	mutex_enter(&cpu_hatch_lock);
+
+	aprint_naive("%s", device_xname(ci->ci_dev));
+	aprint_normal("%s", device_xname(ci->ci_dev));
+	identify_arm_cpu(ci->ci_dev, ci);
+#ifdef VERBOSE_INIT_ARM
+	printf(" vfp");
+#endif
+	vfp_attach(ci);
+
+	mutex_exit(&cpu_hatch_lock);
+
+#ifdef VERBOSE_INIT_ARM
 	printf(" interrupts");
+#endif
 	/*
 	 * Let the interrupts do what they need to on this CPU.
 	 */
 	intr_cpu_init(ci);
 
+#ifdef VERBOSE_INIT_ARM
 	printf(" md(%p)", md_cpu_init);
+#endif
 	if (md_cpu_init != NULL)
 		(*md_cpu_init)(ci);
 
-#if 0
-	/*
-	 * Tell the MI code we are alive!
-	 */
-	printf(" mi_cpu");
-	mi_cpu_running(ci);
-#endif
-
+#ifdef VERBOSE_INIT_ARM
 	printf(" done!\n");
+#endif
+	atomic_and_32(&arm_cpu_mbox, ~(1 << cpuid));
+	membar_producer();
+	__asm __volatile("sev; sev; sev");
 }
 #endif /* MULTIPROCESSOR */

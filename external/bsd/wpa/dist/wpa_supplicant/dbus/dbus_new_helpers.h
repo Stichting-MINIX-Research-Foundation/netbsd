@@ -3,14 +3,8 @@
  * Copyright (c) 2006, Dan Williams <dcbw@redhat.com> and Red Hat, Inc.
  * Copyright (c) 2009, Witold Sowa <witold.sowa@gmail.com>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #ifndef WPA_DBUS_CTRL_H
@@ -18,13 +12,13 @@
 
 #include <dbus/dbus.h>
 
-typedef DBusMessage * (* WPADBusMethodHandler)(DBusMessage *message,
-					       void *user_data);
-typedef void (* WPADBusArgumentFreeFunction)(void *handler_arg);
+typedef DBusMessage * (*WPADBusMethodHandler)(DBusMessage *message,
+					      void *user_data);
+typedef void (*WPADBusArgumentFreeFunction)(void *handler_arg);
 
-typedef dbus_bool_t (* WPADBusPropertyAccessor)(DBusMessageIter *iter,
-                                                DBusError *error,
-						void *user_data);
+typedef dbus_bool_t (*WPADBusPropertyAccessor)(DBusMessageIter *iter,
+					       DBusError *error,
+					       void *user_data);
 
 struct wpa_dbus_object_desc {
 	DBusConnection *connection;
@@ -143,10 +137,8 @@ void wpa_dbus_mark_property_changed(struct wpas_dbus_priv *iface,
 DBusMessage * wpa_dbus_introspect(DBusMessage *message,
 				  struct wpa_dbus_object_desc *obj_dsc);
 
-char *wpas_dbus_new_decompose_object_path(const char *path,
-					   int p2p_persistent_group,
-					   char **network,
-					   char **bssid);
+char * wpas_dbus_new_decompose_object_path(const char *path, const char *sep,
+					   char **item);
 
 DBusMessage *wpas_dbus_reply_new_from_error(DBusMessage *message,
 					    DBusError *error,

@@ -1,4 +1,4 @@
-/*	$NetBSD: ehci_pci.c,v 1.57 2012/09/22 14:27:24 tsutsui Exp $	*/
+/*	$NetBSD: ehci_pci.c,v 1.62 2015/08/31 10:41:22 skrll Exp $	*/
 
 /*
  * Copyright (c) 2001, 2002 The NetBSD Foundation, Inc.
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ehci_pci.c,v 1.57 2012/09/22 14:27:24 tsutsui Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ehci_pci.c,v 1.62 2015/08/31 10:41:22 skrll Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -119,11 +119,11 @@ ehci_pci_attach(device_t parent, device_t self, void *aux)
 	char const *intrstr;
 	pci_intr_handle_t ih;
 	pcireg_t csr;
-	const char *vendor;
 	usbd_status r;
 	int ncomp;
 	struct usb_pci *up;
 	int quirk;
+	char intrbuf[PCI_INTRSTR_LEN];
 
 	sc->sc.sc_dev = self;
 	sc->sc.sc_bus.hci_private = sc;
@@ -142,14 +142,14 @@ ehci_pci_attach(device_t parent, device_t self, void *aux)
 		return;
 	}
 
+	sc->sc_pc = pc;
+	sc->sc_tag = tag;
+	sc->sc.sc_bus.dmatag = pa->pa_dmat;
+
 	/* Disable interrupts, so we don't get any spurious ones. */
 	sc->sc.sc_offs = EREAD1(&sc->sc, EHCI_CAPLENGTH);
 	DPRINTF(("%s: offs=%d\n", device_xname(self), sc->sc.sc_offs));
 	EOWRITE4(&sc->sc, EHCI_USBINTR, 0);
-
-	sc->sc_pc = pc;
-	sc->sc_tag = tag;
-	sc->sc.sc_bus.dmatag = pa->pa_dmat;
 
 	/* Handle quirks */
 	switch (quirk) {
@@ -176,14 +176,14 @@ ehci_pci_attach(device_t parent, device_t self, void *aux)
 	/*
 	 * Allocate IRQ
 	 */
-	intrstr = pci_intr_string(pc, ih);
-	sc->sc_ih = pci_intr_establish(pc, ih, IPL_SCHED, ehci_intr, sc);
+	intrstr = pci_intr_string(pc, ih, intrbuf, sizeof(intrbuf));
+	sc->sc_ih = pci_intr_establish(pc, ih, IPL_USB, ehci_intr, sc);
 	if (sc->sc_ih == NULL) {
 		aprint_error_dev(self, "couldn't establish interrupt");
 		if (intrstr != NULL)
 			aprint_error(" at %s", intrstr);
 		aprint_error("\n");
-		return;
+		goto fail;
 	}
 	aprint_normal_dev(self, "interrupting at %s\n", intrstr);
 
@@ -193,7 +193,7 @@ ehci_pci_attach(device_t parent, device_t self, void *aux)
 	case PCI_USBREV_1_1:
 		sc->sc.sc_bus.usbrev = USBREV_UNKNOWN;
 		aprint_verbose_dev(self, "pre-2.0 USB rev\n");
-		return;
+		goto fail;
 	case PCI_USBREV_2_0:
 		sc->sc.sc_bus.usbrev = USBREV_2_0;
 		break;
@@ -203,14 +203,9 @@ ehci_pci_attach(device_t parent, device_t self, void *aux)
 	}
 
 	/* Figure out vendor for root hub descriptor. */
-	vendor = pci_findvendor(pa->pa_id);
 	sc->sc.sc_id_vendor = PCI_VENDOR(pa->pa_id);
-	if (vendor)
-		strlcpy(sc->sc.sc_vendor, vendor, sizeof(sc->sc.sc_vendor));
-	else
-		snprintf(sc->sc.sc_vendor, sizeof(sc->sc.sc_vendor),
-		    "vendor 0x%04x", PCI_VENDOR(pa->pa_id));
-
+	pci_findvendor(sc->sc.sc_vendor,
+	    sizeof(sc->sc.sc_vendor), sc->sc.sc_id_vendor);
 	/* Enable workaround for dropped interrupts as required */
 	switch (sc->sc.sc_id_vendor) {
 	case PCI_VENDOR_ATI:
@@ -330,7 +325,7 @@ ehci_dump_caps(ehci_softc_t *sc, pci_chipset_tag_t pc, pcitag_t tag)
 		switch (id) {
 		case EHCI_CAP_ID_LEGACY:
 			legctlsts = pci_conf_read(pc, tag,
-						  addr + PCI_EHCI_USBLEGCTLSTS);
+			    addr + PCI_EHCI_USBLEGCTLSTS);
 			printf("ehci_dump_caps: legsup=0x%08x "
 			       "legctlsts=0x%08x\n", cap, legctlsts);
 			break;

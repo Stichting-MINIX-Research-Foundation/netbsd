@@ -1,4 +1,4 @@
-#	$NetBSD: OPENBLOCKS_A6,v 1.17 2013/10/05 06:14:48 kiyohara Exp $
+#	$NetBSD: OPENBLOCKS_A6,v 1.25 2015/08/12 07:53:57 maxv Exp $
 #
 #	OPENBLOCKS_A6 -- Plat'Home. OpenBlockS A6 kernel
 #
@@ -17,9 +17,8 @@ options 	EVBARM_BOARDTYPE=openblocks_a6
 
 # CPU options
 options 	CPU_SHEEVA
-#options 	MV_L2_CACHE_ENABLE
-#options 	MV_L2_CACHE_WRITE_THROUGH
-options 	MV_CACHE_RANGE_OPS
+#options 	SHEEVA_L2_CACHE
+#options 	SHEEVA_L2_CACHE_WT
 makeoptions	CPUFLAGS="-march=armv5te"
 
 # Marvell SoC options
@@ -92,19 +91,21 @@ options 	NFS_BOOT_DHCP
 
 # Compatibility options
 
-#options 	COMPAT_09	# NetBSD 0.9 compatibility.
-#options 	COMPAT_10	# NetBSD 1.0 compatibility.
-#options 	COMPAT_11	# NetBSD 1.1 compatibility.
-#options 	COMPAT_12	# NetBSD 1.2 compatibility.
-#options 	COMPAT_13	# NetBSD 1.3 compatibility.
-#options 	COMPAT_14	# NetBSD 1.4 compatibility.
-#options 	COMPAT_15	# NetBSD 1.5 compatibility.
-#options 	COMPAT_16	# NetBSD 1.6 compatibility.
-#options 	COMPAT_20	# NetBSD 2.0 compatibility.
-#options 	COMPAT_30	# NetBSD 3.0 compatibility.
-#options 	COMPAT_40	# NetBSD 4.0 compatibility.
-options 	COMPAT_50	# NetBSD 5.0 compatibility.
-options 	COMPAT_60	# NetBSD 6.0 compatibility.
+options		COMPAT_NETBSD32	# allow running arm (e.g. non-earm) binaries
+#options 	COMPAT_09	# NetBSD 0.9,
+#options 	COMPAT_10	# NetBSD 1.0,
+#options 	COMPAT_11	# NetBSD 1.1,
+#options 	COMPAT_12	# NetBSD 1.2,
+#options 	COMPAT_13	# NetBSD 1.3,
+#options 	COMPAT_14	# NetBSD 1.4,
+#options 	COMPAT_15	# NetBSD 1.5,
+#options 	COMPAT_16	# NetBSD 1.6,
+#options 	COMPAT_20	# NetBSD 2.0,
+#options 	COMPAT_30	# NetBSD 3.0,
+#options 	COMPAT_40	# NetBSD 4.0,
+options 	COMPAT_50	# NetBSD 5.0,
+options 	COMPAT_60	# NetBSD 6.0, and
+options 	COMPAT_70	# NetBSD 7.0 binary compatibility.
 #options 	COMPAT_43	# 4.3BSD compatibility.
 #options 	TCP_COMPAT_42	# 4.2BSD TCP/IP bug compat. Not recommended.
 
@@ -130,7 +131,6 @@ options 	SYSVSHM		# System V-like memory sharing
 
 #options 	KTRACE		# system call tracing, a la ktrace(1)
 options 	IRQSTATS	# manage IRQ statistics
-#options 	KMEMSTATS	# kernel memory statistics
 #options 	MIIVERBOSE	# Verbose MII auto configuration messages
 #options 	PCIVERBOSE	# Verbose PCI descriptions
 #options 	SCSIVERBOSE	# Verbose SCSI errors
@@ -143,7 +143,7 @@ options 	USBVERBOSE	# Verbose USB device auto configuration messages
 # Development and Debugging options
 
 #options 	PERFCTRS	# performance counters
-options 	DIAGNOSTIC	# internally consistency checks
+options 	DIAGNOSTIC	# internal consistency checks
 options 	DEBUG
 #options 	PMAP_DEBUG	# Enable pmap_debug_level code
 #options 	VERBOSE_INIT_ARM # verbose bootstraping messages
@@ -153,7 +153,7 @@ options 	DDB		# in-kernel debugger
 #options 	DEBUG_KGDB
 makeoptions	DEBUG="-g"	# compile full symbol table
 #makeoptions	COPTS="-O2"
-options 	SYMTAB_SPACE=850000
+makeoptions	COPY_SYMTAB=1
 #options 	AUDIO_DEBUG=2
 
 config		netbsd		root on ? type ?
@@ -171,10 +171,8 @@ mvsoc0	at mainbus?
 mvsata* at mvsoc? offset ? irq ?
 
 # On-chip Gigabit Ethernet Controller Interface
-mvgbec0 at mvsoc? offset 0x70000
-mvgbe*	at mvgbec0 port 0 irq ?
-#mvgbec1 at mvsoc? offset 0x74000
-#mvgbe*	at mvgbec1 port 0 irq ?
+mvgbec* at mvsoc? offset ?
+mvgbe*	at mvgbec? port ? irq ?
 makphy* at mii? phy ?
 
 # On-chip USB 2.0 Interface

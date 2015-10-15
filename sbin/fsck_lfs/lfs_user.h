@@ -1,4 +1,4 @@
-/* $NetBSD: lfs_user.h,v 1.5 2013/06/08 21:13:19 dholland Exp $ */
+/* $NetBSD: lfs_user.h,v 1.14 2015/09/01 06:15:16 dholland Exp $ */
 /*-
  * Copyright (c) 2003 The NetBSD Foundation, Inc.
  * All rights reserved.
@@ -31,8 +31,9 @@
 #include <stdarg.h>
 
 struct lfs;
-struct segsum;
-struct finfo;
+/* XXX do these really need to be here? */
+union segsum;
+union finfo;
 
 /*
  * In the fsck code we don't need lfs_unlockvp, but we don't have a mount
@@ -67,11 +68,9 @@ struct indir {
 	int in_exists;		/* Flag if the block exists. */
 };
 
-typedef int32_t ulfs_daddr_t;
-
 /* Convert between inode pointers and vnode pointers. */
 #define	VTOI(vp)	((struct inode *)(vp)->v_data)
-#define VTOD(vp)	(VTOI(vp)->i_din.ffs1_din)
+#define VTOD(vp)	(VTOI(vp)->i_din)
 
 #define sbdirty()	++fsdirty
 
@@ -82,12 +81,12 @@ int lfs_vop_strategy(struct ubuf *);
 int lfs_vop_bwrite(struct ubuf *);
 int lfs_vop_bmap(struct uvnode *, daddr_t, daddr_t *);
 
-struct uvnode *lfs_raw_vget(struct lfs *, ino_t, int, ulfs_daddr_t);
+struct uvnode *lfs_raw_vget(struct lfs *, ino_t, int, daddr_t);
 struct lfs *lfs_init(int, daddr_t, daddr_t, int, int);
 struct lfs *lfs_verify(struct lfs *, struct lfs *, struct uvnode *, int);
-int check_summary(struct lfs *, struct segsum *, ulfs_daddr_t, int, struct uvnode *, void (*)(ulfs_daddr_t, struct finfo *));
-ulfs_daddr_t try_verify(struct lfs *, struct uvnode *, ulfs_daddr_t, int);
-struct ulfs1_dinode *lfs_ifind(struct lfs *, ino_t, struct ubuf *);
+int check_summary(struct lfs *, union segsum *, daddr_t, int, struct uvnode *, void (*)(daddr_t, union finfo *));
+daddr_t try_verify(struct lfs *, struct uvnode *, daddr_t, int);
+union lfs_dinode *lfs_ifind(struct lfs *, ino_t, struct ubuf *);
 void call_panic(const char *, ...);
 void my_vpanic(int, const char *, va_list);
 int extend_ifile(struct lfs *);

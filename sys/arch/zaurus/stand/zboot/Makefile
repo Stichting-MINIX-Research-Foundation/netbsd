@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.13 2013/11/04 21:30:16 christos Exp $
+#	$NetBSD: Makefile,v 1.17 2014/08/27 03:17:21 matt Exp $
 
 PROG=		zboot
 
@@ -21,11 +21,11 @@ CFLAGS+=	-fno-unwind-tables
 CPPFLAGS+=	-nostdinc -I. -I${.CURDIR} -I${.OBJDIR} -I${S}
 CPPFLAGS+=	-D_STANDALONE -DHEAP_VARIABLE
 CPPFLAGS+=	-DLIBSA_ENABLE_LS_OP
-CPPFLAGS+=	-mabi=apcs-gnu -mfloat-abi=soft -mcpu=xscale
-.if ${HAVE_GCC} < 48
-CPPFLAGS+=	-mno-thumb -mno-thumb-interwork
-.else
+CPPFLAGS+=	${ARM_APCS_FLAGS} -mcpu=xscale
+.if ${HAVE_LLVM:Uno} != "no" || ${HAVE_GCC:U0} >= 48
 CPPFLAGS+=	-marm
+.else
+CPPFLAGS+=	-mno-thumb -mno-thumb-interwork
 .endif
 CPUFLAGS=
 AFLAGS+=	-D_LOCORE
@@ -34,6 +34,7 @@ LDFLAGS+=	-nostdlib -Bstatic
 CLEANFILES+=	vers.c vers.o
 
 LIBCRT0=	crt0.o
+LIBCRTI=	# nothing
 LIBC=		# nothing
 LIBCRTBEGIN=	# nothing
 LIBCRTEND=	# nothing
@@ -60,7 +61,7 @@ LIBSA=		${SALIB}
 ${PROG}: ${OBJS} ${LIBSA} ${LIBZ} ${LIBKERN} ${VERSIONFILE}
 	${_MKTARGET_LINK}
 	${HOST_SH} ${S}/conf/newvers_stand.sh ${${MKREPRO} == "yes" :?:-D} \
-	    ${VERSIONFILE} ${MACHINE} ${NEWVERSWHAT}
+	    ${VERSIONFILE} zaurus ${NEWVERSWHAT}
 	${CC} ${CFLAGS} ${CPPFLAGS} -c vers.c
 	${LD} ${LDFLAGS} -o ${PROG} ${OBJS} vers.o ${LIBSA} ${LIBZ} ${LIBKERN}
 

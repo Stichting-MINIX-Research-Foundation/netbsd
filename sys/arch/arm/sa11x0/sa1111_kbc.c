@@ -1,4 +1,4 @@
-/*      $NetBSD: sa1111_kbc.c,v 1.16 2012/10/27 17:17:41 chs Exp $ */
+/*      $NetBSD: sa1111_kbc.c,v 1.18 2015/04/13 21:18:41 riastradh Exp $ */
 
 /*
  * Copyright (c) 2004  Ben Harris.
@@ -57,7 +57,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: sa1111_kbc.c,v 1.16 2012/10/27 17:17:41 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: sa1111_kbc.c,v 1.18 2015/04/13 21:18:41 riastradh Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -71,7 +71,7 @@ __KERNEL_RCSID(0, "$NetBSD: sa1111_kbc.c,v 1.16 2012/10/27 17:17:41 chs Exp $");
 #include <sys/errno.h>
 #include <sys/queue.h>
 #include <sys/bus.h>
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 
 #include <arm/sa11x0/sa1111_reg.h>
 #include <arm/sa11x0/sa1111_var.h>
@@ -276,7 +276,7 @@ sackbc_attach(device_t parent, device_t self, void *aux)
 			continue;
 		sc->slot = slot;
 		rnd_attach_source(&sc->rnd_source, device_xname(child),
-		    RND_TYPE_TTY, 0);
+		    RND_TYPE_TTY, RND_FLAG_DEFAULT|RND_FLAG_ESTIMATE_VALUE);
 		/* only one of KBD_SLOT or AUX_SLOT is used. */
 		break;			
 	}

@@ -1,4 +1,4 @@
-/*	$NetBSD: usb.c,v 1.148 2013/11/09 07:52:22 skrll Exp $	*/
+/*	$NetBSD: usb.c,v 1.159 2015/05/30 06:41:08 skrll Exp $	*/
 
 /*
  * Copyright (c) 1998, 2002, 2008, 2012 The NetBSD Foundation, Inc.
@@ -37,9 +37,10 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: usb.c,v 1.148 2013/11/09 07:52:22 skrll Exp $");
+__KERNEL_RCSID(0, "$NetBSD: usb.c,v 1.159 2015/05/30 06:41:08 skrll Exp $");
 
 #ifdef _KERNEL_OPT
+#include "opt_usb.h"
 #include "opt_compat_netbsd.h"
 #endif
 
@@ -61,6 +62,8 @@ __KERNEL_RCSID(0, "$NetBSD: usb.c,v 1.148 2013/11/09 07:52:22 skrll Exp $");
 #include <sys/mutex.h>
 #include <sys/bus.h>
 #include <sys/once.h>
+#include <sys/atomic.h>
+#include <sys/sysctl.h>
 
 #include <dev/usb/usb.h>
 #include <dev/usb/usbdi.h>
@@ -68,6 +71,18 @@ __KERNEL_RCSID(0, "$NetBSD: usb.c,v 1.148 2013/11/09 07:52:22 skrll Exp $");
 #include <dev/usb/usbdivar.h>
 #include <dev/usb/usb_verbose.h>
 #include <dev/usb/usb_quirks.h>
+#include <dev/usb/usbhist.h>
+
+#if defined(USBHIST)
+
+#ifndef USBHIST_SIZE
+#define USBHIST_SIZE 50000
+#endif
+
+static struct kern_history_ent usbhistbuf[USBHIST_SIZE];
+USBHIST_DEFINE(usbhist) = KERNHIST_INITIALIZER(usbhist, usbhistbuf);
+
+#endif
 
 #define USB_DEV_MINOR 255
 
@@ -81,6 +96,34 @@ int	usbdebug = 0;
  * >1 - do no exploration
  */
 int	usb_noexplore = 0;
+
+SYSCTL_SETUP(sysctl_hw_usb_setup, "sysctl hw.usb setup")
+{
+	int err;
+	const struct sysctlnode *rnode;
+	const struct sysctlnode *cnode;
+
+	err = sysctl_createv(clog, 0, NULL, &rnode,
+	    CTLFLAG_PERMANENT, CTLTYPE_NODE, "usb",
+	    SYSCTL_DESCR("usb global controls"),
+	    NULL, 0, NULL, 0, CTL_HW, CTL_CREATE, CTL_EOL);
+
+	if (err)
+		goto fail;
+
+	/* control debugging printfs */
+	err = sysctl_createv(clog, 0, &rnode, &cnode,
+	    CTLFLAG_PERMANENT|CTLFLAG_READWRITE, CTLTYPE_INT,
+	    "debug", SYSCTL_DESCR("Enable debugging output"),
+	    NULL, 0, &usbdebug, sizeof(usbdebug), CTL_CREATE, CTL_EOL);
+	if (err)
+		goto fail;
+
+	return;
+fail:
+	aprint_error("%s: sysctl_createv failed (err = %d)\n", __func__, err);
+}
+
 #else
 #define DPRINTF(x)
 #define DPRINTFN(n,x)
@@ -117,8 +160,18 @@ dev_type_poll(usbpoll);
 dev_type_kqfilter(usbkqfilter);
 
 const struct cdevsw usb_cdevsw = {
-	usbopen, usbclose, usbread, nowrite, usbioctl,
-	nostop, notty, usbpoll, nommap, usbkqfilter, D_OTHER,
+	.d_open = usbopen,
+	.d_close = usbclose,
+	.d_read = usbread,
+	.d_write = nowrite,
+	.d_ioctl = usbioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = usbpoll,
+	.d_mmap = nommap,
+	.d_kqfilter = usbkqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_OTHER
 };
 
 Static void	usb_discover(struct usb_softc *);
@@ -192,6 +245,7 @@ usb_attach(device_t parent, device_t self, void *aux)
 	case USBREV_1_0:
 	case USBREV_1_1:
 	case USBREV_2_0:
+	case USBREV_3_0:
 		break;
 	default:
 		aprint_error(", not supported\n");
@@ -222,6 +276,8 @@ usb_once_init(void)
 {
 	struct usb_taskq *taskq;
 	int i;
+
+	USBHIST_LINK_STATIC(usbhist);
 
 	selinit(&usb_selevent);
 	mutex_init(&usb_event_lock, MUTEX_DEFAULT, IPL_NONE);
@@ -273,6 +329,9 @@ usb_doattach(device_t self)
 		break;
 	case USBREV_2_0:
 		speed = USB_SPEED_HIGH;
+		break;
+	case USBREV_3_0:
+		speed = USB_SPEED_SUPER;
 		break;
 	default:
 		panic("usb_doattach");
@@ -346,28 +405,39 @@ usb_add_task(usbd_device_handle dev, struct usb_task *task, int queue)
 {
 	struct usb_taskq *taskq;
 
+	KASSERT(0 <= queue);
+	KASSERT(queue < USB_NUM_TASKQS);
 	taskq = &usb_taskq[queue];
 	mutex_enter(&taskq->lock);
-	if (task->queue == -1) {
+	if (atomic_cas_uint(&task->queue, USB_NUM_TASKQS, queue) ==
+	    USB_NUM_TASKQS) {
 		DPRINTFN(2,("usb_add_task: task=%p\n", task));
 		TAILQ_INSERT_TAIL(&taskq->tasks, task, next);
-		task->queue = queue;
+		cv_signal(&taskq->cv);
 	} else {
 		DPRINTFN(3,("usb_add_task: task=%p on q\n", task));
 	}
-	cv_signal(&taskq->cv);
 	mutex_exit(&taskq->lock);
 }
 
+/*
+ * XXX This does not wait for completion!  Most uses need such an
+ * operation.  Urgh...
+ */
 void
 usb_rem_task(usbd_device_handle dev, struct usb_task *task)
 {
+	unsigned queue;
 
-	if (task->queue != -1) {
-		struct usb_taskq *taskq = &usb_taskq[task->queue];
+	while ((queue = task->queue) != USB_NUM_TASKQS) {
+		struct usb_taskq *taskq = &usb_taskq[queue];
 		mutex_enter(&taskq->lock);
-		TAILQ_REMOVE(&taskq->tasks, task, next);
-		task->queue = -1;
+		if (__predict_true(task->queue == queue)) {
+			TAILQ_REMOVE(&taskq->tasks, task, next);
+			task->queue = USB_NUM_TASKQS;
+			mutex_exit(&taskq->lock);
+			break;
+		}
 		mutex_exit(&taskq->lock);
 	}
 }
@@ -421,6 +491,7 @@ usb_task_thread(void *arg)
 {
 	struct usb_task *task;
 	struct usb_taskq *taskq;
+	bool mpsafe;
 
 	taskq = arg;
 	DPRINTF(("usb_task_thread: start taskq %s\n", taskq->name));
@@ -434,14 +505,16 @@ usb_task_thread(void *arg)
 		}
 		DPRINTFN(2,("usb_task_thread: woke up task=%p\n", task));
 		if (task != NULL) {
+			mpsafe = ISSET(task->flags, USB_TASKQ_MPSAFE);
 			TAILQ_REMOVE(&taskq->tasks, task, next);
-			task->queue = -1;
+			task->queue = USB_NUM_TASKQS;
 			mutex_exit(&taskq->lock);
 
-			if (!(task->flags & USB_TASKQ_MPSAFE))
+			if (!mpsafe)
 				KERNEL_LOCK(1, curlwp);
 			task->fun(task->arg);
-			if (!(task->flags & USB_TASKQ_MPSAFE))
+			/* Can't dereference task after this point.  */
+			if (!mpsafe)
 				KERNEL_UNLOCK_ONE(curlwp);
 
 			mutex_enter(&taskq->lock);

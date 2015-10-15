@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.7 2013/07/27 19:23:09 christos Exp $
+#	$NetBSD: Makefile,v 1.9 2015/01/25 15:51:53 christos Exp $
 
 .include <bsd.own.mk>
 
@@ -13,6 +13,7 @@ DIST=${IDIST}/bin/named
 CPPFLAGS+=-I${DIST}/include -I${DIST}/unix/include -DCONFIGARGS=\"defaults\"
 CPPFLAGS+=-DNO_VERSION_DATE -DPRODUCT=\"BIND\" -DSRCID=\"${SRCID}\"
 CPPFLAGS+=-DDESCRIPTION=\"\(Extended\ Support\ Version\)\"
+CPPFLAGS+=-DBUILDER=\"make\"	# I am tempted to say Bob
 
 .include "${IDIST}/srcid"
 
@@ -32,7 +33,9 @@ SRCS=	builtin.c client.c config.c control.c controlconf.c \
 	lwaddr.c lwdclient.c lwderror.c \
 	lwdgabn.c lwdgnba.c lwdgrbn.c lwdnoop.c lwresd.c lwsearch.c \
 	main.c notify.c query.c server.c sortlist.c statschannel.c \
-	tkeyconf.c tsigconf.c \
+	pfilter.c tkeyconf.c tsigconf.c \
 	update.c xfrout.c zoneconf.c ${SRCS_UNIX}
 
+LDADD+=-lblacklist
+DPADD+=${LIBBLACKLIST}
 .include <bsd.prog.mk>

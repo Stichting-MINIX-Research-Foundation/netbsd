@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -41,12 +41,9 @@
  * POSSIBILITY OF SUCH DAMAGES.
  */
 
-
 /*
  * These interfaces are required in order to compile the ASL compiler and the
  * various ACPICA tools under Linux or other Unix-like system.
- *
- * Note: Use #define __APPLE__ for OS X generation.
  */
 #include "acpi.h"
 #include "accommon.h"
@@ -67,15 +64,10 @@
         ACPI_MODULE_NAME    ("osunixxf")
 
 
-extern FILE                    *AcpiGbl_DebugFile;
-FILE                           *AcpiGbl_OutputFile;
+BOOLEAN                        AcpiGbl_DebugTimeout = FALSE;
 
 
 /* Upcalls to AcpiExec */
-
-ACPI_PHYSICAL_ADDRESS
-AeLocalGetRootPointer (
-    void);
 
 void
 AeTableOverride (
@@ -84,10 +76,128 @@ AeTableOverride (
 
 typedef void* (*PTHREAD_CALLBACK) (void *);
 
-/* Apple-specific */
+/* Buffer used by AcpiOsVprintf */
 
-#ifdef __APPLE__
-#define sem_destroy         sem_close
+#define ACPI_VPRINTF_BUFFER_SIZE    512
+#define _ASCII_NEWLINE              '\n'
+
+/* Terminal support for AcpiExec only */
+
+#ifdef ACPI_EXEC_APP
+#include <termios.h>
+
+struct termios              OriginalTermAttributes;
+int                         TermAttributesWereSet = 0;
+
+ACPI_STATUS
+AcpiUtReadLine (
+    char                    *Buffer,
+    UINT32                  BufferLength,
+    UINT32                  *BytesRead);
+
+static void
+OsEnterLineEditMode (
+    void);
+
+static void
+OsExitLineEditMode (
+    void);
+
+
+/******************************************************************************
+ *
+ * FUNCTION:    OsEnterLineEditMode, OsExitLineEditMode
+ *
+ * PARAMETERS:  None
+ *
+ * RETURN:      None
+ *
+ * DESCRIPTION: Enter/Exit the raw character input mode for the terminal.
+ *
+ * Interactive line-editing support for the AML debugger. Used with the
+ * common/acgetline module.
+ *
+ * readline() is not used because of non-portability. It is not available
+ * on all systems, and if it is, often the package must be manually installed.
+ *
+ * Therefore, we use the POSIX tcgetattr/tcsetattr and do the minimal line
+ * editing that we need in AcpiOsGetLine.
+ *
+ * If the POSIX tcgetattr/tcsetattr interfaces are unavailable, these
+ * calls will also work:
+ *     For OsEnterLineEditMode: system ("stty cbreak -echo")
+ *     For OsExitLineEditMode:  system ("stty cooked echo")
+ *
+ *****************************************************************************/
+
+static void
+OsEnterLineEditMode (
+    void)
+{
+    struct termios          LocalTermAttributes;
+
+
+    TermAttributesWereSet = 0;
+
+    /* STDIN must be a terminal */
+
+    if (!isatty (STDIN_FILENO))
+    {
+        return;
+    }
+
+    /* Get and keep the original attributes */
+
+    if (tcgetattr (STDIN_FILENO, &OriginalTermAttributes))
+    {
+        fprintf (stderr, "Could not get terminal attributes!\n");
+        return;
+    }
+
+    /* Set the new attributes to enable raw character input */
+
+    memcpy (&LocalTermAttributes, &OriginalTermAttributes,
+        sizeof (struct termios));
+
+    LocalTermAttributes.c_lflag &= ~(ICANON | ECHO);
+    LocalTermAttributes.c_cc[VMIN] = 1;
+    LocalTermAttributes.c_cc[VTIME] = 0;
+
+    if (tcsetattr (STDIN_FILENO, TCSANOW, &LocalTermAttributes))
+    {
+        fprintf (stderr, "Could not set terminal attributes!\n");
+        return;
+    }
+
+    TermAttributesWereSet = 1;
+}
+
+
+static void
+OsExitLineEditMode (
+    void)
+{
+
+    if (!TermAttributesWereSet)
+    {
+        return;
+    }
+
+    /* Set terminal attributes back to the original values */
+
+    if (tcsetattr (STDIN_FILENO, TCSANOW, &OriginalTermAttributes))
+    {
+        fprintf (stderr, "Could not restore terminal attributes!\n");
+    }
+}
+
+
+#else
+
+/* These functions are not needed for other ACPICA utilities */
+
+#define OsEnterLineEditMode()
+#define OsExitLineEditMode()
 #endif
 
 
@@ -99,7 +209,7 @@ typedef void* (*PTHREAD_CALLBACK) (void *);
  *
  * RETURN:      Status
  *
- * DESCRIPTION: Init and terminate. Nothing to do.
+ * DESCRIPTION: Initialize and terminate this module.
  *
  *****************************************************************************/
 
@@ -107,21 +217,33 @@ ACPI_STATUS
 AcpiOsInitialize (
     void)
 {
+    ACPI_STATUS            Status;
+
 
     AcpiGbl_OutputFile = stdout;
+
+    OsEnterLineEditMode ();
+
+    Status = AcpiOsCreateLock (&AcpiGbl_PrintLock);
+    if (ACPI_FAILURE (Status))
+    {
+        return (Status);
+    }
+
     return (AE_OK);
 }
-
 
 ACPI_STATUS
 AcpiOsTerminate (
     void)
 {
 
+    OsExitLineEditMode ();
     return (AE_OK);
 }
 
 
+#ifndef ACPI_USE_NATIVE_RSDP_POINTER
 /******************************************************************************
  *
  * FUNCTION:    AcpiOsGetRootPointer
@@ -139,8 +261,9 @@ AcpiOsGetRootPointer (
     void)
 {
 
-    return (AeLocalGetRootPointer ());
+    return (0);
 }
+#endif
 
 
 /******************************************************************************
@@ -214,6 +337,33 @@ AcpiOsTableOverride (
 
 /******************************************************************************
  *
+ * FUNCTION:    AcpiOsPhysicalTableOverride
+ *
+ * PARAMETERS:  ExistingTable       - Header of current table (probably firmware)
+ *              NewAddress          - Where new table address is returned
+ *                                    (Physical address)
+ *              NewTableLength      - Where new table length is returned
+ *
+ * RETURN:      Status, address/length of new table. Null pointer returned
+ *              if no table is available to override.
+ *
+ * DESCRIPTION: Returns AE_SUPPORT, function not used in user space.
+ *
+ *****************************************************************************/
+
+ACPI_STATUS
+AcpiOsPhysicalTableOverride (
+    ACPI_TABLE_HEADER       *ExistingTable,
+    ACPI_PHYSICAL_ADDRESS   *NewAddress,
+    UINT32                  *NewTableLength)
+{
+
+    return (AE_SUPPORT);
+}
+
+
+/******************************************************************************
+ *
  * FUNCTION:    AcpiOsRedirectOutput
  *
  * PARAMETERS:  Destination         - An open file handle/pointer
@@ -241,7 +391,8 @@ AcpiOsRedirectOutput (
  *
  * RETURN:      None
  *
- * DESCRIPTION: Formatted output
+ * DESCRIPTION: Formatted output. Note: very similar to AcpiOsVprintf
+ *              (performance), changes should be tracked in both functions.
  *
  *****************************************************************************/
 
@@ -251,33 +402,6 @@ AcpiOsPrintf (
     ...)
 {
     va_list                 Args;
-
-
-    va_start (Args, Fmt);
-    AcpiOsVprintf (Fmt, Args);
-    va_end (Args);
-}
-
-
-/******************************************************************************
- *
- * FUNCTION:    AcpiOsVprintf
- *
- * PARAMETERS:  fmt                 - Standard printf format
- *              args                - Argument list
- *
- * RETURN:      None
- *
- * DESCRIPTION: Formatted output with argument list pointer
- *
- *****************************************************************************/
-
-void
-AcpiOsVprintf (
-    const char              *Fmt,
-    va_list                 Args)
-{
-    INT32                   Count = 0;
     UINT8                   Flags;
 
 
@@ -290,7 +414,9 @@ AcpiOsVprintf (
         {
             /* Output file is open, send the output there */
 
-            Count = vfprintf (AcpiGbl_DebugFile, Fmt, Args);
+            va_start (Args, Fmt);
+            vfprintf (AcpiGbl_DebugFile, Fmt, Args);
+            va_end (Args);
         }
         else
         {
@@ -302,11 +428,76 @@ AcpiOsVprintf (
 
     if (Flags & ACPI_DB_CONSOLE_OUTPUT)
     {
-        Count = vfprintf (AcpiGbl_OutputFile, Fmt, Args);
+        va_start (Args, Fmt);
+        vfprintf (AcpiGbl_OutputFile, Fmt, Args);
+        va_end (Args);
     }
 }
 
 
+/******************************************************************************
+ *
+ * FUNCTION:    AcpiOsVprintf
+ *
+ * PARAMETERS:  fmt                 - Standard printf format
+ *              args                - Argument list
+ *
+ * RETURN:      None
+ *
+ * DESCRIPTION: Formatted output with argument list pointer. Note: very
+ *              similar to AcpiOsPrintf, changes should be tracked in both
+ *              functions.
+ *
+ *****************************************************************************/
+
+void
+AcpiOsVprintf (
+    const char              *Fmt,
+    va_list                 Args)
+{
+    UINT8                   Flags;
+    char                    Buffer[ACPI_VPRINTF_BUFFER_SIZE];
+
+
+    /*
+     * We build the output string in a local buffer because we may be
+     * outputting the buffer twice. Using vfprintf is problematic because
+     * some implementations modify the args pointer/structure during
+     * execution. Thus, we use the local buffer for portability.
+     *
+     * Note: Since this module is intended for use by the various ACPICA
+     * utilities/applications, we can safely declare the buffer on the stack.
+     * Also, This function is used for relatively small error messages only.
+     */
+    vsnprintf (Buffer, ACPI_VPRINTF_BUFFER_SIZE, Fmt, Args);
+
+    Flags = AcpiGbl_DbOutputFlags;
+    if (Flags & ACPI_DB_REDIRECTABLE_OUTPUT)
+    {
+        /* Output is directable to either a file (if open) or the console */
+
+        if (AcpiGbl_DebugFile)
+        {
+            /* Output file is open, send the output there */
+
+            fputs (Buffer, AcpiGbl_DebugFile);
+        }
+        else
+        {
+            /* No redirection, send output to console (once only!) */
+
+            Flags |= ACPI_DB_CONSOLE_OUTPUT;
+        }
+    }
+
+    if (Flags & ACPI_DB_CONSOLE_OUTPUT)
+    {
+        fputs (Buffer, AcpiGbl_OutputFile);
+    }
+}
+
+
+#ifndef ACPI_EXEC_APP
 /******************************************************************************
  *
  * FUNCTION:    AcpiOsGetLine
@@ -317,7 +508,9 @@ AcpiOsVprintf (
  *
  * RETURN:      Status and actual bytes read
  *
- * DESCRIPTION: Formatted input with argument list pointer
+ * DESCRIPTION: Get the next input line from the terminal. NOTE: For the
+ *              AcpiExec utility, we use the acgetline module instead to
+ *              provide line-editing and history support.
  *
  *****************************************************************************/
 
@@ -327,40 +520,49 @@ AcpiOsGetLine (
     UINT32                  BufferLength,
     UINT32                  *BytesRead)
 {
-    UINT8                   Temp;
-    UINT32                  i;
+    int                     InputChar;
+    UINT32                  EndOfLine;
 
 
-    for (i = 0; ; i++)
+    /* Standard AcpiOsGetLine for all utilities except AcpiExec */
+
+    for (EndOfLine = 0; ; EndOfLine++)
     {
-        if (i >= BufferLength)
+        if (EndOfLine >= BufferLength)
         {
             return (AE_BUFFER_OVERFLOW);
         }
 
-        scanf ("%1c", &Temp);
-        if (!Temp || Temp == '\n')
+        if ((InputChar = getchar ()) == EOF)
+        {
+            return (AE_ERROR);
+        }
+
+        if (!InputChar || InputChar == _ASCII_NEWLINE)
         {
             break;
         }
 
-        Buffer [i] = Temp;
+        Buffer[EndOfLine] = (char) InputChar;
     }
 
     /* Null terminate the buffer */
 
-    Buffer [i] = 0;
+    Buffer[EndOfLine] = 0;
 
     /* Return the number of bytes in the string */
 
     if (BytesRead)
     {
-        *BytesRead = i;
+        *BytesRead = EndOfLine;
     }
+
     return (AE_OK);
 }
+#endif
 
 
+#ifndef ACPI_USE_NATIVE_MEMORY_MAPPING
 /******************************************************************************
  *
  * FUNCTION:    AcpiOsMapMemory
@@ -406,6 +608,7 @@ AcpiOsUnmapMemory (
 
     return;
 }
+#endif
 
 
 /******************************************************************************
@@ -430,6 +633,32 @@ AcpiOsAllocate (
     Mem = (void *) malloc ((size_t) size);
     return (Mem);
 }
+
+
+#ifdef USE_NATIVE_ALLOCATE_ZEROED
+/******************************************************************************
+ *
+ * FUNCTION:    AcpiOsAllocateZeroed
+ *
+ * PARAMETERS:  Size                - Amount to allocate, in bytes
+ *
+ * RETURN:      Pointer to the new allocation. Null on error.
+ *
+ * DESCRIPTION: Allocate and zero memory. Algorithm is dependent on the OS.
+ *
+ *****************************************************************************/
+
+void *
+AcpiOsAllocateZeroed (
+    ACPI_SIZE               size)
+{
+    void                    *Mem;
+
+
+    Mem = (void *) calloc (1, (size_t) size);
+    return (Mem);
+}
+#endif
 
 
 /******************************************************************************
@@ -596,7 +825,7 @@ AcpiOsDeleteSemaphore (
  *
  * PARAMETERS:  Handle              - Handle returned by AcpiOsCreateSemaphore
  *              Units               - How many units to wait for
- *              Timeout             - How long to wait
+ *              MsecTimeout         - How long to wait (milliseconds)
  *
  * RETURN:      Status
  *
@@ -608,11 +837,14 @@ ACPI_STATUS
 AcpiOsWaitSemaphore (
     ACPI_HANDLE         Handle,
     UINT32              Units,
-    UINT16              Timeout)
+    UINT16              MsecTimeout)
 {
     ACPI_STATUS         Status = AE_OK;
     sem_t               *Sem = (sem_t *) Handle;
-    struct timespec     T;
+#ifndef ACPI_USE_ALTERNATE_TIMEOUT
+    struct timespec     Time;
+    int                 RetVal;
+#endif
 
 
     if (!Sem)
@@ -620,7 +852,7 @@ AcpiOsWaitSemaphore (
         return (AE_BAD_PARAMETER);
     }
 
-    switch (Timeout)
+    switch (MsecTimeout)
     {
     /*
      * No Wait:
@@ -647,37 +879,71 @@ AcpiOsWaitSemaphore (
         }
         break;
 
-    /* Wait with Timeout */
+    /* Wait with MsecTimeout */
 
     default:
-
-        T.tv_sec = Timeout / 1000;
-        T.tv_nsec = (Timeout - (T.tv_sec * 1000)) * 1000000;
 
 #ifdef ACPI_USE_ALTERNATE_TIMEOUT
         /*
          * Alternate timeout mechanism for environments where
          * sem_timedwait is not available or does not work properly.
          */
-        while (Timeout)
+        while (MsecTimeout)
         {
             if (sem_trywait (Sem) == 0)
             {
                 /* Got the semaphore */
                 return (AE_OK);
             }
-            usleep (1000);  /* one millisecond */
-            Timeout--;
+
+            if (MsecTimeout >= 10)
+            {
+                MsecTimeout -= 10;
+                usleep (10 * ACPI_USEC_PER_MSEC); /* ten milliseconds */
+            }
+            else
+            {
+                MsecTimeout--;
+                usleep (ACPI_USEC_PER_MSEC); /* one millisecond */
+            }
         }
         Status = (AE_TIME);
 #else
-
-        if (sem_timedwait (Sem, &T))
+        /*
+         * The interface to sem_timedwait is an absolute time, so we need to
+         * get the current time, then add in the millisecond Timeout value.
+         */
+        if (clock_gettime (CLOCK_REALTIME, &Time) == -1)
         {
+            perror ("clock_gettime");
+            return (AE_TIME);
+        }
+
+        Time.tv_sec += (MsecTimeout / ACPI_MSEC_PER_SEC);
+        Time.tv_nsec += ((MsecTimeout % ACPI_MSEC_PER_SEC) * ACPI_NSEC_PER_MSEC);
+
+        /* Handle nanosecond overflow (field must be less than one second) */
+
+        if (Time.tv_nsec >= ACPI_NSEC_PER_SEC)
+        {
+            Time.tv_sec += (Time.tv_nsec / ACPI_NSEC_PER_SEC);
+            Time.tv_nsec = (Time.tv_nsec % ACPI_NSEC_PER_SEC);
+        }
+
+        while (((RetVal = sem_timedwait (Sem, &Time)) == -1) && (errno == EINTR))
+        {
+            continue;
+        }
+
+        if (RetVal != 0)
+        {
+            if (errno != ETIMEDOUT)
+            {
+                perror ("sem_timedwait");
+            }
             Status = (AE_TIME);
         }
 #endif
-
         break;
     }
 
@@ -854,12 +1120,15 @@ AcpiOsSleep (
     UINT64                  milliseconds)
 {
 
-    sleep (milliseconds / 1000);    /* Sleep for whole seconds */
+    /* Sleep for whole seconds */
+
+    sleep (milliseconds / ACPI_MSEC_PER_SEC);
 
     /*
-     * Arg to usleep() must be less than 1,000,000 (1 second)
+     * Sleep for remaining microseconds.
+     * Arg to usleep() is in usecs and must be less than 1,000,000 (1 second).
      */
-    usleep ((milliseconds % 1000) * 1000);      /* Sleep for remaining usecs */
+    usleep ((milliseconds % ACPI_MSEC_PER_SEC) * ACPI_USEC_PER_MSEC);
 }
 
 
@@ -882,11 +1151,14 @@ AcpiOsGetTimer (
     struct timeval          time;
 
 
+    /* This timer has sufficient resolution for user-space application code */
+
     gettimeofday (&time, NULL);
 
-    /* Seconds * 10^7 = 100ns(10^-7), Microseconds(10^-6) * 10^1 = 100ns */
+    /* (Seconds * 10^7 = 100ns(10^-7)) + (Microseconds(10^-6) * 10^1 = 100ns) */
 
-    return (((UINT64) time.tv_sec * 10000000) + ((UINT64) time.tv_usec * 10));
+    return (((UINT64) time.tv_sec * ACPI_100NSEC_PER_SEC) +
+            ((UINT64) time.tv_usec * ACPI_100NSEC_PER_USEC));
 }
 
 
@@ -895,7 +1167,7 @@ AcpiOsGetTimer (
  * FUNCTION:    AcpiOsReadPciConfiguration
  *
  * PARAMETERS:  PciId               - Seg/Bus/Dev
- *              Register            - Device Register
+ *              PciRegister         - Device Register
  *              Value               - Buffer where value is placed
  *              Width               - Number of bits
  *
@@ -908,11 +1180,12 @@ AcpiOsGetTimer (
 ACPI_STATUS
 AcpiOsReadPciConfiguration (
     ACPI_PCI_ID             *PciId,
-    UINT32                  Register,
+    UINT32                  PciRegister,
     UINT64                  *Value,
     UINT32                  Width)
 {
 
+    *Value = 0;
     return (AE_OK);
 }
 
@@ -922,7 +1195,7 @@ AcpiOsReadPciConfiguration (
  * FUNCTION:    AcpiOsWritePciConfiguration
  *
  * PARAMETERS:  PciId               - Seg/Bus/Dev
- *              Register            - Device Register
+ *              PciRegister         - Device Register
  *              Value               - Value to be written
  *              Width               - Number of bits
  *
@@ -935,7 +1208,7 @@ AcpiOsReadPciConfiguration (
 ACPI_STATUS
 AcpiOsWritePciConfiguration (
     ACPI_PCI_ID             *PciId,
-    UINT32                  Register,
+    UINT32                  PciRegister,
     UINT64                  Value,
     UINT32                  Width)
 {
@@ -968,18 +1241,22 @@ AcpiOsReadPort (
     switch (Width)
     {
     case 8:
+
         *Value = 0xFF;
         break;
 
     case 16:
+
         *Value = 0xFFFF;
         break;
 
     case 32:
+
         *Value = 0xFFFFFFFF;
         break;
 
     default:
+
         return (AE_BAD_PARAMETER);
     }
 
@@ -1018,9 +1295,10 @@ AcpiOsWritePort (
  *
  * PARAMETERS:  Address             - Physical Memory Address to read
  *              Value               - Where value is placed
- *              Width               - Number of bits
+ *              Width               - Number of bits (8,16,32, or 64)
  *
- * RETURN:      Value read from physical memory address
+ * RETURN:      Value read from physical memory address. Always returned
+ *              as a 64-bit integer, regardless of the read width.
  *
  * DESCRIPTION: Read data from a physical memory address
  *
@@ -1029,7 +1307,7 @@ AcpiOsWritePort (
 ACPI_STATUS
 AcpiOsReadMemory (
     ACPI_PHYSICAL_ADDRESS   Address,
-    UINT32                  *Value,
+    UINT64                  *Value,
     UINT32                  Width)
 {
 
@@ -1038,10 +1316,13 @@ AcpiOsReadMemory (
     case 8:
     case 16:
     case 32:
+    case 64:
+
         *Value = 0;
         break;
 
     default:
+
         return (AE_BAD_PARAMETER);
     }
     return (AE_OK);
@@ -1054,7 +1335,7 @@ AcpiOsReadMemory (
  *
  * PARAMETERS:  Address             - Physical Memory Address to write
  *              Value               - Value to write
- *              Width               - Number of bits
+ *              Width               - Number of bits (8,16,32, or 64)
  *
  * RETURN:      None
  *
@@ -1065,7 +1346,7 @@ AcpiOsReadMemory (
 ACPI_STATUS
 AcpiOsWriteMemory (
     ACPI_PHYSICAL_ADDRESS   Address,
-    UINT32                  Value,
+    UINT64                  Value,
     UINT32                  Width)
 {
 
@@ -1123,7 +1404,7 @@ AcpiOsWritable (
  *
  * FUNCTION:    AcpiOsSignal
  *
- * PARAMETERS:  Function            - ACPI CA signal function code
+ * PARAMETERS:  Function            - ACPI A signal function code
  *              Info                - Pointer to function-dependent structure
  *
  * RETURN:      Status
@@ -1141,12 +1422,15 @@ AcpiOsSignal (
     switch (Function)
     {
     case ACPI_SIGNAL_FATAL:
+
         break;
 
     case ACPI_SIGNAL_BREAKPOINT:
+
         break;
 
     default:
+
         break;
     }
 
@@ -1172,8 +1456,11 @@ ACPI_THREAD_ID
 AcpiOsGetThreadId (
     void)
 {
+    pthread_t               thread;
 
-    return (ACPI_CAST_PTHREAD_T (pthread_self()));
+
+    thread = pthread_self();
+    return (ACPI_CAST_PTHREAD_T (thread));
 }
 
 
@@ -1209,4 +1496,45 @@ AcpiOsExecute (
     return (0);
 }
 
+#else /* ACPI_SINGLE_THREADED */
+ACPI_THREAD_ID
+AcpiOsGetThreadId (
+    void)
+{
+    return (1);
+}
+
+ACPI_STATUS
+AcpiOsExecute (
+    ACPI_EXECUTE_TYPE       Type,
+    ACPI_OSD_EXEC_CALLBACK  Function,
+    void                    *Context)
+{
+
+    Function (Context);
+
+    return (AE_OK);
+}
+
 #endif /* ACPI_SINGLE_THREADED */
+
+
+/******************************************************************************
+ *
+ * FUNCTION:    AcpiOsWaitEventsComplete
+ *
+ * PARAMETERS:  None
+ *
+ * RETURN:      None
+ *
+ * DESCRIPTION: Wait for all asynchronous events to complete. This
+ *              implementation does nothing.
+ *
+ *****************************************************************************/
+
+void
+AcpiOsWaitEventsComplete (
+    void)
+{
+    return;
+}

@@ -1,4 +1,4 @@
-# 	$NetBSD: Makefile.sparc64,v 1.73 2013/03/19 19:59:40 christos Exp $
+# 	$NetBSD: Makefile.sparc64,v 1.80 2015/08/31 08:00:44 martin Exp $
 
 #=========================================================================
 #
@@ -59,10 +59,12 @@ CPPFLAGS+=	-D_LP64 -Wa,-Av9a
 AFLAGS+=	-Wa,-Av9a
 .if defined(PROF)
 # Profiling is only supported in the medium low memory model.
-CFLAGS+=	-mcmodel=medlow
+CFLAGS+=	${${ACTIVE_CC} == "gcc":? -mcmodel=medlow :}
+CFLAGS+=	${${ACTIVE_CC} == "clang":? -mcmodel=small :}
 .else
 # Since the kernel resides in the lower 32 bits, use medium low for now anyway.
-CFLAGS+=	-mcmodel=medlow
+CFLAGS+=	${${ACTIVE_CC} == "gcc":? -mcmodel=medlow :}
+CFLAGS+=	${${ACTIVE_CC} == "clang":? -mcmodel=small :}
 .endif
 .else
 # 32-bit kernels
@@ -106,11 +108,10 @@ dependkernlib:	assym.h
 ## (5) link settings
 ##
 TEXTADDR?=	01000000
-LINKFORMAT=	-T ${SPARC64}/conf/${KERN_LDSCRIPT}
 .if ${LP64} == "yes"
-KERN_LDSCRIPT?= kern.ldscript
+KERNLDSCRIPT?= ${SPARC64}/conf/kern.ldscript
 .else
-KERN_LDSCRIPT?= kern32.ldscript
+KERNLDSCRIPT?= ${SPARC64}/conf/kern32.ldscript
 .endif
 
 ##

@@ -1,4 +1,4 @@
-/* $NetBSD: ep93xx_intr.c,v 1.19 2013/08/18 15:58:19 matt Exp $ */
+/* $NetBSD: ep93xx_intr.c,v 1.24 2015/04/08 08:35:54 ozaki-r Exp $ */
 
 /*
  * Copyright (c) 2002 The NetBSD Foundation, Inc.
@@ -33,7 +33,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ep93xx_intr.c,v 1.19 2013/08/18 15:58:19 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ep93xx_intr.c,v 1.24 2015/04/08 08:35:54 ozaki-r Exp $");
 
 /*
  * Interrupt support for the Cirrus Logic EP93XX
@@ -43,6 +43,7 @@ __KERNEL_RCSID(0, "$NetBSD: ep93xx_intr.c,v 1.19 2013/08/18 15:58:19 matt Exp $"
 #include <sys/systm.h>
 #include <sys/malloc.h>
 #include <sys/termios.h>
+#include <sys/lwp.h>
 
 #include <sys/bus.h>
 #include <sys/intr.h>
@@ -65,9 +66,6 @@ volatile int hardware_spl_level;
 /* Software copy of the IRQs we have enabled. */
 volatile uint32_t vic1_intr_enabled;
 volatile uint32_t vic2_intr_enabled;
-
-/* Interrupts pending. */
-static volatile int ipending;
 
 void	ep93xx_intr_dispatch(struct trapframe *);
 
@@ -200,11 +198,9 @@ ep93xx_intr_calculate_masks(void)
 inline void
 splx(int new)
 {
-	int	old;
 	u_int	oldirqstate;
 
 	oldirqstate = disable_interrupts(I32_bit);
-	old = curcpl();
 	set_curcpl(new);
 	if (new != hardware_spl_level) {
 		hardware_spl_level = new;
@@ -260,7 +256,7 @@ ep93xx_intr_init(void)
 		iq = &intrq[i];
 		TAILQ_INIT(&iq->iq_list);
 
-		sprintf(iq->iq_name, "irq %d", i);
+		snprintf(iq->iq_name, sizeof(iq->iq_name), "irq %d", i);
 		evcnt_attach_dynamic(&iq->iq_ev, EVCNT_TYPE_INTR,
 				     NULL, (i < VIC_NIRQ ? "vic1" : "vic2"),
 		                     iq->iq_name);

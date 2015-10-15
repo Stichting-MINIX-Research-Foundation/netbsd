@@ -1,4 +1,4 @@
-/*	$NetBSD: vfs_syscalls_20.c,v 1.37 2013/11/27 17:24:44 christos Exp $	*/
+/*	$NetBSD: vfs_syscalls_20.c,v 1.39 2015/07/24 13:02:52 maxv Exp $	*/
 
 /*
  * Copyright (c) 1989, 1993
@@ -37,7 +37,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: vfs_syscalls_20.c,v 1.37 2013/11/27 17:24:44 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: vfs_syscalls_20.c,v 1.39 2015/07/24 13:02:52 maxv Exp $");
 
 #ifdef _KERNEL_OPT
 #include "opt_compat_netbsd.h"
@@ -90,7 +90,7 @@ static int
 vfs2fs(struct statfs12 *bfs, const struct statvfs *fs)
 {
 	struct statfs12 ofs;
-	int i = 0;
+	int i;
 	ofs.f_type = 0;
 	ofs.f_oflags = (short)fs->f_flag;
 
@@ -139,7 +139,7 @@ compat_20_sys_statfs(struct lwp *l, const struct compat_20_sys_statfs_args *uap,
 	} */
 	struct mount *mp;
 	struct statvfs *sbuf;
-	int error = 0;
+	int error;
 	struct vnode *vp;
 
 	error = namei_simple_user(SCARG(uap, path),
@@ -179,7 +179,7 @@ compat_20_sys_fstatfs(struct lwp *l, const struct compat_20_sys_fstatfs_args *ua
 	/* fd_getvnode() will use the descriptor for us */
 	if ((error = fd_getvnode(SCARG(uap, fd), &fp)) != 0)
 		return (error);
-	mp = ((struct vnode *)fp->f_data)->v_mount;
+	mp = fp->f_vnode->v_mount;
 	sbuf = malloc(sizeof(*sbuf), M_TEMP, M_WAITOK);
 	if ((error = dostatvfs(mp, sbuf, l, 0, 1)) != 0)
 		goto out;

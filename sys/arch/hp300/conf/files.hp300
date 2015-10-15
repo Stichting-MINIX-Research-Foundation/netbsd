@@ -1,4 +1,4 @@
-#	$NetBSD: files.hp300,v 1.86 2013/08/16 13:39:47 tsutsui Exp $
+#	$NetBSD: files.hp300,v 1.89 2014/08/24 08:17:44 tsutsui Exp $
 #
 # hp300-specific configuration info
 
@@ -85,6 +85,11 @@ attach	dnkbd at frodo
 file	arch/hp300/dev/dnkbd.c			dnkbd	needs-flag
 file	arch/hp300/dev/dnkbdmap.c		dnkbd
 
+# An mc146818-like calendar on 425e
+device	mcclock: mc146818
+attach mcclock at frodo with mcclock_frodo
+file	arch/hp300/dev/mcclock_frodo.c		mcclock_frodo
+
 #
 # Frame buffer devices on Internal I/O and the DIO bus
 #
@@ -142,6 +147,10 @@ file	arch/hp300/dev/dcm.c		dcm needs-flag
 attach	le at dio: le24
 file	arch/hp300/dev/if_le.c		le
 
+# 425e digital audio
+attach	arcofi at dio with arcofi_dio
+file	arch/hp300/dev/arcofi_dio.c	arcofi_dio
+
 # HP-IB interfaces
 define	hpibdev { }
 
@@ -187,7 +196,7 @@ file	arch/hp300/dev/spc.c		spc needs-flag
 #
 
 attach	sti at sgc with sti_sgc
-file	arch/hp300/dev/sti_sgc.c	sti_sgc
+file	arch/hp300/dev/sti_sgc.c	sti_sgc needs-flag
 
 # Memory Disk for ramdisk
 file	dev/md_root.c			memory_disk_hooks

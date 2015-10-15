@@ -1,4 +1,4 @@
-/*	$NetBSD: vnd.c,v 1.226 2013/09/15 16:05:51 martin Exp $	*/
+/*	$NetBSD: vnd.c,v 1.248 2015/08/20 14:40:17 christos Exp $	*/
 
 /*-
  * Copyright (c) 1996, 1997, 1998, 2008 The NetBSD Foundation, Inc.
@@ -91,7 +91,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: vnd.c,v 1.226 2013/09/15 16:05:51 martin Exp $");
+__KERNEL_RCSID(0, "$NetBSD: vnd.c,v 1.248 2015/08/20 14:40:17 christos Exp $");
 
 #if defined(_KERNEL_OPT)
 #include "opt_vnd.h"
@@ -127,6 +127,8 @@ __KERNEL_RCSID(0, "$NetBSD: vnd.c,v 1.226 2013/09/15 16:05:51 martin Exp $");
 #include <dev/dkvar.h>
 #include <dev/vndvar.h>
 
+#include "ioconf.h"
+
 #if defined(VNDDEBUG) && !defined(DEBUG)
 #define DEBUG
 #endif
@@ -156,8 +158,6 @@ struct vndxfer {
 
 #define	VND_MAXPENDING(vnd)	((vnd)->sc_maxactive * 4)
 
-/* called by main() at boot time */
-void	vndattach(int);
 
 static void	vndclear(struct vnd_softc *, int);
 static int	vnddoclear(struct vnd_softc *, int, int, bool);
@@ -197,12 +197,29 @@ static dev_type_dump(vnddump);
 static dev_type_size(vndsize);
 
 const struct bdevsw vnd_bdevsw = {
-	vndopen, vndclose, vndstrategy, vndioctl, vnddump, vndsize, D_DISK
+	.d_open = vndopen,
+	.d_close = vndclose,
+	.d_strategy = vndstrategy,
+	.d_ioctl = vndioctl,
+	.d_dump = vnddump,
+	.d_psize = vndsize,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
 const struct cdevsw vnd_cdevsw = {
-	vndopen, vndclose, vndread, vndwrite, vndioctl,
-	nostop, notty, nopoll, nommap, nokqfilter, D_DISK
+	.d_open = vndopen,
+	.d_close = vndclose,
+	.d_read = vndread,
+	.d_write = vndwrite,
+	.d_ioctl = vndioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
 static int	vnd_match(device_t, cfdata_t, void *);
@@ -216,7 +233,10 @@ extern struct cfdriver vnd_cd;
 static struct vnd_softc	*vnd_spawn(int);
 int	vnd_destroy(device_t);
 
-static struct	dkdriver vnddkdriver = { vndstrategy, minphys };
+static struct	dkdriver vnddkdriver = {
+	.d_strategy = vndstrategy,
+	.d_minphys = minphys
+};
 
 void
 vndattach(int num)
@@ -225,8 +245,8 @@ vndattach(int num)
 
 	error = config_cfattach_attach(vnd_cd.cd_name, &vnd_ca);
 	if (error)
-		aprint_error("%s: unable to register cfattach\n",
-		    vnd_cd.cd_name);
+		aprint_error("%s: unable to register cfattach, error = %d\n",
+		    vnd_cd.cd_name, error);
 }
 
 static int
@@ -315,10 +335,15 @@ vndopen(dev_t dev, int flags, int mode, struct lwp *l)
 		sc = vnd_spawn(unit);
 		if (sc == NULL)
 			return ENOMEM;
+
+		/* compatibility, keep disklabel after close */
+		sc->sc_flags = VNF_KLABEL;
 	}
 
 	if ((error = vndlock(sc)) != 0)
 		return error;
+
+	mutex_enter(&sc->sc_dkdev.dk_openlock);
 
 	if ((sc->sc_flags & VNF_CLEARING) != 0) {
 		error = ENXIO;
@@ -380,6 +405,7 @@ vndopen(dev_t dev, int flags, int mode, struct lwp *l)
 	    sc->sc_dkdev.dk_copenmask | sc->sc_dkdev.dk_bopenmask;
 
  done:
+	mutex_exit(&sc->sc_dkdev.dk_openlock);
 	vndunlock(sc);
 	return error;
 }
@@ -402,6 +428,8 @@ vndclose(dev_t dev, int flags, int mode, struct lwp *l)
 	if ((error = vndlock(sc)) != 0)
 		return error;
 
+	mutex_enter(&sc->sc_dkdev.dk_openlock);
+
 	part = DISKPART(dev);
 
 	/* ...that much closer to allowing unconfiguration... */
@@ -416,6 +444,14 @@ vndclose(dev_t dev, int flags, int mode, struct lwp *l)
 	}
 	sc->sc_dkdev.dk_openmask =
 	    sc->sc_dkdev.dk_copenmask | sc->sc_dkdev.dk_bopenmask;
+
+	/* are we last opener ? */
+	if (sc->sc_dkdev.dk_openmask == 0) {
+		if ((sc->sc_flags & VNF_KLABEL) == 0)
+			sc->sc_flags &= ~VNF_VLABEL;
+	}
+
+	mutex_exit(&sc->sc_dkdev.dk_openlock);
 
 	vndunlock(sc);
 
@@ -629,7 +665,7 @@ vndthread(void *arg)
 		/* handle a compressed read */
 		if ((obp->b_flags & B_READ) != 0 && (vnd->sc_flags & VNF_COMP)) {
 			off_t bn;
-			
+
 			/* Convert to a byte offset within the file. */
 			bn = obp->b_rawblkno *
 			    vnd->sc_dkdev.dk_label->d_secsize;
@@ -638,7 +674,7 @@ vndthread(void *arg)
 			goto done;
 		}
 #endif /* VND_COMPRESSION */
-		
+
 		/*
 		 * Allocate a header for this transfer and link it to the
 		 * buffer
@@ -714,7 +750,7 @@ vnode_has_op(const struct vnode *vp, int opoffset)
 }
 
 /*
- * Handes the read/write request given in 'bp' using the vnode's VOP_READ
+ * Handles the read/write request given in 'bp' using the vnode's VOP_READ
  * and VOP_WRITE operations.
  *
  * 'obp' is a pointer to the original request fed to the vnd device.
@@ -778,15 +814,10 @@ handle_with_strategy(struct vnd_softc *vnd, const struct buf *obp,
 	size_t resid, sz;
 	off_t bn, offset;
 	struct vnode *vp;
+	struct buf *nbp = NULL;
 
 	flags = obp->b_flags;
 
-	if (!(flags & B_READ)) {
-		vp = bp->b_vp;
-		mutex_enter(vp->v_interlock);
-		vp->v_numoutput++;
-		mutex_exit(vp->v_interlock);
-	}
 
 	/* convert to a byte offset within the file. */
 	bn = obp->b_rawblkno * vnd->sc_dkdev.dk_label->d_secsize;
@@ -803,9 +834,8 @@ handle_with_strategy(struct vnd_softc *vnd, const struct buf *obp,
 	 */
 	error = 0;
 	bp->b_resid = bp->b_bcount;
-	for (offset = 0, resid = bp->b_resid; resid;
+	for (offset = 0, resid = bp->b_resid; /* true */;
 	    resid -= sz, offset += sz) {
-		struct buf *nbp;
 		daddr_t nbn;
 		int off, nra;
 
@@ -858,10 +888,34 @@ handle_with_strategy(struct vnd_softc *vnd, const struct buf *obp,
 			    nbp->vb_buf.b_flags, nbp->vb_buf.b_data,
 			    nbp->vb_buf.b_bcount);
 #endif
+		if (resid == sz) {
+			break;
+		}
 		VOP_STRATEGY(vp, nbp);
 		bn += sz;
 	}
-	nestiobuf_done(bp, skipped, error);
+	if (!(flags & B_READ)) {
+		struct vnode *w_vp;
+		/*
+		 * this is the last nested buf, account for
+		 * the parent buf write too.
+		 * This has to be done last, so that
+		 * fsync won't wait for this write which
+		 * has no chance to complete before all nested bufs
+		 * have been queued. But it has to be done
+		 * before the last VOP_STRATEGY()
+		 * or the call to nestiobuf_done().
+		 */
+		w_vp = bp->b_vp;
+		mutex_enter(w_vp->v_interlock);
+		w_vp->v_numoutput++;
+		mutex_exit(w_vp->v_interlock);
+	}
+	KASSERT(skipped != 0 || nbp != NULL);
+	if (skipped)
+		nestiobuf_done(bp, skipped, error);
+	else
+		VOP_STRATEGY(vp, nbp);
 }
 
 static void
@@ -1024,8 +1078,6 @@ vndioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 #ifdef __HAVE_OLD_DISKLABEL
 	struct disklabel newlabel;
 #endif
-	struct dkwedge_info *dkw;
-	struct dkwedge_list *dkwl;
 
 #ifdef DEBUG
 	if (vnddebug & VDB_FOLLOW)
@@ -1088,6 +1140,11 @@ vndioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 			return ENXIO;
 	}
 
+	error = disk_ioctl(&vnd->sc_dkdev, dev, cmd, data, flag, l);
+	if (error != EPASSTHROUGH)
+		return error;
+
+
 	switch (cmd) {
 #ifdef VNDIOCSET50
 	case VNDIOCSET50:
@@ -1131,11 +1188,11 @@ vndioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 			int i;
 			u_int32_t comp_size;
 			u_int32_t comp_maxsize;
- 
+
 			/* allocate space for compresed file header */
 			ch = malloc(sizeof(struct vnd_comp_header),
 			M_TEMP, M_WAITOK);
- 
+
 			/* read compressed file header */
 			error = vn_rdwr(UIO_READ, nd.ni_vp, (void *)ch,
 			  sizeof(struct vnd_comp_header), 0, UIO_SYSSPACE,
@@ -1145,7 +1202,7 @@ vndioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 				VOP_UNLOCK(nd.ni_vp);
 				goto close_and_exit;
 			}
- 
+
 			/* save some header info */
 			vnd->sc_comp_blksz = ntohl(ch->block_size);
 			/* note last offset is the file byte size */
@@ -1164,17 +1221,17 @@ vndioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 				error = EINVAL;
 				goto close_and_exit;
 			}
- 
+
 			/* set decompressed file size */
 			vattr.va_size =
 			    ((u_quad_t)vnd->sc_comp_numoffs - 1) *
 			     (u_quad_t)vnd->sc_comp_blksz;
- 
+
 			/* allocate space for all the compressed offsets */
 			vnd->sc_comp_offsets =
 			malloc(sizeof(u_int64_t) * vnd->sc_comp_numoffs,
 			M_DEVBUF, M_WAITOK);
- 
+
 			/* read in the offsets */
 			error = vn_rdwr(UIO_READ, nd.ni_vp,
 			  (void *)vnd->sc_comp_offsets,
@@ -1200,16 +1257,16 @@ vndioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 			}
 			vnd->sc_comp_offsets[vnd->sc_comp_numoffs - 1] =
 			  be64toh(vnd->sc_comp_offsets[vnd->sc_comp_numoffs - 1]);
- 
+
 			/* create compressed data buffer */
 			vnd->sc_comp_buff = malloc(comp_maxsize,
 			  M_DEVBUF, M_WAITOK);
- 
+
 			/* create decompressed buffer */
 			vnd->sc_comp_decombuf = malloc(vnd->sc_comp_blksz,
 			  M_DEVBUF, M_WAITOK);
 			vnd->sc_comp_buffblk = -1;
- 
+
 			/* Initialize decompress stream */
 			memset(&vnd->sc_comp_stream, 0, sizeof(z_stream));
 			vnd->sc_comp_stream.zalloc = vnd_alloc;
@@ -1223,7 +1280,7 @@ vndioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 				error = EINVAL;
 				goto close_and_exit;
 			}
- 
+
 			vnd->sc_flags |= VNF_COMP | VNF_READONLY;
 #else /* !VND_COMPRESSION */
 			VOP_UNLOCK(nd.ni_vp);
@@ -1231,7 +1288,7 @@ vndioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 			goto close_and_exit;
 #endif /* VND_COMPRESSION */
 		}
- 
+
 		VOP_UNLOCK(nd.ni_vp);
 		vnd->sc_vp = nd.ni_vp;
 		vnd->sc_size = btodb(vattr.va_size);	/* note truncation */
@@ -1263,9 +1320,9 @@ vndioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 			 * Compute the size (in DEV_BSIZE blocks) specified
 			 * by the geometry.
 			 */
-			geomsize = (vnd->sc_geom.vng_nsectors *
+			geomsize = (int64_t)vnd->sc_geom.vng_nsectors *
 			    vnd->sc_geom.vng_ntracks *
-			    vnd->sc_geom.vng_ncylinders) *
+			    vnd->sc_geom.vng_ncylinders *
 			    (vnd->sc_geom.vng_secsize / DEV_BSIZE);
 
 			/*
@@ -1329,7 +1386,6 @@ vndioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 
 		/* Attach the disk. */
 		disk_attach(&vnd->sc_dkdev);
-		disk_blocksize(&vnd->sc_dkdev, vnd->sc_geom.vng_secsize);
 
 		/* Initialize the xfer and buffer pools. */
 		pool_init(&vnd->sc_vxpool, sizeof(struct vndxfer), 0,
@@ -1446,25 +1502,6 @@ unlock_and_exit:
 		break;
 	}
 
-	case DIOCGDINFO:
-		*(struct disklabel *)data = *(vnd->sc_dkdev.dk_label);
-		break;
-
-#ifdef __HAVE_OLD_DISKLABEL
-	case ODIOCGDINFO:
-		newlabel = *(vnd->sc_dkdev.dk_label);
-		if (newlabel.d_npartitions > OLDMAXPARTITIONS)
-			return ENOTTY;
-		memcpy(data, &newlabel, sizeof (struct olddisklabel));
-		break;
-#endif
-
-	case DIOCGPART:
-		((struct partinfo *)data)->disklab = vnd->sc_dkdev.dk_label;
-		((struct partinfo *)data)->part =
-		    &vnd->sc_dkdev.dk_label->d_partitions[DISKPART(dev)];
-		break;
-
 	case DIOCWDINFO:
 	case DIOCSDINFO:
 #ifdef __HAVE_OLD_DISKLABEL
@@ -1543,33 +1580,6 @@ unlock_and_exit:
 		    FSYNC_WAIT | FSYNC_DATAONLY | FSYNC_CACHE, 0, 0);
 		VOP_UNLOCK(vnd->sc_vp);
 		return error;
-
-	case DIOCAWEDGE:
-		dkw = (void *) data;
-
-		if ((flag & FWRITE) == 0)
-			return EBADF;
-
-		/* If the ioctl happens here, the parent is us. */
-		strlcpy(dkw->dkw_parent, device_xname(vnd->sc_dev),
-		    sizeof(dkw->dkw_parent));
-		return dkwedge_add(dkw);
-
-	case DIOCDWEDGE:
-		dkw = (void *) data;
-
-		if ((flag & FWRITE) == 0)
-			return EBADF;
-
-		/* If the ioctl happens here, the parent is us. */
-		strlcpy(dkw->dkw_parent, device_xname(vnd->sc_dev),
-		    sizeof(dkw->dkw_parent));
-		return dkwedge_del(dkw);
-
-	case DIOCLWEDGES:
-		dkwl = (void *) data;
-
-		return dkwedge_list(&vnd->sc_dkdev, dkwl, l);
 
 	default:
 		return ENOTTY;
@@ -1705,7 +1715,7 @@ vndclear(struct vnd_softc *vnd, int myminor)
 	}
 #endif /* VND_COMPRESSION */
 	vnd->sc_flags &=
-	    ~(VNF_INITED | VNF_READONLY | VNF_VLABEL
+	    ~(VNF_INITED | VNF_READONLY | VNF_KLABEL | VNF_VLABEL
 	      | VNF_VUNCONF | VNF_COMP | VNF_CLEARING);
 	if (vp == NULL)
 		panic("vndclear: null vp");
@@ -1765,10 +1775,15 @@ vndgetdefaultlabel(struct vnd_softc *sc, struct disklabel *lp)
 {
 	struct vndgeom *vng = &sc->sc_geom;
 	struct partition *pp;
+	unsigned spb;
 
 	memset(lp, 0, sizeof(*lp));
 
-	lp->d_secperunit = sc->sc_size / (vng->vng_secsize / DEV_BSIZE);
+	spb = vng->vng_secsize / DEV_BSIZE;
+	if (sc->sc_size / spb > UINT32_MAX)
+		lp->d_secperunit = UINT32_MAX;
+	else
+		lp->d_secperunit = sc->sc_size / spb;
 	lp->d_secsize = vng->vng_secsize;
 	lp->d_nsectors = vng->vng_nsectors;
 	lp->d_ntracks = vng->vng_ntracks;
@@ -1776,7 +1791,7 @@ vndgetdefaultlabel(struct vnd_softc *sc, struct disklabel *lp)
 	lp->d_secpercyl = lp->d_ntracks * lp->d_nsectors;
 
 	strncpy(lp->d_typename, "vnd", sizeof(lp->d_typename));
-	lp->d_type = DTYPE_VND;
+	lp->d_type = DKTYPE_VND;
 	strncpy(lp->d_packname, "fictitious", sizeof(lp->d_packname));
 	lp->d_rpm = 3600;
 	lp->d_interleave = 1;
@@ -2007,6 +2022,12 @@ vnd_set_geometry(struct vnd_softc *vnd)
 	dg->dg_ntracks = vnd->sc_geom.vng_ntracks;
 	dg->dg_ncylinders = vnd->sc_geom.vng_ncylinders;
 
+#ifdef DEBUG
+	if (vnddebug & VDB_LABEL) {
+		printf("dg->dg_secperunit: %" PRId64 "\n", dg->dg_secperunit);
+		printf("dg->dg_ncylinders: %u\n", dg->dg_ncylinders);
+	}
+#endif
 	disk_set_info(vnd->sc_dev, &vnd->sc_dkdev, NULL);
 }
 
@@ -2014,14 +2035,20 @@ vnd_set_geometry(struct vnd_softc *vnd)
 
 #include <sys/module.h>
 
-MODULE(MODULE_CLASS_DRIVER, vnd, NULL);
+#ifdef VND_COMPRESSION
+#define VND_DEPENDS "zlib"
+#else
+#define VND_DEPENDS NULL
+#endif
+
+MODULE(MODULE_CLASS_DRIVER, vnd, VND_DEPENDS);
 CFDRIVER_DECL(vnd, DV_DISK, NULL);
 
 static int
 vnd_modcmd(modcmd_t cmd, void *arg)
 {
 	int bmajor = -1, cmajor = -1,  error = 0;
-	
+
 	switch (cmd) {
 	case MODULE_CMD_INIT:
 		error = config_cfdriver_attach(&vnd_cd);
@@ -2035,7 +2062,7 @@ vnd_modcmd(modcmd_t cmd, void *arg)
 			    vnd_cd.cd_name);
 			break;
 		}
-		
+
 		error = devsw_attach("vnd", &vnd_bdevsw, &bmajor,
 		    &vnd_cdevsw, &cmajor);
 		if (error) {
@@ -2043,7 +2070,7 @@ vnd_modcmd(modcmd_t cmd, void *arg)
 			config_cfdriver_detach(&vnd_cd);
 			break;
 		}
-		
+
 		break;
 
 	case MODULE_CMD_FINI:

@@ -1,4 +1,4 @@
-/*	$NetBSD: ip6_mroute.c,v 1.105 2013/11/21 21:55:13 riz Exp $	*/
+/*	$NetBSD: ip6_mroute.c,v 1.109 2015/08/24 22:21:27 pooka Exp $	*/
 /*	$KAME: ip6_mroute.c,v 1.49 2001/07/25 09:21:18 jinmei Exp $	*/
 
 /*
@@ -117,10 +117,12 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ip6_mroute.c,v 1.105 2013/11/21 21:55:13 riz Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ip6_mroute.c,v 1.109 2015/08/24 22:21:27 pooka Exp $");
 
+#ifdef _KERNEL_OPT
 #include "opt_inet.h"
 #include "opt_mrouting.h"
+#endif
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -658,13 +660,7 @@ add_m6if(struct mif6ctl *mifcp)
 	mifp = mif6table + mifcp->mif6c_mifi;
 	if (mifp->m6_ifp)
 		return EADDRINUSE; /* XXX: is it appropriate? */
-	if (mifcp->mif6c_pifi == 0 || mifcp->mif6c_pifi >= if_indexlim)
-		return ENXIO;
-	/*
-	 * XXX: some OSes can remove ifp and clear ifindex2ifnet[id]
-	 * even for id between 0 and if_index.
-	 */
-	if ((ifp = ifindex2ifnet[mifcp->mif6c_pifi]) == NULL)
+	if (!mifcp->mif6c_pifi || (ifp = if_byindex(mifcp->mif6c_pifi)) == NULL)
 		return ENXIO;
 
 	if (mifcp->mif6c_flags & MIFF_REGISTER) {
@@ -1076,8 +1072,8 @@ ip6_mforward(struct ip6_hdr *ip6, struct ifnet *ifp, struct mbuf *m)
 	 */
 	if (IN6_IS_ADDR_UNSPECIFIED(&ip6->ip6_src)) {
 		IP6_STATINC(IP6_STAT_CANTFORWARD);
-		if (ip6_log_time + ip6_log_interval < time_second) {
-			ip6_log_time = time_second;
+		if (ip6_log_time + ip6_log_interval < time_uptime) {
+			ip6_log_time = time_uptime;
 			log(LOG_DEBUG,
 			    "cannot forward "
 			    "from %s to %s nxt %d received on %s\n",
@@ -1941,11 +1937,7 @@ sysctl_net_inet6_pim6_stats(SYSCTLFN_ARGS)
 static void
 sysctl_net_inet6_pim6_setup(struct sysctllog **clog)
 {
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
-		       CTLTYPE_NODE, "net", NULL,
-		       NULL, 0, NULL, 0,
-		       CTL_NET, CTL_EOL);
+
 	sysctl_createv(clog, 0, NULL, NULL,
 		       CTLFLAG_PERMANENT,
 		       CTLTYPE_NODE, "inet6", NULL,

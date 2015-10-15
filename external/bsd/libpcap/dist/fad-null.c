@@ -1,4 +1,4 @@
-/*	$NetBSD: fad-null.c,v 1.1.1.3 2013/04/06 15:57:45 christos Exp $	*/
+/*	$NetBSD: fad-null.c,v 1.2 2014/11/19 19:33:30 christos Exp $	*/
 
 /* -*- Mode: c; tab-width: 8; indent-tabs-mode: 1; c-basic-offset: 8; -*- */
 /*
@@ -34,10 +34,8 @@
  * SUCH DAMAGE.
  */
 
-#ifndef lint
-static const char rcsid[] _U_ =
-    "@(#) Header: /tcpdump/master/libpcap/fad-null.c,v 1.2 2003-11-15 23:23:58 guy Exp  (LBL)";
-#endif
+#include <sys/cdefs.h>
+__RCSID("$NetBSD: fad-null.c,v 1.2 2014/11/19 19:33:30 christos Exp $");
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -55,7 +53,7 @@ static const char rcsid[] _U_ =
  * packet capture.
  */
 int
-pcap_findalldevs(pcap_if_t **alldevsp, char *errbuf)
+pcap_findalldevs_interfaces(pcap_if_t **alldevsp, char *errbuf)
 {
 	/*
 	 * Succeed, but don't return any interfaces; we return only those

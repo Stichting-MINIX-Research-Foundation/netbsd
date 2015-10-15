@@ -1,4 +1,4 @@
-/*	$NetBSD: partutil.c,v 1.12 2013/04/13 22:08:57 jakllsch Exp $	*/
+/*	$NetBSD: partutil.c,v 1.15 2015/06/03 17:53:23 martin Exp $	*/
 
 /*-
  * Copyright (c) 2006 The NetBSD Foundation, Inc.
@@ -30,9 +30,10 @@
  */
 
 #include <sys/cdefs.h>
-__RCSID("$NetBSD: partutil.c,v 1.12 2013/04/13 22:08:57 jakllsch Exp $");
+__RCSID("$NetBSD: partutil.c,v 1.15 2015/06/03 17:53:23 martin Exp $");
 
 #include <sys/types.h>
+#include <sys/param.h>
 #include <sys/disklabel.h>
 #include <sys/disk.h>
 #include <sys/ioctl.h>
@@ -98,7 +99,7 @@ getdiskinfo(const char *s, int fd, const char *dt, struct disk_geom *geo,
 	prop_dictionary_t disk_dict, geom_dict;
 	struct stat sb;
 	const struct partition *pp;
-	int ptn;
+	int ptn, error;
 
 	if (dt) {
 		lp = getdiskbyname(dt);
@@ -107,7 +108,13 @@ getdiskinfo(const char *s, int fd, const char *dt, struct disk_geom *geo,
 	}
 
 	/* Get disk description dictionary */
-	if (prop_dictionary_recv_ioctl(fd, DIOCGDISKINFO, &disk_dict)) {
+	error = prop_dictionary_recv_ioctl(fd, DIOCGDISKINFO, &disk_dict);
+
+	/* fail quickly if the device does not exist at all */
+	if (error == ENXIO)
+		return -1;
+
+	if (error) {
 		/*
 		 * Ask for disklabel if DIOCGDISKINFO failed. This is
 		 * compatibility call and can be removed when all devices
@@ -115,7 +122,8 @@ getdiskinfo(const char *s, int fd, const char *dt, struct disk_geom *geo,
 		 * cgd, ccd pseudo disk drives doesn't support DIOCGDDISKINFO
 		 */
 		if (ioctl(fd, DIOCGDINFO, lp) == -1) {
-			warn("DIOCGDINFO on %s failed", s);
+			if (errno != ENXIO)
+				warn("DIOCGDINFO on %s failed", s);
 			return -1;
 		}
 		label2geom(geo, lp);
@@ -123,6 +131,9 @@ getdiskinfo(const char *s, int fd, const char *dt, struct disk_geom *geo,
 		geom_dict = prop_dictionary_get(disk_dict, "geometry");
 		dict2geom(geo, geom_dict);
 	}
+
+	if (dkw == NULL)
+		return 0;
 
 	/* Get info about partition/wedge */
 	if (ioctl(fd, DIOCGWEDGEINFO, dkw) != -1) {
@@ -136,7 +147,6 @@ getdiskinfo(const char *s, int fd, const char *dt, struct disk_geom *geo,
 	}
 
 	/* DIOCGDINFO didn't fail */
-
 	(void)memset(dkw, 0, sizeof(*dkw));
 
 	if (stat(s, &sb) == -1)
@@ -159,5 +169,25 @@ getdiskinfo(const char *s, int fd, const char *dt, struct disk_geom *geo,
 	strlcpy(dkw->dkw_ptype, getfstypename(pp->p_fstype),
 	    sizeof(dkw->dkw_ptype));
 
+	return 0;
+}
+
+int
+getdisksize(const char *name, u_int *secsize, off_t *mediasize)
+{
+	char buf[MAXPATHLEN];
+	struct disk_geom geo;
+	int fd, error;
+
+	if ((fd = opendisk(name, O_RDONLY, buf, sizeof(buf), 0)) == -1)
+		return -1;
+
+	error = getdiskinfo(name, fd, NULL, &geo, NULL);
+	close(fd);
+	if (error)
+		return error;
+
+	*secsize = geo.dg_secsize;
+	*mediasize = geo.dg_secsize * geo.dg_secperunit;
 	return 0;
 }

@@ -1,6 +1,7 @@
-.\"	$NetBSD: gpio.3lua,v 1.2 2013/10/27 11:43:07 mbalmer Exp $
+.\"	$NetBSD: gpio.3lua,v 1.4 2014/01/07 21:54:17 mbalmer Exp $
 .\"
-.\" Copyright (c) 2013 Marc Balmer <mbalmer@NetBSD.org>. All rights reserved.
+.\" Copyright (c) 2013, 2014 Marc Balmer <mbalmer@NetBSD.org>.
+.\" All rights reserved.
 .\"
 .\" Redistribution and use in source and binary forms, with or without
 .\" modification, are permitted provided that the following conditions
@@ -27,7 +28,7 @@
 .\" SUCH DAMAGE.
 .\"
 .\"
-.Dd October 27, 2013
+.Dd Januar 7, 2014
 .Dt GPIO 3lua
 .Os
 .Sh NAME
@@ -36,7 +37,7 @@
 .Xr gpio 4
 pins from Lua
 .Sh SYNOPSIS
-.Cd "require 'gpio'"
+.Cd "local gpio = require 'gpio'"
 .Pp
 .Bl -tag -width XXXX -compact
 .It Dv gpiodev = gpio.open(path)
@@ -166,7 +167,7 @@ end
 .Xr intro 3lua ,
 .Xr gpio 4
 .Sh HISTORY
-An
+A
 .Nm
 manual appeared in
 .Nx 7.0 .

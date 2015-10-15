@@ -1,4 +1,4 @@
-/*	$NetBSD: cd.c,v 1.316 2013/10/25 11:35:55 martin Exp $	*/
+/*	$NetBSD: cd.c,v 1.330 2015/04/26 15:15:20 mlelstv Exp $	*/
 
 /*-
  * Copyright (c) 1998, 2001, 2003, 2004, 2005, 2008 The NetBSD Foundation,
@@ -50,7 +50,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: cd.c,v 1.316 2013/10/25 11:35:55 martin Exp $");
+__KERNEL_RCSID(0, "$NetBSD: cd.c,v 1.330 2015/04/26 15:15:20 mlelstv Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -72,7 +72,7 @@ __KERNEL_RCSID(0, "$NetBSD: cd.c,v 1.316 2013/10/25 11:35:55 martin Exp $");
 #include <sys/proc.h>
 #include <sys/conf.h>
 #include <sys/vnode.h>
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 
 #include <dev/scsipi/scsi_spc.h>
 #include <dev/scsipi/scsipi_all.h>
@@ -204,15 +204,35 @@ static dev_type_dump(cddump);
 static dev_type_size(cdsize);
 
 const struct bdevsw cd_bdevsw = {
-	cdopen, cdclose, cdstrategy, cdioctl, cddump, cdsize, D_DISK
+	.d_open = cdopen,
+	.d_close = cdclose,
+	.d_strategy = cdstrategy,
+	.d_ioctl = cdioctl,
+	.d_dump = cddump,
+	.d_psize = cdsize,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
 const struct cdevsw cd_cdevsw = {
-	cdopen, cdclose, cdread, cdwrite, cdioctl,
-	nostop, notty, nopoll, nommap, nokqfilter, D_DISK
+	.d_open = cdopen,
+	.d_close = cdclose,
+	.d_read = cdread,
+	.d_write = cdwrite,
+	.d_ioctl = cdioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
-static struct dkdriver cddkdriver = { cdstrategy, NULL };
+static struct dkdriver cddkdriver = {
+	.d_strategy = cdstrategy,
+	.d_minphys = cdminphys
+};
 
 static const struct scsipi_periphsw cd_switch = {
 	cd_interpret_sense,	/* use our error handler first */
@@ -286,7 +306,7 @@ cdattach(device_t parent, device_t self, void *aux)
 	aprint_naive("\n");
 
 	rnd_attach_source(&cd->rnd_source, device_xname(cd->sc_dev),
-			  RND_TYPE_DISK, 0);
+			  RND_TYPE_DISK, RND_FLAG_DEFAULT);
 
 	if (!pmf_device_register(self, NULL, NULL))
 		aprint_error_dev(self, "couldn't establish power handler\n");
@@ -297,6 +317,9 @@ cddetach(device_t self, int flags)
 {
 	struct cd_softc *cd = device_private(self);
 	int s, bmaj, cmaj, i, mn;
+
+	if (cd->sc_dk.dk_openmask != 0 && (flags & DETACH_FORCE) == 0)
+		return EBUSY;
 
 	/* locate the major number */
 	bmaj = bdevsw_lookup_major(&cd_bdevsw);
@@ -1301,35 +1324,12 @@ cdioctl(dev_t dev, u_long cmd, void *addr, int flag, struct lwp *l)
 		}
 	}
 
-	error = disk_ioctl(&cd->sc_dk, cmd, addr, flag, l); 
+	error = disk_ioctl(&cd->sc_dk, dev, cmd, addr, flag, l); 
 	if (error != EPASSTHROUGH)
 		return (error);
 
 	error = 0;
 	switch (cmd) {
-	case DIOCGDINFO:
-		*(struct disklabel *)addr = *(cd->sc_dk.dk_label);
-		return (0);
-#ifdef __HAVE_OLD_DISKLABEL
-	case ODIOCGDINFO:
-		newlabel = malloc(sizeof (*newlabel), M_TEMP, M_WAITOK);
-		if (newlabel == NULL)
-			return (EIO);
-		memcpy(newlabel, cd->sc_dk.dk_label, sizeof (*newlabel));
-		if (newlabel->d_npartitions > OLDMAXPARTITIONS)
-			error = ENOTTY;
-		else
-			memcpy(addr, newlabel, sizeof (struct olddisklabel));
-		free(newlabel, M_TEMP);
-		return error;
-#endif
-
-	case DIOCGPART:
-		((struct partinfo *)addr)->disklab = cd->sc_dk.dk_label;
-		((struct partinfo *)addr)->part =
-		    &cd->sc_dk.dk_label->d_partitions[part];
-		return (0);
-
 	case DIOCWDINFO:
 	case DIOCSDINFO:
 #ifdef __HAVE_OLD_DISKLABEL
@@ -1701,10 +1701,10 @@ cdgetdefaultlabel(struct cd_softc *cd, struct cd_formatted_toc *toc,
 
 	switch (SCSIPI_BUSTYPE_TYPE(scsipi_periph_bustype(cd->sc_periph))) {
 	case SCSIPI_BUSTYPE_SCSI:
-		lp->d_type = DTYPE_SCSI;
+		lp->d_type = DKTYPE_SCSI;
 		break;
 	case SCSIPI_BUSTYPE_ATAPI:
-		lp->d_type = DTYPE_ATAPI;
+		lp->d_type = DKTYPE_ATAPI;
 		break;
 	}
 	/*
@@ -1789,10 +1789,15 @@ cdgetdisklabel(struct cd_softc *cd)
  * we count.
  */
 static int
-read_cd_capacity(struct scsipi_periph *periph, u_int *blksize, u_long *last_lba)
+read_cd_capacity(struct scsipi_periph *periph, uint32_t *blksize, u_long *last_lba)
 {
 	struct scsipi_read_cd_capacity    cap_cmd;
-	struct scsipi_read_cd_cap_data    cap;
+	/*
+	 * XXX: see PR 48550 and PR 48754:
+	 * the ahcisata(4) driver can not deal with unaligned
+	 * data, so align this "a bit"
+	 */
+	struct scsipi_read_cd_cap_data    cap __aligned(2);
 	struct scsipi_read_discinfo       di_cmd;
 	struct scsipi_read_discinfo_data  di;
 	struct scsipi_read_trackinfo      ti_cmd;
@@ -1808,6 +1813,7 @@ read_cd_capacity(struct scsipi_periph *periph, u_int *blksize, u_long *last_lba)
 	/* issue the cd capacity request */
 	flags = XS_CTL_DATA_IN;
 	memset(&cap_cmd, 0, sizeof(cap_cmd));
+	memset(&cap, 0, sizeof(cap));
 	cap_cmd.opcode = READ_CD_CAPACITY;
 
 	error = scsipi_command(periph,
@@ -1822,8 +1828,14 @@ read_cd_capacity(struct scsipi_periph *periph, u_int *blksize, u_long *last_lba)
 	*last_lba = _4btol(cap.addr);
 
 	/* blksize is 2048 for CD, but some drives give gibberish */
-	if ((*blksize < 512) || ((*blksize & 511) != 0))
+	if ((*blksize < 512) || ((*blksize & 511) != 0)
+	    || (*blksize > 16*1024)) {
+		if (*blksize > 16*1024)
+			aprint_error("read_cd_capacity: extra large block "
+			    "size %u found - limiting to 2kByte\n",
+			    *blksize);
 		*blksize = 2048;	/* some drives lie ! */
+	}
 
 	/* recordables have READ_DISCINFO implemented */
 	flags = XS_CTL_DATA_IN | XS_CTL_SILENT;
@@ -1869,13 +1881,13 @@ read_cd_capacity(struct scsipi_periph *periph, u_int *blksize, u_long *last_lba)
 }
 
 /*
- * Find out from the device what it's capacity is
+ * Find out from the device what its capacity is
  */
 static u_long
 cd_size(struct cd_softc *cd, int flags)
 {
-	u_int blksize;
-	u_long last_lba, size;
+	uint32_t blksize = 2048;
+	u_long last_lba = 0, size;
 	int error;
 
 	error = read_cd_capacity(cd->sc_periph, &blksize, &last_lba);
@@ -2100,7 +2112,6 @@ cd_get_parms(struct cd_softc *cd, int flags)
 	 */
 	if (cd_size(cd, flags) == 0)
 		return (ENXIO);
-	disk_blocksize(&cd->sc_dk, cd->params.blksize);
 	return (0);
 }
 
@@ -2978,7 +2989,7 @@ mmc_getdiscinfo(struct scsipi_periph *periph,
 	struct scsipi_read_discinfo_data  di;
 	const uint32_t buffer_size = 1024;
 	uint32_t feat_tbl_len, pos;
-	u_long   last_lba;
+	u_long   last_lba = 0;
 	uint8_t  *buffer, *fpos;
 	int feature, last_feature, features_len, feature_cur, feature_len;
 	int lsb, msb, error, flags;

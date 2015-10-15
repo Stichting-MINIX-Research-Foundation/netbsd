@@ -1,13 +1,6 @@
 #include <stdlib.h>
 
-#ifdef PROTOTYPES
 int main (int argc, char **argv, char **envp)
-#else
-main (argc, argv, envp)
-     int argc;
-     char **argv;
-     char **envp;
-#endif
 {
     extern void dummy();
     dummy();
@@ -204,7 +197,7 @@ dummy ()
 {
   /* setvar.exp wants to allocate memory for constants.  So make sure malloc
      gets linked into the program.  */
-  malloc (1);
+  void *p = malloc (1);
 
   /* Some linkers (e.g. on AIX) remove unreferenced variables,
      so make sure to reference them. */
@@ -278,4 +271,5 @@ dummy ()
   sef.field = s1;
   uef.field = u1;
 #endif
+  free (p);
 }

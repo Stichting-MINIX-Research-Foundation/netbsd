@@ -1,6 +1,6 @@
 /* Stack manipulation commands, for GDB the GNU Debugger.
 
-   Copyright (C) 2003-2013 Free Software Foundation, Inc.
+   Copyright (C) 2003-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -22,18 +22,18 @@
 
 void select_frame_command (char *level_exp, int from_tty);
 
-void find_frame_funname (struct frame_info *frame, const char **funname,
+void find_frame_funname (struct frame_info *frame, char **funname,
 			 enum language *funlang, struct symbol **funcp);
 
 typedef void (*iterate_over_block_arg_local_vars_cb) (const char *print_name,
 						      struct symbol *sym,
 						      void *cb_data);
 
-void iterate_over_block_arg_vars (struct block *block,
+void iterate_over_block_arg_vars (const struct block *block,
 				  iterate_over_block_arg_local_vars_cb cb,
 				  void *cb_data);
 
-void iterate_over_block_local_vars (struct block *block,
+void iterate_over_block_local_vars (const struct block *block,
 				    iterate_over_block_arg_local_vars_cb cb,
 				    void *cb_data);
 

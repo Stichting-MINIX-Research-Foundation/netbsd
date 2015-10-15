@@ -1,4 +1,4 @@
-/*	$NetBSD: cgfour.c,v 1.47 2012/10/27 17:18:11 chs Exp $	*/
+/*	$NetBSD: cgfour.c,v 1.50 2014/10/18 08:33:26 snj Exp $	*/
 
 /*-
  * Copyright (c) 1996, 1997 The NetBSD Foundation, Inc.
@@ -102,7 +102,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: cgfour.c,v 1.47 2012/10/27 17:18:11 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: cgfour.c,v 1.50 2014/10/18 08:33:26 snj Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -153,8 +153,18 @@ dev_type_ioctl(cgfourioctl);
 dev_type_mmap(cgfourmmap);
 
 const struct cdevsw cgfour_cdevsw = {
-	cgfouropen, nullclose, noread, nowrite, cgfourioctl,
-	nostop, notty, nopoll, cgfourmmap, nokqfilter,
+	.d_open = cgfouropen,
+	.d_close = nullclose,
+	.d_read = noread,
+	.d_write = nowrite,
+	.d_ioctl = cgfourioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = cgfourmmap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = 0
 };
 
 #if defined(SUN4)
@@ -386,12 +396,12 @@ cgfourioctl(dev_t dev, u_long cmd, void *data, int flags, struct lwp *l)
  * Return the address that would map the given device at the given
  * offset, allowing for the given protection, or return -1 for error.
  *
- * the cg4 maps it's overlay plane for 128K, followed by the enable
+ * the cg4 maps its overlay plane for 128K, followed by the enable
  * plane for 128K, followed by the colour plane (for as much colour
  * as their is.)
  *
  * As well, mapping at an offset of 0x04000000 causes the cg4 to map
- * only it's colour plane, at 0.
+ * only its colour plane, at 0.
  */
 paddr_t
 cgfourmmap(dev_t dev, off_t off, int prot)

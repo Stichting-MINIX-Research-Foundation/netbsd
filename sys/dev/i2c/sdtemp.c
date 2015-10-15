@@ -1,4 +1,4 @@
-/*      $NetBSD: sdtemp.c,v 1.22 2013/07/22 13:46:20 soren Exp $        */
+/*      $NetBSD: sdtemp.c,v 1.26 2015/05/20 00:43:28 msaitoh Exp $        */
 
 /*
  * Copyright (c) 2009 The NetBSD Foundation, Inc.
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: sdtemp.c,v 1.22 2013/07/22 13:46:20 soren Exp $");
+__KERNEL_RCSID(0, "$NetBSD: sdtemp.c,v 1.26 2015/05/20 00:43:28 msaitoh Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -120,8 +120,16 @@ sdtemp_dev_table[] = {
 	"STmicroelectronics STTS424E" }, 
     { STTS_MANUFACTURER_ID,  STTS_424_DEVICE_ID,    STTS_424_MASK,   2,
 	"STmicroelectronics STTS424" }, 
+    { STTS_MANUFACTURER_ID,  STTS_2002_DEVICE_ID,    STTS_2002_MASK,   2,
+	"STmicroelectronics STTS2002" }, 
+    { STTS_MANUFACTURER_ID,  STTS_2004_DEVICE_ID,    STTS_2004_MASK,   2,
+	"STmicroelectronics STTS2002" }, 
+    { STTS_MANUFACTURER_ID,  STTS_3000_DEVICE_ID,    STTS_3000_MASK,   2,
+	"STmicroelectronics STTS3000" }, 
     { CAT_MANUFACTURER_ID,   CAT_34TS02_DEVICE_ID,  CAT_34TS02_MASK, 4,
 	"Catalyst CAT34TS02/CAT6095" },
+    { CAT_MANUFACTURER_ID,   CAT_34TS02C_DEVICE_ID,  CAT_34TS02C_MASK, 4,
+	"Catalyst CAT34TS02C" },
     { IDT_MANUFACTURER_ID,   IDT_TS3000B3_DEVICE_ID, IDT_TS3000B3_MASK, 4,
 	"Integrated Device Technology TS3000B3/TSE2002B3" },
     { 0, 0, 0, 2, "Unknown" }
@@ -547,7 +555,7 @@ sdtemp_pmf_resume(device_t dev, const pmf_qual_t *qual)
 	return (error == 0);
 }
 
-MODULE(MODULE_CLASS_DRIVER, sdtemp, "iic");
+MODULE(MODULE_CLASS_DRIVER, sdtemp, "i2cexec,sysmon_envsys");
 
 #ifdef _MODULE
 #include "ioconf.c"

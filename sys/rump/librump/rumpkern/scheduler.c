@@ -1,4 +1,4 @@
-/*      $NetBSD: scheduler.c,v 1.34 2013/05/15 14:07:26 pooka Exp $	*/
+/*      $NetBSD: scheduler.c,v 1.41 2015/08/25 14:47:39 pooka Exp $	*/
 
 /*
  * Copyright (c) 2010, 2011 Antti Kantee.  All Rights Reserved.
@@ -26,7 +26,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: scheduler.c,v 1.34 2013/05/15 14:07:26 pooka Exp $");
+__KERNEL_RCSID(0, "$NetBSD: scheduler.c,v 1.41 2015/08/25 14:47:39 pooka Exp $");
 
 #include <sys/param.h>
 #include <sys/atomic.h>
@@ -72,7 +72,7 @@ static struct rumpcpu {
 struct cpu_info *rump_cpu = &rump_cpus[0];
 kcpuset_t *kcpuset_attached = NULL;
 kcpuset_t *kcpuset_running = NULL;
-int ncpu;
+int ncpu, ncpuonline;
 
 #define RCPULWP_BUSY	((void *)-1)
 #define RCPULWP_WANTED	((void *)-2)
@@ -240,7 +240,7 @@ rump_schedule()
 	 * for this case -- anyone who cares about performance will
 	 * start a real thread.
 	 */
-	if (__predict_true((l = rumpuser_curlwp()) != NULL)) {
+	if (__predict_true((l = curlwp) != NULL)) {
 		rump_schedule_cpu(l);
 		LWP_CACHE_CREDS(l, l->l_proc);
 	} else {
@@ -248,7 +248,7 @@ rump_schedule()
 
 		/* schedule cpu and use lwp0 */
 		rump_schedule_cpu(&lwp0);
-		rumpuser_curlwpop(RUMPUSER_LWP_SET, &lwp0);
+		rump_lwproc_curlwp_set(&lwp0);
 
 		/* allocate thread, switch to it, and release lwp0 */
 		l = rump__lwproc_alloclwp(initproc);
@@ -280,6 +280,7 @@ void
 rump_schedule_cpu_interlock(struct lwp *l, void *interlock)
 {
 	struct rumpcpu *rcpu;
+	struct cpu_info *ci;
 	void *old;
 	bool domigrate;
 	bool bound = l->l_pflag & LP_BOUND;
@@ -354,18 +355,25 @@ rump_schedule_cpu_interlock(struct lwp *l, void *interlock)
 	rumpuser_mutex_exit(rcpu->rcpu_mtx);
 
  fastlane:
-	l->l_cpu = l->l_target_cpu = rcpu->rcpu_ci;
+	ci = rcpu->rcpu_ci;
+	l->l_cpu = l->l_target_cpu = ci;
 	l->l_mutex = rcpu->rcpu_ci->ci_schedstate.spc_mutex;
 	l->l_ncsw++;
 	l->l_stat = LSONPROC;
 
-	rcpu->rcpu_ci->ci_curlwp = l;
+	/*
+	 * No interrupts, so ci_curlwp === cpu_onproc.
+	 * Okay, we could make an attempt to not set cpu_onproc
+	 * in the case that an interrupt is scheduled immediately
+	 * after a user proc, but leave that for later.
+	 */
+	ci->ci_curlwp = ci->ci_data.cpu_onproc = l;
 }
 
 void
 rump_unschedule()
 {
-	struct lwp *l = rumpuser_curlwp();
+	struct lwp *l = curlwp;
 #ifdef DIAGNOSTIC
 	int nlock;
 
@@ -399,10 +407,10 @@ rump_unschedule()
 		lwp0.l_mutex = &unruntime_lock;
 		lwp0.l_pflag &= ~LP_RUNNING;
 		lwp0rele();
-		rumpuser_curlwpop(RUMPUSER_LWP_CLEAR, &lwp0);
+		rump_lwproc_curlwp_clear(&lwp0);
 
 	} else if (__predict_false(l->l_flag & LW_RUMP_CLEAR)) {
-		rumpuser_curlwpop(RUMPUSER_LWP_CLEAR, l);
+		rump_lwproc_curlwp_clear(l);
 		l->l_flag &= ~LW_RUMP_CLEAR;
 	}
 }
@@ -431,7 +439,7 @@ rump_unschedule_cpu1(struct lwp *l, void *interlock)
 	void *old;
 
 	ci = l->l_cpu;
-	ci->ci_curlwp = NULL;
+	ci->ci_curlwp = ci->ci_data.cpu_onproc = NULL;
 	rcpu = &rcpu_storage[ci-&rump_cpus[0]];
 
 	KASSERT(rcpu->rcpu_ci == ci);
@@ -513,14 +521,27 @@ void
 kpreempt_disable(void)
 {
 
-	//KPREEMPT_DISABLE(curlwp);
+	KPREEMPT_DISABLE(curlwp);
 }
 
 void
 kpreempt_enable(void)
 {
 
-	//KPREEMPT_ENABLE(curlwp);
+	KPREEMPT_ENABLE(curlwp);
+}
+
+bool
+kpreempt_disabled(void)
+{
+#if 0
+	const lwp_t *l = curlwp;
+
+	return l->l_nopreempt != 0 || l->l_stat == LSZOMB ||
+	    (l->l_flag & LW_IDLE) != 0 || cpu_kpreempt_disabled();
+#endif
+	/* XXX: emulate cpu_kpreempt_disabled() */
+	return true;
 }
 
 void
@@ -538,4 +559,20 @@ sched_nice(struct proc *p, int level)
 {
 
 	/* nothing to do for now */
+}
+
+void
+sched_enqueue(struct lwp *l, bool swtch)
+{
+
+	if (swtch)
+		panic("sched_enqueue with switcheroo");
+	rump_thread_allow(l);
+}
+
+void
+sched_dequeue(struct lwp *l)
+{
+
+	panic("sched_dequeue not implemented");
 }

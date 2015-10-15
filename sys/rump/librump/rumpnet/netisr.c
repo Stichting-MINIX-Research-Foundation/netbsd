@@ -1,4 +1,4 @@
-/*	$NetBSD: netisr.c,v 1.6 2013/07/18 15:59:27 kefren Exp $	*/
+/*	$NetBSD: netisr.c,v 1.9 2014/06/05 23:48:17 rmind Exp $	*/
 
 /*
  * Copyright (c) 2008 Antti Kantee.  All Rights Reserved.
@@ -26,17 +26,11 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: netisr.c,v 1.6 2013/07/18 15:59:27 kefren Exp $");
+__KERNEL_RCSID(0, "$NetBSD: netisr.c,v 1.9 2014/06/05 23:48:17 rmind Exp $");
 
 #include <sys/param.h>
 #include <sys/intr.h>
 
-#include <netinet/in.h>
-#include <netinet/ip_var.h>
-#include <netinet/if_inarp.h>
-#include <netinet/ip6.h>
-#include <netinet6/ip6_var.h>
-#include <netmpls/mpls_var.h>
 #include <net/netisr.h>
 
 #include <rump/rumpuser.h>
@@ -44,55 +38,29 @@ __KERNEL_RCSID(0, "$NetBSD: netisr.c,v 1.6 2013/07/18 15:59:27 kefren Exp $");
 #include "rump_net_private.h"
 
 static void *netisrs[NETISR_MAX];
+
 void
 schednetisr(int isr)
 {
+	KASSERT(isr != NETISR_IP);
+	KASSERT(isr != NETISR_IPV6);
 
-	softint_schedule(netisrs[isr]);
+	/*
+	 * Do not schedule a softint that is not registered.
+	 * This might cause the inq to fill, but the one calling us
+	 * should start dropping packets once the inq is full,
+	 * so no big harm done.
+	 */
+	if (__predict_true(netisrs[isr]))
+		softint_schedule(netisrs[isr]);
 }
 
-/*
- * Aliases are needed only for static linking (dlsym() is not supported).
- */
-void __netisr_stub(void);
 void
-__netisr_stub(void)
+rump_netisr_register(int level, void (*handler)(void))
 {
+	KASSERT(level != NETISR_IP);
+	KASSERT(level != NETISR_IPV6);
 
-	panic("netisr called but networking stack missing");
-}
-__weak_alias(ipintr,__netisr_stub);
-__weak_alias(arpintr,__netisr_stub);
-__weak_alias(ip6intr,__netisr_stub);
-__weak_alias(mplsintr,__netisr_stub);
-
-void
-rump_netisr_init(void)
-{
-	void *iphand, *arphand, *ip6hand, *mplshand, *sym;
-
-	iphand = ipintr;
-	if ((sym = rumpuser_dl_globalsym("rumpns_ipintr")) != NULL)
-		iphand = sym;
-
-	arphand = arpintr;
-	if ((sym = rumpuser_dl_globalsym("rumpns_arpintr")) != NULL)
-		arphand = sym;
-
-	ip6hand = ip6intr;
-	if ((sym = rumpuser_dl_globalsym("rumpns_ip6intr")) != NULL)
-		ip6hand = sym;
-
-	mplshand = mplsintr;
-	if ((sym = rumpuser_dl_globalsym("rumpns_mplsintr")) != NULL)
-		mplshand = sym;
-		
-	netisrs[NETISR_IP] = softint_establish(SOFTINT_NET | SOFTINT_MPSAFE,
-	    (void (*)(void *))iphand, NULL);
-	netisrs[NETISR_ARP] = softint_establish(SOFTINT_NET | SOFTINT_MPSAFE,
-	    (void (*)(void *))arphand, NULL);
-	netisrs[NETISR_IPV6] = softint_establish(SOFTINT_NET | SOFTINT_MPSAFE,
-	    (void (*)(void *))ip6hand, NULL);
-	netisrs[NETISR_MPLS] = softint_establish(SOFTINT_NET | SOFTINT_MPSAFE,
-	    (void (*)(void *))mplshand, NULL);
+	netisrs[level] = softint_establish(SOFTINT_NET | SOFTINT_MPSAFE,
+	    (void (*)(void *))handler, NULL);
 }

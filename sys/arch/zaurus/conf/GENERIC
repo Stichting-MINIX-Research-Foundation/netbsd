@@ -1,4 +1,4 @@
-#	$NetBSD: GENERIC,v 1.56 2013/04/27 21:43:43 christos Exp $
+#	$NetBSD: GENERIC,v 1.67 2015/09/26 11:16:13 maxv Exp $
 #
 # GENERIC machine description file
 #
@@ -60,6 +60,7 @@ file-system	MSDOSFS		# MS-DOS file system
 file-system	KERNFS		# /kern
 file-system	NULLFS		# loopback file system
 #file-system	OVERLAY		# overlay file system
+file-system	PUFFS		# Userspace file systems (e.g. ntfs-3g & sshfs)
 file-system	PROCFS		# /proc
 #file-system	UMAPFS		# NULLFS + uid and gid remapping
 #file-system	UNION		# union file system
@@ -76,6 +77,7 @@ file-system	TMPFS		# Efficient memory file-system
 options 	WAPBL		# File system journaling support
 #options 	UFS_DIRHASH	# UFS Large Directory Hashing - Experimental
 options 	FFS_NO_SNAPSHOT	# No FFS snapshot support
+#options 	UFS_EXTATTR	# Extended attribute support for UFS1
 #options 	EXT2FS_SYSTEM_FLAGS # makes ext2fs file flags (append and
 				# immutable) behave as system flags.
 
@@ -85,6 +87,7 @@ options 	INET		# IP + ICMP + TCP + UDP
 options 	INET6		# IPv6
 
 # Compatibility options
+options		COMPAT_NETBSD32	# allow running arm (e.g. non-earm) binaries
 #options 	COMPAT_09	# NetBSD 0.9,
 #options 	COMPAT_10	# NetBSD 1.0,
 #options 	COMPAT_11	# NetBSD 1.1,
@@ -96,8 +99,9 @@ options 	COMPAT_16	# NetBSD 1.6,
 options 	COMPAT_20	# NetBSD 2.0,
 options 	COMPAT_30	# NetBSD 3.0,
 options 	COMPAT_40	# NetBSD 4.0,
-options 	COMPAT_50	# NetBSD 5.0 compatibility.
-options 	COMPAT_60	# NetBSD 6.0 compatibility.
+options 	COMPAT_50	# NetBSD 5.0,
+options 	COMPAT_60	# NetBSD 6.0, and
+options 	COMPAT_70	# NetBSD 7.0 binary compatibility.
 options 	COMPAT_43	# and 4.3BSD
 #options 	TCP_COMPAT_42	# 4.2BSD TCP/IP bug compat. Not recommended.
 
@@ -106,10 +110,10 @@ options 	COMPAT_BSDPTY	# /dev/[pt]ty?? ptys.
 
 # Wedge support
 options 	DKWEDGE_AUTODISCOVER	# Automatically add dk(4) instances
-#options 	DKWEDGE_METHOD_GPT	# Supports GPT partitions as wedges
-# The following two options can break /etc/fstab, so handle with care
+options 	DKWEDGE_METHOD_GPT	# Supports GPT partitions as wedges
 #options 	DKWEDGE_METHOD_BSDLABEL	# Support disklabel entries as wedges
 #options 	DKWEDGE_METHOD_MBR	# Support MBR partitions as wedges
+options		DKWEDGE_METHOD_APPLE    # Support Apple partitions as wedges
 
 # Shared memory options
 
@@ -119,12 +123,12 @@ options 	SYSVSHM		# System V-like memory sharing
 
 # Loadable kernel module support
 #options 	MODULAR		# new style module(7) framework
+#options 	MODULAR_DEFAULT_AUTOLOAD
 
 # Device options
 
 # Miscellaneous kernel options
 #options 	KTRACE		# system call tracing via ktrace(1)
-#options 	KMEMSTATS	# kernel memory statistics
 #options 	SCSIVERBOSE	# Verbose SCSI errors
 #options 	MIIVERBOSE	# Verbose MII autoconfuration messages
 #options 	USBVERBOSE	# verbose USB device autoconfig messages
@@ -165,7 +169,7 @@ options 	DDB			# in-kernel debugger
 options 	DDB_HISTORY_SIZE=100	# Enable history editing in DDB
 #options 	KGDB
 #makeoptions 	DEBUG="-g"		# compile full symbol table
-options 	SYMTAB_SPACE=640000
+makeoptions	COPY_SYMTAB=1
 
 
 # Kernel root file system and dump configuration.
@@ -388,7 +392,9 @@ pseudo-device	accf_http		# "httpready" accept filter
 pseudo-device	pty			# pseudo-terminals
 #pseudo-device	sequencer		# MIDI sequencer
 pseudo-device	clockctl		# user control of clock subsystem
+pseudo-device	drvctl			# user control of drive subsystem
 pseudo-device	ksyms			# /dev/ksyms
+pseudo-device	putter			# for puffs and pud
 
 # a pseudo device needed for Coda	# also needs CODA (above)
 #pseudo-device	vcoda			# coda minicache <-> venus comm.

@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -41,55 +41,12 @@
  * POSSIBILITY OF SUCH DAMAGES.
  */
 
-#define __UTDECODE_C__
-
 #include "acpi.h"
 #include "accommon.h"
 #include "acnamesp.h"
 
 #define _COMPONENT          ACPI_UTILITIES
         ACPI_MODULE_NAME    ("utdecode")
-
-
-/*******************************************************************************
- *
- * FUNCTION:    AcpiFormatException
- *
- * PARAMETERS:  Status       - The ACPI_STATUS code to be formatted
- *
- * RETURN:      A string containing the exception text. A valid pointer is
- *              always returned.
- *
- * DESCRIPTION: This function translates an ACPI exception into an ASCII string
- *              It is here instead of utxface.c so it is always present.
- *
- ******************************************************************************/
-
-const char *
-AcpiFormatException (
-    ACPI_STATUS             Status)
-{
-    const char              *Exception = NULL;
-
-
-    ACPI_FUNCTION_ENTRY ();
-
-
-    Exception = AcpiUtValidateException (Status);
-    if (!Exception)
-    {
-        /* Exception code was not recognized */
-
-        ACPI_ERROR ((AE_INFO,
-            "Unknown exception code: 0x%8.8X", Status));
-
-        Exception = "UNKNOWN_STATUS_CODE";
-    }
-
-    return (ACPI_CAST_PTR (const char, Exception));
-}
-
-ACPI_EXPORT_SYMBOL (AcpiFormatException)
 
 
 /*
@@ -134,38 +91,6 @@ const UINT8                     AcpiGbl_NsProperties[ACPI_NUM_NS_TYPES] =
 
 /*******************************************************************************
  *
- * FUNCTION:    AcpiUtHexToAsciiChar
- *
- * PARAMETERS:  Integer             - Contains the hex digit
- *              Position            - bit position of the digit within the
- *                                    integer (multiple of 4)
- *
- * RETURN:      The converted Ascii character
- *
- * DESCRIPTION: Convert a hex digit to an Ascii character
- *
- ******************************************************************************/
-
-/* Hex to ASCII conversion table */
-
-static const char           AcpiGbl_HexToAscii[] =
-{
-    '0','1','2','3','4','5','6','7',
-    '8','9','A','B','C','D','E','F'
-};
-
-char
-AcpiUtHexToAsciiChar (
-    UINT64                  Integer,
-    UINT32                  Position)
-{
-
-    return (AcpiGbl_HexToAscii[(Integer >> Position) & 0xF]);
-}
-
-
-/*******************************************************************************
- *
  * FUNCTION:    AcpiUtGetRegionName
  *
  * PARAMETERS:  Space ID            - ID for the region
@@ -180,14 +105,17 @@ AcpiUtHexToAsciiChar (
 
 const char        *AcpiGbl_RegionTypes[ACPI_NUM_PREDEFINED_REGIONS] =
 {
-    "SystemMemory",
-    "SystemIO",
-    "PCI_Config",
-    "EmbeddedControl",
-    "SMBus",
-    "SystemCMOS",
-    "PCIBARTarget",
-    "IPMI"
+    "SystemMemory",     /* 0x00 */
+    "SystemIO",         /* 0x01 */
+    "PCI_Config",       /* 0x02 */
+    "EmbeddedControl",  /* 0x03 */
+    "SMBus",            /* 0x04 */
+    "SystemCMOS",       /* 0x05 */
+    "PCIBARTarget",     /* 0x06 */
+    "IPMI",             /* 0x07 */
+    "GeneralPurposeIo", /* 0x08 */
+    "GenericSerialBus", /* 0x09 */
+    "PCC"               /* 0x0A */
 };
 
 
@@ -565,39 +493,100 @@ AcpiUtGetMutexName (
 
 /* Names for Notify() values, used for debug output */
 
-static const char           *AcpiGbl_NotifyValueNames[] =
+static const char           *AcpiGbl_GenericNotify[ACPI_NOTIFY_MAX + 1] =
 {
-    "Bus Check",
-    "Device Check",
-    "Device Wake",
-    "Eject Request",
-    "Device Check Light",
-    "Frequency Mismatch",
-    "Bus Mode Mismatch",
-    "Power Fault",
-    "Capabilities Check",
-    "Device PLD Check",
-    "Reserved",
-    "System Locality Update"
+    /* 00 */ "Bus Check",
+    /* 01 */ "Device Check",
+    /* 02 */ "Device Wake",
+    /* 03 */ "Eject Request",
+    /* 04 */ "Device Check Light",
+    /* 05 */ "Frequency Mismatch",
+    /* 06 */ "Bus Mode Mismatch",
+    /* 07 */ "Power Fault",
+    /* 08 */ "Capabilities Check",
+    /* 09 */ "Device PLD Check",
+    /* 0A */ "Reserved",
+    /* 0B */ "System Locality Update",
+    /* 0C */ "Shutdown Request",
+    /* 0D */ "System Resource Affinity Update"
 };
+
+static const char           *AcpiGbl_DeviceNotify[4] =
+{
+    /* 80 */ "Status Change",
+    /* 81 */ "Information Change",
+    /* 82 */ "Device-Specific Change",
+    /* 83 */ "Device-Specific Change"
+};
+
+static const char           *AcpiGbl_ProcessorNotify[4] =
+{
+    /* 80 */ "Performance Capability Change",
+    /* 81 */ "C-State Change",
+    /* 82 */ "Throttling Capability Change",
+    /* 83 */ "Device-Specific Change"
+};
+
+static const char           *AcpiGbl_ThermalNotify[4] =
+{
+    /* 80 */ "Thermal Status Change",
+    /* 81 */ "Thermal Trip Point Change",
+    /* 82 */ "Thermal Device List Change",
+    /* 83 */ "Thermal Relationship Change"
+};
+
 
 const char *
 AcpiUtGetNotifyName (
-    UINT32                  NotifyValue)
+    UINT32                  NotifyValue,
+    ACPI_OBJECT_TYPE        Type)
 {
+
+    /* 00 - 0D are common to all object types */
 
     if (NotifyValue <= ACPI_NOTIFY_MAX)
     {
-        return (AcpiGbl_NotifyValueNames[NotifyValue]);
+        return (AcpiGbl_GenericNotify[NotifyValue]);
     }
-    else if (NotifyValue <= ACPI_MAX_SYS_NOTIFY)
+
+    /* 0D - 7F are reserved */
+
+    if (NotifyValue <= ACPI_MAX_SYS_NOTIFY)
     {
         return ("Reserved");
     }
-    else /* Greater or equal to 0x80 */
+
+    /* 80 - 83 are per-object-type */
+
+    if (NotifyValue <= 0x83)
     {
-        return ("**Device Specific**");
+        switch (Type)
+        {
+        case ACPI_TYPE_ANY:
+        case ACPI_TYPE_DEVICE:
+            return (AcpiGbl_DeviceNotify [NotifyValue - 0x80]);
+
+        case ACPI_TYPE_PROCESSOR:
+            return (AcpiGbl_ProcessorNotify [NotifyValue - 0x80]);
+
+        case ACPI_TYPE_THERMAL:
+            return (AcpiGbl_ThermalNotify [NotifyValue - 0x80]);
+
+        default:
+            return ("Target object type does not support notifies");
+        }
     }
+
+    /* 84 - BF are device-specific */
+
+    if (NotifyValue <= ACPI_MAX_DEVICE_SPECIFIC_NOTIFY)
+    {
+        return ("Device-Specific");
+    }
+
+    /* C0 and above are hardware-specific */
+
+    return ("Hardware-Specific");
 }
 #endif
 

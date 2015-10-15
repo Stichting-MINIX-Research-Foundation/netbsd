@@ -1,4 +1,4 @@
-/*	$NetBSD: freebsd_sysctl.c,v 1.15 2008/11/19 18:36:02 ad Exp $	*/
+/*	$NetBSD: freebsd_sysctl.c,v 1.19 2015/02/14 07:37:19 dholland Exp $	*/
 
 /*-
  * Copyright (c) 2005 The NetBSD Foundation, Inc.
@@ -31,7 +31,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: freebsd_sysctl.c,v 1.15 2008/11/19 18:36:02 ad Exp $");
+__KERNEL_RCSID(0, "$NetBSD: freebsd_sysctl.c,v 1.19 2015/02/14 07:37:19 dholland Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -62,11 +62,6 @@ void
 freebsd_sysctl_init(void)
 {
 
-	sysctl_createv(&freebsd_clog, 0, NULL, NULL,
-			CTLFLAG_PERMANENT,
-			CTLTYPE_NODE, "kern", NULL,
-			NULL, 0, NULL, 0,
-			CTL_KERN, CTL_EOL);
         sysctl_createv(&freebsd_clog, 0, NULL, NULL,
 			CTLFLAG_PERMANENT|CTLFLAG_IMMEDIATE,
 			CTLTYPE_INT, "osreldate",
@@ -95,7 +90,7 @@ freebsd_sys_sysctl(struct lwp *l, const struct freebsd_sys_sysctl_args *uap, reg
 	} */
 	int error;
 	int name[CTL_MAXNAME];
-	size_t newlen, *oldlenp;
+	size_t newlen, *oldlenp, oldlen;
 	u_int namelen;
 	void *new, *old;
 
@@ -114,9 +109,9 @@ freebsd_sys_sysctl(struct lwp *l, const struct freebsd_sys_sysctl_args *uap, reg
 	ktrmib(name, namelen);
 
 	/*
-	 * FreeBSD sysctl uses an undocumented set of special OIDs in it's
+	 * FreeBSD sysctl uses an undocumented set of special OIDs in its
 	 * sysctl MIB whose tree is rooted at oid 0.  These OIDs are
-	 * interpretted by their sysctl to implement functions that NetBSD
+	 * interpreted by their sysctl to implement functions that NetBSD
 	 * performs in libc, such as sysctlgetmibinfo.
 	 *
 	 * From the FreeBSD kern_sysctl.c, these OIDs are:
@@ -146,8 +141,13 @@ freebsd_sys_sysctl(struct lwp *l, const struct freebsd_sys_sysctl_args *uap, reg
 
 		old = SCARG(uap, old);
 		oldlenp = SCARG(uap, oldlenp);
-		if (old == NULL || oldlenp == NULL || *oldlenp < sizeof(int))
+		if (old == NULL || oldlenp == NULL)
 			return(EINVAL);
+
+		if ((error = copyin(oldlenp, &oldlen, sizeof(oldlen))))
+			return (error);
+		if (oldlen < sizeof(int))
+			return (EINVAL);
 
 		if ((locnew =
 		     (char *) malloc(newlen + 1, M_TEMP, M_WAITOK)) == NULL)
@@ -168,11 +168,11 @@ freebsd_sys_sysctl(struct lwp *l, const struct freebsd_sys_sysctl_args *uap, reg
 
 		oidlen *= sizeof(int);
 		error = copyout(oid, SCARG(uap, old),
-				MIN(oidlen, *SCARG(uap, oldlenp)));
+				MIN(oidlen, oldlen));
 		if (error)
 			return(error);
 		ktrmibio(-1, UIO_READ, SCARG(uap, old),
-		    MIN(oidlen, *SCARG(uap, oldlenp)),  0);
+		    MIN(oidlen, oldlen),  0);
 
 		error = copyout(&oidlen, SCARG(uap, oldlenp), sizeof(u_int));
 

@@ -1,6 +1,6 @@
 /* Auxiliary vector support for GDB, the GNU debugger.
 
-   Copyright (C) 2004-2013 Free Software Foundation, Inc.
+   Copyright (C) 2004-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -24,6 +24,13 @@
 
 /* See "include/elf/common.h" for the definition of valid AT_* values.  */
 
+/* The default implementation of to_auxv_parse, used by the target
+   stack.  */
+
+extern int default_auxv_parse (struct target_ops *ops, gdb_byte **readptr,
+			       gdb_byte *endptr, CORE_ADDR *typep,
+			       CORE_ADDR *valp);
+
 /* Read one auxv entry from *READPTR, not reading locations >= ENDPTR.
    Return 0 if *READPTR is already at the end of the buffer.
    Return -1 if there is insufficient buffer for a whole entry.
@@ -42,13 +49,7 @@ extern int target_auxv_search (struct target_ops *ops,
 /* Print the contents of the target's AUXV on the specified file.  */
 extern int fprint_target_auxv (struct ui_file *file, struct target_ops *ops);
 
-extern LONGEST memory_xfer_auxv (struct target_ops *ops,
-				 enum target_object object,
-				 const char *annex,
-				 gdb_byte *readbuf,
-				 const gdb_byte *writebuf,
-				 ULONGEST offset,
-				 LONGEST len);
+extern target_xfer_partial_ftype memory_xfer_auxv;
 
 
 #endif

@@ -1,10 +1,11 @@
-# $NetBSD: Makefile,v 1.4 2013/07/21 15:29:04 tron Exp $
+# $NetBSD: Makefile,v 1.6 2015/01/31 20:55:43 nakayama Exp $
 
 .include <bsd.own.mk>
 
 TESTSDIR=	${TESTSBASE}/lib/libexecinfo
 
 TESTS_C+=	t_backtrace
+STRIPFLAG=
 
 LDADD+=		-lexecinfo -lelf
 DPADD+=		${LIBEXECINFO} ${LIBELF}

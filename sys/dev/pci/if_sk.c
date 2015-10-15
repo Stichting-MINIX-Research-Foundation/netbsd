@@ -1,4 +1,4 @@
-/*	$NetBSD: if_sk.c,v 1.75 2013/09/13 21:13:08 martin Exp $	*/
+/*	$NetBSD: if_sk.c,v 1.80 2015/04/13 16:33:25 riastradh Exp $	*/
 
 /*-
  * Copyright (c) 2003 The NetBSD Foundation, Inc.
@@ -115,7 +115,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_sk.c,v 1.75 2013/09/13 21:13:08 martin Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_sk.c,v 1.80 2015/04/13 16:33:25 riastradh Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -138,7 +138,7 @@ __KERNEL_RCSID(0, "$NetBSD: if_sk.c,v 1.75 2013/09/13 21:13:08 martin Exp $");
 #include <net/if_media.h>
 
 #include <net/bpf.h>
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 
 #include <dev/mii/mii.h>
 #include <dev/mii/miivar.h>
@@ -1462,7 +1462,7 @@ sk_attach(device_t parent, device_t self, void *aux)
 	ether_ifattach(ifp, sc_if->sk_enaddr);
 
         rnd_attach_source(&sc->rnd_source, device_xname(sc->sk_dev),
-            RND_TYPE_NET, 0);
+            RND_TYPE_NET, RND_FLAG_DEFAULT);
 
 	if (pmf_device_register(self, NULL, sk_resume))
 		pmf_class_network_register(self, ifp);
@@ -1513,6 +1513,7 @@ skc_attach(device_t parent, device_t self, void *aux)
 	u_int32_t command;
 	const char *revstr;
 	const struct sysctlnode *node;
+	char intrbuf[PCI_INTRSTR_LEN];
 
 	sc->sk_dev = self;
 	aprint_naive("\n");
@@ -1626,7 +1627,7 @@ skc_attach(device_t parent, device_t self, void *aux)
 		goto fail;
 	}
 
-	intrstr = pci_intr_string(pc, ih);
+	intrstr = pci_intr_string(pc, ih, intrbuf, sizeof(intrbuf));
 	sc->sk_intrhand = pci_intr_establish(pc, ih, IPL_NET, sk_intr, sc);
 	if (sc->sk_intrhand == NULL) {
 		aprint_error(": couldn't establish interrupt");
@@ -2219,7 +2220,10 @@ sk_tick(void *xsc_if)
 	SK_XM_CLRBIT_2(sc_if, XM_IMR, XM_IMR_GP0_SET);
 	SK_XM_READ_2(sc_if, XM_ISR);
 	mii_tick(mii);
-	callout_stop(&sc_if->sk_tick_ch);
+	if (ifp->if_link_state != LINK_STATE_UP)
+		callout_reset(&sc_if->sk_tick_ch, hz, sk_tick, sc_if);
+	else
+		callout_stop(&sc_if->sk_tick_ch);
 }
 
 void
@@ -2871,6 +2875,7 @@ sk_init(struct ifnet *ifp)
 
 	ifp->if_flags |= IFF_RUNNING;
 	ifp->if_flags &= ~IFF_OACTIVE;
+	callout_reset(&sc_if->sk_tick_ch, hz, sk_tick, sc_if);
 
 out:
 	splx(s);
@@ -3104,12 +3109,6 @@ SYSCTL_SETUP(sysctl_sk, "sysctl sk subtree setup")
 {
 	int rc;
 	const struct sysctlnode *node;
-
-	if ((rc = sysctl_createv(clog, 0, NULL, NULL,
-	    0, CTLTYPE_NODE, "hw", NULL,
-	    NULL, 0, NULL, 0, CTL_HW, CTL_EOL)) != 0) {
-		goto err;
-	}
 
 	if ((rc = sysctl_createv(clog, 0, NULL, &node,
 	    0, CTLTYPE_NODE, "sk",

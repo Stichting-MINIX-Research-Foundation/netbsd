@@ -1,4 +1,4 @@
-/*	$NetBSD: machdep.c,v 1.114 2012/07/28 23:08:57 matt Exp $	*/
+/*	$NetBSD: machdep.c,v 1.117 2015/06/30 02:39:03 matt Exp $	*/
 
 /*
  * Copyright (c) 1988 University of Utah.
@@ -39,7 +39,7 @@
 
 #include <sys/cdefs.h>			/* RCS ID & Copyright macro defns */
 
-__KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.114 2012/07/28 23:08:57 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.117 2015/06/30 02:39:03 matt Exp $");
 
 /* from: Utah Hdr: machdep.c 1.63 91/04/24 */
 
@@ -148,6 +148,7 @@ mach_init(int x_boothowto, int x_bootdev, int x_bootname, int x_maxmem)
 {
 	u_long first, last;
 	char *kernend;
+	const char *model;
 	struct btinfo_magic *bi_magic;
 	struct btinfo_bootarg *bi_arg;
 	struct btinfo_systype *bi_systype;
@@ -195,7 +196,7 @@ mach_init(int x_boothowto, int x_bootdev, int x_bootname, int x_maxmem)
 #ifdef news5000
 	if (systype == NEWS5000) {
 		int i;
-		char *bootspec = (char *)x_bootdev;
+		char *bspec = (char *)x_bootdev;
 
 		if (bi_arg == NULL)
 			panic("news5000 requires BTINFO_BOOTARG to boot");
@@ -203,21 +204,21 @@ mach_init(int x_boothowto, int x_bootdev, int x_bootname, int x_maxmem)
 		_sip = (void *)bi_arg->sip;
 		x_maxmem = _sip->apbsi_memsize;
 		x_maxmem -= 0x00100000;	/* reserve 1MB for ROM monitor */
-		if (strncmp(bootspec, "scsi", 4) == 0) {
+		if (strncmp(bspec, "scsi", 4) == 0) {
 			x_bootdev = (5 << 28) | 0;	 /* magic, sd */
-			bootspec += 4;
-			if (*bootspec != '(' /*)*/)
+			bspec += 4;
+			if (*bspec != '(' /*)*/)
 				goto bootspec_end;
-			i = strtoul(bootspec + 1, &bootspec, 10);
+			i = strtoul(bspec + 1, &bspec, 10);
 			x_bootdev |= (i << 24);		/* bus */
-			if (*bootspec != ',')
+			if (*bspec != ',')
 				goto bootspec_end;
-			i = strtoul(bootspec + 1, &bootspec, 10);
+			i = strtoul(bspec + 1, &bspec, 10);
 			x_bootdev |= (i / 10) << 20;	/* controller */
 			x_bootdev |= (i % 10) << 16;	/* unit */
-			if (*bootspec != ',')
+			if (*bspec != ',')
 				goto bootspec_end;
-			i = strtoul(bootspec + 1, &bootspec, 10);
+			i = strtoul(bspec + 1, &bspec, 10);
 			x_bootdev |= (i << 8);		/* partition */
 		}
  bootspec_end:
@@ -314,18 +315,18 @@ mach_init(int x_boothowto, int x_bootdev, int x_bootname, int x_maxmem)
 #ifdef news3400
 	case NEWS3400:
 		news3400_init();
-		strcpy(cpu_model, idrom.id_machine);
-		if (strcmp(cpu_model, "news3400") == 0 ||
-		    strcmp(cpu_model, "news3200") == 0 ||
-		    strcmp(cpu_model, "news3700") == 0) {
+		cpu_setmodel("%s", idrom.id_machine);
+		model = cpu_getmodel();
+		if (strcmp(model, "news3400") == 0 ||
+		    strcmp(model, "news3200") == 0 ||
+		    strcmp(model, "news3700") == 0) {
 			/*
 			 * Set up interrupt handling and I/O addresses.
 			 */
 			hardware_intr = news3400_intr;
 			cpuspeed = 10;
 		} else {
-			printf("kernel not configured for machine %s\n",
-			    cpu_model);
+			printf("kernel not configured for machine %s\n", model);
 		}
 		break;
 #endif
@@ -333,17 +334,17 @@ mach_init(int x_boothowto, int x_bootdev, int x_bootname, int x_maxmem)
 #ifdef news5000
 	case NEWS5000:
 		news5000_init();
-		strcpy(cpu_model, idrom.id_machine);
-		if (strcmp(cpu_model, "news5000") == 0 ||
-		    strcmp(cpu_model, "news5900") == 0) {
+		cpu_setmodel("%s", idrom.id_machine);
+		model = cpu_getmodel();
+		if (strcmp(model, "news5000") == 0 ||
+		    strcmp(model, "news5900") == 0) {
 			/*
 			 * Set up interrupt handling and I/O addresses.
 			 */
 			hardware_intr = news5000_intr;
 			cpuspeed = 50;	/* ??? XXX */
 		} else {
-			printf("kernel not configured for machine %s\n",
-			    cpu_model);
+			printf("kernel not configured for machine %s\n", model);
 		}
 		break;
 #endif
@@ -369,42 +370,10 @@ mips_machdep_cache_config(void)
 void
 cpu_startup(void)
 {
-	vaddr_t minaddr, maxaddr;
-	char pbuf[9];
-#ifdef DEBUG
-	extern int pmapdebug;
-	int opmapdebug = pmapdebug;
-
-	pmapdebug = 0;
-#endif
-
-	/*
-	 * Good {morning,afternoon,evening,night}.
-	 */
-	printf("%s%s", copyright, version);
 	printf("SONY NET WORK STATION, Model %s, ", idrom.id_model);
 	printf("Machine ID #%d\n", idrom.id_serial);
-	format_bytes(pbuf, sizeof(pbuf), ctob(physmem));
-	printf("total memory = %s\n", pbuf);
 
-	minaddr = 0;
-	/*
-	 * Allocate a submap for physio
-	 */
-	phys_map = uvm_km_suballoc(kernel_map, &minaddr, &maxaddr,
-	    VM_PHYS_SIZE, 0, false, NULL);
-
-	/*
-	 * No need to allocate an mbuf cluster submap.  Mbuf clusters
-	 * are allocated via the pool allocator, and we use KSEG to
-	 * map those pages.
-	 */
-
-#ifdef DEBUG
-	pmapdebug = opmapdebug;
-#endif
-	format_bytes(pbuf, sizeof(pbuf), ptoa(uvmexp.free));
-	printf("avail memory = %s\n", pbuf);
+	cpu_startup_common();
 }
 
 /*

@@ -1,6 +1,6 @@
 /* Target-dependent code for GNU/Linux, architecture independent.
 
-   Copyright (C) 2009-2013 Free Software Foundation, Inc.
+   Copyright (C) 2009-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -29,11 +29,16 @@ typedef char *(*linux_collect_thread_registers_ftype) (const struct regcache *,
 						       bfd *, char *, int *,
 						       enum gdb_signal);
 
-char *linux_make_corefile_notes (struct gdbarch *, bfd *, int *,
-                                 linux_collect_thread_registers_ftype);
-
 struct type *linux_get_siginfo_type (struct gdbarch *);
 
+extern enum gdb_signal linux_gdb_signal_from_target (struct gdbarch *gdbarch,
+						     int signal);
+
+extern int linux_gdb_signal_to_target (struct gdbarch *gdbarch,
+				       enum gdb_signal signal);
+
 extern void linux_init_abi (struct gdbarch_info info, struct gdbarch *gdbarch);
+
+extern int linux_is_uclinux (void);
 
 #endif /* linux-tdep.h */

@@ -1,4 +1,4 @@
-/*	$NetBSD: zs.c,v 1.37 2011/02/20 07:59:50 matt Exp $	*/
+/*	$NetBSD: zs.c,v 1.39 2015/02/18 16:47:58 macallan Exp $	*/
 
 /*-
  * Copyright (c) 1996, 2000 The NetBSD Foundation, Inc.
@@ -37,7 +37,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: zs.c,v 1.37 2011/02/20 07:59:50 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: zs.c,v 1.39 2015/02/18 16:47:58 macallan Exp $");
 
 #include "opt_ddb.h"
 #include "opt_kgdb.h"
@@ -444,7 +444,7 @@ zs_get_speed(struct zs_chanstate *cs)
 int
 zs_set_speed(struct zs_chanstate *cs, int bps)
 {
-	int tconst, real_bps;
+	int tconst;
 
 #if 0
 	while (!(zs_read_csr(cs) & ZSRR0_TX_READY))
@@ -464,11 +464,11 @@ zs_set_speed(struct zs_chanstate *cs, int bps)
 	if (tconst < 0)
 		return (EINVAL);
 
+#if 0
 	/* Convert back to make sure we can do it. */
-	real_bps = TCONST_TO_BPS(cs->cs_brg_clk, tconst);
+	int real_bps = TCONST_TO_BPS(cs->cs_brg_clk, tconst);
 
 	/* XXX - Allow some tolerance here? */
-#if 0
 	if (real_bps != bps)
 		return (EINVAL);
 #endif
@@ -530,9 +530,11 @@ zs_read_reg(struct zs_chanstate *cs, uint8_t reg)
 	uint8_t val;
 	struct zs_channel *zsc = (struct zs_channel *)cs;
 
-	bus_space_write_1(zsc->cs_bustag, zsc->cs_regs, ZS_REG_CSR, reg);
+	bus_space_write_1(zsc->cs_bustag, zsc->cs_regs,
+	    (ZS_REG_CSR << 2) + 3, reg);
 	ZS_DELAY();
-	val = bus_space_read_1(zsc->cs_bustag, zsc->cs_regs, ZS_REG_CSR);
+	val = bus_space_read_1(zsc->cs_bustag, zsc->cs_regs,
+	    (ZS_REG_CSR << 2) + 3);
 	ZS_DELAY();
 	return val;
 }
@@ -542,9 +544,11 @@ zs_write_reg(struct zs_chanstate *cs, uint8_t reg, uint8_t val)
 {
 	struct zs_channel *zsc = (struct zs_channel *)cs;
 
-	bus_space_write_1(zsc->cs_bustag, zsc->cs_regs, ZS_REG_CSR, reg);
+	bus_space_write_1(zsc->cs_bustag, zsc->cs_regs,
+	    (ZS_REG_CSR << 2) + 3, reg);
 	ZS_DELAY();
-	bus_space_write_1(zsc->cs_bustag, zsc->cs_regs, ZS_REG_CSR, val);
+	bus_space_write_1(zsc->cs_bustag, zsc->cs_regs,
+	    (ZS_REG_CSR << 2) + 3, val);
 	ZS_DELAY();
 }
 
@@ -554,7 +558,8 @@ zs_read_csr(struct zs_chanstate *cs)
 	struct zs_channel *zsc = (struct zs_channel *)cs;
 	uint8_t val;
 
-	val = bus_space_read_1(zsc->cs_bustag, zsc->cs_regs, ZS_REG_CSR);
+	val = bus_space_read_1(zsc->cs_bustag, zsc->cs_regs,
+	    (ZS_REG_CSR << 2) + 3);
 	ZS_DELAY();
 	return val;
 }
@@ -564,7 +569,8 @@ zs_write_csr(struct zs_chanstate *cs, uint8_t val)
 {
 	struct zs_channel *zsc = (struct zs_channel *)cs;
 
-	bus_space_write_1(zsc->cs_bustag, zsc->cs_regs, ZS_REG_CSR, val);
+	bus_space_write_1(zsc->cs_bustag, zsc->cs_regs,
+	    (ZS_REG_CSR << 2) + 3, val);
 	ZS_DELAY();
 }
 
@@ -574,7 +580,8 @@ zs_read_data(struct zs_chanstate *cs)
 	struct zs_channel *zsc = (struct zs_channel *)cs;
 	uint8_t val;
 
-	val = bus_space_read_1(zsc->cs_bustag, zsc->cs_regs, ZS_REG_DATA);
+	val = bus_space_read_1(zsc->cs_bustag, zsc->cs_regs,
+	    (ZS_REG_DATA << 2) + 3);
 	ZS_DELAY();
 	return val;
 }
@@ -584,7 +591,8 @@ zs_write_data(struct zs_chanstate *cs, uint8_t val)
 {
 	struct zs_channel *zsc = (struct zs_channel *)cs;
 
-	bus_space_write_1(zsc->cs_bustag, zsc->cs_regs, ZS_REG_DATA, val);
+	bus_space_write_1(zsc->cs_bustag, zsc->cs_regs,
+	    (ZS_REG_DATA << 2) + 3, val);
 	ZS_DELAY();
 }
 

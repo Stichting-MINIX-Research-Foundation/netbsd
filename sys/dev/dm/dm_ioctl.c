@@ -1,4 +1,4 @@
-/* $NetBSD: dm_ioctl.c,v 1.27 2013/10/18 19:56:30 christos Exp $      */
+/* $NetBSD: dm_ioctl.c,v 1.30 2015/05/10 14:08:54 christos Exp $      */
 
 /*
  * Copyright (c) 2008 The NetBSD Foundation, Inc.
@@ -200,7 +200,8 @@ dm_dev_create_ioctl(prop_dictionary_t dm_dict)
 {
 	dm_dev_t *dmv;
 	const char *name, *uuid;
-	int r, flags;
+	int r;
+	uint32_t flags;
 	device_t devt;
 
 	r = 0;
@@ -712,6 +713,7 @@ dm_table_load_ioctl(prop_dictionary_t dm_dict)
 
 	if ((dmv = dm_dev_lookup(name, uuid, minor)) == NULL) {
 		DM_REMOVE_FLAG(flags, DM_EXISTS_FLAG);
+		prop_object_iterator_release(iter);
 		return ENOENT;
 	}
 	aprint_debug("Loading table to device: %s--%d\n", name,
@@ -743,12 +745,14 @@ dm_table_load_ioctl(prop_dictionary_t dm_dict)
 		    ((target = dm_target_autoload(type)) == NULL)) {
 			dm_table_release(&dmv->table_head, DM_TABLE_INACTIVE);
 			dm_dev_unbusy(dmv);
+			prop_object_iterator_release(iter);
 			return ENOENT;
 		}
 		if ((table_en = kmem_alloc(sizeof(dm_table_entry_t),
 			    KM_SLEEP)) == NULL) {
 			dm_table_release(&dmv->table_head, DM_TABLE_INACTIVE);
 			dm_dev_unbusy(dmv);
+			prop_object_iterator_release(iter);
 			return ENOMEM;
 		}
 		prop_dictionary_get_uint64(target_dict, DM_TABLE_START,
@@ -770,7 +774,7 @@ dm_table_load_ioctl(prop_dictionary_t dm_dict)
 		prop_dictionary_get_cstring(target_dict,
 		    DM_TABLE_PARAMS, (char **) &str);
 
-		if (SLIST_EMPTY(tbl))
+		if (SLIST_EMPTY(tbl) || last_table == NULL)
 			/* insert this table to head */
 			SLIST_INSERT_HEAD(tbl, table_en, next);
 		else
@@ -791,6 +795,7 @@ dm_table_load_ioctl(prop_dictionary_t dm_dict)
 
 			dm_dev_unbusy(dmv);
 			dm_target_unbusy(target);
+			prop_object_iterator_release(iter);
 			return ret;
 		}
 		last_table = table_en;
@@ -839,11 +844,10 @@ dm_table_status_ioctl(prop_dictionary_t dm_dict)
 	prop_array_t cmd_array;
 	prop_dictionary_t target_dict;
 
-	uint32_t minor;
+	uint32_t minor, flags;
 
 	const char *name, *uuid;
 	char *params;
-	int flags;
 	int table_type;
 
 	dmv = NULL;
@@ -948,7 +952,7 @@ int
 dm_check_version(prop_dictionary_t dm_dict)
 {
 	size_t i;
-	int dm_version[3];
+	uint32_t dm_version[3];
 	prop_array_t ver;
 
 	ver = prop_dictionary_get(dm_dict, DM_IOCTL_VERSION);

@@ -33,13 +33,14 @@
 
 #include <sys/cdefs.h>
 
-__KERNEL_RCSID(1, "$NetBSD: bcm53xx_rng.c,v 1.4 2013/02/01 19:27:47 matt Exp $");
+__KERNEL_RCSID(1, "$NetBSD: bcm53xx_rng.c,v 1.8 2015/04/13 21:18:40 riastradh Exp $");
 
+#include <sys/param.h>
 #include <sys/bus.h>
 #include <sys/callout.h>
 #include <sys/device.h>
 #include <sys/intr.h>
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 #include <sys/systm.h>
 
 #include <arm/broadcom/bcm53xx_reg.h>
@@ -97,7 +98,7 @@ bcmrng_read_multi_4(struct bcmrng_softc *sc, bus_size_t o, uint32_t *p,
 	return bus_space_read_multi_4(sc->sc_bst, sc->sc_bsh, o, p, c);
 }
 
-static inline void
+__unused static inline void
 bcmrng_write_4(struct bcmrng_softc *sc, bus_size_t o, uint32_t v)
 {
 	bus_space_write_4(sc->sc_bst, sc->sc_bsh, o, v);
@@ -142,7 +143,7 @@ bcmrng_ccb_attach(device_t parent, device_t self, void *aux)
 	callout_init(&sc->sc_rnd_callout, CALLOUT_MPSAFE);
 
 	rnd_attach_source(&sc->sc_rnd_source, device_xname(self), RND_TYPE_RNG,
-	    RND_FLAG_NO_ESTIMATE);
+	    RND_FLAG_COLLECT_VALUE);
 
 #ifdef RNG_USE_INTR
 	sc->sc_ih = intr_establish(loc->loc_intrs[0], IPL_VM, IST_LEVEL,

@@ -1,4 +1,4 @@
-/*	$NetBSD: at_control.c,v 1.34 2011/10/19 01:50:27 dyoung Exp $	 */
+/*	$NetBSD: at_control.c,v 1.37 2014/10/18 08:33:29 snj Exp $	 */
 
 /*
  * Copyright (c) 1990,1994 Regents of The University of Michigan.
@@ -27,7 +27,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: at_control.c,v 1.34 2011/10/19 01:50:27 dyoung Exp $");
+__KERNEL_RCSID(0, "$NetBSD: at_control.c,v 1.37 2014/10/18 08:33:29 snj Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -72,7 +72,7 @@ static void aa_clean(void);
 			 (a)->sat_addr.s_node == (b)->sat_addr.s_node )
 
 int
-at_control(u_long cmd, void * data, struct ifnet *ifp, struct lwp *l)
+at_control(u_long cmd, void *data, struct ifnet *ifp)
 {
 	struct ifreq   *ifr = (struct ifreq *) data;
 	const struct sockaddr_at *csat;
@@ -125,7 +125,7 @@ at_control(u_long cmd, void * data, struct ifnet *ifp, struct lwp *l)
 		 * If we are not superuser, then we don't get to do these
 		 * ops.
 		 */
-		if (l && kauth_authorize_network(l->l_cred,
+		if (kauth_authorize_network(curlwp->l_cred,
 		    KAUTH_NETWORK_INTERFACE,
 		    KAUTH_REQ_NETWORK_INTERFACE_SETPRIV, ifp, (void *)cmd,
 		    NULL) != 0)
@@ -193,7 +193,7 @@ at_control(u_long cmd, void * data, struct ifnet *ifp, struct lwp *l)
 			} else {
 				TAILQ_INSERT_TAIL(&at_ifaddr, aa, aa_list);
 			}
-			IFAREF(&aa->aa_ifa);
+			ifaref(&aa->aa_ifa);
 
 			/*
 		         * Find the end of the interface's addresses
@@ -336,7 +336,7 @@ at_purgeaddr(struct ifaddr *ifa)
 	 */
 	ifa_remove(ifp, &aa->aa_ifa);
 	TAILQ_REMOVE(&at_ifaddr, aa, aa_list);
-	IFAFREE(&aa->aa_ifa);
+	ifafree(&aa->aa_ifa);
 }
 
 void
@@ -697,7 +697,7 @@ at_broadcast(const struct sockaddr_at *sat)
  *
  * Split the range into two subranges such that the middle
  * of the two ranges is the point where the highest bit of difference
- * between the two addresses, makes it's transition
+ * between the two addresses, makes its transition
  * Each of the upper and lower ranges might not exist, or might be
  * representable by 1 or more netmasks. In addition, if both
  * ranges can be represented by the same netmask, then teh can be merged

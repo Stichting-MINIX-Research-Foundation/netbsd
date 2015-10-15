@@ -1,6 +1,6 @@
 /* Target-dependent code for NetBSD/arm.
 
-   Copyright (C) 2002-2013 Free Software Foundation, Inc.
+   Copyright (C) 2002-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -20,8 +20,6 @@
 #include "defs.h"
 #include "osabi.h"
 
-#include "gdb_string.h"
-
 #include "arm-tdep.h"
 #include "solib-svr4.h"
 
@@ -31,10 +29,10 @@
 
 /* For compatibility with previous implemenations of GDB on arm/NetBSD,
    override the default little-endian breakpoint.  */
-static const char arm_nbsd_arm_le_breakpoint[] = {0x11, 0x00, 0x00, 0xe6};
-static const char arm_nbsd_arm_be_breakpoint[] = {0xe6, 0x00, 0x00, 0x11};
-static const char arm_nbsd_thumb_le_breakpoint[] = {0xfe, 0xde};
-static const char arm_nbsd_thumb_be_breakpoint[] = {0xde, 0xfe};
+static const gdb_byte arm_nbsd_arm_le_breakpoint[] = {0x11, 0x00, 0x00, 0xe6};
+static const gdb_byte arm_nbsd_arm_be_breakpoint[] = {0xe6, 0x00, 0x00, 0x11};
+static const gdb_byte arm_nbsd_thumb_le_breakpoint[] = {0xfe, 0xde};
+static const gdb_byte arm_nbsd_thumb_be_breakpoint[] = {0xde, 0xfe};
 
 static void
 arm_netbsd_init_abi_common (struct gdbarch_info info,
@@ -43,7 +41,7 @@ arm_netbsd_init_abi_common (struct gdbarch_info info,
   struct gdbarch_tdep *tdep = gdbarch_tdep (gdbarch);
 
   tdep->lowest_pc = 0x8000;
-  switch (info.byte_order)
+  switch (info.byte_order_for_code)
     {
     case BFD_ENDIAN_LITTLE:
       tdep->arm_breakpoint = arm_nbsd_arm_le_breakpoint;

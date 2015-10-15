@@ -1,4 +1,4 @@
-/*	$NetBSD: cpu_in_cksum.S,v 1.6 2013/08/18 15:58:19 matt Exp $	*/
+/*	$NetBSD: cpu_in_cksum.S,v 1.11 2015/02/15 17:21:08 skrll Exp $	*/
 
 /*
  * Copyright 2003 Wasabi Systems, Inc.
@@ -40,7 +40,7 @@
  */
 
 #include <machine/asm.h>
-RCSID("$NetBSD: cpu_in_cksum.S,v 1.6 2013/08/18 15:58:19 matt Exp $")
+RCSID("$NetBSD: cpu_in_cksum.S,v 1.11 2015/02/15 17:21:08 skrll Exp $")
 	
 #include "assym.h"
 
@@ -72,7 +72,7 @@ ENTRY(cpu_in_cksum)
 	ldr	ip, [ip, #(M_NEXT)]
 .Lin_cksum_skip_entry:
 	subs	r2, r2, r1		/* offset = offset - mbuf length */
-	blt	.Lin_cksum_skip_done	/* if offset has gone negative start with this mbuf */
+	ble	.Lin_cksum_skip_done	/* if offset has gone negative start with this mbuf */
 	cmp	ip, #0x00
 	bne	.Lin_cksum_skip_loop
 	b	.Lin_cksum_whoops
@@ -104,7 +104,7 @@ ENTRY(cpu_in_cksum)
 #ifdef __thumb__
 	it	ne
 #endif
-	blne	_ASM_LABEL(.L_cksumdata)
+	blne	_ASM_LABEL(arm_cksumdata)
 	tst	r11, #0x01
 #ifdef __thumb__
 	it	ne
@@ -129,15 +129,14 @@ ENTRY(cpu_in_cksum)
 	mvn	r0, r8
 	lsr	r0, r0, #16
 #endif
-	pop	{r4-r11, lr}
-	RET
+	pop	{r4-r11, pc}
 
 .Lin_cksum_whoops:
 	adr	r0, .Lin_cksum_whoops_str
 	bl	_C_LABEL(panic)
 .Lin_cksum_whoops_str:
 	.asciz	"in_cksum: out of mbufs\n"
-	.align	5
+	.p2align	5
 END(cpu_in_cksum)
 
 
@@ -156,7 +155,7 @@ END(cpu_in_cksum)
  *	r0-r7
  */
 /* LINTSTUB: Ignore */
-ASENTRY_NP(.L_cksumdata)
+ASENTRY_NP(arm_cksumdata)
 #ifdef __PROG26
 	str	lr, [sp, #-4]!		/* for SVC26 mode */
 #endif
@@ -191,9 +190,8 @@ ASENTRY_NP(.L_cksumdata)
 #else
 	RETc(eq)			/* done */
 #endif
-	adds	r7, r7, r1		/* undo sub */
-	adds	r7, r7, r1		/* r7 = offset + len */
-	rsb	r7, r7, #4
+	adds	r1, r1, r7		/* undo sub */
+	subs	r7, r7, r1
 	lsls	r7, r7, #3
 #if defined(__ARMEB__)
 	lsrs	r2, r2, r7
@@ -227,37 +225,37 @@ ASENTRY_NP(.L_cksumdata)
 	 * setting r6 to zero to avoid stalling for results in the
 	 * loop. (r7 is live, from above).
 	 */
-	ldrd	r4, [r0], #0x08
+	ldrd	r4, r5, [r0], #0x08
 	mov	r6, #0x00
 .Lcksumdata_bigloop:
 	pld	[r0, #0x18]
 	adds	r2, r2, r6
 	adcs	r2, r2, r7
-	ldrd	r6, [r0], #0x08
+	ldrd	r6, r7, [r0], #0x08
 	adcs	r2, r2, r4
 	adcs	r2, r2, r5
-	ldrd	r4, [r0], #0x08
+	ldrd	r4, r5, [r0], #0x08
 	adcs	r2, r2, r6
 	adcs	r2, r2, r7
-	ldrd	r6, [r0], #0x08
+	ldrd	r6, r7, [r0], #0x08
 	adcs	r2, r2, r4
 	adcs	r2, r2, r5
-	ldrd	r4, [r0], #0x08
+	ldrd	r4, r5, [r0], #0x08
 	adcs	r2, r2, r6
 	adcs	r2, r2, r7
 	pld	[r0, #0x18]
-	ldrd	r6, [r0], #0x08
+	ldrd	r6, r7, [r0], #0x08
 	adcs	r2, r2, r4
 	adcs	r2, r2, r5
-	ldrd	r4, [r0], #0x08
+	ldrd	r4, r5, [r0], #0x08
 	adcs	r2, r2, r6
 	adcs	r2, r2, r7
-	ldrd	r6, [r0], #0x08
+	ldrd	r6, r7, [r0], #0x08
 	adcs	r2, r2, r4
 	adcs	r2, r2, r5
 	adcs	r2, r2, #0x00
 	subs	r1, r1, #0x40
-	ldrdge	r4, [r0], #0x08
+	ldrdge	r4, r5, [r0], #0x08
 	bge	.Lcksumdata_bigloop
 
 	adds	r2, r2, r6		/* r6/r7 still need summing */
@@ -306,16 +304,16 @@ ASENTRY_NP(.L_cksumdata)
 	cmp	r1, #0x20
 
 #ifdef __XSCALE__
-	ldrdge	r4, [r0], #0x08		/* Avoid stalling pld and result */
+	ldrdge	r4, r5, [r0], #0x08	/* Avoid stalling pld and result */
 	blt	.Lcksumdata_less_than_32
 	pld	[r0, #0x18]
-	ldrd	r6, [r0], #0x08
+	ldrd	r6, r7, [r0], #0x08
 	adds	r2, r2, r4
 	adcs	r2, r2, r5
-	ldrd	r4, [r0], #0x08
+	ldrd	r4, r5, [r0], #0x08
 	adcs	r2, r2, r6
 	adcs	r2, r2, r7
-	ldrd	r6, [r0], #0x08
+	ldrd	r6, r7, [r0], #0x08
 	adcs	r2, r2, r4
 	adcs	r2, r2, r5
 	adcs	r2, r2, r6		/* XXX: Unavoidable result stall */
@@ -410,4 +408,4 @@ ASENTRY_NP(.L_cksumdata)
 #else
 	RET
 #endif
-ASEND(.L_cksumdata)
+ASEND(arm_cksumdata)

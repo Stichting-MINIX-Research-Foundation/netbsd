@@ -1,5 +1,5 @@
 /* V850-specific support for 32-bit ELF
-   Copyright 1996-2013 Free Software Foundation, Inc.
+   Copyright (C) 1996-2015 Free Software Foundation, Inc.
 
    This file is part of BFD, the Binary File Descriptor library.
 
@@ -83,6 +83,10 @@ v850_elf_check_relocs (bfd *abfd,
 	  while (h->root.type == bfd_link_hash_indirect
 		 || h->root.type == bfd_link_hash_warning)
 	    h = (struct elf_link_hash_entry *) h->root.u.i.link;
+
+	  /* PR15323, ref flags aren't set for references in the same
+	     object.  */
+	  h->root.non_ir_ref = 1;
 	}
 
       r_type = ELF32_R_TYPE (rel->r_info);
@@ -1892,7 +1896,11 @@ v850_elf_info_to_howto_rel (bfd *abfd ATTRIBUTE_UNUSED,
   unsigned int r_type;
 
   r_type = ELF32_R_TYPE (dst->r_info);
-  BFD_ASSERT (r_type < (unsigned int) R_V850_max);
+  if (r_type >= (unsigned int) R_V850_max)
+    {
+      _bfd_error_handler (_("%A: invalid V850 reloc number: %d"), abfd, r_type);
+      r_type = 0;
+    }
   cache_ptr->howto = &v850_elf_howto_table[r_type];
 }
 
@@ -1915,6 +1923,12 @@ v850_elf_is_local_label_name (bfd *abfd ATTRIBUTE_UNUSED, const char *name)
 {
   return (   (name[0] == '.' && (name[1] == 'L' || name[1] == '.'))
 	  || (name[0] == '_' &&  name[1] == '.' && name[2] == 'L' && name[3] == '_'));
+}
+
+static bfd_boolean
+v850_elf_is_target_special_symbol (bfd *abfd, asymbol *sym)
+{
+  return v850_elf_is_local_label_name (abfd, sym->name);
 }
 
 /* We overload some of the bfd_reloc error codes for own purposes.  */
@@ -2201,7 +2215,7 @@ v850_elf_relocate_section (bfd *output_bfd,
 	}
       else
 	{
-	  bfd_boolean unresolved_reloc, warned;
+	  bfd_boolean unresolved_reloc, warned, ignored;
 
 	  /* Note - this check is delayed until now as it is possible and
 	     valid to have a file without any symbols but with relocs that
@@ -2218,7 +2232,7 @@ v850_elf_relocate_section (bfd *output_bfd,
 	  RELOC_FOR_GLOBAL_SYMBOL (info, input_bfd, input_section, rel,
 				   r_symndx, symtab_hdr, sym_hashes,
 				   h, sec, relocation,
-				   unresolved_reloc, warned);
+				   unresolved_reloc, warned, ignored);
 	}
 
       if (sec != NULL && discarded_section (sec))
@@ -3131,7 +3145,7 @@ v850_elf_relax_section (bfd *abfd,
 
 	  if (alignmoveto < alignto)
 	    {
-	      unsigned int i;
+	      bfd_vma i;
 
 	      align_pad_size = alignto - alignmoveto;
 #ifdef DEBUG_RELAX
@@ -3760,7 +3774,7 @@ static const struct bfd_elf_special_section v850_elf_special_sections[] =
   { NULL,                     0,           0, 0,                0 }
 };
 
-#define TARGET_LITTLE_SYM			bfd_elf32_v850_vec
+#define TARGET_LITTLE_SYM			v850_elf32_vec
 #define TARGET_LITTLE_NAME			"elf32-v850"
 #define ELF_ARCH				bfd_arch_v850
 #define ELF_MACHINE_CODE			EM_V850
@@ -3787,6 +3801,8 @@ static const struct bfd_elf_special_section v850_elf_special_sections[] =
 #define elf_backend_rela_normal 1
 
 #define bfd_elf32_bfd_is_local_label_name	v850_elf_is_local_label_name
+#define bfd_elf32_bfd_is_target_special_symbol	v850_elf_is_target_special_symbol
+
 #define bfd_elf32_bfd_reloc_type_lookup		v850_elf_reloc_type_lookup
 #define bfd_elf32_bfd_reloc_name_lookup	        v850_elf_reloc_name_lookup
 #define bfd_elf32_bfd_merge_private_bfd_data 	v850_elf_merge_private_bfd_data
@@ -3893,7 +3909,7 @@ v800_elf_info_to_howto (bfd *               abfd,
 
 
 #undef  TARGET_LITTLE_SYM
-#define TARGET_LITTLE_SYM			bfd_elf32_v850_rh850_vec
+#define TARGET_LITTLE_SYM			v800_elf32_vec
 #undef  TARGET_LITTLE_NAME
 #define TARGET_LITTLE_NAME			"elf32-v850-rh850"
 #undef  ELF_ARCH

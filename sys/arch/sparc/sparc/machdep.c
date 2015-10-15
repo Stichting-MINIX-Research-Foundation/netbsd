@@ -1,4 +1,4 @@
-/*	$NetBSD: machdep.c,v 1.325 2012/11/02 00:01:20 chs Exp $ */
+/*	$NetBSD: machdep.c,v 1.327 2014/09/21 16:36:32 christos Exp $ */
 
 /*-
  * Copyright (c) 1996, 1997, 1998 The NetBSD Foundation, Inc.
@@ -71,7 +71,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.325 2012/11/02 00:01:20 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.327 2014/09/21 16:36:32 christos Exp $");
 
 #include "opt_compat_netbsd.h"
 #include "opt_compat_sunos.h"
@@ -100,7 +100,6 @@ __KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.325 2012/11/02 00:01:20 chs Exp $");
 #include <sys/exec.h>
 #include <sys/exec_aout.h>
 #include <sys/ucontext.h>
-#include <sys/simplelock.h>
 #include <sys/module.h>
 #include <sys/mutex.h>
 #include <sys/ras.h>
@@ -1379,8 +1378,10 @@ _bus_dmamem_alloc(bus_dma_tag_t t, bus_size_t size,
 	 */
 	error = uvm_pglistalloc(size, low, high, 0, 0,
 				mlist, nsegs, (flags & BUS_DMA_NOWAIT) == 0);
-	if (error)
+	if (error) {
+		free(mlist, M_DEVBUF);
 		return (error);
+	}
 
 	/*
 	 * Simply keep a pointer around to the linked list, so

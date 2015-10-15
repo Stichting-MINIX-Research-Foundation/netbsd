@@ -1,4 +1,4 @@
-/*	$NetBSD: subr_extent.c,v 1.75 2012/01/29 11:14:49 para Exp $	*/
+/*	$NetBSD: subr_extent.c,v 1.79 2015/08/24 22:50:32 pooka Exp $	*/
 
 /*-
  * Copyright (c) 1996, 1998, 2007 The NetBSD Foundation, Inc.
@@ -34,10 +34,12 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: subr_extent.c,v 1.75 2012/01/29 11:14:49 para Exp $");
+__KERNEL_RCSID(0, "$NetBSD: subr_extent.c,v 1.79 2015/08/24 22:50:32 pooka Exp $");
 
 #ifdef _KERNEL
+#ifdef _KERNEL_OPT
 #include "opt_lockdebug.h"
+#endif
 
 #include <sys/param.h>
 #include <sys/extent.h>
@@ -50,6 +52,7 @@ __KERNEL_RCSID(0, "$NetBSD: subr_extent.c,v 1.75 2012/01/29 11:14:49 para Exp $"
 #include <uvm/uvm_extern.h>
 
 #elif defined(_EXTENT_TESTING)
+
 /*
  * user-land definitions, so it can fit into a testing harness.
  */
@@ -283,7 +286,7 @@ extent_create(const char *name, u_long start, u_long end,
 			LIST_INSERT_HEAD(&fex->fex_freelist, rp, er_link);
 		}
 	} else {
-		ex = (struct extent *)kmem_alloc(sizeof(struct extent),
+		ex = kmem_alloc(sizeof(*ex),
 		    (flags & EX_WAITOK) ? KM_SLEEP : KM_NOSLEEP);
 		if (ex == NULL)
 			return (NULL);

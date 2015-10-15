@@ -1,8 +1,10 @@
-#	$NetBSD: Makefile,v 1.6 2012/04/04 10:59:47 joerg Exp $
+#	$NetBSD: Makefile,v 1.8 2014/01/10 15:52:25 christos Exp $
 
 NOMAN=	#defined
+
+.include <bsd.own.mk>	# ACTIVE_CC
+
 PROG=	ras3
-WARNS=	2
 
 regress:
 	@if ./${PROG} ; then		\

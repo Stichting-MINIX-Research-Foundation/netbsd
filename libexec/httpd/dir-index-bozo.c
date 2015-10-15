@@ -1,9 +1,9 @@
-/*	$NetBSD: dir-index-bozo.c,v 1.18 2013/10/12 18:46:12 mbalmer Exp $	*/
+/*	$NetBSD: dir-index-bozo.c,v 1.21 2015/08/27 17:12:18 mrg Exp $	*/
 
 /*	$eterna: dir-index-bozo.c,v 1.20 2011/11/18 09:21:15 mrg Exp $	*/
 
 /*
- * Copyright (c) 1997-2013 Matthew R. Green
+ * Copyright (c) 1997-2014 Matthew R. Green
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -57,7 +57,7 @@ directory_hr(bozohttpd_t *httpd)
  * output a directory index.  return 1 if it actually did something..
  */
 int
-bozo_dir_index(bozo_httpreq_t *request, const char *dirname, int isindex)
+bozo_dir_index(bozo_httpreq_t *request, const char *dirpath, int isindex)
 {
 	bozohttpd_t *httpd = request->hr_httpd;
 	struct stat sb;
@@ -72,17 +72,17 @@ bozo_dir_index(bozo_httpreq_t *request, const char *dirname, int isindex)
 	if (!isindex || !httpd->dir_indexing)
 		return 0;
 
-	if (strlen(dirname) <= strlen(httpd->index_html))
-		dirname = ".";
+	if (strlen(dirpath) <= strlen(httpd->index_html))
+		dirpath = ".";
 	else {
-		file = bozostrdup(httpd, dirname);
+		file = bozostrdup(httpd, dirpath);
 
 		file[strlen(file) - strlen(httpd->index_html)] = '\0';
-		dirname = file;
+		dirpath = file;
 	}
-	debug((httpd, DEBUG_FAT, "bozo_dir_index: dirname ``%s''", dirname));
-	if (stat(dirname, &sb) < 0 ||
-	    (dp = opendir(dirname)) == NULL) {
+	debug((httpd, DEBUG_FAT, "bozo_dir_index: dirpath ``%s''", dirpath));
+	if (stat(dirpath, &sb) < 0 ||
+	    (dp = opendir(dirpath)) == NULL) {
 		if (errno == EPERM)
 			(void)bozo_http_error(httpd, 403, request,
 			    "no permission to open directory");
@@ -123,7 +123,7 @@ bozo_dir_index(bozo_httpreq_t *request, const char *dirname, int isindex)
 	directory_hr(httpd);
 	bozo_printf(httpd, "<pre>");
 
-	for (j = k = scandir(dirname, &de, NULL, alphasort), deo = de;
+	for (j = k = scandir(dirpath, &de, NULL, alphasort), deo = de;
 	    j--; de++) {
 		int nostat = 0;
 		char *name = (*de)->d_name;
@@ -134,7 +134,7 @@ bozo_dir_index(bozo_httpreq_t *request, const char *dirname, int isindex)
 		     httpd->hide_dots && name[0] == '.'))
 			continue;
 
-		snprintf(buf, sizeof buf, "%s/%s", dirname, name);
+		snprintf(buf, sizeof buf, "%s/%s", dirpath, name);
 		if (stat(buf, &sb))
 			nostat = 1;
 
@@ -189,8 +189,8 @@ bozo_dir_index(bozo_httpreq_t *request, const char *dirname, int isindex)
 			spacebuf[i] = '\0';
 			bozo_printf(httpd, "%s", spacebuf);
 
-			bozo_printf(httpd, "%7ukB",
-			    ((unsigned)((unsigned)(sb.st_size) >> 10)));
+			bozo_printf(httpd, "%12llukB",
+				    (unsigned long long)sb.st_size >> 10);
 		}
 		bozo_printf(httpd, "\r\n");
 	}

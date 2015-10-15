@@ -1,4 +1,4 @@
-/* 	$NetBSD: mountd.c,v 1.125 2013/10/19 17:16:37 christos Exp $	 */
+/* 	$NetBSD: mountd.c,v 1.127 2015/08/05 23:23:47 jnemeth Exp $	 */
 
 /*
  * Copyright (c) 1989, 1993
@@ -42,7 +42,7 @@ __COPYRIGHT("@(#) Copyright (c) 1989, 1993\
 #if 0
 static char     sccsid[] = "@(#)mountd.c  8.15 (Berkeley) 5/1/95";
 #else
-__RCSID("$NetBSD: mountd.c,v 1.125 2013/10/19 17:16:37 christos Exp $");
+__RCSID("$NetBSD: mountd.c,v 1.127 2015/08/05 23:23:47 jnemeth Exp $");
 #endif
 #endif				/* not lint */
 
@@ -334,14 +334,8 @@ main(int argc, char **argv)
 	get_mountlist();
 	if (debug)
 		(void)fprintf(stderr, "Here we go.\n");
-	if (debug == 0) {
-		daemon(0, 0);
-		(void)signal(SIGINT, SIG_IGN);
-		(void)signal(SIGQUIT, SIG_IGN);
-	}
 	(void)signal(SIGHUP, get_exportlist);
 	(void)signal(SIGTERM, send_umntall);
-	pidfile(NULL);
 
 	rpcb_unset(RPCPROG_MNT, RPCMNT_VER1, NULL);
 	rpcb_unset(RPCPROG_MNT, RPCMNT_VER3, NULL);
@@ -463,6 +457,12 @@ main(int argc, char **argv)
 		exit(1);
 	}
 
+	if (debug == 0) {
+		daemon(0, 0);
+		(void)signal(SIGINT, SIG_IGN);
+		(void)signal(SIGQUIT, SIG_IGN);
+	}
+	pidfile(NULL);
 	svc_run();
 	syslog(LOG_ERR, "Mountd died");
 	exit(1);

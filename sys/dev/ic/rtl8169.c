@@ -1,4 +1,4 @@
-/*	$NetBSD: rtl8169.c,v 1.139 2013/05/10 14:55:08 tsutsui Exp $	*/
+/*	$NetBSD: rtl8169.c,v 1.145 2015/08/28 13:20:46 nonaka Exp $	*/
 
 /*
  * Copyright (c) 1997, 1998-2003
@@ -33,7 +33,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: rtl8169.c,v 1.139 2013/05/10 14:55:08 tsutsui Exp $");
+__KERNEL_RCSID(0, "$NetBSD: rtl8169.c,v 1.145 2015/08/28 13:20:46 nonaka Exp $");
 /* $FreeBSD: /repoman/r/ncvs/src/sys/dev/re/if_re.c,v 1.20 2004/04/11 20:34:08 ru Exp $ */
 
 /*
@@ -134,7 +134,7 @@ __KERNEL_RCSID(0, "$NetBSD: rtl8169.c,v 1.139 2013/05/10 14:55:08 tsutsui Exp $"
 #include <netinet/ip.h>		/* XXX for IP_MAXPACKET */
 
 #include <net/bpf.h>
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 
 #include <sys/bus.h>
 
@@ -454,8 +454,8 @@ re_diag(struct rtk_softc *sc)
 	/* Put some data in the mbuf */
 
 	eh = mtod(m0, struct ether_header *);
-	memcpy(eh->ether_dhost, (char *)&dst, ETHER_ADDR_LEN);
-	memcpy(eh->ether_shost, (char *)&src, ETHER_ADDR_LEN);
+	memcpy(eh->ether_dhost, &dst, ETHER_ADDR_LEN);
+	memcpy(eh->ether_shost, &src, ETHER_ADDR_LEN);
 	eh->ether_type = htons(ETHERTYPE_IP);
 	m0->m_pkthdr.len = m0->m_len = ETHER_MIN_LEN - ETHER_CRC_LEN;
 
@@ -517,8 +517,8 @@ re_diag(struct rtk_softc *sc)
 
 	/* Test that the received packet data matches what we sent. */
 
-	if (memcmp((char *)&eh->ether_dhost, (char *)&dst, ETHER_ADDR_LEN) ||
-	    memcmp((char *)&eh->ether_shost, (char *)&src, ETHER_ADDR_LEN) ||
+	if (memcmp(&eh->ether_dhost, &dst, ETHER_ADDR_LEN) ||
+	    memcmp(&eh->ether_shost, &src, ETHER_ADDR_LEN) ||
 	    ntohs(eh->ether_type) != ETHERTYPE_IP) {
 		aprint_error_dev(sc->sc_dev, "WARNING, DMA FAILURE!\n"
 		    "expected TX data: %s/%s/0x%x\n"
@@ -602,6 +602,8 @@ re_attach(struct rtk_softc *sc)
 			sc->sc_quirk |= RTKQ_NOJUMBO;
 			break;
 		case RTK_HWREV_8168E:
+		case RTK_HWREV_8168H:
+		case RTK_HWREV_8168H_SPIN1:
 			sc->sc_quirk |= RTKQ_DESCV2 | RTKQ_NOEECMD |
 			    RTKQ_MACSTAT | RTKQ_CMDSTOP | RTKQ_PHYWAKE_PM |
 			    RTKQ_NOJUMBO;
@@ -610,6 +612,14 @@ re_attach(struct rtk_softc *sc)
 		case RTK_HWREV_8168F:
 			sc->sc_quirk |= RTKQ_DESCV2 | RTKQ_NOEECMD |
 			    RTKQ_MACSTAT | RTKQ_CMDSTOP | RTKQ_NOJUMBO;
+			break;
+		case RTK_HWREV_8168G:
+		case RTK_HWREV_8168G_SPIN1:
+		case RTK_HWREV_8168G_SPIN2:
+		case RTK_HWREV_8168G_SPIN4:
+			sc->sc_quirk |= RTKQ_DESCV2 | RTKQ_NOEECMD |
+			    RTKQ_MACSTAT | RTKQ_CMDSTOP | RTKQ_NOJUMBO | 
+			    RTKQ_RXDV_GATED;
 			break;
 		case RTK_HWREV_8100E:
 		case RTK_HWREV_8100E_SPIN2:
@@ -862,7 +872,7 @@ re_attach(struct rtk_softc *sc)
 	ether_ifattach(ifp, eaddr);
 
 	rnd_attach_source(&sc->rnd_source, device_xname(sc->sc_dev),
-	    RND_TYPE_NET, 0);
+	    RND_TYPE_NET, RND_FLAG_DEFAULT);
 
 	if (pmf_device_register(sc->sc_dev, NULL, NULL))
 		pmf_class_network_register(sc->sc_dev, ifp);
@@ -1303,9 +1313,19 @@ re_rxeof(struct rtk_softc *sc)
 						    M_CSUM_TCP_UDP_BAD;
 				} else if (RE_UDPPKT(rxstat)) {
 					m->m_pkthdr.csum_flags |= M_CSUM_UDPv4;
-					if (rxstat & RE_RDESC_STAT_UDPSUMBAD)
-						m->m_pkthdr.csum_flags |=
-						    M_CSUM_TCP_UDP_BAD;
+					if (rxstat & RE_RDESC_STAT_UDPSUMBAD) {
+						/*
+						 * XXX: 8139C+ thinks UDP csum
+						 * 0xFFFF is bad, force software
+						 * calculation.
+						 */
+						if (sc->sc_quirk & RTKQ_8139CPLUS)
+							m->m_pkthdr.csum_flags
+							    &= ~M_CSUM_UDPv4;
+						else
+							m->m_pkthdr.csum_flags
+							    |= M_CSUM_TCP_UDP_BAD;
+					}
 				}
 			}
 		} else {
@@ -1834,6 +1854,11 @@ re_init(struct ifnet *ifp)
 	CSR_WRITE_4(sc, RTK_TXLIST_ADDR_LO,
 	    RE_ADDR_LO(sc->re_ldata.re_tx_list_map->dm_segs[0].ds_addr));
 
+	if (sc->sc_quirk & RTKQ_RXDV_GATED) {
+		CSR_WRITE_4(sc, RTK_MISC,
+		    CSR_READ_4(sc, RTK_MISC) & ~RTK_MISC_RXDV_GATED_EN);
+	}
+		
 	/*
 	 * Enable transmit and receive.
 	 */

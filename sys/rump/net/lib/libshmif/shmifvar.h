@@ -1,4 +1,4 @@
-/*	$NetBSD: shmifvar.h,v 1.6 2011/03/21 16:41:09 pooka Exp $	*/
+/*	$NetBSD: shmifvar.h,v 1.10 2014/09/17 04:20:58 ozaki-r Exp $	*/
 
 /*-
  * Copyright (c) 2009, 2010 Antti Kantee.  All Rights Reserved.
@@ -31,7 +31,7 @@
 #define _RUMP_NET_SHMIFVAR_H_
 
 #define SHMIF_MAGIC 0xca11d054
-#define SHMIF_VERSION 2
+#define SHMIF_VERSION 3
 
 struct shmif_mem {
 	uint32_t shm_magic;
@@ -56,6 +56,8 @@ struct shmif_pkthdr {
 
 	uint32_t sp_sec;
 	uint32_t sp_usec;
+
+	uint64_t sp_sender;
 };
 
 #define BUSMEM_SIZE (1024*1024)
@@ -63,8 +65,10 @@ struct shmif_pkthdr {
 
 #if 0
 #ifdef _KERNEL
+#include <rump/rumpuser.h>
 #define DPRINTF(x) rumpuser_dprintf x
 #else
+#include <stdio.h>
 #define DPRINTF(x) printf x
 #endif
 #else

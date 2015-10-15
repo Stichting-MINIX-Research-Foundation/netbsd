@@ -111,6 +111,8 @@
 @V@/gdb/ChangeLog-2010 @V@/gdb/ChangeLog.010
 @V@/gdb/ChangeLog-2011 @V@/gdb/ChangeLog.011
 @V@/gdb/ChangeLog-2012 @V@/gdb/ChangeLog.012
+@V@/gdb/ChangeLog-2013 @V@/gdb/ChangeLog.013
+@V@/gdb/ChangeLog-2014 @V@/gdb/ChangeLog.014
 @V@/gdb/ChangeLog-3.x @V@/gdb/ChangeLog.3-x
 @V@/gdb/ada-exp.tab.c @V@/gdb/ada-exp_tab.c
 @V@/gdb/amd64-windows-nat.c @V@/gdb/a64w-nat.c
@@ -131,9 +133,6 @@
 @V@/gdb/armnbsd-nat.c @V@/gdb/armnbd-nat.c
 @V@/gdb/armnbsd-tdep.c @V@/gdb/armnbd-tdep.c
 @V@/gdb/c-exp.tab.c @V@/gdb/c-exp_tab.c
-@V@/gdb/config/alpha/alpha-osf1.mh @V@/gdb/config/alpha/alphosf1.mh
-@V@/gdb/config/alpha/alpha-osf2.mh @V@/gdb/config/alpha/alphosf2.mh
-@V@/gdb/config/alpha/alpha-osf3.mh @V@/gdb/config/alpha/alphosf3.mh
 @V@/gdb/config/alpha/tm-alphalinux.h @V@/gdb/config/alpha/tm-alplinux.h
 @V@/gdb/config/i386/nm-cygwin64.h @V@/gdb/config/i386/nm-cyg64.h
 @V@/gdb/config/i386/nm-linux64.h @V@/gdb/config/i386/nm-lx64.h
@@ -282,8 +281,6 @@
 @V@/gdb/hppnbsd-tdep.c @V@/gdb/hppnb-tdep.c
 @V@/gdb/i386-darwin-nat.c @V@/gdb/i386dw-nat.c
 @V@/gdb/i386-darwin-tdep.c @V@/gdb/i386dw-tdep.c
-@V@/gdb/i386-interix-nat.c @V@/gdb/i386ix-nat.c
-@V@/gdb/i386-interix-tdep.c @V@/gdb/i386ix-tdep.c
 @V@/gdb/i386-linux-tdep.c @V@/gdb/i386lx-tdep.c
 @V@/gdb/i386-linux-nat.c @V@/gdb/i386lx-nat.c
 @V@/gdb/i386bsd-nat.c @V@/gdb/i3bsd-nat.c

@@ -1,4 +1,4 @@
-/* $NetBSD: podulebus.c,v 1.26 2011/06/03 07:35:37 matt Exp $ */
+/* $NetBSD: podulebus.c,v 1.29 2014/10/25 10:58:12 skrll Exp $ */
 
 /*
  * Copyright (c) 1994-1996 Mark Brinicombe.
@@ -43,7 +43,7 @@
 
 #include <sys/param.h>
 
-__KERNEL_RCSID(0, "$NetBSD: podulebus.c,v 1.26 2011/06/03 07:35:37 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: podulebus.c,v 1.29 2014/10/25 10:58:12 skrll Exp $");
 
 #include <sys/systm.h>
 #include <sys/kernel.h>
@@ -52,7 +52,6 @@ __KERNEL_RCSID(0, "$NetBSD: podulebus.c,v 1.26 2011/06/03 07:35:37 matt Exp $");
 #include <sys/device.h>
 #include <uvm/uvm_extern.h>
 #include <machine/io.h>
-#include <arm/arm32/katelib.h>
 #include <machine/intr.h>
 #include <machine/bootconfig.h>
 #include <machine/pmap.h>
@@ -63,6 +62,11 @@ __KERNEL_RCSID(0, "$NetBSD: podulebus.c,v 1.26 2011/06/03 07:35:37 matt Exp $");
 #include <dev/podulebus/podule_data.h>
 
 #include "locators.h"
+
+#define WriteByte(a, b) \
+    *((volatile unsigned char *)(a)) = (b)
+#define ReadByte(a) \
+    (*((volatile unsigned char *)(a)))
 
 /* Array of podule structures, one per possible podule */
 
@@ -429,7 +433,7 @@ podulebusattach(device_t parent, device_t self, void *aux)
 	 * are built during initarm
 	 */
 	/* Map the FAST and SYNC simple podules */
-	pmap_map_section((vm_offset_t)pmap_kernel()->pm_pdir,
+	pmap_map_section((vaddr_t)pmap_kernel()->pm_pdir,
 	    SYNC_PODULE_BASE & 0xfff00000, SYNC_PODULE_HW_BASE & 0xfff00000,
 	    VM_PROT_READ|VM_PROT_WRITE, PTE_NOCACHE);
 	cpu_tlb_flushD();
@@ -440,7 +444,7 @@ podulebusattach(device_t parent, device_t self, void *aux)
         
 		for (loop1 = loop * EASI_SIZE; loop1 < ((loop + 1) * EASI_SIZE);
 		    loop1 += L1_S_SIZE)
-		pmap_map_section((vm_offset_t)pmap_kernel()->pm_pdir,
+		pmap_map_section((vaddr_t)pmap_kernel()->pm_pdir,
 		    EASI_BASE + loop1, EASI_HW_BASE + loop1,
 		    VM_PROT_READ|VM_PROT_WRITE, PTE_NOCACHE);
 	}
@@ -461,7 +465,7 @@ podulebusattach(device_t parent, device_t self, void *aux)
 	for (loop = 0; loop < MAX_PODULES+MAX_NETSLOTS; ++loop) {
 #if 1
 		/* Provide backwards compat for a while */
-		sprintf(argstring, "podule%d.disable", loop);
+		snprintf(argstring, sizeof(argstring), "podule%d.disable", loop);
 		if (get_bootconf_option(boot_args, argstring,
 		    BOOTOPT_TYPE_BOOLEAN, &value)) {
 			if (value) {
@@ -471,7 +475,7 @@ podulebusattach(device_t parent, device_t self, void *aux)
 			}
  		}
 #endif
- 		sprintf(argstring, "podule%d=", loop);
+ 		snprintf(argstring, sizeof(argstring), "podule%d=", loop);
  		if (get_bootconf_option(boot_args, argstring,
  		    BOOTOPT_TYPE_HEXINT, &value)) {
 			/* Override the ID */

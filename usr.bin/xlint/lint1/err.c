@@ -1,4 +1,4 @@
-/*	$NetBSD: err.c,v 1.46 2013/04/19 17:43:05 christos Exp $	*/
+/*	$NetBSD: err.c,v 1.48 2015/07/29 18:22:06 christos Exp $	*/
 
 /*
  * Copyright (c) 1994, 1995 Jochen Pohl
@@ -37,7 +37,7 @@
 
 #include <sys/cdefs.h>
 #if defined(__RCSID) && !defined(lint)
-__RCSID("$NetBSD: err.c,v 1.46 2013/04/19 17:43:05 christos Exp $");
+__RCSID("$NetBSD: err.c,v 1.48 2015/07/29 18:22:06 christos Exp $");
 #endif
 
 #include <sys/types.h>
@@ -163,7 +163,7 @@ const	char *msgs[] = {
 	"undefined struct/union member: %s",			      /* 101 */
 	"illegal member use: %s",				      /* 102 */
 	"left operand of '.' must be struct/union object",	      /* 103 */
-	"left operand of '->' must be pointer to struct/union",	      /* 104 */
+	"left operand of '->' must be pointer to struct/union and is %s",	/* 104 */
 	"non-unique member requires struct/union %s",		      /* 105 */
 	"left operand of '->' must be pointer",			      /* 106 */
 	"operands of '%s' have incompatible types (%s != %s)",		      /* 107 */
@@ -208,7 +208,7 @@ const	char *msgs[] = {
 	"cannot take size/alignment of void",			      /* 146 */
 	"invalid cast expression",				      /* 147 */
 	"improper cast of void expression",			      /* 148 */
-	"illegal function",					      /* 149 */
+	"illegal function (type %s)",				      /* 149 */
 	"argument mismatch: %d arg%s passed, %d expected",	      /* 150 */
 	"void expressions may not be arguments, arg #%d",	      /* 151 */
 	"argument cannot have unknown size, arg #%d",		      /* 152 */

@@ -1,4 +1,4 @@
-/*	$NetBSD: filecore_vnops.c,v 1.39 2013/10/20 17:14:48 christos Exp $	*/
+/*	$NetBSD: filecore_vnops.c,v 1.44 2015/04/20 23:03:08 riastradh Exp $	*/
 
 /*-
  * Copyright (c) 1994 The Regents of the University of California.
@@ -66,7 +66,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: filecore_vnops.c,v 1.39 2013/10/20 17:14:48 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: filecore_vnops.c,v 1.44 2015/04/20 23:03:08 riastradh Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -254,7 +254,7 @@ filecore_read(void *v)
 			n = MIN(FILECORE_DIR_SIZE - on, uio->uio_resid);
 			size = FILECORE_DIR_SIZE;
 		} else {
-			error = bread(vp, lbn, size, NOCRED, 0, &bp);
+			error = bread(vp, lbn, size, 0, &bp);
 #ifdef FILECORE_DEBUG_BR
 			printf("bread(%p, %llx, %ld, CRED, %p)=%d\n",
 			    vp, (long long)lbn, size, bp, error);
@@ -419,21 +419,20 @@ filecore_readlink(void *v)
 int
 filecore_link(void *v)
 {
-	struct vop_link_args /* {
+	struct vop_link_v2_args /* {
 		struct vnode *a_dvp;
 		struct vnode *a_vp;
 		struct componentname *a_cnp;
 	} */ *ap = v;
 
 	VOP_ABORTOP(ap->a_dvp, ap->a_cnp);
-	vput(ap->a_dvp);
 	return (EROFS);
 }
 
 int
 filecore_symlink(void *v)
 {
-	struct vop_symlink_args /* {
+	struct vop_symlink_v3_args /* {
 		struct vnode *a_dvp;
 		struct vnode **a_vpp;
 		struct componentname *a_cnp;
@@ -442,7 +441,6 @@ filecore_symlink(void *v)
 	} */ *ap = v;
 
 	VOP_ABORTOP(ap->a_dvp, ap->a_cnp);
-	vput(ap->a_dvp);
 	return (EROFS);
 }
 
@@ -566,6 +564,8 @@ const struct vnodeopv_entry_desc filecore_vnodeop_entries[] = {
 	{ &vop_setattr_desc, filecore_setattr },	/* setattr */
 	{ &vop_read_desc, filecore_read },		/* read */
 	{ &vop_write_desc, filecore_write },		/* write */
+	{ &vop_fallocate_desc, genfs_eopnotsupp },	/* fallocate */
+	{ &vop_fdiscard_desc, genfs_eopnotsupp },	/* fdiscard */
 	{ &vop_fcntl_desc, filecore_fcntl },		/* fcntl */
 	{ &vop_ioctl_desc, filecore_ioctl },		/* ioctl */
 	{ &vop_poll_desc, filecore_poll },		/* poll */

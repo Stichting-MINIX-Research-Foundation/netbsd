@@ -1,7 +1,7 @@
-/*	$NetBSD: log.c,v 1.2 2011/08/16 04:45:17 christos Exp $	*/
+/*	$NetBSD: log.c,v 1.6 2015/07/10 14:20:29 christos Exp $	*/
 
 /*
- * Copyright (C) 2004-2007, 2009  Internet Systems Consortium, Inc. ("ISC")
+ * Copyright (C) 2004-2007, 2009, 2011, 2012  Internet Systems Consortium, Inc. ("ISC")
  * Copyright (C) 1999-2003  Internet Software Consortium.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
@@ -17,7 +17,7 @@
  * PERFORMANCE OF THIS SOFTWARE.
  */
 
-/* Id: log.c,v 1.94.332.5 2009/02/16 02:04:05 marka Exp */
+/* Id */
 
 /*! \file
  * \author  Principal Authors: DCL */
@@ -43,6 +43,7 @@
 #include <isc/string.h>
 #include <isc/time.h>
 #include <isc/util.h>
+#include "ntp_stdlib.h"		/* NTP change for strlcpy, strlcat */
 
 #define LCTX_MAGIC		ISC_MAGIC('L', 'c', 't', 'x')
 #define VALID_CONTEXT(lctx)	ISC_MAGIC_VALID(lctx, LCTX_MAGIC)
@@ -1144,7 +1145,7 @@ sync_channellist(isc_logconfig_t *lcfg) {
 static isc_result_t
 greatest_version(isc_logchannel_t *channel, int *greatestp) {
 	/* XXXDCL HIGHLY NT */
-	char *basename, *digit_end;
+	char *basenam, *digit_end;
 	const char *dirname;
 	int version, greatest = -1;
 	unsigned int basenamelen;
@@ -1161,23 +1162,23 @@ greatest_version(isc_logchannel_t *channel, int *greatestp) {
 	 * It is safe to DE_CONST the file.name because it was copied
 	 * with isc_mem_strdup in isc_log_createchannel.
 	 */
-	basename = strrchr(FILE_NAME(channel), sep);
+	basenam = strrchr(FILE_NAME(channel), sep);
 #ifdef _WIN32
 	basename2 = strrchr(FILE_NAME(channel), '\\');
-	if ((basename != NULL && basename2 != NULL && basename2 > basename) ||
-	    (basename == NULL && basename2 != NULL)) {
-		basename = basename2;
+	if ((basenam != NULL && basename2 != NULL && basename2 > basenam) ||
+	    (basenam == NULL && basename2 != NULL)) {
+		basenam = basename2;
 		sep = '\\';
 	}
 #endif
-	if (basename != NULL) {
-		*basename++ = '\0';
+	if (basenam != NULL) {
+		*basenam++ = '\0';
 		dirname = FILE_NAME(channel);
 	} else {
-		DE_CONST(FILE_NAME(channel), basename);
+		DE_CONST(FILE_NAME(channel), basenam);
 		dirname = ".";
 	}
-	basenamelen = strlen(basename);
+	basenamelen = strlen(basenam);
 
 	isc_dir_init(&dir);
 	result = isc_dir_open(&dir, dirname);
@@ -1185,8 +1186,8 @@ greatest_version(isc_logchannel_t *channel, int *greatestp) {
 	/*
 	 * Replace the file separator if it was taken out.
 	 */
-	if (basename != FILE_NAME(channel))
-		*(basename - 1) = sep;
+	if (basenam != FILE_NAME(channel))
+		*(basenam - 1) = sep;
 
 	/*
 	 * Return if the directory open failed.
@@ -1196,7 +1197,7 @@ greatest_version(isc_logchannel_t *channel, int *greatestp) {
 
 	while (isc_dir_read(&dir) == ISC_R_SUCCESS) {
 		if (dir.entry.length > basenamelen &&
-		    strncmp(dir.entry.name, basename, basenamelen) == 0 &&
+		    strncmp(dir.entry.name, basenam, basenamelen) == 0 &&
 		    dir.entry.name[basenamelen] == '.') {
 
 			version = strtol(&dir.entry.name[basenamelen + 1],
@@ -1344,9 +1345,10 @@ isc_log_open(isc_logchannel_t *channel) {
 		    (FILE_MAXSIZE(channel) > 0 &&
 		     statbuf.st_size >= FILE_MAXSIZE(channel)))
 			roll = regular_file;
-	} else if (errno == ENOENT)
+	} else if (errno == ENOENT) {
 		regular_file = ISC_TRUE;
-	else
+		POST(regular_file);
+	} else
 		result = ISC_R_INVALIDFILE;
 
 	/*
@@ -1410,6 +1412,7 @@ isc_log_doit(isc_log_t *lctx, isc_logcategory_t *category,
 	int syslog_level;
 	char time_string[64];
 	char level_string[24];
+	size_t octets;
 	const char *iformat;
 	struct stat statbuf;
 	isc_boolean_t matched = ISC_FALSE;
@@ -1621,16 +1624,17 @@ isc_log_doit(isc_log_t *lctx, isc_logcategory_t *category,
 				 * It wasn't in the duplicate interval,
 				 * so add it to the message list.
 				 */
+				octets = strlen(lctx->buffer) + 1;
 				new = isc_mem_get(lctx->mctx,
 						  sizeof(isc_logmessage_t) +
-						  strlen(lctx->buffer) + 1);
+						  octets);
 				if (new != NULL) {
 					/*
 					 * Put the text immediately after
 					 * the struct.  The strcpy is safe.
 					 */
 					new->text = (char *)(new + 1);
-					strcpy(new->text, lctx->buffer);
+					strlcpy(new->text, lctx->buffer, octets);
 
 					TIME_NOW(&new->time);
 

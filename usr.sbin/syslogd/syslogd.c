@@ -1,4 +1,4 @@
-/*	$NetBSD: syslogd.c,v 1.119 2013/11/27 20:48:28 christos Exp $	*/
+/*	$NetBSD: syslogd.c,v 1.122 2015/09/05 20:19:43 dholland Exp $	*/
 
 /*
  * Copyright (c) 1983, 1988, 1993, 1994
@@ -39,7 +39,7 @@ __COPYRIGHT("@(#) Copyright (c) 1983, 1988, 1993, 1994\
 #if 0
 static char sccsid[] = "@(#)syslogd.c	8.3 (Berkeley) 4/4/94";
 #else
-__RCSID("$NetBSD: syslogd.c,v 1.119 2013/11/27 20:48:28 christos Exp $");
+__RCSID("$NetBSD: syslogd.c,v 1.122 2015/09/05 20:19:43 dholland Exp $");
 #endif
 #endif /* not lint */
 
@@ -273,9 +273,7 @@ static inline void
 static int writev1(int, struct iovec *, size_t);
 
 /* for make_timestamp() */
-#define TIMESTAMPBUFSIZE 35
-char timestamp[TIMESTAMPBUFSIZE];
-
+char	timestamp[MAX_TIMESTAMPLEN + 1];
 /*
  * Global line buffer.	Since we only process one event at a time,
  * a global one will do.  But for klog, we use own buffer so that
@@ -716,9 +714,11 @@ dispatch_read_funix(int fd, short event, void *ev)
 		return;
 	}
 
+#define SUN_PATHLEN(su) \
+	((su)->sun_len - (sizeof(*(su)) - sizeof((su)->sun_path)))
+
 	DPRINTF((D_CALL|D_EVENT|D_NET), "Unix socket (%.*s) active (%d, %d %p)"
-		" with linebuf@%p, size %zu)\n", (int)(myname.sun_len
-		- sizeof(myname.sun_len) - sizeof(myname.sun_family)),
+		" with linebuf@%p, size %zu)\n", (int)SUN_PATHLEN(&myname),
 		myname.sun_path, fd, event, ev, linebuf, linebufsize-1);
 
 	sunlen = sizeof(fromunix);
@@ -729,7 +729,7 @@ dispatch_read_funix(int fd, short event, void *ev)
 		printline(LocalFQDN, linebuf, 0);
 	} else if (rv < 0 && errno != EINTR) {
 		logerror("recvfrom() unix `%.*s'",
-			myname.sun_len, myname.sun_path);
+			(int)SUN_PATHLEN(&myname), myname.sun_path);
 	}
 }
 
@@ -1045,8 +1045,7 @@ printline_syslogprotocol(const char *hname, char *msg,
 
 	if (flags & ADDDATE) {
 		FREEPTR(buffer->timestamp);
-		buffer->timestamp = strdup(make_timestamp(NULL,
-			!BSDOutputFormat));
+		buffer->timestamp = make_timestamp(NULL, !BSDOutputFormat, 0);
 	}
 
 	start = p;
@@ -1262,8 +1261,7 @@ printline_bsdsyslog(const char *hname, char *msg,
 
 	if (flags & ADDDATE || !buffer->timestamp) {
 		FREEPTR(buffer->timestamp);
-		buffer->timestamp = strdup(make_timestamp(NULL,
-			!BSDOutputFormat));
+		buffer->timestamp = make_timestamp(NULL, !BSDOutputFormat, 0);
 	}
 
 	if (*p == ' ') p++; /* SP */
@@ -1421,7 +1419,7 @@ printline_kernelprintf(const char *hname, char *msg,
 		"\"%s\", \"%s\", %d, %d)\n", hname, msg, flags, pri);
 
 	buffer = buf_msg_new(0);
-	buffer->timestamp = strdup(make_timestamp(NULL, !BSDOutputFormat));
+	buffer->timestamp = make_timestamp(NULL, !BSDOutputFormat, 0);
 	buffer->pri = pri;
 	buffer->flags = flags;
 
@@ -1639,7 +1637,7 @@ logmsg_async(int pri, const char *sd, const char *msg, int flags)
 		buffer = buf_msg_new(0);
 	}
 	if (sd) buffer->sd = strdup(sd);
-	buffer->timestamp = strdup(make_timestamp(NULL, !BSDOutputFormat));
+	buffer->timestamp = make_timestamp(NULL, !BSDOutputFormat, 0);
 	buffer->prog = appname;
 	buffer->pid = include_pid;
 	buffer->recvhost = buffer->host = LocalFQDN;
@@ -1722,10 +1720,11 @@ check_timestamp(unsigned char *from_buf, char **to_buf,
 				/* with BSD Syslog the field is reqired
 				 * so replace it with current time
 				 */
-				*to_buf = strdup(make_timestamp(NULL, false));
+				*to_buf = make_timestamp(NULL, false, 0);
 			}
 			return 2;
 		}
+		*to_buf = make_timestamp(NULL, false, 0);
 		return 0;
 	}
 
@@ -1769,20 +1768,18 @@ check_timestamp(unsigned char *from_buf, char **to_buf,
 		(void)strptime(tsbuf, "%FT%T%z", &parsed);
 		timeval = mktime(&parsed);
 
-		*to_buf = strndup(make_timestamp(&timeval, false),
-		    BSD_TIMESTAMPLEN);
+		*to_buf = make_timestamp(&timeval, false, BSD_TIMESTAMPLEN);
 		return i;
 	} else if (!from_iso && to_iso) {
 		/* convert BSD->ISO */
 		struct tm parsed;
 		struct tm *current;
 		time_t timeval;
-		char *rc;
 
 		(void)memset(&parsed, 0, sizeof(parsed));
 		parsed.tm_isdst = -1;
 		DPRINTF(D_CALL, "check_timestamp(): convert BSD->ISO\n");
-		rc = strptime((char *)from_buf, "%b %d %T", &parsed);
+		strptime((char *)from_buf, "%b %d %T", &parsed);
 		current = gmtime(&now);
 
 		/* use current year and timezone */
@@ -1793,8 +1790,7 @@ check_timestamp(unsigned char *from_buf, char **to_buf,
 			parsed.tm_year--;
 
 		timeval = mktime(&parsed);
-		rc = make_timestamp(&timeval, true);
-		*to_buf = strndup(rc, MAX_TIMESTAMPLEN-1);
+		*to_buf = make_timestamp(&timeval, true, MAX_TIMESTAMPLEN - 1);
 
 		return BSD_TIMESTAMPLEN;
 	} else {
@@ -1854,21 +1850,22 @@ logmsg(struct buf_msg *buffer)
 	}
 
 	for (f = Files; f; f = f->f_next) {
+		char *h;	/* host to use for comparing */
+
 		/* skip messages that are incorrect priority */
 		if (!MATCH_PRI(f, fac, prilev)
 		    || f->f_pmask[fac] == INTERNAL_NOPRI)
 			continue;
 
 		/* skip messages with the incorrect host name */
-		/* do we compare with host (IMHO correct) or recvhost */
-		/* (compatible)? */
-		if (f->f_host != NULL && buffer->host != NULL) {
-			char shost[MAXHOSTNAMELEN + 1], *h;
-			if (!BSDOutputFormat) {
-				h = buffer->host;
-			} else {
-				(void)strlcpy(shost, buffer->host,
-				    sizeof(shost));
+		/* compare with host (which is supposedly more correct), */
+		/* but fallback to recvhost if host is NULL */
+		h = (buffer->host != NULL) ? buffer->host : buffer->recvhost;
+		if (f->f_host != NULL && h != NULL) {
+			char shost[MAXHOSTNAMELEN + 1];
+
+			if (BSDOutputFormat) {
+				(void)strlcpy(shost, h, sizeof(shost));
 				trim_anydomain(shost);
 				h = shost;
 			}
@@ -2172,8 +2169,8 @@ fprintlog(struct filed *f, struct buf_msg *passedbuffer, struct buf_queue *qentr
 			buffer = buf_msg_new(REPBUFSIZE);
 			buffer->msglen = snprintf(buffer->msg, REPBUFSIZE,
 			    "last message repeated %d times", f->f_prevcount);
-			buffer->timestamp =
-				strdup(make_timestamp(NULL, !BSDOutputFormat));
+			buffer->timestamp = make_timestamp(NULL,
+			    !BSDOutputFormat, 0);
 			buffer->pri = f->f_prevmsg->pri;
 			buffer->host = LocalFQDN;
 			buffer->prog = appname;
@@ -3740,7 +3737,7 @@ cfline(size_t linenum, const char *line, struct filed *f, const char *prog,
 		f->f_host = NULL;
 	else {
 		f->f_host = strdup(host);
-		trim_anydomain(f->f_host);
+		trim_anydomain(&f->f_host[1]);	/* skip +/- at beginning */
 	}
 
 	/* save program name, if any */
@@ -4669,7 +4666,7 @@ dispatch_force_tls_reconnect(int fd, short event, void *ev)
  * or use the current time if in_now is NULL.
  */
 char *
-make_timestamp(time_t *in_now, bool iso)
+make_timestamp(time_t *in_now, bool iso, size_t tlen)
 {
 	int frac_digits = 6;
 	struct timeval tv;
@@ -4683,31 +4680,40 @@ make_timestamp(time_t *in_now, bool iso)
 		mytime = *in_now;
 	} else {
 		gettimeofday(&tv, NULL);
-		mytime = now = (time_t) tv.tv_sec;
+		mytime = now = tv.tv_sec;
 	}
 
 	if (!iso) {
-		strlcpy(timestamp, ctime(&mytime) + 4, TIMESTAMPBUFSIZE);
+		strlcpy(timestamp, ctime(&mytime) + 4, sizeof(timestamp));
 		timestamp[BSD_TIMESTAMPLEN] = '\0';
+	} else {
+		localtime_r(&mytime, &ltime);
+		len += strftime(timestamp, sizeof(timestamp), "%FT%T", &ltime);
+		snprintf(&timestamp[len], frac_digits + 2, ".%.*jd",
+		    frac_digits, (intmax_t)tv.tv_usec);
+		len += frac_digits + 1;
+		tzlen = strftime(&timestamp[len], sizeof(timestamp) - len, "%z",
+		    &ltime);
+		len += tzlen;
+
+		if (tzlen == 5) {
+			/* strftime gives "+0200", but we need "+02:00" */
+			timestamp[len + 2] = '\0';
+			timestamp[len + 1] = timestamp[len];
+			timestamp[len] = timestamp[len - 1];
+			timestamp[len - 1] = timestamp[len - 2];
+			timestamp[len - 2] = ':';
+		}
+	}
+
+	switch (tlen) {
+	case (size_t)-1:
 		return timestamp;
+	case 0:
+		return strdup(timestamp);
+	default:
+		return strndup(timestamp, tlen);
 	}
-
-	localtime_r(&mytime, &ltime);
-	len += strftime(timestamp, TIMESTAMPBUFSIZE, "%FT%T", &ltime);
-	snprintf(&(timestamp[len]), frac_digits+2, ".%.*ld",
-		frac_digits, (long)tv.tv_usec);
-	len += frac_digits+1;
-	tzlen = strftime(&(timestamp[len]), TIMESTAMPBUFSIZE-len, "%z", &ltime);
-	len += tzlen;
-
-	if (tzlen == 5) {
-		/* strftime gives "+0200", but we need "+02:00" */
-		timestamp[len+1] = timestamp[len];
-		timestamp[len] = timestamp[len-1];
-		timestamp[len-1] = timestamp[len-2];
-		timestamp[len-2] = ':';
-	}
-	return timestamp;
 }
 
 /* auxillary code to allocate memory and copy a string */
@@ -4828,3 +4834,20 @@ writev1(int fd, struct iovec *iov, size_t count)
 	}
 	return tot == 0 ? nw : tot;
 }
+
+#ifndef NDEBUG
+void
+dbprintf(const char *fname, const char *funname,
+    size_t lnum, const char *fmt, ...)
+{
+	va_list ap;
+	char *ts;
+
+	ts = make_timestamp(NULL, true, (size_t)-1);
+	printf("%s:%s:%s:%.4zu\t", ts, fname, funname, lnum);
+
+	va_start(ap, fmt);
+	vprintf(fmt, ap);
+	va_end(ap);
+}
+#endif

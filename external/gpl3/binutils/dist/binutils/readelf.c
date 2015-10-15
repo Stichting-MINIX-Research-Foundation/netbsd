@@ -126,13 +126,14 @@
 #include "elf/mep.h"
 #include "elf/microblaze.h"
 #include "elf/mips.h"
+#include "elf/riscv.h"
 #include "elf/mmix.h"
 #include "elf/mn10200.h"
 #include "elf/mn10300.h"
 #include "elf/moxie.h"
 #include "elf/mt.h"
 #include "elf/msp430.h"
-#include "elf/or32.h"
+#include "elf/or1k.h"
 #include "elf/pj.h"
 #include "elf/ppc.h"
 #include "elf/ppc64.h"
@@ -184,6 +185,7 @@ static Elf_Internal_Phdr * program_headers;
 static Elf_Internal_Dyn *  dynamic_section;
 static Elf_Internal_Shdr * symtab_shndx_hdr;
 static int show_name;
+static int do_special_files;
 static int do_dynamic;
 static int do_syms;
 static int do_dyn_syms;
@@ -555,8 +557,7 @@ guess_is_rela (unsigned int e_machine)
     case EM_MIPS:
     case EM_MIPS_RS3_LE:
     case EM_CYGNUS_M32R:
-    case EM_OPENRISC:
-    case EM_OR32:
+    case EM_OR1K:
     case EM_SCORE:
     case EM_XGATE:
       return FALSE;
@@ -604,6 +605,7 @@ guess_is_rela (unsigned int e_machine)
     case EM_NIOS32:
     case EM_PPC64:
     case EM_PPC:
+    case EM_RISCV:
     case EM_RL78:
     case EM_RX:
     case EM_S390:
@@ -1134,9 +1136,8 @@ dump_relocations (FILE * file,
 	  rtype = elf_h8_reloc_type (type);
 	  break;
 
-	case EM_OPENRISC:
-	case EM_OR32:
-	  rtype = elf_or32_reloc_type (type);
+	case EM_OR1K:
+	  rtype = elf_or1k_reloc_type (type);
 	  break;
 
 	case EM_PJ:
@@ -1232,6 +1233,10 @@ dump_relocations (FILE * file,
 	case EM_MICROBLAZE:
 	case EM_MICROBLAZE_OLD:
 	  rtype = elf_microblaze_reloc_type (type);
+	  break;
+
+	case EM_RISCV:
+	  rtype = elf_riscv_reloc_type (type);
 	  break;
 
 	case EM_RL78:
@@ -1941,8 +1946,7 @@ get_machine_name (unsigned e_machine)
     case EM_S390:		return "IBM S/390";
     case EM_SCORE:		return "SUNPLUS S+Core";
     case EM_XSTORMY16:		return "Sanyo XStormy16 CPU core";
-    case EM_OPENRISC:
-    case EM_OR32:		return "OpenRISC";
+    case EM_OR1K:		return "OpenRISC";
     case EM_ARC_A5:		return "ARC International ARCompact processor";
     case EM_CRX:		return "National Semiconductor CRX microprocessor";
     case EM_ADAPTEVA_EPIPHANY:	return "Adapteva EPIPHANY";
@@ -2005,6 +2009,7 @@ get_machine_name (unsigned e_machine)
     case EM_CR16:
     case EM_MICROBLAZE:
     case EM_MICROBLAZE_OLD:	return "Xilinx MicroBlaze";
+    case EM_RISCV:		return "RISC-V";
     case EM_RL78:		return "Renesas RL78";
     case EM_RX:			return "Renesas RX";
     case EM_METAG:		return "Imagination Technologies META processor architecture";
@@ -2486,6 +2491,14 @@ get_machine_flags (unsigned e_flags, unsigned e_machine)
 
 	  if (e_flags & EF_SH_FDPIC)
 	    strcat (buf, ", fdpic");
+	  break;
+
+	case EM_RISCV:
+	  {
+	    unsigned int riscv_extension = EF_GET_RISCV_EXT(e_flags);
+	    strcat (buf, ", ");
+	    strcat (buf, riscv_elf_flag_to_name (riscv_extension));
+	  }
 	  break;
 
 	case EM_SH:
@@ -3198,6 +3211,7 @@ static struct option options[] =
   {"relocs",	       no_argument, 0, 'r'},
   {"notes",	       no_argument, 0, 'n'},
   {"dynamic",	       no_argument, 0, 'd'},
+  {"special-files",    no_argument, 0, 'f'},
   {"arch-specific",    no_argument, 0, 'A'},
   {"version-info",     no_argument, 0, 'V'},
   {"use-dynamic",      no_argument, 0, 'D'},
@@ -3243,6 +3257,7 @@ usage (FILE * stream)
   -r --relocs            Display the relocations (if present)\n\
   -u --unwind            Display the unwind info (if present)\n\
   -d --dynamic           Display the dynamic section (if present)\n\
+  -f --special-files     Process non-plain files too\n\
   -V --version-info      Display the version sections (if present)\n\
   -A --arch-specific     Display architecture specific information (if any)\n\
   -c --archive-index     Display the symbol/file index in an archive\n\
@@ -3362,7 +3377,7 @@ parse_args (int argc, char ** argv)
     usage (stderr);
 
   while ((c = getopt_long
-	  (argc, argv, "ADHINR:SVWacdeghi:lnp:rstuvw::x:", options, NULL)) != EOF)
+	  (argc, argv, "ADHINR:SVWacdefghi:lnp:rstuvw::x:", options, NULL)) != EOF)
     {
       switch (c)
 	{
@@ -3411,6 +3426,9 @@ parse_args (int argc, char ** argv)
 	  break;
 	case 'u':
 	  do_unwind++;
+	  break;
+	case 'f':
+	  do_special_files++;
 	  break;
 	case 'h':
 	  do_header++;
@@ -8847,6 +8865,20 @@ get_symbol_visibility (unsigned int visibility)
 }
 
 static const char *
+get_alpha_symbol_other (unsigned int other)
+{   
+  switch (other)
+    {
+    case STO_ALPHA_NOPV:
+      return "NOPV";
+    case STO_ALPHA_STD_GPLOAD:
+      return "STD GPLOAD";
+    default:
+      return NULL;
+    } 
+}
+
+static const char *
 get_mips_symbol_other (unsigned int other)
 {
   switch (other)
@@ -8940,6 +8972,9 @@ get_symbol_other (unsigned int other)
 
   switch (elf_header.e_machine)
     {
+    case EM_ALPHA:
+      result = get_alpha_symbol_other (other);
+      break;
     case EM_MIPS:
       result = get_mips_symbol_other (other);
       break;
@@ -9907,9 +9942,8 @@ is_32bit_abs_reloc (unsigned int reloc_type)
     case EM_ALTERA_NIOS2:
     case EM_NIOS32:
       return reloc_type == 1; /* R_NIOS_32.  */
-    case EM_OPENRISC:
-    case EM_OR32:
-      return reloc_type == 1; /* R_OR32_32.  */
+    case EM_OR1K:
+      return reloc_type == 1; /* R_OR1K_32.  */
     case EM_PARISC:
       return (reloc_type == 1 /* R_PARISC_DIR32.  */
 	      || reloc_type == 41); /* R_PARISC_SECREL32.  */
@@ -9920,6 +9954,8 @@ is_32bit_abs_reloc (unsigned int reloc_type)
       return reloc_type == 1; /* R_PPC64_ADDR32.  */
     case EM_PPC:
       return reloc_type == 1; /* R_PPC_ADDR32.  */
+    case EM_RISCV:
+      return reloc_type == 1; /* R_RISCV_32.  */
     case EM_RL78:
       return reloc_type == 1; /* R_RL78_DIR32.  */
     case EM_RX:
@@ -10020,6 +10056,8 @@ is_32bit_pcrel_reloc (unsigned int reloc_type)
     case EM_L1OM:
     case EM_K1OM:
       return reloc_type == 2;  /* R_X86_64_PC32.  */
+    case EM_VAX:
+      return reloc_type == 4;  /* R_VAX_PCREL32.  */
     case EM_XTENSA_OLD:
     case EM_XTENSA:
       return reloc_type == 14; /* R_XTENSA_32_PCREL.  */
@@ -10051,6 +10089,8 @@ is_64bit_abs_reloc (unsigned int reloc_type)
       return reloc_type == 80; /* R_PARISC_DIR64.  */
     case EM_PPC64:
       return reloc_type == 38; /* R_PPC64_ADDR64.  */
+    case EM_RISCV:
+      return reloc_type == 2; /* R_RISCV_64.  */
     case EM_SPARC32PLUS:
     case EM_SPARCV9:
     case EM_SPARC:
@@ -10192,6 +10232,7 @@ is_none_reloc (unsigned int reloc_type)
     case EM_ADAPTEVA_EPIPHANY:
     case EM_PPC:     /* R_PPC_NONE.  */
     case EM_PPC64:   /* R_PPC64_NONE.  */
+    case EM_RISCV:   /* R_RISCV_NONE.  */
     case EM_ARM:     /* R_ARM_NONE.  */
     case EM_IA_64:   /* R_IA64_NONE.  */
     case EM_SH:      /* R_SH_NONE.  */
@@ -12685,13 +12726,23 @@ process_netbsd_elf_note (Elf_Internal_Note * pnote)
 		(version / 10000) % 100 > 26 ? "Z" : "",
 		'A' + (version / 10000) % 26); 
       else
-	printf ("  NetBSD\t0x%08lx\tIDENT %u (%u.%u.%u)\n", pnote->descsz,
+	printf ("  NetBSD\t\t0x%08lx\tIDENT %u (%u.%u.%u)\n", pnote->descsz,
 	        version, version / 100000000, (version / 1000000) % 100,
 		(version / 100) % 100); 
       return 1;
     case NT_NETBSD_MARCH:
-      printf ("  NetBSD\t0x%08lx\tMARCH <%s>\n", pnote->descsz,
+      printf ("  NetBSD\t\t0x%08lx\tMARCH <%s>\n", pnote->descsz,
 	      pnote->descdata);
+      return 1;
+    case NT_NETBSD_PAX:
+      version = byte_get((unsigned char *)pnote->descdata, sizeof(version));
+      printf ("  NetBSD\t\t0x%08lx\tPaX <%s%s%s%s%s%s>\n", pnote->descsz,
+	      ((version & NT_NETBSD_PAX_MPROTECT) ? "+mprotect" : ""),
+	      ((version & NT_NETBSD_PAX_NOMPROTECT) ? "-mprotect" : ""),
+	      ((version & NT_NETBSD_PAX_GUARD) ? "+guard" : ""),
+	      ((version & NT_NETBSD_PAX_NOGUARD) ? "-guard" : ""),
+	      ((version & NT_NETBSD_PAX_ASLR) ? "+ASLR" : ""),
+	      ((version & NT_NETBSD_PAX_NOASLR) ? "-ASLR" : ""));
       return 1;
     default:
       break;
@@ -13026,6 +13077,10 @@ process_note (Elf_Internal_Note * pnote)
     nt = get_gnu_elf_note_type (pnote->type);
 
   else if (const_strneq (pnote->namedata, "NetBSD"))
+    /* NetBSD-specific core file notes.  */
+    return process_netbsd_elf_note (pnote);
+
+  else if (const_strneq (pnote->namedata, "PaX"))
     /* NetBSD-specific core file notes.  */
     return process_netbsd_elf_note (pnote);
 
@@ -13768,7 +13823,7 @@ process_file (char * file_name)
       return 1;
     }
 
-  if (! S_ISREG (statbuf.st_mode))
+  if (!do_special_files && ! S_ISREG (statbuf.st_mode))
     {
       error (_("'%s' is not an ordinary file\n"), file_name);
       return 1;

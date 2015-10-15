@@ -1,4 +1,4 @@
-#	$NetBSD: INSTALL,v 1.67 2013/11/09 21:32:55 christos Exp $
+#	$NetBSD: INSTALL,v 1.71 2015/08/12 07:53:58 maxv Exp $
 #
 # INSTALL kernel; all supported devices but nothing fancy.
 #
@@ -33,14 +33,14 @@ maxusers	8
 options 	MEMORY_DISK_HOOKS
 options 	MEMORY_DISK_IS_ROOT	# force root on memory disk
 options 	MEMORY_DISK_SERVER=0	# no userspace memory disk support
-options 	MEMORY_DISK_ROOT_SIZE=4000	# size of memory disk, in blocks
+options 	MEMORY_DISK_ROOT_SIZE=4100	# size of memory disk, in blocks
 options 	MEMORY_DISK_RBFLAGS=RB_SINGLE	# boot in single-user mode
 
 # Kernel compiled-in symbolic debugger & system call tracer
 #options 	DDB
 #options 	DDB_HISTORY_SIZE=512	# enable history editing in DDB
 #options 	KTRACE
-#options 	DIAGNOSTIC,DEBUG,KMEMSTATS,PMAPDEBUG,TRAPDEBUG
+#options 	DIAGNOSTIC,DEBUG,PMAPDEBUG,TRAPDEBUG
 
 #options 	SCSIVERBOSE		# Verbose SCSI errors
 
@@ -93,19 +93,20 @@ options 	WSDISPLAY_DEFAULTSCREENS=1
 # (They cannot coexist).
 #options 	COMPAT_VAX1K	# Must be present to run pre-1.4 binaries.
 #options 	COMPAT_43
-#options 	COMPAT_09
-#options 	COMPAT_10
-#options 	COMPAT_11
-#options 	COMPAT_12
-#options 	COMPAT_13
-options 	COMPAT_14
-options 	COMPAT_15
-options 	COMPAT_16
-options 	COMPAT_20
-options 	COMPAT_30	# NetBSD 3.0 compatibility.
-options 	COMPAT_40	# NetBSD 4.0 compatibility.
-options 	COMPAT_50	# NetBSD 5.0 compatibility.
-options 	COMPAT_60	# NetBSD 6.0 compatibility.
+#options 	COMPAT_09	# NetBSD 0.9,
+#options 	COMPAT_10	# NetBSD 1.0,
+#options 	COMPAT_11	# NetBSD 1.1,
+#options 	COMPAT_12	# NetBSD 1.2,
+#options 	COMPAT_13	# NetBSD 1.3,
+options 	COMPAT_14	# NetBSD 1.4,
+options 	COMPAT_15	# NetBSD 1.5,
+options 	COMPAT_16	# NetBSD 1.6,
+options 	COMPAT_20	# NetBSD 2.0,
+options 	COMPAT_30	# NetBSD 3.0,
+options 	COMPAT_40	# NetBSD 4.0,
+options 	COMPAT_50	# NetBSD 5.0,
+options 	COMPAT_60	# NetBSD 6.0, and
+options 	COMPAT_70	# NetBSD 7.0 binary compatibility.
 #options 	COMPAT_ULTRIX
 options		COMPAT_BSDPTY	# /dev/[pt]ty?? ptys.
 

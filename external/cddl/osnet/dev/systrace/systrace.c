@@ -1,4 +1,4 @@
-/*	$NetBSD: systrace.c,v 1.3 2011/07/17 20:54:33 joerg Exp $	*/
+/*	$NetBSD: systrace.c,v 1.8 2015/09/24 14:26:44 christos Exp $	*/
 
 /*
  * CDDL HEADER START
@@ -38,7 +38,6 @@
 #include <sys/cpuvar.h>
 #include <sys/fcntl.h>
 #include <sys/filio.h>
-#include <sys/kdb.h>
 #include <sys/kernel.h>
 #include <sys/kmem.h>
 #include <sys/kthread.h>
@@ -51,40 +50,43 @@
 #include <sys/poll.h>
 #include <sys/proc.h>
 #include <sys/selinfo.h>
-#include <sys/smp.h>
-#include <sys/sysproto.h>
-#include <sys/sysent.h>
+#include <sys/syscallargs.h>
 #include <sys/uio.h>
 #include <sys/unistd.h>
 
 #include <sys/dtrace.h>
 
-#ifdef LINUX_SYSTRACE
-#include <linux.h>
-#include <linux_syscall.h>
-#include <linux_proto.h>
-#include <linux_syscallnames.c>
-#include <linux_systrace.c>
-extern struct sysent linux_sysent[];
-#define	DEVNAME		"dtrace/linsystrace"
-#define	PROVNAME	"linsyscall"
-#define	MAXSYSCALL	LINUX_SYS_MAXSYSCALL
-#define	SYSCALLNAMES	linux_syscallnames
-#define	SYSENT		linux_sysent
+#include "emultrace.h"
+
+#define	CONCAT(x,y)	__CONCAT(x,y)
+#define	STRING(s)	__STRING(s)
+
+#ifndef NATIVE
+extern const char	* const CONCAT(emulname,_syscallnames)[];
+extern const char	* const CONCAT(alt,CONCAT(emulname,_syscallnames))[];
+extern 	struct sysent 	CONCAT(emulname,_sysent)[];
+#define	MODNAME		CONCAT(dtrace_syscall_,emulname)
+#define	MODDEP		"dtrace_syscall,compat_" STRING(emulname)
+#define	MAXSYSCALL	CONCAT(EMULNAME,_SYS_MAXSYSCALL)
+#define	SYSCALLNAMES	CONCAT(emulname,_syscallnames)
+#define	ALTSYSCALLNAMES	CONCAT(alt,CONCAT(emulname,_syscallnames))
+#define	SYSENT		CONCAT(emulname,_sysent)
+#define	PROVNAME	STRING(emulname) "_syscall"
 #else
-/*
- * The syscall arguments are processed into a DTrace argument array
- * using a generated function. See sys/kern/makesyscalls.sh.
- */
-#include <sys/syscall.h>
-#include <kern/systrace_args.c>
-extern const char	*syscallnames[];
-#define	DEVNAME		"dtrace/systrace"
-#define	PROVNAME	"syscall"
+extern const char	* const syscallnames[];
+extern const char	* const altsyscallnames[];
+#define	MODNAME		dtrace_syscall
+#define	MODDEP		"dtrace"
 #define	MAXSYSCALL	SYS_MAXSYSCALL
 #define	SYSCALLNAMES	syscallnames
+#define	ALTSYSCALLNAMES	altsyscallnames
 #define	SYSENT		sysent
+#define	PROVNAME	"syscall"
 #endif
+
+#define	MODCMD		CONCAT(MODNAME,_modcmd)
+#define EMUL		CONCAT(emul_,emulname)
+extern struct emul 	EMUL;
 
 #define	SYSTRACE_ARTIFICIAL_FRAMES	1
 
@@ -98,29 +100,13 @@ extern const char	*syscallnames[];
 #error 1 << SYSTRACE_SHIFT must exceed number of system calls
 #endif
 
-static d_open_t	systrace_open;
 static int	systrace_unload(void);
 static void	systrace_getargdesc(void *, dtrace_id_t, void *, dtrace_argdesc_t *);
-static void	systrace_provide(void *, dtrace_probedesc_t *);
+static void	systrace_provide(void *, const dtrace_probedesc_t *);
 static void	systrace_destroy(void *, dtrace_id_t, void *);
-static void	systrace_enable(void *, dtrace_id_t, void *);
+static int	systrace_enable(void *, dtrace_id_t, void *);
 static void	systrace_disable(void *, dtrace_id_t, void *);
 static void	systrace_load(void *);
-
-static struct cdevsw systrace_cdevsw = {
-	.d_version	= D_VERSION,
-	.d_open		= systrace_open,
-#ifdef LINUX_SYSTRACE
-	.d_name		= "linsystrace",
-#else
-	.d_name		= "systrace",
-#endif
-};
-
-static union	{
-	const char	**p_constnames;
-	char		**pp_syscallnames;
-} uglyhack = { SYSCALLNAMES };
 
 static dtrace_pattr_t systrace_attr = {
 { DTRACE_STABILITY_EVOLVING, DTRACE_STABILITY_EVOLVING, DTRACE_CLASS_COMMON },
@@ -143,10 +129,8 @@ static dtrace_pops_t systrace_pops = {
 	systrace_destroy
 };
 
-static struct cdev		*systrace_cdev;
 static dtrace_provider_id_t	systrace_id;
 
-#if !defined(LINUX_SYSTRACE)
 /*
  * Probe callback function.
  *
@@ -155,51 +139,45 @@ static dtrace_provider_id_t	systrace_id;
  *       compat syscall from something like Linux.
  */
 static void
-systrace_probe(u_int32_t id, int sysnum, struct sysent *sysent, void *params)
+systrace_probe(uint32_t id, register_t sysnum, const struct sysent *se,
+    const void *params, const register_t *ret, int error)
 {
-	int		n_args	= 0;
-	u_int64_t	uargs[8];
+	size_t		n_args	= 0;
+	uintptr_t	uargs[SYS_MAXSYSARGS + 3];
 
-	/*
-	 * Check if this syscall has an argument conversion function
-	 * registered.
-	 */
-	if (sysent->sy_systrace_args_func != NULL)
-		/*
-		 * Convert the syscall parameters using the registered
-		 * function.
-		 */
-		(*sysent->sy_systrace_args_func)(sysnum, params, uargs, &n_args);
-	else
-		/*
-		 * Use the built-in system call argument conversion
-		 * function to translate the syscall structure fields
-		 * into the array of 64-bit values that DTrace 
-		 * expects.
-		 */
+	memset(uargs, 0, sizeof(uargs));
+	if (ret == NULL) {
+		/* entry syscall, convert params */
 		systrace_args(sysnum, params, uargs, &n_args);
-
+	} else {
+		/* return syscall, set values and params: */
+		uargs[0] = ret[0];
+		uargs[1] = ret[1];
+		uargs[2] = error;
+		systrace_args(sysnum, params, uargs + 3, &n_args);
+	}
 	/* Process the probe using the converted argments. */
+	/* XXX: fix for more arguments! */
 	dtrace_probe(id, uargs[0], uargs[1], uargs[2], uargs[3], uargs[4]);
 }
-#endif
 
 static void
 systrace_getargdesc(void *arg, dtrace_id_t id, void *parg, dtrace_argdesc_t *desc)
 {
 	int sysnum = SYSTRACE_SYSNUM((uintptr_t)parg);
-
-	systrace_setargdesc(sysnum, desc->dtargd_ndx, desc->dtargd_native,
-	    sizeof(desc->dtargd_native));
+	if (SYSTRACE_ISENTRY((uintptr_t)parg))
+		systrace_entry_setargdesc(sysnum, desc->dtargd_ndx, 
+		    desc->dtargd_native, sizeof(desc->dtargd_native));
+	else
+		systrace_return_setargdesc(sysnum, desc->dtargd_ndx, 
+		    desc->dtargd_native, sizeof(desc->dtargd_native));
 
 	if (desc->dtargd_native[0] == '\0')
 		desc->dtargd_ndx = DTRACE_ARGNONE;
-
-	return;
 }
 
 static void
-systrace_provide(void *arg, dtrace_probedesc_t *desc)
+systrace_provide(void *arg, const dtrace_probedesc_t *desc)
 {
 	int i;
 
@@ -207,16 +185,17 @@ systrace_provide(void *arg, dtrace_probedesc_t *desc)
 		return;
 
 	for (i = 0; i < MAXSYSCALL; i++) {
-		if (dtrace_probe_lookup(systrace_id, NULL,
-		    uglyhack.pp_syscallnames[i], "entry") != 0)
+		const char *name = ALTSYSCALLNAMES[i] ? ALTSYSCALLNAMES[i] :
+		    SYSCALLNAMES[i];
+		if (dtrace_probe_lookup(systrace_id, NULL, name, "entry") != 0)
 			continue;
 
-		(void) dtrace_probe_create(systrace_id, NULL, uglyhack.pp_syscallnames[i],
-		    "entry", SYSTRACE_ARTIFICIAL_FRAMES,
-		    (void *)((uintptr_t)SYSTRACE_ENTRY(i)));
-		(void) dtrace_probe_create(systrace_id, NULL, uglyhack.pp_syscallnames[i],
-		    "return", SYSTRACE_ARTIFICIAL_FRAMES,
-		    (void *)((uintptr_t)SYSTRACE_RETURN(i)));
+		(void) dtrace_probe_create(systrace_id, NULL,
+		    name, "entry", SYSTRACE_ARTIFICIAL_FRAMES,
+		    (void *)(intptr_t)SYSTRACE_ENTRY(i));
+		(void) dtrace_probe_create(systrace_id, NULL,
+		    name, "return", SYSTRACE_ARTIFICIAL_FRAMES,
+		    (void *)(intptr_t)SYSTRACE_RETURN(i));
 	}
 }
 
@@ -238,18 +217,16 @@ systrace_destroy(void *arg, dtrace_id_t id, void *parg)
 #endif
 }
 
-static void
+static int
 systrace_enable(void *arg, dtrace_id_t id, void *parg)
 {
 	int sysnum = SYSTRACE_SYSNUM((uintptr_t)parg);
-
-	if (SYSENT[sysnum].sy_systrace_args_func == NULL)
-		SYSENT[sysnum].sy_systrace_args_func = systrace_args;
 
 	if (SYSTRACE_ISENTRY((uintptr_t)parg))
 		SYSENT[sysnum].sy_entry = id;
 	else
 		SYSENT[sysnum].sy_return = id;
+	return 0;
 }
 
 static void
@@ -264,79 +241,44 @@ systrace_disable(void *arg, dtrace_id_t id, void *parg)
 static void
 systrace_load(void *dummy)
 {
-	/* Create the /dev/dtrace/systrace entry. */
-	systrace_cdev = make_dev(&systrace_cdevsw, 0, UID_ROOT, GID_WHEEL, 0600,
-	   DEVNAME);
-
 	if (dtrace_register(PROVNAME, &systrace_attr, DTRACE_PRIV_USER,
 	    NULL, &systrace_pops, NULL, &systrace_id) != 0)
 		return;
 
-#if !defined(LINUX_SYSTRACE)
-	systrace_probe_func = systrace_probe;
-#endif
+	EMUL.e_dtrace_syscall = systrace_probe;
 }
 
 
 static int
 systrace_unload()
 {
-	int error = 0;
+	int error;
 
 	if ((error = dtrace_unregister(systrace_id)) != 0)
 		return (error);
 
-#if !defined(LINUX_SYSTRACE)
-	systrace_probe_func = NULL;
-#endif
+	EMUL.e_dtrace_syscall = NULL;
 
-	destroy_dev(systrace_cdev);
-
-	return (error);
+	return error;
 }
 
 static int
-systrace_modevent(module_t mod __unused, int type, void *data __unused)
+MODCMD(modcmd_t cmd, void *data)
 {
-	int error = 0;
+	switch (cmd) {
+	case MODULE_CMD_INIT:
+		systrace_load(NULL);
+		return 0;
 
-	switch (type) {
-	case MOD_LOAD:
-		break;
+	case MODULE_CMD_FINI:
+		return systrace_unload();
 
-	case MOD_UNLOAD:
-		break;
-
-	case MOD_SHUTDOWN:
-		break;
+	case MODULE_CMD_AUTOUNLOAD:
+		return EBUSY;
 
 	default:
-		error = EOPNOTSUPP;
-		break;
-
+		return ENOTTY;
 	}
-	return (error);
 }
 
-static int
-systrace_open(struct cdev *dev __unused, int oflags __unused, int devtype __unused, struct thread *td __unused)
-{
-	return (0);
-}
-
-SYSINIT(systrace_load, SI_SUB_DTRACE_PROVIDER, SI_ORDER_ANY, systrace_load, NULL);
-SYSUNINIT(systrace_unload, SI_SUB_DTRACE_PROVIDER, SI_ORDER_ANY, systrace_unload, NULL);
-
-#ifdef LINUX_SYSTRACE
-DEV_MODULE(linsystrace, systrace_modevent, NULL);
-MODULE_VERSION(linsystrace, 1);
-MODULE_DEPEND(linsystrace, linux, 1, 1, 1);
-MODULE_DEPEND(linsystrace, systrace, 1, 1, 1);
-MODULE_DEPEND(linsystrace, dtrace, 1, 1, 1);
-MODULE_DEPEND(linsystrace, opensolaris, 1, 1, 1);
-#else
-DEV_MODULE(systrace, systrace_modevent, NULL);
-MODULE_VERSION(systrace, 1);
-MODULE_DEPEND(systrace, dtrace, 1, 1, 1);
-MODULE_DEPEND(systrace, opensolaris, 1, 1, 1);
-#endif
+MODULE(MODULE_CLASS_MISC, MODNAME, MODDEP)

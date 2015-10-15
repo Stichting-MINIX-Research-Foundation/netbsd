@@ -1,4 +1,4 @@
-/*	$NetBSD: arpci.c,v 1.2 2011/07/10 23:13:22 matt Exp $	*/
+/*	$NetBSD: arpci.c,v 1.5 2015/10/02 05:22:51 msaitoh Exp $	*/
 /*-
  * Copyright (c) 2011 The NetBSD Foundation, Inc.
  * All rights reserved.
@@ -30,13 +30,15 @@
 
 #include <sys/cdefs.h>
 
-__KERNEL_RCSID(0, "$NetBSD: arpci.c,v 1.2 2011/07/10 23:13:22 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: arpci.c,v 1.5 2015/10/02 05:22:51 msaitoh Exp $");
 
 #include <sys/param.h>
 #include <sys/bus.h>
 #include <sys/device.h>
 
 #include <dev/pci/pcivar.h>
+
+#include <mips/locore.h>
 
 #include <mips/atheros/include/arbusvar.h>
 #include <mips/atheros/include/ar9344reg.h>
@@ -131,6 +133,9 @@ arpci_conf_read(void *v, pcitag_t tag, int reg)
 	struct arpci_softc * const sc = v;
 	pcireg_t rv = 0xffffffff;
 
+	if ((unsigned int)reg >= PCI_CONF_SIZE)
+		return rv;
+
 	if ((tag & 0x00ff0001) == 1) {
 		KASSERT(((tag >> 11) & 31) > 20); 
 		/*
@@ -174,6 +179,9 @@ arpci_conf_write(void *v, pcitag_t tag, int reg, pcireg_t data)
 {
 	struct arpci_softc * const sc = v;
 
+	if ((unsigned int)reg >= PCI_CONF_SIZE)
+		return;
+
 	if ((tag & 0x00ff0001) == 1) {
 		KASSERT(((tag >> 11) & 31) > 20); 
 		/*
@@ -207,9 +215,10 @@ arpci_intr_map(const struct pci_attach_args *pa, pci_intr_handle_t *ihp)
 }
 
 static const char *
-arpci_intr_string(void *v, pci_intr_handle_t ih)
+arpci_intr_string(void *v, pci_intr_handle_t ih, char *buf, size_t len)
 {
-	return NULL;
+	snprintf(buf, len, "fixme!");
+	return buf;
 }
 
 static const struct evcnt *

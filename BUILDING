@@ -49,6 +49,12 @@ FILES
                     ``reachover'' Makefile semantics when building these
                     programs for a native host.
 
+     external, sys/external
+                    Sources and build infrastructure for components imported
+                    (mostly) unchanged from upstream maintainers, sorted by
+                    applicable license.  This is (slowly) replacing the
+                    crypto/dist, dist, and gnu/dist directories.
+
      distrib/, etc/
                     Sources for items used when making a full release
                     snapshot, such as files installed in DESTDIR/etc on the
@@ -71,8 +77,12 @@ FILES
                     any of these directories are missing, they will be skipped
                     during the build.
 
-     x11/           ``Reachover'' build structure for X11R6; the source is in
-                    X11SRCDIR.
+     external/mit/xorg/
+                    ``Reachover'' build structure for modular Xorg; the source
+                    is in X11SRCDIR.
+
+     extsrc/        ``Reachover'' build structure for externally added
+                    programs and libraries; the source is in EXTSRCSRCDIR.
 
    Build tree layout
      The NetBSD build tree is described in hier(7), and the release layout is
@@ -145,10 +155,27 @@ CONFIGURATION
      otherwise specified, these variables may be set in either the process
      environment or the make(1) configuration file specified by MAKECONF.
 
-     BUILDID     Identifier for the build.  The identifier will be appended to
-                 object directory names, and can be consulted in the make(1)
+     BUILDID     Identifier for the build.  If set, this should be a short
+                 string that is suitable for use as part of a file or
+                 directory name.  The identifier will be appended to object
+                 directory names, and can be consulted in the make(1)
                  configuration file in order to set additional build
-                 parameters, such as compiler flags.
+                 parameters, such as compiler flags.  It will also be used as
+                 part of the kernel version string, which can be printed by
+                 ``uname -v''.
+
+                 Default: Unset.
+
+     BUILDINFO   This may be a multi-line string containing information about
+                 the build.  This will appear in DESTDIR/etc/release, and it
+                 will be stored in the buildinfo variable in any kernels that
+                 are built.  When such kernels are booted, the sysctl(7)
+                 kern.buildinfo variable will report this value.  The string
+                 may contain backslash escape sequences, such as ``\\''
+                 (representing a backslash character) and ``\n'' (representing
+                 a newline).
+
+                 Default: Unset.
 
      BUILDSEED   GCC uses random numbers when compiling C++ code.  This
                  variable seeds the gcc random number generator using the
@@ -173,6 +200,13 @@ CONFIGURATION
 
                  Note: build.sh will provide a default of destdir.MACHINE (in
                  the top-level .OBJDIR) unless run in `expert' mode.
+
+     EXTSRCSRCDIR
+                 Directory containing sources of externally added programs and
+                 libraries.  If specified, must be an absolute path.
+
+                 Default: NETBSDRCDIR/../extsrc, if that exists; otherwise
+                 /usr/extsrc.
 
      MAKECONF    The name of the make(1) configuration file.  Only settable in
                  the process environment.
@@ -209,6 +243,11 @@ CONFIGURATION
 
                  Default: ``no''
 
+     MKCROSSGDB  Can be set to ``yes'' or ``no''.  Create a cross-gdb as a
+                 host tool.
+
+                 Default: ``no''
+
      MKCRYPTO    Can be set to ``yes'' or ``no''.  Indicates whether
                  cryptographic code will be included in a build; provided for
                  the benefit of countries that do not allow strong
@@ -217,11 +256,29 @@ CONFIGURATION
 
                  Default: ``yes''
 
+     MKDEBUG     Can be set to ``yes'' or ``no''.  Indicates whether debug
+                 information should be generated for all userland binaries
+                 compiled.  The result is collected as an additional debug.tgz
+                 and xdebug.tgz set and installed in /usr/libdata/debug.
+
+                 Default: ``no''
+
+     MKDEBUGLIB  Can be set to ``yes'' or ``no''.  Indicates whether debug
+                 information (see MKDEBUG) should also be generated for all
+                 libraries build.
+
+                 Default: ``no''
+
      MKDOC       Can be set to ``yes'' or ``no''.  Indicates whether system
                  documentation destined for DESTDIR/usr/share/doc will be
                  installed during a build.
 
                  Default: ``yes''
+
+     MKEXTSRC    Can be set to ``yes'' or ``no''.  Indicates whether extsrc is
+                 built from EXTSRCSRCDIR.
+
+                 Default: ``no''
 
      MKHTML      Can be set to ``yes'' or ``no''.  Indicates whether
                  preformatted HTML manual pages will be built and installed
@@ -244,6 +301,14 @@ CONFIGURATION
                  tools, will be created and installed during a build.
 
                  Default: ``yes''
+
+     MKKDEBUG    Can be set to ``yes'' or ``no''.  Force generation of full-
+                 debug symbol versions of all kernels compiled.  Alongside of
+                 the netbsd kernel file, an unstripped version netbsd.gdb is
+                 created.  This is useful if a cross-gdb is built as well (see
+                 MKCROSSGDB).
+
+                 Default: ``no''
 
      MKKMOD      Can be set to ``yes'' or ``no''.  Indicates whether kernel
                  modules are built and installed.
@@ -378,18 +443,12 @@ CONFIGURATION
                  USETOOLS is also set to ``no'' when using <bsd.*.mk> outside
                  the NetBSD source tree.
 
-     X11SRCDIR   Directory containing the X11R6 source.  If specified, must be
-                 an absolute path.  The main X11R6 source is found in
-                 X11SRCDIR/xfree/xc.
+     X11SRCDIR   Directory containing the modular Xorg source.  If specified,
+                 must be an absolute path.  The main modular Xorg source is
+                 found in X11SRCDIR/external/mit.
 
                  Default: NETBSDRCDIR/../xsrc, if that exists; otherwise
                  /usr/xsrc.
-
-     X11FLAVOUR  The style of X11 cross-built, set to either ``Xorg'' or
-                 ``XFree86''.
-
-                 Default: ``Xorg'' on amd64, i386, macppc, shark and sparc64
-                 platforms, ``XFree86'' on everything else.
 
    "make" variables for full builds
      These variables only affect the top level ``Makefile'' and do not affect
@@ -583,8 +642,8 @@ BUILDING
                    set (see above).
 
      iso-image     Create a NetBSD installation CD-ROM image in the
-                   RELEASEDIR/iso directory.  The CD-ROM file system will have
-                   a layout as described in release(7).
+                   RELEASEDIR/images directory.  The CD-ROM file system will
+                   have a layout as described in release(7).
 
                    For most machine types, the CD-ROM will be bootable, and
                    will automatically run the sysinst(8) menu-based
@@ -600,8 +659,8 @@ BUILDING
                    the RELEASEDIR/RELEASEMACHINEDIR/installation/cdrom
                    directory by ``make release''.  These smaller images
                    usually contain the same tools as the larger images in
-                   RELEASEDIR/iso, but do not contain additional content such
-                   as the distribution sets.
+                   RELEASEDIR/images, but do not contain additional content
+                   such as the distribution sets.
 
                    Note that the mac68k port still uses an older method of
                    creating CD-ROM images.  This requires the mkisofs(1)
@@ -610,8 +669,8 @@ BUILDING
 
      iso-image-source
                    Create a NetBSD installation CD-ROM image in the
-                   RELEASEDIR/iso directory.  The CD-ROM file system will have
-                   a layout as described in release(7).  It will have top
+                   RELEASEDIR/images directory.  The CD-ROM file system will
+                   have a layout as described in release(7).  It will have top
                    level directories for the machine type and source.
 
                    For most machine types, the CD-ROM will be bootable, and
@@ -629,8 +688,8 @@ BUILDING
                    the RELEASEDIR/RELEASEMACHINEDIR/installation/cdrom
                    directory by ``make release''.  These smaller images
                    usually contain the same tools as the larger images in
-                   RELEASEDIR/iso, but do not contain additional content such
-                   as the distribution sets.
+                   RELEASEDIR/images, but do not contain additional content
+                   such as the distribution sets.
 
                    Note that the mac68k port still uses an older method of
                    creating CD-ROM images.  This requires the mkisofs(1)
@@ -657,8 +716,7 @@ BUILDING
                    must have been performed with MKUNPRIVED=yes because ``make
                    install-image'' relies on information in DESTDIR/METALOG.
 
-     live-image    Create NetBSD live images in the
-                   RELEASEDIR/RELEASEMACHINEDIR/installation/liveimage
+     live-image    Create NetBSD live images in the RELEASEDIR/images
                    directory.  The live image contains all necessary files to
                    boot NetBSD up to multi-user mode, including all files
                    which should be extracted during installation, NetBSD
@@ -764,6 +822,19 @@ BUILDING
                    This command will run ``make cleandir'' on the kernel in
                    question first unless the -u option is given.
 
+     kernel.gdb=kconf
+                   Build a new kernel with debug information.  Similar to the
+                   above kernel=kconf operation, but creates a netbsd.gdb file
+                   alongside of the kernel netbsd, which contains a full
+                   symbol table and can be used for debugging (for example
+                   with a cross-gdb built by MKCROSSGDB).
+
+     kernels       This command will build all kernels defined in port
+                   specific release build procedure.
+
+                   This command internally calls the kernel=kconf operation
+                   for each found kernel configuration file.
+
      modules       This command will build kernel modules and install them
                    into DESTDIR.
 
@@ -790,10 +861,21 @@ BUILDING
 
      live-image    Perform ``make live-image''.
 
+     list-arch     Prints a list of valid MACHINE and MACHINE_ARCH settings,
+                   the default MACHINE_ARCH for each MACHINE, and aliases for
+                   MACHINE/MACHINE_ARCH pairs, and then exits.  The -m or -a
+                   options (or both) may be used to specify glob patterns that
+                   will be used to narrow the list of results; for example,
+                   ``build.sh -m 'evm*' -a '*arm*' list-arch'' will list all
+                   known MACHINE/MACHINE_ARCH values in which either MACHINE
+                   or ALIAS matches the pattern `evb*', and MACHINE_ARCH
+                   matches the pattern `*arm*'.
+
      The following command line options alter the behaviour of the build.sh
      operations described above:
 
-     -a arch   Set the value of MACHINE_ARCH to arch.
+     -a arch   Set the value of MACHINE_ARCH to arch.  See the -m option for
+               more information.
 
      -B buildid
                Set the value of BUILDID to buildid.  This will also append the
@@ -837,7 +919,7 @@ BUILDING
                bandwidth.
 
      -M obj    Set MAKEOBJDIRPREFIX to obj.  Unsets MAKEOBJDIR.  See ``-O
-               -obj'' for more information.
+               obj'' for more information.
 
                For instance, if the source directory is /usr/src, a setting of
                ``-M /usr/obj'' will place build-time files under
@@ -852,30 +934,19 @@ BUILDING
                relative path.  If the directory does not already exist,
                build.sh will create it.
 
-     -m mach   Set the value of MACHINE to mach, except in some special cases
-               listed below.  This will also override any value of
-               MACHINE_ARCH in the process environment with a value deduced
-               from mach, unless -a is specified.  All cross builds require
-               -m, but if unset on a NetBSD host, the host's value of MACHINE
-               will be detected and used automatically.
+     -m mach   Set the value of MACHINE to mach, unless the mach argument is
+               an alias that refers to a MACHINE/MACHINE_ARCH pair, in which
+               case both MACHINE and MACHINE_ARCH are set from the alias.
+               Such aliases are interpreted entirely by build.sh; they are not
+               used by any other part of the build system.  The MACHINE_ARCH
+               setting implied by mach will override any value of MACHINE_ARCH
+               in the process environment, but will not override a value set
+               by the -a option.  All cross builds require -m, but if unset on
+               a NetBSD host, the host's value of MACHINE will be detected and
+               used automatically.
 
-               Some machines support multiple values for MACHINE_ARCH.  The
-               following special cases for the mach argument are defined to
-               set the listed values of MACHINE and MACHINE_ARCH:
-
-                     mach          MACHINE    MACHINE_ARCH
-                     evbarm        evbarm     (not set)
-                     evbarm-eb     evbarm     armeb
-                     evbarm-el     evbarm     arm
-                     evbmips       evbmips    (not set)
-                     evbmips-eb    evbmips    mipseb
-                     evbmips-el    evbmips    mipsel
-                     evbsh3        evbsh3     (not set)
-                     evbsh3-eb     evbsh3     sh3eb
-                     evbsh3-el     evbsh3     sh3el
-                     sbmips        sbmips     (not set)
-                     sbmips-eb     sbmips     mipseb
-                     sbmips-el     sbmips     mipsel
+               See the list-arch operation for a way to get a list of valid
+               MACHINE and MACHINE_ARCH settings.
 
      -N noiselevel
                Set the ``noisyness'' level of the build, by setting
@@ -906,6 +977,16 @@ BUILDING
                because it is determined by complex rules that are influenced
                by the values of several variables and by the location of the
                source directory.
+
+               Note that placing the obj directory location outside of the
+               default source tree hierarchy makes it easier to manually clear
+               out old files in the event the ``make cleandir'' operation is
+               unable to do so.  (See CAVEATS below.)
+
+               Note also that use of one of -M or -O is the only means of
+               building multiple machine architecture userlands from the same
+               source tree without cleaning between builds (in which case, one
+               would specify distinct obj locations for each).
 
      -o        Set the value of MKOBJDIRS to ``no''.  Otherwise, it will be
                automatically set to ``yes''.  This default is opposite to the
@@ -949,6 +1030,13 @@ BUILDING
                being used.
 
      -x        Set MKX11=yes.
+
+     -Y extsrcdir
+               Set the value of EXTSRCSRCDIR to extsrcdir.  If a relative path
+               is specified, it will be converted to an absolute path before
+               being used.
+
+     -y        Set MKEXTSRC=yes.
 
      -Z var    Unset ("zap") the environment variable var.  This is propagated
                to the nbmake wrapper.
@@ -1008,4 +1096,10 @@ HISTORY
      The build.sh based build scheme was introduced for NetBSD 1.6 as
      USE_NEW_TOOLCHAIN, and re-worked to TOOLCHAIN_MISSING after that.
 
-NetBSD                         November 8, 2012                         NetBSD
+CAVEATS
+     After significant updates to third-party components in the source tree,
+     the ``make cleandir'' operation may be insufficient to clean out old
+     files in object directories.  Instead, one may have to manually remove
+     the files.  Consult the UPDATING file for notices concerning this.
+
+NetBSD                           April 7, 2015                          NetBSD

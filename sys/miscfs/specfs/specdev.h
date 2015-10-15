@@ -1,4 +1,4 @@
-/*	$NetBSD: specdev.h,v 1.42 2013/09/30 18:58:00 hannken Exp $	*/
+/*	$NetBSD: specdev.h,v 1.44 2015/06/23 10:42:35 hannken Exp $	*/
 
 /*-
  * Copyright (c) 2008 The NetBSD Foundation, Inc.
@@ -119,6 +119,8 @@ int	spec_close(void *);
 #define	spec_setattr	genfs_ebadf
 int	spec_read(void *);
 int	spec_write(void *);
+#define spec_fallocate	genfs_eopnotsupp
+int	spec_fdiscard(void *);
 #define spec_fcntl	genfs_fcntl
 int	spec_ioctl(void *);
 int	spec_poll(void *);
@@ -136,8 +138,8 @@ int	spec_fsync(void *);
 #define	spec_readdir	genfs_badop
 #define	spec_readlink	genfs_badop
 #define	spec_abortop	genfs_badop
-#define	spec_reclaim	genfs_nullop
 int	spec_inactive(void *);
+int	spec_reclaim(void *);
 #define	spec_lock	genfs_nolock
 #define	spec_unlock	genfs_nounlock
 int	spec_bmap(void *);

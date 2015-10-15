@@ -1,4 +1,4 @@
-/*	$NetBSD: pci_machdep.c,v 1.23 2012/10/27 17:18:10 chs Exp $	*/
+/*	$NetBSD: pci_machdep.c,v 1.25 2015/02/18 16:47:59 macallan Exp $	*/
 
 /*
  * Copyright (c) 2000 Soren S. Jorvang
@@ -33,7 +33,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: pci_machdep.c,v 1.23 2012/10/27 17:18:10 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: pci_machdep.c,v 1.25 2015/02/18 16:47:59 macallan Exp $");
 
 #include "opt_pci.h"
 #include "pci.h"
@@ -47,7 +47,6 @@ __KERNEL_RCSID(0, "$NetBSD: pci_machdep.c,v 1.23 2012/10/27 17:18:10 chs Exp $")
 
 #include <uvm/uvm_extern.h>
 
-#define _SGIMIPS_BUS_DMA_PRIVATE
 #include <sys/bus.h>
 #include <machine/intr.h>
 #include <machine/sysconf.h>
@@ -57,7 +56,7 @@ __KERNEL_RCSID(0, "$NetBSD: pci_machdep.c,v 1.23 2012/10/27 17:18:10 chs Exp $")
 #include <dev/pci/pcidevs.h>
 #include <dev/pci/pciconf.h>
 
-struct sgimips_bus_dma_tag pci_bus_dma_tag;
+struct mips_bus_dma_tag pci_bus_dma_tag;
 
 void
 pci_attach_hook(device_t parent, device_t self, struct pcibus_attach_args *pba)
@@ -121,9 +120,10 @@ pci_intr_map(const struct pci_attach_args *pa, pci_intr_handle_t *ihp)
 }
 
 const char *
-pci_intr_string(pci_chipset_tag_t pc, pci_intr_handle_t ih)
+pci_intr_string(pci_chipset_tag_t pc, pci_intr_handle_t ih, char *buf,
+    size_t len)
 {
-	return (*pc->pc_intr_string)(pc, ih);
+	return (*pc->pc_intr_string)(pc, ih, buf, len);
 }
 
 const struct evcnt *

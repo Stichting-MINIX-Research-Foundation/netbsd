@@ -12,32 +12,23 @@ DRV_AP_LIBS =
 
 ##### COMMON DRIVERS
 
-ifdef CONFIG_DRIVER_HOSTAP
-DRV_CFLAGS += -DCONFIG_DRIVER_HOSTAP
-DRV_OBJS += ../src/drivers/driver_hostap.o
-CONFIG_WIRELESS_EXTENSION=y
-NEED_AP_MLME=y
-NEED_NETLINK=y
-NEED_LINUX_IOCTL=y
-endif
-
 ifdef CONFIG_DRIVER_WIRED
 DRV_CFLAGS += -DCONFIG_DRIVER_WIRED
 DRV_OBJS += ../src/drivers/driver_wired.o
 endif
 
-ifdef CONFIG_DRIVER_MADWIFI
-DRV_CFLAGS += -DCONFIG_DRIVER_MADWIFI
-DRV_OBJS += ../src/drivers/driver_madwifi.o
-CONFIG_WIRELESS_EXTENSION=y
-CONFIG_L2_PACKET=linux
-NEED_NETLINK=y
-NEED_LINUX_IOCTL=y
+ifdef CONFIG_DRIVER_MACSEC_QCA
+DRV_CFLAGS += -DCONFIG_DRIVER_MACSEC_QCA
+DRV_OBJS += ../src/drivers/driver_macsec_qca.o
 endif
 
 ifdef CONFIG_DRIVER_NL80211
 DRV_CFLAGS += -DCONFIG_DRIVER_NL80211
 DRV_OBJS += ../src/drivers/driver_nl80211.o
+DRV_OBJS += ../src/drivers/driver_nl80211_capa.o
+DRV_OBJS += ../src/drivers/driver_nl80211_event.o
+DRV_OBJS += ../src/drivers/driver_nl80211_monitor.o
+DRV_OBJS += ../src/drivers/driver_nl80211_scan.o
 DRV_OBJS += ../src/utils/radiotap.o
 NEED_SME=y
 NEED_AP_MLME=y
@@ -49,6 +40,16 @@ ifdef CONFIG_LIBNL32
   DRV_LIBS += -lnl-3
   DRV_LIBS += -lnl-genl-3
   DRV_CFLAGS += -DCONFIG_LIBNL20
+  ifdef LIBNL_INC
+    DRV_CFLAGS += -I$(LIBNL_INC)
+  else
+    PKG_CONFIG ?= pkg-config
+    DRV_CFLAGS += $(shell $(PKG_CONFIG) --cflags libnl-3.0)
+  endif
+ifdef CONFIG_LIBNL3_ROUTE
+  DRV_LIBS += -lnl-route-3
+  DRV_CFLAGS += -DCONFIG_LIBNL3_ROUTE
+endif
 else
   ifdef CONFIG_LIBNL_TINY
     DRV_LIBS += -lnl-tiny
@@ -73,10 +74,12 @@ CONFIG_L2_FREEBSD=y
 CONFIG_DNET_PCAP=y
 endif
 
-ifdef CONFIG_DRIVER_TEST
-DRV_CFLAGS += -DCONFIG_DRIVER_TEST
-DRV_OBJS += ../src/drivers/driver_test.o
-NEED_AP_MLME=y
+ifdef CONFIG_DRIVER_OPENBSD
+ifndef CONFIG_L2_PACKET
+CONFIG_L2_PACKET=freebsd
+endif
+DRV_CFLAGS += -DCONFIG_DRIVER_OPENBSD
+DRV_OBJS += ../src/drivers/driver_openbsd.o
 endif
 
 ifdef CONFIG_DRIVER_NONE
@@ -86,12 +89,24 @@ endif
 
 ##### PURE AP DRIVERS
 
+ifdef CONFIG_DRIVER_HOSTAP
+DRV_AP_CFLAGS += -DCONFIG_DRIVER_HOSTAP
+DRV_AP_OBJS += ../src/drivers/driver_hostap.o
+CONFIG_WIRELESS_EXTENSION=y
+NEED_AP_MLME=y
+NEED_NETLINK=y
+NEED_LINUX_IOCTL=y
+endif
+
 ifdef CONFIG_DRIVER_ATHEROS
 DRV_AP_CFLAGS += -DCONFIG_DRIVER_ATHEROS
 DRV_AP_OBJS += ../src/drivers/driver_atheros.o
 CONFIG_L2_PACKET=linux
 NEED_NETLINK=y
 NEED_LINUX_IOCTL=y
+ifdef ATH_GCM_SUPPORT
+CFLAGS += -DATH_GCM_SUPPORT
+endif
 endif
 
 ##### PURE CLIENT DRIVERS
@@ -102,18 +117,6 @@ CONFIG_WIRELESS_EXTENSION=y
 NEED_NETLINK=y
 NEED_LINUX_IOCTL=y
 NEED_RFKILL=y
-endif
-
-ifdef CONFIG_DRIVER_RALINK
-DRV_WPA_CFLAGS += -DCONFIG_DRIVER_RALINK
-DRV_WPA_OBJS += ../src/drivers/driver_ralink.o
-NEED_NETLINK=y
-NEED_LINUX_IOCTL=y
-endif
-
-ifdef CONFIG_DRIVER_BROADCOM
-DRV_WPA_CFLAGS += -DCONFIG_DRIVER_BROADCOM
-DRV_WPA_OBJS += ../src/drivers/driver_broadcom.o
 endif
 
 ifdef CONFIG_DRIVER_NDIS
@@ -129,20 +132,6 @@ CONFIG_WINPCAP=y
 ifdef CONFIG_USE_NDISUIO
 DRV_WPA_CFLAGS += -DCONFIG_USE_NDISUIO
 endif
-endif
-
-ifdef CONFIG_DRIVER_OSX
-DRV_WPA_CFLAGS += -DCONFIG_DRIVER_OSX
-DRV_WPA_OBJS += ../src/drivers/driver_osx.o
-DRV_WPA_LDFLAGS += -framework CoreFoundation
-DRV_WPA_LDFLAGS += -F/System/Library/PrivateFrameworks -framework Apple80211
-endif
-
-ifdef CONFIG_DRIVER_IPHONE
-DRV_WPA_CFLAGS += -DCONFIG_DRIVER_IPHONE
-DRV_WPA_OBJS += ../src/drivers/driver_iphone.o
-DRV_WPA_OBJS += ../src/drivers/MobileApple80211.o
-DRV_WPA_LDFLAGS += -framework CoreFoundation
 endif
 
 ifdef CONFIG_DRIVER_ROBOSWITCH
@@ -168,6 +157,28 @@ ifdef NEED_RFKILL
 DRV_OBJS += ../src/drivers/rfkill.o
 endif
 
+ifdef CONFIG_VLAN_NETLINK
+ifdef CONFIG_FULL_DYNAMIC_VLAN
+ifdef CONFIG_LIBNL32
+  DRV_LIBS += -lnl-3
+  DRV_LIBS += -lnl-genl-3
+  DRV_LIBS += -lnl-route-3
+  DRV_CFLAGS += -DCONFIG_LIBNL20
+else
+  ifdef CONFIG_LIBNL_TINY
+    DRV_LIBS += -lnl-tiny
+  else
+    DRV_LIBS += -lnl
+  endif
+
+  ifdef CONFIG_LIBNL20
+    DRV_LIBS += -lnl-genl
+    DRV_LIBS += -lnl-route
+    DRV_CFLAGS += -DCONFIG_LIBNL20
+  endif
+endif
+endif
+endif
 
 ##### COMMON VARS
 DRV_BOTH_CFLAGS := $(DRV_CFLAGS) $(DRV_WPA_CFLAGS) $(DRV_AP_CFLAGS)

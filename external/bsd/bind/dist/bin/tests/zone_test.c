@@ -1,7 +1,7 @@
-/*	$NetBSD: zone_test.c,v 1.5 2013/07/27 19:23:10 christos Exp $	*/
+/*	$NetBSD: zone_test.c,v 1.8 2014/12/10 04:37:53 christos Exp $	*/
 
 /*
- * Copyright (C) 2004, 2005, 2007, 2009, 2012  Internet Systems Consortium, Inc. ("ISC")
+ * Copyright (C) 2004, 2005, 2007, 2009, 2012, 2014  Internet Systems Consortium, Inc. ("ISC")
  * Copyright (C) 1999-2002  Internet Software Consortium.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
@@ -78,7 +78,7 @@ isc_sockaddr_t addr;
 			(void)NULL
 
 static void
-usage() {
+usage(void) {
 	fprintf(stderr,
 		"usage: zone_test [-dqsSM] [-c class] [-f file] zone\n");
 	exit(1);
@@ -247,10 +247,6 @@ main(int argc, char **argv) {
 	char *filename = NULL;
 	const char *classname = "IN";
 
-	isc__mem_register();
-	isc__task_register();
-	isc__timer_register();
-	isc__socket_register();
 	while ((c = isc_commandline_parse(argc, argv, "cdf:m:qsMS")) != EOF) {
 		switch (c) {
 		case 'c':

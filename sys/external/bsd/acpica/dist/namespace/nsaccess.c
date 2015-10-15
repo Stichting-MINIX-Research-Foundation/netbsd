@@ -5,7 +5,7 @@
  ******************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -40,8 +40,6 @@
  * IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGES.
  */
-
-#define __NSACCESS_C__
 
 #include "acpi.h"
 #include "accommon.h"
@@ -113,7 +111,7 @@ AcpiNsRootInitialize (
     {
         /* _OSI is optional for now, will be permanent later */
 
-        if (!ACPI_STRCMP (InitVal->Name, "_OSI") && !AcpiGbl_CreateOsiMethod)
+        if (!strcmp (InitVal->Name, "_OSI") && !AcpiGbl_CreateOsiMethod)
         {
             continue;
         }
@@ -121,12 +119,12 @@ AcpiNsRootInitialize (
         Status = AcpiNsLookup (NULL, __UNCONST(InitVal->Name), InitVal->Type,
                         ACPI_IMODE_LOAD_PASS2, ACPI_NS_NO_UPSEARCH,
                         NULL, &NewNode);
-
-        if (ACPI_FAILURE (Status) || (!NewNode)) /* Must be on same line for code converter */
+        if (ACPI_FAILURE (Status))
         {
             ACPI_EXCEPTION ((AE_INFO, Status,
                 "Could not create predefined name %s",
                 InitVal->Name));
+            continue;
         }
 
         /*
@@ -167,6 +165,7 @@ AcpiNsRootInitialize (
             switch (InitVal->Type)
             {
             case ACPI_TYPE_METHOD:
+
                 ObjDesc->Method.ParamCount = (UINT8) ACPI_TO_INTEGER (Val);
                 ObjDesc->Common.Flags |= AOPOBJ_DATA_VALID;
 
@@ -188,16 +187,14 @@ AcpiNsRootInitialize (
                 ObjDesc->Integer.Value = ACPI_TO_INTEGER (Val);
                 break;
 
-
             case ACPI_TYPE_STRING:
 
                 /* Build an object around the static string */
 
-                ObjDesc->String.Length = (UINT32) ACPI_STRLEN (Val);
+                ObjDesc->String.Length = (UINT32) strlen (Val);
                 ObjDesc->String.Pointer = Val;
                 ObjDesc->Common.Flags |= AOPOBJ_STATIC_POINTER;
                 break;
-
 
             case ACPI_TYPE_MUTEX:
 
@@ -215,7 +212,7 @@ AcpiNsRootInitialize (
 
                 /* Special case for ACPI Global Lock */
 
-                if (ACPI_STRCMP (InitVal->Name, "_GL_") == 0)
+                if (strcmp (InitVal->Name, "_GL_") == 0)
                 {
                     AcpiGbl_GlobalLockMutex = ObjDesc;
 
@@ -230,7 +227,6 @@ AcpiNsRootInitialize (
                     }
                 }
                 break;
-
 
             default:
 
@@ -323,7 +319,9 @@ AcpiNsLookup (
         return_ACPI_STATUS (AE_BAD_PARAMETER);
     }
 
-    LocalFlags = Flags & ~(ACPI_NS_ERROR_IF_FOUND | ACPI_NS_SEARCH_PARENT);
+    LocalFlags = Flags &
+        ~(ACPI_NS_ERROR_IF_FOUND | ACPI_NS_OVERRIDE_IF_FOUND |
+          ACPI_NS_SEARCH_PARENT);
     *ReturnNode = ACPI_ENTRY_NOT_FOUND;
     AcpiGbl_NsLookupCount++;
 
@@ -450,8 +448,8 @@ AcpiNsLookup (
                     /* Current scope has no parent scope */
 
                     ACPI_ERROR ((AE_INFO,
-                        "ACPI path has too many parent prefixes (^) "
-                        "- reached beyond root node"));
+                        "%s: Path has too many parent prefixes (^) "
+                        "- reached beyond root node", Pathname));
                     return_ACPI_STATUS (AE_NOT_FOUND);
                 }
             }
@@ -575,6 +573,13 @@ AcpiNsLookup (
             {
                 LocalFlags |= ACPI_NS_ERROR_IF_FOUND;
             }
+
+            /* Set override flag according to caller */
+
+            if (Flags & ACPI_NS_OVERRIDE_IF_FOUND)
+            {
+                LocalFlags |= ACPI_NS_OVERRIDE_IF_FOUND;
+            }
         }
 
         /* Extract one ACPI name from the front of the pathname */
@@ -697,4 +702,3 @@ AcpiNsLookup (
     *ReturnNode = ThisNode;
     return_ACPI_STATUS (AE_OK);
 }
-

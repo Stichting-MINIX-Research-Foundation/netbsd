@@ -1,6 +1,6 @@
 /* This testcase is part of GDB, the GNU debugger.
 
-   Copyright 2005-2013 Free Software Foundation, Inc.
+   Copyright 2005-2015 Free Software Foundation, Inc.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -17,10 +17,11 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <unistd.h>
 
 long lines = 0;
 
-main()
+int main()
 {
   char linebuf[128];
   FILE *in, *out;
@@ -28,13 +29,13 @@ main()
   long i;
   int c = 0;
 
-  in  = fopen ("pi.txt", "r");
-  out = fopen ("copy1.txt", "w");
+  in  = fopen (PI_TXT, "r");
+  out = fopen (COPY1_TXT, "w");
 
   if (!in || !out)
     {
       fprintf (stderr, "File open failed\n");
-      exit (1);
+      return 1;
     }
 
   for (i = 0; ; i++)
@@ -54,6 +55,6 @@ main()
   fclose (in);
   fclose (out);
   printf ("Deleting copy.\n");	/* breakpoint 3 */
-  unlink ("copy1.txt");
-  exit (0);			/* breakpoint 4 */
+  unlink (COPY1_TXT);
+  return 0;			/* breakpoint 4 */
 }

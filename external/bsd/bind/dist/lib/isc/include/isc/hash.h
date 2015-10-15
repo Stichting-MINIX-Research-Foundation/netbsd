@@ -1,7 +1,7 @@
-/*	$NetBSD: hash.h,v 1.3 2012/06/05 00:42:35 christos Exp $	*/
+/*	$NetBSD: hash.h,v 1.5 2014/12/10 04:38:00 christos Exp $	*/
 
 /*
- * Copyright (C) 2004-2007, 2009  Internet Systems Consortium, Inc. ("ISC")
+ * Copyright (C) 2004-2007, 2009, 2013, 2014  Internet Systems Consortium, Inc. ("ISC")
  * Copyright (C) 2003  Internet Software Consortium.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
@@ -21,6 +21,8 @@
 
 #ifndef ISC_HASH_H
 #define ISC_HASH_H 1
+
+#include <isc/types.h>
 
 /*****
  ***** Module Info
@@ -84,7 +86,7 @@
 ISC_LANG_BEGINDECLS
 
 isc_result_t
-isc_hash_ctxcreate(isc_mem_t *mctx, isc_entropy_t *entropy, unsigned int limit,
+isc_hash_ctxcreate(isc_mem_t *mctx, isc_entropy_t *entropy, size_t limit,
 		   isc_hash_t **hctx);
 isc_result_t
 isc_hash_create(isc_mem_t *mctx, isc_entropy_t *entropy, size_t limit);
@@ -181,6 +183,22 @@ isc_hash_calc(const unsigned char *key, unsigned int keylen,
  * is a DNS name.
  */
 /*@}*/
+
+void
+isc__hash_setvec(const isc_uint16_t *vec);
+
+/*!<
+ * \brief Set the contents of the random vector used in hashing.
+ *
+ * WARNING: This function is meant to be used only in testing code. It
+ * must not be used anywhere in normally running code.
+ *
+ * The hash context must have been created beforehand, otherwise this
+ * function is a nop.
+ *
+ * 'vec' is not documented here on purpose. You should know what you are
+ * doing before using this function.
+ */
 
 ISC_LANG_ENDDECLS
 

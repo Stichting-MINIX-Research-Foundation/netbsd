@@ -1,8 +1,9 @@
-/*	$NetBSD: modetoa.c,v 1.3 2012/02/01 07:46:22 kardel Exp $	*/
+/*	$NetBSD: modetoa.c,v 1.7 2015/07/10 14:20:32 christos Exp $	*/
 
 /*
  * modetoa - return an asciized mode
  */
+#include <config.h>
 #include <stdio.h>
 
 #include "lib_strbuf.h"
@@ -14,7 +15,7 @@ modetoa(
 	)
 {
 	char *bp;
-	static const char *modestrings[] = {
+	static const char * const modestrings[] = {
 		"unspec",
 		"sym_active",
 		"sym_passive",

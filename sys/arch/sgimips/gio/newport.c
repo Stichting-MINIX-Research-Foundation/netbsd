@@ -1,4 +1,4 @@
-/*	$NetBSD: newport.c,v 1.17 2012/01/11 21:23:38 macallan Exp $	*/
+/*	$NetBSD: newport.c,v 1.19 2015/08/25 02:09:18 macallan Exp $	*/
 
 /*
  * Copyright (c) 2003 Ilpo Ruotsalainen
@@ -31,7 +31,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: newport.c,v 1.17 2012/01/11 21:23:38 macallan Exp $");
+__KERNEL_RCSID(0, "$NetBSD: newport.c,v 1.19 2015/08/25 02:09:18 macallan Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -58,10 +58,9 @@ struct newport_softc {
 };
 
 struct newport_devconfig {
-	uint32_t		dc_addr;
-
 	bus_space_tag_t		dc_st;
 	bus_space_handle_t	dc_sh;
+	bus_addr_t		dc_addr;
 
 	int			dc_boardrev;
 	int			dc_vc2rev;
@@ -433,7 +432,7 @@ newport_get_resolution(struct newport_devconfig *dc)
 static void
 newport_setup_hw(struct newport_devconfig *dc)
 {
-	uint16_t curp,tmp;
+	uint16_t __unused(curp), tmp;
 	int i;
 	uint32_t scratch;
 
@@ -882,7 +881,7 @@ newport_ioctl(void *v, void *vs, u_long cmd, void *data, int flag,
 {
 	struct vcons_data *vd;
 	struct newport_devconfig *dc;
-	struct vcons_screen *ms;
+	struct vcons_screen *__unused(ms);
 	int nmode;
 
 	vd = (struct vcons_data *)v;
@@ -909,12 +908,6 @@ newport_ioctl(void *v, void *vs, u_long cmd, void *data, int flag,
 				rex3_wait_gfifo(dc);
 				newport_setup_hw(dc);
 				vcons_redraw_screen(vd->active);
-			} else {
-				xmap9_write_mode(dc, 0,
-	    			    XMAP9_MODE_GAMMA_BYPASS |
-				    XMAP9_CONFIG_RGBMAP_2 |
-	    			    XMAP9_MODE_PIXSIZE_24BPP);
-				xmap9_write(dc, XMAP9_DCBCRS_MODE_SELECT, 0);
 			}
 		}
 		return 0;
@@ -934,5 +927,5 @@ newport_mmap(void *v, void *vs, off_t offset, int prot)
 	if ( offset >= 0xfffff)
 		return -1;
 
-	return bus_space_mmap(dc->dc_st, dc->dc_sh, offset, prot, 0);
+	return bus_space_mmap(dc->dc_st, dc->dc_addr, offset, prot, 0);
 }

@@ -1,4 +1,4 @@
-/*	$NetBSD: kdump.c,v 1.117 2013/11/27 20:27:58 christos Exp $	*/
+/*	$NetBSD: kdump.c,v 1.120 2015/06/17 00:01:59 christos Exp $	*/
 
 /*-
  * Copyright (c) 1988, 1993
@@ -39,7 +39,7 @@ __COPYRIGHT("@(#) Copyright (c) 1988, 1993\
 #if 0
 static char sccsid[] = "@(#)kdump.c	8.4 (Berkeley) 4/28/95";
 #else
-__RCSID("$NetBSD: kdump.c,v 1.117 2013/11/27 20:27:58 christos Exp $");
+__RCSID("$NetBSD: kdump.c,v 1.120 2015/06/17 00:01:59 christos Exp $");
 #endif
 #endif /* not lint */
 
@@ -436,7 +436,7 @@ dumpheader(struct ktr_header *kth)
 				break;
 			default:
 			badversion:
-				err(1, "Unsupported ktrace version %x\n",
+				err(1, "Unsupported ktrace version %x",
 				    kth->ktr_version);
 			}
 		}
@@ -652,14 +652,13 @@ rprint(register_t ret)
 {
 
 	if (!plain) {
-		(void)printf("%ld", (long)ret);
-		if (!small(ret))
-			(void)printf("/%#lx", (long)ret);
+		output_long(ret, 0);
+		if (!small(ret)) {
+			putchar('/');
+			output_long(ret, 1);
+		}
 	} else {
-		if (decimal || small(ret))
-			(void)printf("%ld", (long)ret);
-		else
-			(void)printf("%#lx", (long)ret);
+		output_long(ret, !(decimal || small(ret)));
 	}
 }
 
@@ -998,7 +997,7 @@ ktrpsig(void *v, int len)
 		}
 		/*NOTREACHED*/
 	default:
-		warnx("Unhandled size %d for ktrpsig\n", len);
+		warnx("Unhandled size %d for ktrpsig", len);
 		break;
 	}
 }

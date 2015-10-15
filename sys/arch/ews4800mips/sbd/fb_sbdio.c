@@ -1,4 +1,4 @@
-/*	$NetBSD: fb_sbdio.c,v 1.12 2012/01/11 21:17:33 macallan Exp $	*/
+/*	$NetBSD: fb_sbdio.c,v 1.15 2015/06/23 21:00:23 matt Exp $	*/
 
 /*-
  * Copyright (c) 2004, 2005 The NetBSD Foundation, Inc.
@@ -32,7 +32,7 @@
 #define WIRED_FB_TLB
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: fb_sbdio.c,v 1.12 2012/01/11 21:17:33 macallan Exp $");
+__KERNEL_RCSID(0, "$NetBSD: fb_sbdio.c,v 1.15 2015/06/23 21:00:23 matt Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -46,9 +46,9 @@ __KERNEL_RCSID(0, "$NetBSD: fb_sbdio.c,v 1.12 2012/01/11 21:17:33 macallan Exp $
 #include <dev/wsfont/wsfont.h>
 #include <dev/rasops/rasops.h>
 
+#include <mips/locore.h>
 #include <mips/pte.h>
 
-#include <machine/locore.h>
 #include <machine/sbdiovar.h>
 
 #include <machine/gareg.h>
@@ -154,6 +154,7 @@ fb_sbdio_attach(device_t parent, device_t self, void *aux)
 		ga = malloc(sizeof(struct ga), M_DEVBUF, M_NOWAIT | M_ZERO);
 		if (ga == NULL) {
 			printf(":can't allocate ga memory\n");
+			free(ri, M_DEVBUF);
 			return;
 		}
 		ga->reg_paddr = sa->sa_addr2;
@@ -294,12 +295,10 @@ _fb_ioctl(void *v, void *vs, u_long cmd, void *data, int flag, struct lwp *l)
 		fbinfo->cmsize = 256;
 		return 0;
 
-#if 1
 	case WSDISPLAYIO_LINEBYTES:
 		*(u_int *)data = ri->ri_stride;
 		return 0;
 
-#endif
 	case WSDISPLAYIO_GETCMAP:
 		if (ri->ri_flg == RI_FORCEMONO)
 			break;

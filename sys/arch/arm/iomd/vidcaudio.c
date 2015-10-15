@@ -1,4 +1,4 @@
-/*	$NetBSD: vidcaudio.c,v 1.51 2012/10/10 22:00:22 skrll Exp $	*/
+/*	$NetBSD: vidcaudio.c,v 1.53 2014/10/25 10:58:12 skrll Exp $	*/
 
 /*
  * Copyright (c) 1995 Melvin Tang-Richardson
@@ -65,7 +65,7 @@
 
 #include <sys/param.h>	/* proc.h */
 
-__KERNEL_RCSID(0, "$NetBSD: vidcaudio.c,v 1.51 2012/10/10 22:00:22 skrll Exp $");
+__KERNEL_RCSID(0, "$NetBSD: vidcaudio.c,v 1.53 2014/10/25 10:58:12 skrll Exp $");
 
 #include <sys/audioio.h>
 #include <sys/conf.h>   /* autoconfig functions */
@@ -84,7 +84,6 @@ __KERNEL_RCSID(0, "$NetBSD: vidcaudio.c,v 1.51 2012/10/10 22:00:22 skrll Exp $")
 
 #include <machine/intr.h>
 #include <machine/machdep.h>
-#include <arm/arm32/katelib.h>
 
 #include <arm/iomd/vidcaudiovar.h>
 #include <arm/iomd/iomdreg.h>
@@ -105,6 +104,12 @@ extern int *vidc_base;
 #define DPRINTF(x)
 #endif
 
+#define WriteWord(a, b) \
+*((volatile unsigned int *)(a)) = (b)
+
+#define ReadWord(a) \
+(*((volatile unsigned int *)(a)))
+
 struct vidcaudio_softc {
 	device_t	sc_dev;
 
@@ -114,8 +119,8 @@ struct vidcaudio_softc {
 	int	sc_is16bit;
 
 	size_t	sc_pblksize;
-	vm_offset_t	sc_poffset;
-	vm_offset_t	sc_pbufsize;
+	vaddr_t	sc_poffset;
+	vaddr_t	sc_pbufsize;
 	paddr_t	*sc_ppages;
 	void	(*sc_pintr)(void *);
 	void	*sc_parg;

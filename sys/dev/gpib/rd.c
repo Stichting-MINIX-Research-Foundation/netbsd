@@ -1,4 +1,4 @@
-/*	$NetBSD: rd.c,v 1.31 2012/10/27 17:18:16 chs Exp $ */
+/*	$NetBSD: rd.c,v 1.40 2015/04/13 16:33:24 riastradh Exp $ */
 
 /*-
  * Copyright (c) 1996-2003 The NetBSD Foundation, Inc.
@@ -72,7 +72,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: rd.c,v 1.31 2012/10/27 17:18:16 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: rd.c,v 1.40 2015/04/13 16:33:24 riastradh Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -89,7 +89,7 @@ __KERNEL_RCSID(0, "$NetBSD: rd.c,v 1.31 2012/10/27 17:18:16 chs Exp $");
 #include <sys/proc.h>
 #include <sys/stat.h>
 
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 
 #include <dev/gpib/gpibvar.h>
 #include <dev/gpib/cs80busvar.h>
@@ -255,12 +255,29 @@ dev_type_dump(rddump);
 dev_type_size(rdsize);
 
 const struct bdevsw rd_bdevsw = {
-	rdopen, rdclose, rdstrategy, rdioctl, rddump, rdsize, D_DISK
+	.d_open = rdopen,
+	.d_close = rdclose,
+	.d_strategy = rdstrategy,
+	.d_ioctl = rdioctl,
+	.d_dump = rddump,
+	.d_psize = rdsize,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
 const struct cdevsw rd_cdevsw = {
-	rdopen, rdclose, rdread, rdwrite, rdioctl,
-	nostop, notty, nopoll, nommap, nokqfilter, D_DISK
+	.d_open = rdopen,
+	.d_close = rdclose,
+	.d_read = rdread,
+	.d_write = rdwrite,
+	.d_ioctl = rdioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
 extern struct cfdriver rd_cd;
@@ -411,7 +428,7 @@ rdattach(device_t parent, device_t self, void *aux)
 	 * attach the device into the random source list
 	 */
 	rnd_attach_source(&sc->rnd_source, device_xname(sc->sc_dev),
-			  RND_TYPE_DISK, 0);
+			  RND_TYPE_DISK, RND_FLAG_DEFAULT);
 }
 
 /*
@@ -682,7 +699,7 @@ void
 rdstart(struct rd_softc *sc)
 {
 	struct buf *bp = bufq_peek(sc->sc_tab);
-	int part, slave, punit;
+	int slave, punit;
 
 	slave = sc->sc_slave;
 	punit = sc->sc_punit;
@@ -692,7 +709,6 @@ rdstart(struct rd_softc *sc)
 
 again:
 
-	part = RDPART(bp->b_dev);
 	sc->sc_flags |= RDF_SEEK;
 	sc->sc_ioc.c_unit = CS80CMD_SUNIT(punit);
 	sc->sc_ioc.c_volume = CS80CMD_SVOL(0);
@@ -956,17 +972,11 @@ rdioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 
 	DPRINTF(RDB_FOLLOW, ("rdioctl: sc=%p\n", sc));
 
+	error = disk_ioctl(&sc->sc_dk, dev, cmd, data, flag, l);
+	if (error != EPASSTHROUGH)
+		return error;
+
 	switch (cmd) {
-	case DIOCGDINFO:
-		*(struct disklabel *)data = *lp;
-		return (0);
-
-	case DIOCGPART:
-		((struct partinfo *)data)->disklab = lp;
-		((struct partinfo *)data)->part =
-		    &lp->d_partitions[RDPART(dev)];
-		return (0);
-
 	case DIOCWLABEL:
 		if ((flag & FWRITE) == 0)
 			return (EBADF);
@@ -1012,7 +1022,7 @@ rdgetdefaultlabel(struct rd_softc *sc, struct disklabel *lp)
 
 	memset((void *)lp, 0, sizeof(struct disklabel));
 
-	lp->d_type = DTYPE_HPIB /* DTYPE_GPIB */;
+	lp->d_type = DKTYPE_HPIB /* DKTYPE_GPIB */;
 	lp->d_secsize = DEV_BSIZE;
 	lp->d_nsectors = rdidentinfo[type].ri_nbpt;
 	lp->d_ntracks = rdidentinfo[type].ri_ntpc;

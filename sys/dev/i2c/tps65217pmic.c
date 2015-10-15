@@ -1,4 +1,4 @@
-/*	$NetBSD: tps65217pmic.c,v 1.6 2013/08/04 00:24:28 rkujawa Exp $ */
+/*	$NetBSD: tps65217pmic.c,v 1.10 2014/07/20 23:01:22 bouyer Exp $ */
 
 /*-
  * Copyright (c) 2013 The NetBSD Foundation, Inc.
@@ -35,7 +35,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: tps65217pmic.c,v 1.6 2013/08/04 00:24:28 rkujawa Exp $");
+__KERNEL_RCSID(0, "$NetBSD: tps65217pmic.c,v 1.10 2014/07/20 23:01:22 bouyer Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -49,9 +49,10 @@ __KERNEL_RCSID(0, "$NetBSD: tps65217pmic.c,v 1.6 2013/08/04 00:24:28 rkujawa Exp
 #include <dev/sysmon/sysmonvar.h>
 
 #include <dev/i2c/tps65217pmicreg.h>
+#include <dev/i2c/tps65217pmicvar.h>
 
 #define NTPS_REG	7
-#define SNUM_REGS	NTPS_REG-1	
+#define SNUM_REGS	NTPS_REG-1
 #define SNUM_USBSTATUS	NTPS_REG
 #define SNUM_ACSTATUS	NTPS_REG+1
 
@@ -131,6 +132,8 @@ static int tps65217pmic_match(device_t, cfdata_t, void *);
 static void tps65217pmic_attach(device_t, device_t, void *);
 
 static uint8_t tps65217pmic_reg_read(struct tps65217pmic_softc *, uint8_t);
+static void tps65217pmic_reg_write(struct tps65217pmic_softc *, uint8_t,
+    uint8_t);
 
 static void tps65217pmic_reg_refresh(struct tps65217pmic_softc *);
 
@@ -338,7 +341,7 @@ tps65217pmic_power_monitor_init(struct tps65217pmic_softc *sc)
 {
 	uint8_t intr, intrmask, status, ppath;
 
-	intrmask = TPS65217PMIC_INT_USBM | TPS65217PMIC_INT_ACM | 
+	intrmask = TPS65217PMIC_INT_USBM | TPS65217PMIC_INT_ACM |
 	    TPS65217PMIC_INT_PBM;
 
 	status = tps65217pmic_reg_read(sc, TPS65217PMIC_STATUS);
@@ -352,7 +355,7 @@ tps65217pmic_power_monitor_init(struct tps65217pmic_softc *sc)
 	sc->sc_acenabled = ppath & TPS65217PMIC_PPATH_AC_EN;
 
 	if (intr & intrmask)
-		aprint_normal_dev(sc->sc_dev, 
+		aprint_normal_dev(sc->sc_dev,
 		    "WARNING: hardware interrupt enabled but not supported");
 
 	/* set up callout to poll for power source changes */
@@ -381,10 +384,10 @@ tps65217pmic_power_monitor(void *aux)
 		sc->sc_usbstatus = usbstatus;
 		pmf_event_inject(NULL, PMFE_POWER_CHANGED);
 		if (usbstatus)
-			aprint_normal_dev(sc->sc_dev, 
+			aprint_normal_dev(sc->sc_dev,
 			    "USB power source connected\n");
 		else
-			aprint_normal_dev(sc->sc_dev, 
+			aprint_normal_dev(sc->sc_dev,
 			    "USB power source disconnected\n");
 	}
 
@@ -392,10 +395,10 @@ tps65217pmic_power_monitor(void *aux)
 		sc->sc_acstatus = acstatus;
 		pmf_event_inject(NULL, PMFE_POWER_CHANGED);
 		if (acstatus) {
-			sysmon_pswitch_event(&sc->sc_smpsw, 
+			sysmon_pswitch_event(&sc->sc_smpsw,
 			    PSWITCH_EVENT_PRESSED);
 		} else {
-			sysmon_pswitch_event(&sc->sc_smpsw, 
+			sysmon_pswitch_event(&sc->sc_smpsw,
 			    PSWITCH_EVENT_RELEASED);
 		}
 	}
@@ -554,11 +557,10 @@ tps65217pmic_print_ldos(struct tps65217pmic_softc *sc)
 static void
 tps65217pmic_print_ppath(struct tps65217pmic_softc *sc)
 {
-	uint8_t status, ppath, regenable;
+	uint8_t status, ppath;
 
 	ppath = tps65217pmic_reg_read(sc, TPS65217PMIC_PPATH);
 	status = tps65217pmic_reg_read(sc, TPS65217PMIC_STATUS);
-	regenable = tps65217pmic_reg_read(sc, TPS65217PMIC_ENABLE);
 
 	aprint_normal_dev(sc->sc_dev, "power sources ");
 
@@ -608,6 +610,52 @@ tps65217pmic_reg_read(struct tps65217pmic_softc *sc, uint8_t reg)
 }
 
 static void
+tps65217pmic_reg_write_unlocked(struct tps65217pmic_softc *sc,
+    uint8_t reg, uint8_t data)
+{
+	uint8_t wbuf[2];
+
+	wbuf[0] = reg;
+	wbuf[1] = data;
+
+	if (iic_exec(sc->sc_tag, I2C_OP_WRITE_WITH_STOP, sc->sc_addr, NULL, 0,
+	    wbuf, 2, I2C_F_POLL)) {
+		aprint_error_dev(sc->sc_dev, "cannot execute I2C write\n");
+	}
+}
+
+static void __unused
+tps65217pmic_reg_write(struct tps65217pmic_softc *sc, uint8_t reg, uint8_t data)
+{
+
+	if (iic_acquire_bus(sc->sc_tag, I2C_F_POLL) != 0) {
+		aprint_error_dev(sc->sc_dev, "cannot acquire bus for write\n");
+		return;
+	}
+
+	tps65217pmic_reg_write_unlocked(sc, reg, data);
+
+	iic_release_bus(sc->sc_tag, I2C_F_POLL);
+}
+
+static void
+tps65217pmic_reg_write_l2(struct tps65217pmic_softc *sc,
+    uint8_t reg, uint8_t data)
+{
+	uint8_t regpw = reg ^ TPS65217PMIC_PASSWORD_XOR;
+	if (iic_acquire_bus(sc->sc_tag, I2C_F_POLL) != 0) {
+		aprint_error_dev(sc->sc_dev, "cannot acquire bus for write\n");
+		return;
+	}
+
+	tps65217pmic_reg_write_unlocked(sc, TPS65217PMIC_PASSWORD, regpw);
+	tps65217pmic_reg_write_unlocked(sc, reg, data);
+	tps65217pmic_reg_write_unlocked(sc, TPS65217PMIC_PASSWORD, regpw);
+	tps65217pmic_reg_write_unlocked(sc, reg, data);
+	iic_release_bus(sc->sc_tag, I2C_F_POLL);
+}
+
+static void
 tps65217pmic_envsys_register(struct tps65217pmic_softc *sc)
 {
 	int i;
@@ -631,16 +679,16 @@ tps65217pmic_envsys_register(struct tps65217pmic_softc *sc)
 	/* attach power source indicators */
 	strcpy(sc->sc_usbsensor.desc, "USB power source"); /* SNUM_USBSTATUS */
 	sc->sc_usbsensor.units = ENVSYS_INDICATOR;
-	sc->sc_usbsensor.state = ENVSYS_SINVALID; 
+	sc->sc_usbsensor.state = ENVSYS_SINVALID;
 	if (sysmon_envsys_sensor_attach(sc->sc_sme, &sc->sc_usbsensor))
-		aprint_error_dev(sc->sc_dev, 
+		aprint_error_dev(sc->sc_dev,
 		    "error attaching USB power source sensor\n");
 	strcpy(sc->sc_acsensor.desc, "AC power source"); /* SNUM_ACSTATUS */
 	sc->sc_acsensor.units = ENVSYS_INDICATOR;
-	sc->sc_acsensor.state = ENVSYS_SINVALID; 
+	sc->sc_acsensor.state = ENVSYS_SINVALID;
 	if (sysmon_envsys_sensor_attach(sc->sc_sme, &sc->sc_acsensor))
-		aprint_error_dev(sc->sc_dev, 
-	 	    "error attaching AC power source sensor\n");
+		aprint_error_dev(sc->sc_dev,
+		    "error attaching AC power source sensor\n");
 
 	/* register everything in sysmon */
 	sc->sc_sme->sme_name = device_xname(sc->sc_dev);
@@ -678,3 +726,50 @@ tps65217pmic_envsys_refresh(struct sysmon_envsys *sme, envsys_data_t *edata)
 	mutex_exit(&sc->sc_lock);
 }
 
+int
+tps65217pmic_set_volt(device_t self, const char *name, int mvolt)
+{
+	int i;
+	struct tps65217pmic_softc *sc = device_private(self);
+	struct tps_reg_param *regulator = NULL;
+	uint8_t val;
+
+	for (i = 0; i < __arraycount(tps_regulators); i++) {
+		if (strcmp(name, tps_regulators[i].name) == 0) {
+			regulator = &tps_regulators[i];
+			break;
+		}
+	}
+	if (regulator == NULL)
+		return EINVAL;
+
+	if (regulator->voltage_min > mvolt || regulator->voltage_max < mvolt)
+		return EINVAL;
+
+	if (!regulator->is_enabled)
+		return EINVAL;
+
+	if (regulator->is_tracking)
+		return EINVAL;
+
+	if (regulator->is_xadj)
+		return EINVAL;
+
+	/* find closest voltage entry */
+	for (i = 0; i < regulator->nvoltages; i++) {
+		if (mvolt <= regulator->voltages[i]) {
+			break;
+		}
+	}
+	KASSERT(i < regulator->nvoltages);
+	tps65217pmic_reg_write_l2(sc, regulator->defreg_num, i);
+
+	val = tps65217pmic_reg_read(sc, TPS65217PMIC_DEFSLEW);
+	val |= TPS65217PMIC_DEFSLEW_GO;
+	tps65217pmic_reg_write_l2(sc, TPS65217PMIC_DEFSLEW, val);
+
+	while (val & TPS65217PMIC_DEFSLEW_GO) {
+		val = tps65217pmic_reg_read(sc, TPS65217PMIC_DEFSLEW);
+	}
+	return 0;
+}

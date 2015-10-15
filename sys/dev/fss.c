@@ -1,4 +1,4 @@
-/*	$NetBSD: fss.c,v 1.86 2013/02/13 14:03:48 hannken Exp $	*/
+/*	$NetBSD: fss.c,v 1.93 2015/08/20 14:40:17 christos Exp $	*/
 
 /*-
  * Copyright (c) 2003 The NetBSD Foundation, Inc.
@@ -36,7 +36,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: fss.c,v 1.86 2013/02/13 14:03:48 hannken Exp $");
+__KERNEL_RCSID(0, "$NetBSD: fss.c,v 1.93 2015/08/20 14:40:17 christos Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -57,7 +57,6 @@ __KERNEL_RCSID(0, "$NetBSD: fss.c,v 1.86 2013/02/13 14:03:48 hannken Exp $");
 #include <sys/conf.h>
 #include <sys/kthread.h>
 #include <sys/fstrans.h>
-#include <sys/simplelock.h>
 #include <sys/vfs_syscalls.h>		/* For do_sys_unlink(). */
 
 #include <miscfs/specfs/specdev.h>
@@ -66,7 +65,7 @@ __KERNEL_RCSID(0, "$NetBSD: fss.c,v 1.86 2013/02/13 14:03:48 hannken Exp $");
 
 #include <uvm/uvm.h>
 
-void fssattach(int);
+#include "ioconf.h"
 
 dev_type_open(fss_open);
 dev_type_close(fss_close);
@@ -100,13 +99,29 @@ static struct vfs_hooks fss_vfs_hooks = {
 };
 
 const struct bdevsw fss_bdevsw = {
-	fss_open, fss_close, fss_strategy, fss_ioctl,
-	fss_dump, fss_size, D_DISK | D_MPSAFE
+	.d_open = fss_open,
+	.d_close = fss_close,
+	.d_strategy = fss_strategy,
+	.d_ioctl = fss_ioctl,
+	.d_dump = fss_dump,
+	.d_psize = fss_size,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK | D_MPSAFE
 };
 
 const struct cdevsw fss_cdevsw = {
-	fss_open, fss_close, fss_read, fss_write, fss_ioctl,
-	nostop, notty, nopoll, nommap, nokqfilter, D_DISK | D_MPSAFE
+	.d_open = fss_open,
+	.d_close = fss_close,
+	.d_read = fss_read,
+	.d_write = fss_write,
+	.d_ioctl = fss_ioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK | D_MPSAFE
 };
 
 static int fss_match(device_t, cfdata_t, void *);
@@ -1142,7 +1157,7 @@ fss_bs_thread(void *arg)
 				fss_error(sc, "write error on backing store");
 
 			scp->fc_type = FSS_CACHE_FREE;
-			cv_signal(&sc->sc_cache_cv);
+			cv_broadcast(&sc->sc_cache_cv);
 			break;
 		}
 
@@ -1278,7 +1293,8 @@ CFDRIVER_DECL(fss, DV_DISK, NULL);
 static int
 fss_modcmd(modcmd_t cmd, void *arg)
 {
-	int bmajor = -1, cmajor = -1,  error = 0;
+	devmajor_t bmajor = -1, cmajor = -1;
+	int error = 0;
 
 	switch (cmd) {
 	case MODULE_CMD_INIT:

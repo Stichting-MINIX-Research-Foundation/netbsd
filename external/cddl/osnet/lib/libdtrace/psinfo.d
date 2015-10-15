@@ -1,4 +1,4 @@
-/*	$NetBSD: psinfo.d,v 1.2 2010/02/21 01:46:35 darran Exp $	*/
+/*	$NetBSD: psinfo.d,v 1.5 2015/10/07 00:35:23 christos Exp $	*/
 
 /*
  * CDDL HEADER START
@@ -48,18 +48,18 @@ typedef struct psinfo {
 
 #pragma D binding "1.0" translator
 translator psinfo_t < struct proc *T > {
-	pr_nlwp = T->p_numthreads;
+	pr_nlwp = T->p_nlwps;
 	pr_pid = T->p_pid;
 	pr_ppid = (T->p_pptr == 0) ? 0 : T->p_pptr->p_pid;
-	pr_pgid = (T->p_leader == 0) ? 0 : T->p_leader->p_pid;
+	pr_pgid = (T->p_pgrp->pg_session->s_leader == 0) ? 0 : T->p_pgrp->pg_session->s_leader->p_pid;
 	pr_sid = (T->p_pgrp == 0) ? 0 : ((T->p_pgrp->pg_session == 0) ? 0 : T->p_pgrp->pg_session->s_sid);
-	pr_uid = T->p_ucred->cr_ruid;
-	pr_euid = T->p_ucred->cr_uid;
-	pr_gid = T->p_ucred->cr_rgid;
-	pr_egid = T->p_ucred->cr_groups[0];
+	pr_uid = T->p_cred->cr_uid;
+	pr_euid = T->p_cred->cr_euid;
+	pr_gid = T->p_cred->cr_gid;
+	pr_egid = T->p_cred->cr_egid;
 	pr_addr = 0;
-	pr_psargs = stringof(T->p_args->ar_args);
-	pr_arglen = T->p_args->ar_length;
+	pr_psargs = stringof(T->p_comm);
+	pr_arglen = strlen(T->p_comm);
 };
 
 typedef struct lwpsinfo {
@@ -76,22 +76,21 @@ typedef struct lwpsinfo {
 } lwpsinfo_t;
 
 #pragma D binding "1.0" translator
-translator lwpsinfo_t < struct thread *T > {
-	pr_lwpid = T->td_tid;
-	pr_pri = T->td_priority;
-	pr_flag = T->td_flags;
-	pr_state = 0; /* XXX */
-	pr_sname = '?'; /* XXX */
+translator lwpsinfo_t < struct lwp *T > {
+	pr_lwpid = T->l_lid;
+	pr_pri = T->l_priority;
+	pr_flag = T->l_flag;
+	pr_state = T->l_stat;
+	pr_sname = '?';	/* XXX */
 	pr_syscall = 0; /* XXX */
 	pr_addr = (uintptr_t)T;
-	pr_wchan = (uintptr_t)T->td_wchan;
+	pr_wchan = (uintptr_t)T->l_wchan;
 };
 
-inline psinfo_t *curpsinfo = xlate <psinfo_t *> (curthread->td_proc);
+inline psinfo_t *curpsinfo = xlate <psinfo_t *> (curthread->l_proc);
 #pragma D attributes Stable/Stable/Common curpsinfo
 #pragma D binding "1.0" curpsinfo
 
 inline lwpsinfo_t *curlwpsinfo = xlate <lwpsinfo_t *> (curthread);
 #pragma D attributes Stable/Stable/Common curlwpsinfo
 #pragma D binding "1.0" curlwpsinfo
-

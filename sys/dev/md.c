@@ -1,4 +1,4 @@
-/*	$NetBSD: md.c,v 1.67 2012/06/30 10:52:31 tsutsui Exp $	*/
+/*	$NetBSD: md.c,v 1.75 2015/08/20 14:40:17 christos Exp $	*/
 
 /*
  * Copyright (c) 1995 Gordon W. Ross, Leo Weppelman.
@@ -40,7 +40,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: md.c,v 1.67 2012/06/30 10:52:31 tsutsui Exp $");
+__KERNEL_RCSID(0, "$NetBSD: md.c,v 1.75 2015/08/20 14:40:17 christos Exp $");
 
 #ifdef _KERNEL_OPT
 #include "opt_md.h"
@@ -65,6 +65,7 @@ __KERNEL_RCSID(0, "$NetBSD: md.c,v 1.67 2012/06/30 10:52:31 tsutsui Exp $");
 
 #include <dev/md.h>
 
+#include "ioconf.h"
 /*
  * The user-space functionality is included by default.
  * Use  `options MEMORY_DISK_SERVER=0' to turn it off.
@@ -93,8 +94,6 @@ struct md_softc {
 #define sc_size sc_md.md_size
 #define sc_type sc_md.md_type
 
-void	mdattach(int);
-
 static void	md_attach(device_t, device_t, void *);
 static int	md_detach(device_t, int);
 
@@ -107,15 +106,34 @@ static dev_type_strategy(mdstrategy);
 static dev_type_size(mdsize);
 
 const struct bdevsw md_bdevsw = {
-	mdopen, mdclose, mdstrategy, mdioctl, nodump, mdsize, D_DISK | D_MPSAFE
+	.d_open = mdopen,
+	.d_close = mdclose,
+	.d_strategy = mdstrategy,
+	.d_ioctl = mdioctl,
+	.d_dump = nodump,
+	.d_psize = mdsize,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK | D_MPSAFE
 };
 
 const struct cdevsw md_cdevsw = {
-	mdopen, mdclose, mdread, mdwrite, mdioctl,
-	nostop, notty, nopoll, nommap, nokqfilter, D_DISK
+	.d_open = mdopen,
+	.d_close = mdclose,
+	.d_read = mdread,
+	.d_write = mdwrite,
+	.d_ioctl = mdioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
-static struct dkdriver mddkdriver = { mdstrategy, NULL };
+static struct dkdriver mddkdriver = {
+	.d_strategy = mdstrategy
+};
 
 extern struct cfdriver md_cd;
 CFATTACH_DECL3_NEW(md, sizeof(struct md_softc),
@@ -340,6 +358,10 @@ mdclose(dev_t dev, int flag, int fmt, struct lwp *l)
 		break;
 	}
 	dk->dk_openmask = dk->dk_copenmask | dk->dk_bopenmask;
+	if (dk->dk_openmask != 0) {
+		mutex_exit(&dk->dk_openlock);
+		return 0;
+	}
 
 	mutex_exit(&dk->dk_openlock);
 
@@ -453,8 +475,6 @@ mdioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 {
 	struct md_softc *sc;
 	struct md_conf *umd;
-	struct disklabel *lp;
-	struct partinfo *pp;
 	int error;
 
 	if ((sc = device_lookup_private(&md_cd, MD_UNIT(dev))) == NULL)
@@ -462,18 +482,8 @@ mdioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 
 	mutex_enter(&sc->sc_lock);
 	if (sc->sc_type != MD_UNCONFIGURED) {
-		switch (cmd) {
-		case DIOCGDINFO:
-			lp = (struct disklabel *)data;
-			*lp = *sc->sc_dkdev.dk_label;
-			mutex_exit(&sc->sc_lock);
-			return 0;
-
-		case DIOCGPART:
-			pp = (struct partinfo *)data;
-			pp->disklab = sc->sc_dkdev.dk_label;
-			pp->part =
-			    &sc->sc_dkdev.dk_label->d_partitions[DISKPART(dev)];
+		error = disk_ioctl(&sc->sc_dkdev, dev, cmd, data, flag, l); 
+		if (error != EPASSTHROUGH) {
 			mutex_exit(&sc->sc_lock);
 			return 0;
 		}
@@ -537,7 +547,7 @@ md_set_disklabel(struct md_softc *sc)
 	lp->d_secpercyl = lp->d_ntracks*lp->d_nsectors;
 
 	strncpy(lp->d_typename, md_cd.cd_name, sizeof(lp->d_typename));
-	lp->d_type = DTYPE_UNKNOWN;
+	lp->d_type = DKTYPE_MD;
 	strncpy(lp->d_packname, "fictitious", sizeof(lp->d_packname));
 	lp->d_rpm = 3600;
 	lp->d_interleave = 1;

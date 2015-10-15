@@ -1,4 +1,4 @@
-/*	$NetBSD: init_main.c,v 1.454 2013/10/02 21:38:55 apb Exp $	*/
+/*	$NetBSD: init_main.c,v 1.470 2015/09/14 01:40:03 uebayasi Exp $	*/
 
 /*-
  * Copyright (c) 2008, 2009 The NetBSD Foundation, Inc.
@@ -97,7 +97,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: init_main.c,v 1.454 2013/10/02 21:38:55 apb Exp $");
+__KERNEL_RCSID(0, "$NetBSD: init_main.c,v 1.470 2015/09/14 01:40:03 uebayasi Exp $");
 
 #include "opt_ddb.h"
 #include "opt_ipsec.h"
@@ -112,14 +112,18 @@ __KERNEL_RCSID(0, "$NetBSD: init_main.c,v 1.454 2013/10/02 21:38:55 apb Exp $");
 #include "opt_compat_netbsd.h"
 #include "opt_wapbl.h"
 #include "opt_ptrace.h"
+#include "opt_rnd_printf.h"
+#include "opt_splash.h"
+
+#if defined(SPLASHSCREEN) && defined(makeoptions_SPLASHSCREEN_IMAGE)
+extern void *_binary_splash_image_start;
+extern void *_binary_splash_image_end;
+#endif
 
 #include "drvctl.h"
+#include "ether.h"
 #include "ksyms.h"
 
-#include "sysmon_envsys.h"
-#include "sysmon_power.h"
-#include "sysmon_taskq.h"
-#include "sysmon_wdog.h"
 #include "veriexec.h"
 
 #include <sys/param.h>
@@ -157,6 +161,7 @@ __KERNEL_RCSID(0, "$NetBSD: init_main.c,v 1.454 2013/10/02 21:38:55 apb Exp $");
 #include <sys/mbuf.h>
 #include <sys/sched.h>
 #include <sys/sleepq.h>
+#include <sys/ipi.h>
 #include <sys/iostat.h>
 #include <sys/vmem.h>
 #include <sys/uuid.h>
@@ -212,26 +217,19 @@ __KERNEL_RCSID(0, "$NetBSD: init_main.c,v 1.454 2013/10/02 21:38:55 apb Exp $");
 #include <ufs/ufs/quota.h>
 
 #include <miscfs/genfs/genfs.h>
-#include <miscfs/syncfs/syncfs.h>
 #include <miscfs/specfs/specdev.h>
 
 #include <sys/cpu.h>
 
 #include <uvm/uvm.h>	/* extern struct uvm uvm */
 
-#if NSYSMON_TASKQ > 0
-#include <dev/sysmon/sysmon_taskq.h>
-#endif
-
 #include <dev/cons.h>
-
-#if NSYSMON_ENVSYS > 0 || NSYSMON_POWER > 0 || NSYSMON_WDOG > 0
-#include <dev/sysmon/sysmonvar.h>
-#endif
+#include <dev/splash/splash.h>
 
 #include <net/bpf.h>
 #include <net/if.h>
 #include <net/raw_cb.h>
+#include <net/if_llatbl.h>
 
 #include <prop/proplib.h>
 
@@ -306,6 +304,7 @@ main(void)
 	evcnt_init();
 
 	uvm_init();
+	ubchist_init();
 	kcpuset_sysinit();
 
 	prop_kern_init();
@@ -364,6 +363,13 @@ main(void)
 
 	/* Initialize the buffer cache */
 	bufinit();
+
+
+#if defined(SPLASHSCREEN) && defined(SPLASHSCREEN_IMAGE)
+	size_t splash_size = (&_binary_splash_image_end -
+	    &_binary_splash_image_start) * sizeof(void *);
+	splash_setimage(&_binary_splash_image_start, splash_size);
+#endif
 
 	/* Initialize sockets. */
 	soinit();
@@ -464,23 +470,6 @@ main(void)
 	/* Initialize kqueue. */
 	kqueue_init();
 
-	/* Initialize the system monitor subsystems. */
-#if NSYSMON_TASKQ > 0
-	sysmon_task_queue_preinit();
-#endif
-
-#if NSYSMON_ENVSYS > 0
-	sysmon_envsys_init();
-#endif
-
-#if NSYSMON_POWER > 0
-	sysmon_power_init();
-#endif
-
-#if NSYSMON_WDOG > 0
-	sysmon_wdog_init();
-#endif
-
 	inittimecounter();
 	ntp_init();
 
@@ -497,7 +486,7 @@ main(void)
 	/* Initialize the kernel strong PRNG. */
 	kern_cprng = cprng_strong_create("kernel", IPL_VM,
 					 CPRNG_INIT_ANY|CPRNG_REKEY_ANY);
-					 
+
 	/* Initialize interfaces. */
 	ifinit1();
 
@@ -509,6 +498,9 @@ main(void)
 	/* Configure the system hardware.  This will enable interrupts. */
 	configure();
 
+	/* Once all CPUs are detected, initialize the per-CPU cprng_fast.  */
+	cprng_fast_init();
+
 	ssp_init();
 
 	ubc_init();		/* must be after autoconfig */
@@ -516,11 +508,22 @@ main(void)
 	mm_init();
 
 	configure2();
+
+	ipi_sysinit();
+
 	/* Now timer is working.  Enable preemption. */
 	kpreempt_enable();
 
+	/* Get the threads going and into any sleeps before continuing. */
+	yield();
+
 	/* Enable deferred processing of RNG samples */
 	rnd_init_softint();
+
+#ifdef RND_PRINTF
+	/* Enable periodic injection of console output into entropy pool */
+	kprintf_init_callout();
+#endif
 
 #ifdef SYSVSHM
 	/* Initialize System V style shared memory. */
@@ -564,6 +567,9 @@ main(void)
 	 */
 	s = splnet();
 	ifinit();
+#if NETHER > 0
+	lltableinit();
+#endif
 	domaininit(true);
 	if_attachdomain();
 	splx(s);
@@ -590,9 +596,6 @@ main(void)
 	/* Initialize ptrace. */
 	ptrace_init();
 #endif /* PTRACE */
-
-	/* Initialize the UUID system calls. */
-	uuid_init();
 
 	machdep_init();
 
@@ -698,6 +701,9 @@ main(void)
 	    uvm_aiodone_worker, NULL, PRI_VM, IPL_NONE, WQ_MPSAFE))
 		panic("fork aiodoned");
 
+	/* Wait for final configure threads to complete. */
+	config_finalize_mountroot();
+
 	/*
 	 * Okay, now we can let init(8) exec!  It's off to userland!
 	 */
@@ -792,9 +798,6 @@ configure2(void)
 	 * devices that want interrupts enabled.
 	 */
 	config_create_interruptthreads();
-
-	/* Get the threads going and into any sleeps before continuing. */
-	yield();
 }
 
 static void

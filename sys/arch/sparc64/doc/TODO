@@ -1,0 +1,27 @@
+ /* $NetBSD: TODO,v 1.13 2015/09/06 18:41:34 palle Exp $ */
+
+Things to be done:
+
+common:
+- make %g6 point to curcpu
+- make %g7 point to curlwp
+- change run-time checks for cpu type to function pointers
+
+sun4u:
+- GENERIC.UP kernel hangs on v445 (missing interrupt?)
+
+sun4v:
+- 64-bit kernel support
+- 32-bit kernel support
+- libkvm
+- ofwboot: tlb_init_sun4v() hardcodes number of slots to 64
+- locore.s: sun4v_datatrap missing implementation for trap levels 0 and 1
+- check build without SUN4V defined
+- replace relevant references to %ver with GET_MAXCWP
+- pmap_mp_init(): sun4v missing handling
+- replace constructs like "wrpr %g0, PSTATE_KERN, %pstate" with NORMAL_GLOBALS
+- replace constructs line "wrpr %g0, PSTATE_INTR, %pstate" with ALTERNATE_GOBALS
+- sun4v tsb no need to lock... per cpu... anyway...
+- ci_tsb_desc->td_ctxidx: -1 or 1?
+- MP support - currently bypassed in cpu_boot_secondary_processors() for sun4v
+- vpci.c/vpcivar.h: cleanup FIXMEs

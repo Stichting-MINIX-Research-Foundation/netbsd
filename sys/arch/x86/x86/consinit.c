@@ -1,4 +1,4 @@
-/*	$NetBSD: consinit.c,v 1.24 2012/10/13 17:58:55 jdc Exp $	*/
+/*	$NetBSD: consinit.c,v 1.28 2015/01/11 19:54:23 is Exp $	*/
 
 /*
  * Copyright (c) 1998
@@ -27,9 +27,10 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: consinit.c,v 1.24 2012/10/13 17:58:55 jdc Exp $");
+__KERNEL_RCSID(0, "$NetBSD: consinit.c,v 1.28 2015/01/11 19:54:23 is Exp $");
 
 #include "opt_kgdb.h"
+#include "opt_puc.h"
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -38,10 +39,14 @@ __KERNEL_RCSID(0, "$NetBSD: consinit.c,v 1.24 2012/10/13 17:58:55 jdc Exp $");
 #include <machine/bootinfo.h>
 #include <arch/x86/include/genfb_machdep.h>
 
+#include <dev/cons.h>
+
+#include "nullcons.h"
 #include "genfb.h"
 #include "vga.h"
 #include "ega.h"
 #include "pcdisplay.h"
+#include "com_puc.h"
 #if (NVGA > 0) || (NEGA > 0) || (NPCDISPLAY > 0)
 #include <dev/ic/mc6845reg.h>
 #include <dev/ic/pcdisplayvar.h>
@@ -75,6 +80,9 @@ __KERNEL_RCSID(0, "$NetBSD: consinit.c,v 1.24 2012/10/13 17:58:55 jdc Exp $");
 #include <sys/termios.h>
 #include <dev/ic/comreg.h>
 #include <dev/ic/comvar.h>
+#endif
+#if (NCOM_PUC > 0)
+#include <dev/pci/puccn.h>
 #endif
 
 #include "ukbd.h"
@@ -142,8 +150,13 @@ void
 consinit(void)
 {
 	const struct btinfo_console *consinfo;
+#if (NGENFB > 0)
 	const struct btinfo_framebuffer *fbinfo;
+#endif
 	static int initted;
+#if (NCOM > 0)
+	int rv;
+#endif
 
 	if (initted)
 		return;
@@ -155,7 +168,9 @@ consinit(void)
 #endif
 		consinfo = &default_consinfo;
 
+#if (NGENFB > 0)
 	fbinfo = lookup_bootinfo(BTINFO_FRAMEBUFFER);
+#endif
 
 	if (!strcmp(consinfo->devname, "pc")) {
 		int error;
@@ -204,15 +219,30 @@ dokbd:
 		int addr = consinfo->addr;
 		int speed = consinfo->speed;
 
+#if (NCOM_PUC > 0) && defined(PUC_CNAUTO)
+		puc_cnprobe(NULL);
+		rv = puc_cninit(NULL);
+		if (rv == 0)
+			return;
+#endif
+
 		if (addr == 0)
 			addr = CONADDR;
 		if (speed == 0)
 			speed = CONSPEED;
 
-		if (comcnattach(x86_bus_space_io, addr, speed,
-				COM_FREQ, COM_TYPE_NORMAL, comcnmode))
+		rv = comcnattach(x86_bus_space_io, addr, speed,
+				 COM_FREQ, COM_TYPE_NORMAL, comcnmode);
+		if (rv != 0)
 			panic("can't init serial console @%x", consinfo->addr);
+		return;
+	}
+#endif
+#if (NNULLCONS > 0)
+	if (!strcmp(consinfo->devname, "nullcons")) {
+		void nullcninit(struct consdev *cn);
 
+		nullcninit(0);
 		return;
 	}
 #endif

@@ -4849,7 +4849,7 @@ macro_build_jrpatch (expressionS *ep, unsigned int sreg)
   }
   if (mips_relax.sequence != 1) {
     mips_macro_warning.sizes[1] -= 2 * 4;
-    mips_macro_warning.insns[0] -= 2;
+    mips_macro_warning.insns[1] -= 2;
   }
 }
 
@@ -9235,18 +9235,28 @@ macro (struct mips_cl_insn *ip)
 
 	
     case M_SAA_AB:
-      ab = 1;
+      ab = (offset_expr.X_op != O_constant || offset_expr.X_add_number != 0);
     case M_SAA_OB:
       s = "saa";
       off0 = 1;
       fmt = "t,(b)";
+      if (!ab)
+	{
+	  tempreg = AT;
+	  goto ld_noat;
+	}
       goto ld_st;
     case M_SAAD_AB:
-      ab = 1;
+      ab = (offset_expr.X_op != O_constant || offset_expr.X_add_number != 0);
     case M_SAAD_OB:
       s = "saad";
       off0 = 1;
       fmt = "t,(b)";
+      if (!ab)
+	{
+	  tempreg = AT;
+	  goto ld_noat;
+	}
       goto ld_st;
 
    /* New code added to support COPZ instructions.

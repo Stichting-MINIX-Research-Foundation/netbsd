@@ -1,4 +1,4 @@
-/*	$NetBSD: queue_test.c,v 1.1.1.2 2012/12/04 19:26:00 spz Exp $	*/
+/*	$NetBSD: queue_test.c,v 1.1.1.4 2014/12/10 03:34:44 christos Exp $	*/
 
 /*
  * Copyright (C) 2011, 2012  Internet Systems Consortium, Inc. ("ISC")

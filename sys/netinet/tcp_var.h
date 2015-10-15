@@ -1,4 +1,4 @@
-/*	$NetBSD: tcp_var.h,v 1.171 2013/11/12 09:02:05 kefren Exp $	*/
+/*	$NetBSD: tcp_var.h,v 1.177 2015/02/14 22:09:53 he Exp $	*/
 
 /*
  * Copyright (C) 1995, 1996, 1997, and 1998 WIDE Project.
@@ -364,6 +364,11 @@ struct tcpcb {
 	u_int	t_maxidle;		/* t_keepcnt * t_keepintvl */
 
 	u_int	t_msl;			/* MSL to use for this connexion */
+
+	/* maintain a few stats per connection: */
+	uint32_t t_rcvoopack;	 	/* out-of-order packets received */
+	uint32_t t_sndrexmitpack; 	/* retransmit packets sent */
+	uint32_t t_sndzerowin;		/* zero-window updates sent */
 };
 
 /*
@@ -790,7 +795,10 @@ struct syn_cache_head {
 }
 
 #ifdef _KERNEL
+
 extern	struct inpcbtable tcbtable;	/* head of queue of active tcpcb's */
+extern	const struct pr_usrreqs tcp_usrreqs;
+
 extern	u_int32_t tcp_now;	/* for RFC 1323 timestamps */
 extern	int tcp_do_rfc1323;	/* enabled/disabled? */
 extern	int tcp_do_sack;	/* SACK enabled/disabled? */
@@ -888,7 +896,6 @@ extern int tcp_autosndbuf_max;
 
 struct secasvar;
 
-int	 tcp_attach(struct socket *);
 void	 tcp_canceltimers(struct tcpcb *);
 struct tcpcb *
 	 tcp_close(struct tcpcb *);
@@ -899,7 +906,7 @@ void	 *tcp6_ctlinput(int, const struct sockaddr *, void *);
 void	 *tcp_ctlinput(int, const struct sockaddr *, void *);
 int	 tcp_ctloutput(int, struct socket *, struct sockopt *);
 struct tcpcb *
-	 tcp_disconnect(struct tcpcb *);
+	 tcp_disconnect1(struct tcpcb *);
 struct tcpcb *
 	 tcp_drop(struct tcpcb *, int);
 #ifdef TCP_SIGNATURE
@@ -912,6 +919,7 @@ void	 tcp_drain(void);
 void	 tcp_drainstub(void);
 void	 tcp_established(struct tcpcb *);
 void	 tcp_init(void);
+void	 tcp_init_common(unsigned);
 #ifdef INET6
 int	 tcp6_input(struct mbuf **, int *, int);
 #endif
@@ -935,6 +943,9 @@ void	 tcp_quench(struct inpcb *, int);
 void	 tcp6_quench(struct in6pcb *, int);
 #endif
 void	 tcp_mtudisc(struct inpcb *, int);
+#ifdef INET6
+void	 tcp6_mtudisc_callback(struct in6_addr *);
+#endif
 
 void	tcpipqent_init(void);
 struct ipqent *tcpipqent_alloc(void);
@@ -948,7 +959,8 @@ void	 tcp_setpersist(struct tcpcb *);
 int	 tcp_signature_compute(struct mbuf *, struct tcphdr *, int, int,
 	    int, u_char *, u_int);
 #endif
-void	 tcp_slowtimo(void);
+void	 tcp_slowtimo(void *);
+extern callout_t tcp_slowtimo_ch;
 void	 tcp_fasttimo(void);
 struct mbuf *
 	 tcp_template(struct tcpcb *);
@@ -956,8 +968,6 @@ void	 tcp_trace(short, short, struct tcpcb *, struct mbuf *, int);
 struct tcpcb *
 	 tcp_usrclosed(struct tcpcb *);
 void	 tcp_usrreq_init(void);
-int	 tcp_usrreq(struct socket *,
-	    int, struct mbuf *, struct mbuf *, struct mbuf *, struct lwp *);
 void	 tcp_xmit_timer(struct tcpcb *, uint32_t);
 tcp_seq	 tcp_new_iss(struct tcpcb *, tcp_seq);
 tcp_seq  tcp_new_iss1(void *, void *, u_int16_t, u_int16_t, size_t,

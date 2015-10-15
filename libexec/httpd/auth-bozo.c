@@ -1,9 +1,9 @@
-/*	$NetBSD: auth-bozo.c,v 1.11 2013/10/12 18:46:12 mbalmer Exp $	*/
+/*	$NetBSD: auth-bozo.c,v 1.16 2014/12/26 19:52:00 mrg Exp $	*/
 
 /*	$eterna: auth-bozo.c,v 1.17 2011/11/18 09:21:15 mrg Exp $	*/
 
 /*
- * Copyright (c) 1997-2011 Matthew R. Green
+ * Copyright (c) 1997-2014 Matthew R. Green
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -74,7 +74,11 @@ bozo_auth_check(bozo_httpreq_t *request, const char *file)
 	}
 	request->hr_authrealm = bozostrdup(httpd, dir);
 
-	snprintf(authfile, sizeof(authfile), "%s/%s", dir, AUTH_FILE);
+	if ((size_t)snprintf(authfile, sizeof(authfile), "%s/%s", dir, AUTH_FILE) >= 
+	  sizeof(authfile)) {
+		return bozo_http_error(httpd, 404, request,
+			"authfile path too long");
+	}
 	if (stat(authfile, &sb) < 0) {
 		debug((httpd, DEBUG_NORMAL,
 		    "bozo_auth_check realm `%s' dir `%s' authfile `%s' missing",
@@ -114,6 +118,13 @@ bozo_auth_check(bozo_httpreq_t *request, const char *file)
 }
 
 void
+bozo_auth_init(bozo_httpreq_t *request)
+{
+	request->hr_authuser = NULL;
+	request->hr_authpass = NULL;
+}
+
+void
 bozo_auth_cleanup(bozo_httpreq_t *request)
 {
 
@@ -146,6 +157,8 @@ bozo_auth_check_headers(bozo_httpreq_t *request, char *val, char *str, ssize_t l
 			return bozo_http_error(httpd, 400, request,
 			    "bad authorization field");
 		*pass++ = '\0';
+		free(request->hr_authuser);
+		free(request->hr_authpass);
 		request->hr_authuser = bozostrdup(httpd, authbuf);
 		request->hr_authpass = bozostrdup(httpd, pass);
 		debug((httpd, DEBUG_FAT,
@@ -225,6 +238,12 @@ base64_decode(const unsigned char *in, size_t ilen, unsigned char *out,
 	unsigned char *cp;
 	size_t	 i;
 
+	if (ilen == 0) {
+		if (olen)
+			*out = '\0';
+		return 0;
+	}
+
 	cp = out;
 	for (i = 0; i < ilen; i += 4) {
 		if (cp + 3 > out + olen)
@@ -246,7 +265,7 @@ base64_decode(const unsigned char *in, size_t ilen, unsigned char *out,
 			| decodetable[in[i + 3]];
 #undef IN_CHECK
 	}
-	while (in[i - 1] == '=')
+	while (i > 0 && in[i - 1] == '=')
 		cp--,i--;
 	return (cp - out);
 }

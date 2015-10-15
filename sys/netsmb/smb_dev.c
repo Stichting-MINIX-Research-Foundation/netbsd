@@ -1,4 +1,4 @@
-/*	$NetBSD: smb_dev.c,v 1.40 2012/04/29 20:27:31 dsl Exp $	*/
+/*	$NetBSD: smb_dev.c,v 1.44 2015/08/20 14:40:19 christos Exp $	*/
 
 /*
  * Copyright (c) 2000-2001 Boris Popov
@@ -35,7 +35,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: smb_dev.c,v 1.40 2012/04/29 20:27:31 dsl Exp $");
+__KERNEL_RCSID(0, "$NetBSD: smb_dev.c,v 1.44 2015/08/20 14:40:19 christos Exp $");
 
 #include <sys/param.h>
 #include <sys/kernel.h>
@@ -68,6 +68,8 @@ __KERNEL_RCSID(0, "$NetBSD: smb_dev.c,v 1.40 2012/04/29 20:27:31 dsl Exp $");
 #include <netsmb/smb_dev.h>
 #include <netsmb/smb_rq.h>
 
+#include "ioconf.h"
+
 static struct smb_dev **smb_devtbl; /* indexed by minor */
 #define SMB_GETDEV(dev) (smb_devtbl[minor(dev)])
 #define NSMB_DEFNUM	4
@@ -85,12 +87,21 @@ dev_type_close(nsmb_dev_close);
 dev_type_ioctl(nsmb_dev_ioctl);
 
 const struct cdevsw nsmb_cdevsw = {
-	nsmb_dev_open, nsmb_dev_close, noread, nowrite,
-	nsmb_dev_ioctl, nostop, notty, nopoll, nommap, nokqfilter, D_OTHER,
+	.d_open = nsmb_dev_open,
+	.d_close = nsmb_dev_close,
+	.d_read = noread,
+	.d_write = nowrite,
+	.d_ioctl = nsmb_dev_ioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_OTHER,
 };
 
 
-void nsmbattach(int);
 static bool nsmb_inited = false;
 
 void
@@ -407,7 +418,7 @@ smb_dev2share(int fd, int mode, struct smb_cred *scred,
 	if ((fp = fd_getfile(fd)) == NULL)
 		return (EBADF);
 
-	vp = fp->f_data;
+	vp = fp->f_vnode;
 	if (fp->f_type != DTYPE_VNODE
 	    || (fp->f_flag & (FREAD|FWRITE)) == 0
 	    || vp->v_type != VCHR

@@ -1,4 +1,4 @@
-/*	$NetBSD: mvsocvar.h,v 1.5 2013/09/30 13:12:56 kiyohara Exp $	*/
+/*	$NetBSD: mvsocvar.h,v 1.10 2015/06/03 04:20:02 hsuenaga Exp $	*/
 /*
  * Copyright (c) 2007, 2010 KIYOHARA Takashi
  * All rights reserved.
@@ -42,15 +42,11 @@ struct mvsoc_softc {
 typedef int (*mvsoc_irq_handler_t)(void *);
 
 extern uint32_t mvPclk, mvSysclk, mvTclk;
-extern vaddr_t misc_base;
 extern vaddr_t mlmb_base;
 extern int nwindow, nremap;
 extern int gpp_npins, gpp_irqbase;
 extern struct bus_space mvsoc_bs_tag;
 extern struct arm32_bus_dma_tag mvsoc_bus_dma_tag;
-
-#define read_miscreg(o)		(*(volatile uint32_t *)(misc_base + (o)))
-#define write_miscreg(o, v)	(*(volatile uint32_t *)(misc_base + (o)) = (v))
 
 #define read_mlmbreg(o)		(*(volatile uint32_t *)(mlmb_base + (o)))
 #define write_mlmbreg(o, v)	(*(volatile uint32_t *)(mlmb_base + (o)) = (v))
@@ -123,19 +119,28 @@ enum mvsoc_tags {
 	ARMADAXP_TAG_PEX2_IO,
 	ARMADAXP_TAG_PEX3_MEM,
 	ARMADAXP_TAG_PEX3_IO,
+	ARMADAXP_TAG_CRYPT0,
+	ARMADAXP_TAG_CRYPT1,
 };
 int mvsoc_target(int, uint32_t *, uint32_t *, uint32_t *, uint32_t *);
+int mvsoc_target_dump(struct mvsoc_softc *);
+int mvsoc_attr_dump(struct mvsoc_softc *, uint32_t, uint32_t);
+
+extern int (*mvsoc_clkgating)(struct marvell_attach_args *);
 
 void orion_intr_bootstrap(void);
 void orion_getclks(bus_addr_t);
 
 void kirkwood_intr_bootstrap(void);
 void kirkwood_getclks(bus_addr_t);
+int kirkwood_clkgating(struct marvell_attach_args *);
 
 void mv78xx0_intr_bootstrap(void);
 void mv78xx0_getclks(bus_addr_t);
 
 void armadaxp_intr_bootstrap(bus_addr_t);
 void armadaxp_getclks(void);
+void armada370_getclks(void);
+int armadaxp_clkgating(struct marvell_attach_args *);
 
 #endif	/* _MVSOCVAR_H_ */

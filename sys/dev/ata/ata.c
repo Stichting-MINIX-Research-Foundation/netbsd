@@ -1,4 +1,4 @@
-/*	$NetBSD: ata.c,v 1.129 2013/10/12 16:49:00 christos Exp $	*/
+/*	$NetBSD: ata.c,v 1.132 2014/09/10 07:04:48 matt Exp $	*/
 
 /*
  * Copyright (c) 1998, 2001 Manuel Bouyer.  All rights reserved.
@@ -25,7 +25,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ata.c,v 1.129 2013/10/12 16:49:00 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ata.c,v 1.132 2014/09/10 07:04:48 matt Exp $");
 
 #include "opt_ata.h"
 
@@ -106,8 +106,18 @@ dev_type_close(atabusclose);
 dev_type_ioctl(atabusioctl);
 
 const struct cdevsw atabus_cdevsw = {
-	atabusopen, atabusclose, noread, nowrite, atabusioctl,
-	nostop, notty, nopoll, nommap, nokqfilter, D_OTHER
+	.d_open = atabusopen,
+	.d_close = atabusclose,
+	.d_read = noread,
+	.d_write = nowrite,
+	.d_ioctl = atabusioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_OTHER
 };
 
 extern struct cfdriver atabus_cd;
@@ -714,7 +724,7 @@ atabus_free_drives(struct ata_channel *chp)
 
 /* Get the disk's parameters */
 int
-ata_get_params(struct ata_drive_datas *drvp, u_int8_t flags,
+ata_get_params(struct ata_drive_datas *drvp, uint8_t flags,
     struct ataparams *prms)
 {
 	struct ata_command ata_c;
@@ -722,7 +732,7 @@ ata_get_params(struct ata_drive_datas *drvp, u_int8_t flags,
 	struct atac_softc *atac = chp->ch_atac;
 	char *tb;
 	int i, rv;
-	u_int16_t *p;
+	uint16_t *p;
 
 	ATADEBUG_PRINT(("%s\n", __func__), DEBUG_FUNCS);
 
@@ -796,15 +806,15 @@ ata_get_params(struct ata_drive_datas *drvp, u_int8_t flags,
 	     }
 #undef M
 	for (i = 0; i < sizeof(prms->atap_model); i += 2) {
-		p = (u_int16_t *)(prms->atap_model + i);
+		p = (uint16_t *)(prms->atap_model + i);
 		*p = bswap16(*p);
 	}
 	for (i = 0; i < sizeof(prms->atap_serial); i += 2) {
-		p = (u_int16_t *)(prms->atap_serial + i);
+		p = (uint16_t *)(prms->atap_serial + i);
 		*p = bswap16(*p);
 	}
 	for (i = 0; i < sizeof(prms->atap_revision); i += 2) {
-		p = (u_int16_t *)(prms->atap_revision + i);
+		p = (uint16_t *)(prms->atap_revision + i);
 		*p = bswap16(*p);
 	}
 
@@ -815,7 +825,7 @@ ata_get_params(struct ata_drive_datas *drvp, u_int8_t flags,
 }
 
 int
-ata_set_mode(struct ata_drive_datas *drvp, u_int8_t mode, u_int8_t flags)
+ata_set_mode(struct ata_drive_datas *drvp, uint8_t mode, uint8_t flags)
 {
 	struct ata_command ata_c;
 	struct ata_channel *chp = drvp->chnl_softc;

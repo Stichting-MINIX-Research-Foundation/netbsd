@@ -1,4 +1,4 @@
-/*	$NetBSD: tcp_input.c,v 1.330 2013/11/12 09:02:05 kefren Exp $	*/
+/*	$NetBSD: tcp_input.c,v 1.344 2015/08/24 22:21:26 pooka Exp $	*/
 
 /*
  * Copyright (C) 1995, 1996, 1997, and 1998 WIDE Project.
@@ -148,12 +148,14 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: tcp_input.c,v 1.330 2013/11/12 09:02:05 kefren Exp $");
+__KERNEL_RCSID(0, "$NetBSD: tcp_input.c,v 1.344 2015/08/24 22:21:26 pooka Exp $");
 
+#ifdef _KERNEL_OPT
 #include "opt_inet.h"
 #include "opt_ipsec.h"
 #include "opt_inet_csum.h"
 #include "opt_tcp_debug.h"
+#endif
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -174,7 +176,6 @@ __KERNEL_RCSID(0, "$NetBSD: tcp_input.c,v 1.330 2013/11/12 09:02:05 kefren Exp $
 #include <sys/cprng.h>
 
 #include <net/if.h>
-#include <net/route.h>
 #include <net/if_types.h>
 
 #include <netinet/in.h>
@@ -265,7 +266,7 @@ nd6_hint(struct tcpcb *tp)
 
 	if (tp != NULL && tp->t_in6pcb != NULL && tp->t_family == AF_INET6 &&
 	    (rt = rtcache_validate(&tp->t_in6pcb->in6p_route)) != NULL)
-		nd6_nud_hint(rt, NULL, 0);
+		nd6_nud_hint(rt);
 }
 #else
 static inline void
@@ -738,6 +739,7 @@ tcp_reass(struct tcpcb *tp, const struct tcphdr *th, struct mbuf *m, int *tlen)
 	/*
 	 * Update the counters.
 	 */
+	tp->t_rcvoopack++;
 	tcps = TCP_STAT_GETREF();
 	tcps[TCP_STAT_RCVOOPACK]++;
 	tcps[TCP_STAT_RCVOOBYTE] += rcvoobyte;
@@ -845,12 +847,12 @@ tcp6_input(struct mbuf **mp, int *offp, int proto)
 static void
 tcp4_log_refused(const struct ip *ip, const struct tcphdr *th)
 {
-	char src[4*sizeof "123"];
-	char dst[4*sizeof "123"];
+	char src[INET_ADDRSTRLEN];
+	char dst[INET_ADDRSTRLEN];
 
 	if (ip) {
-		strlcpy(src, inet_ntoa(ip->ip_src), sizeof(src));
-		strlcpy(dst, inet_ntoa(ip->ip_dst), sizeof(dst));
+		in_print(src, sizeof(src), &ip->ip_src);
+		in_print(dst, sizeof(dst), &ip->ip_dst);
 	}
 	else {
 		strlcpy(src, "(unknown)", sizeof(src));
@@ -871,8 +873,8 @@ tcp6_log_refused(const struct ip6_hdr *ip6, const struct tcphdr *th)
 	char dst[INET6_ADDRSTRLEN];
 
 	if (ip6) {
-		strlcpy(src, ip6_sprintf(&ip6->ip6_src), sizeof(src));
-		strlcpy(dst, ip6_sprintf(&ip6->ip6_dst), sizeof(dst));
+		in6_print(src, sizeof(src), &ip6->ip6_src);
+		in6_print(dst, sizeof(dst), &ip6->ip6_dst);
 	}
 	else {
 		strlcpy(src, "(unknown v6)", sizeof(src));
@@ -1100,7 +1102,7 @@ static void tcp_vtw_input(struct tcphdr *th, vestigial_inpcb_t *vp,
 				/* We only support this in the !NOFDREF case, which
 				 * is to say: not here.
 				 */
-				goto dropwithreset;;
+				goto dropwithreset;
 			}
 			/*
 			 * If window is closed can only take segments at
@@ -1394,6 +1396,12 @@ tcp_input(struct mbuf *m, ...)
 	tiflags = th->th_flags;
 
 	/*
+	 * Checksum extended TCP header and data
+	 */
+	if (tcp_input_checksum(af, m, th, toff, off, tlen))
+		goto badcsum;
+
+	/*
 	 * Locate pcb for segment.
 	 */
 findpcb:
@@ -1447,19 +1455,22 @@ findpcb:
 			goto dropwithreset_ratelim;
 		}
 #if defined(IPSEC)
-		if (inp && (inp->inp_socket->so_options & SO_ACCEPTCONN) == 0 &&
-		    ipsec4_in_reject(m, inp)) {
-			IPSEC_STATINC(IPSEC_STAT_IN_POLVIO);
-			goto drop;
-		}
+		if (ipsec_used) {
+			if (inp &&
+			    (inp->inp_socket->so_options & SO_ACCEPTCONN) == 0
+			    && ipsec4_in_reject(m, inp)) {
+				IPSEC_STATINC(IPSEC_STAT_IN_POLVIO);
+				goto drop;
+			}
 #ifdef INET6
-		else if (in6p &&
-		    (in6p->in6p_socket->so_options & SO_ACCEPTCONN) == 0 &&
-		    ipsec6_in_reject_so(m, in6p->in6p_socket)) {
-			IPSEC_STATINC(IPSEC_STAT_IN_POLVIO);
-			goto drop;
-		}
+			else if (in6p &&
+			    (in6p->in6p_socket->so_options & SO_ACCEPTCONN) == 0
+			    && ipsec6_in_reject_so(m, in6p->in6p_socket)) {
+				IPSEC_STATINC(IPSEC_STAT_IN_POLVIO);
+				goto drop;
+			}
 #endif
+		}
 #endif /*IPSEC*/
 		break;
 #endif /*INET*/
@@ -1490,7 +1501,7 @@ findpcb:
 			goto dropwithreset_ratelim;
 		}
 #if defined(IPSEC)
-		if (in6p
+		if (ipsec_used && in6p
 		    && (in6p->in6p_socket->so_options & SO_ACCEPTCONN) == 0
 		    && ipsec6_in_reject(m, in6p)) {
 			IPSEC6_STATINC(IPSEC_STAT_IN_POLVIO);
@@ -1560,12 +1571,6 @@ findpcb:
 
 	KASSERT(so->so_lock == softnet_lock);
 	KASSERT(solocked(so));
-
-	/*
-	 * Checksum extended TCP header and data.
-	 */
-	if (tcp_input_checksum(af, m, th, toff, off, tlen))
-		goto badcsum;
 
 	tcp_fields_to_host(th);
 
@@ -1799,25 +1804,27 @@ findpcb:
 #endif
 
 #if defined(IPSEC)
-				switch (af) {
+				if (ipsec_used) {
+					switch (af) {
 #ifdef INET
-				case AF_INET:
-					if (ipsec4_in_reject_so(m, so)) {
-						IPSEC_STATINC(IPSEC_STAT_IN_POLVIO);
+					case AF_INET:
+						if (!ipsec4_in_reject_so(m, so))
+							break;
+						IPSEC_STATINC(
+						    IPSEC_STAT_IN_POLVIO);
 						tp = NULL;
 						goto dropwithreset;
-					}
-					break;
 #endif
 #ifdef INET6
-				case AF_INET6:
-					if (ipsec6_in_reject_so(m, so)) {
-						IPSEC6_STATINC(IPSEC_STAT_IN_POLVIO);
+					case AF_INET6:
+						if (!ipsec6_in_reject_so(m, so))
+							break;
+						IPSEC6_STATINC(
+						    IPSEC_STAT_IN_POLVIO);
 						tp = NULL;
 						goto dropwithreset;
-					}
-					break;
 #endif /*INET6*/
+					}
 				}
 #endif /*IPSEC*/
 
@@ -2708,7 +2715,10 @@ after_listen:
 				tp->t_lastm = NULL;
 			sbdrop(&so->so_snd, acked);
 			tp->t_lastoff -= acked;
-			tp->snd_wnd -= acked;
+			if (tp->snd_wnd > acked)
+				tp->snd_wnd -= acked;
+			else
+				tp->snd_wnd = 0;
 			ourfinisacked = 0;
 		}
 		sowwakeup(so);
@@ -2874,7 +2884,7 @@ dodata:							/* XXX */
 	 * and arranging for acknowledgement of receipt if necessary.
 	 * This process logically involves adjusting tp->rcv_wnd as data
 	 * is presented to the user (this happens in tcp_usrreq.c,
-	 * case PRU_RCVD).  If a FIN has already been received on this
+	 * tcp_rcvd()).  If a FIN has already been received on this
 	 * connection then we just ignore the text.
 	 */
 	if ((tlen || (tiflags & TH_FIN)) &&
@@ -3128,10 +3138,6 @@ tcp_signature_apply(void *fstate, void *data, u_int len)
 struct secasvar *
 tcp_signature_getsav(struct mbuf *m, struct tcphdr *th)
 {
-	struct secasvar *sav;
-#ifdef IPSEC
-	union sockaddr_union dst;
-#endif
 	struct ip *ip;
 	struct ip6_hdr *ip6;
 
@@ -3150,34 +3156,36 @@ tcp_signature_getsav(struct mbuf *m, struct tcphdr *th)
 	}
 
 #ifdef IPSEC
-	/* Extract the destination from the IP header in the mbuf. */
-	memset(&dst, 0, sizeof(union sockaddr_union));
-	if (ip !=NULL) {
-		dst.sa.sa_len = sizeof(struct sockaddr_in);
-		dst.sa.sa_family = AF_INET;
-		dst.sin.sin_addr = ip->ip_dst;
-	} else {
-		dst.sa.sa_len = sizeof(struct sockaddr_in6);
-		dst.sa.sa_family = AF_INET6;
-		dst.sin6.sin6_addr = ip6->ip6_dst;
-	}
+	if (ipsec_used) {
+		union sockaddr_union dst;
+		/* Extract the destination from the IP header in the mbuf. */
+		memset(&dst, 0, sizeof(union sockaddr_union));
+		if (ip != NULL) {
+			dst.sa.sa_len = sizeof(struct sockaddr_in);
+			dst.sa.sa_family = AF_INET;
+			dst.sin.sin_addr = ip->ip_dst;
+		} else {
+			dst.sa.sa_len = sizeof(struct sockaddr_in6);
+			dst.sa.sa_family = AF_INET6;
+			dst.sin6.sin6_addr = ip6->ip6_dst;
+		}
 
-	/*
-	 * Look up an SADB entry which matches the address of the peer.
-	 */
-	sav = KEY_ALLOCSA(&dst, IPPROTO_TCP, htonl(TCP_SIG_SPI), 0, 0);
+		/*
+		 * Look up an SADB entry which matches the address of the peer.
+		 */
+		return KEY_ALLOCSA(&dst, IPPROTO_TCP, htonl(TCP_SIG_SPI), 0, 0);
+	}
+	return NULL;
 #else
 	if (ip)
-		sav = key_allocsa(AF_INET, (void *)&ip->ip_src,
+		return key_allocsa(AF_INET, (void *)&ip->ip_src,
 		    (void *)&ip->ip_dst, IPPROTO_TCP,
 		    htonl(TCP_SIG_SPI), 0, 0);
 	else
-		sav = key_allocsa(AF_INET6, (void *)&ip6->ip6_src,
+		return key_allocsa(AF_INET6, (void *)&ip6->ip6_src,
 		    (void *)&ip6->ip6_dst, IPPROTO_TCP,
 		    htonl(TCP_SIG_SPI), 0, 0);
 #endif
-
-	return (sav);	/* freesav must be performed by caller */
 }
 
 int
@@ -3187,9 +3195,11 @@ tcp_signature(struct mbuf *m, struct tcphdr *th, int thoff,
 	MD5_CTX ctx;
 	struct ip *ip;
 	struct ipovly *ipovly;
+#ifdef INET6
 	struct ip6_hdr *ip6;
-	struct ippseudo ippseudo;
 	struct ip6_hdr_pseudo ip6pseudo;
+#endif /* INET6 */
+	struct ippseudo ippseudo;
 	struct tcphdr th0;
 	int l, tcphdrlen;
 
@@ -3200,20 +3210,8 @@ tcp_signature(struct mbuf *m, struct tcphdr *th, int thoff,
 
 	switch (mtod(m, struct ip *)->ip_v) {
 	case 4:
+		MD5Init(&ctx);
 		ip = mtod(m, struct ip *);
-		ip6 = NULL;
-		break;
-	case 6:
-		ip = NULL;
-		ip6 = mtod(m, struct ip6_hdr *);
-		break;
-	default:
-		return (-1);
-	}
-
-	MD5Init(&ctx);
-
-	if (ip) {
 		memset(&ippseudo, 0, sizeof(ippseudo));
 		ipovly = (struct ipovly *)ip;
 		ippseudo.ippseudo_src = ipovly->ih_src;
@@ -3222,7 +3220,11 @@ tcp_signature(struct mbuf *m, struct tcphdr *th, int thoff,
 		ippseudo.ippseudo_p = IPPROTO_TCP;
 		ippseudo.ippseudo_len = htons(m->m_pkthdr.len - thoff);
 		MD5Update(&ctx, (char *)&ippseudo, sizeof(ippseudo));
-	} else {
+		break;
+#if INET6
+	case 6:
+		MD5Init(&ctx);
+		ip6 = mtod(m, struct ip6_hdr *);
 		memset(&ip6pseudo, 0, sizeof(ip6pseudo));
 		ip6pseudo.ip6ph_src = ip6->ip6_src;
 		in6_clearscope(&ip6pseudo.ip6ph_src);
@@ -3231,6 +3233,10 @@ tcp_signature(struct mbuf *m, struct tcphdr *th, int thoff,
 		ip6pseudo.ip6ph_len = htons(m->m_pkthdr.len - thoff);
 		ip6pseudo.ip6ph_nxt = IPPROTO_TCP;
 		MD5Update(&ctx, (char *)&ip6pseudo, sizeof(ip6pseudo));
+		break;
+#endif /* INET6 */
+	default:
+		return (-1);
 	}
 
 	th0 = *th;
@@ -3309,27 +3315,25 @@ tcp_dooptions(struct tcpcb *tp, const u_char *cp, int cnt,
 			tp->t_flags |= TF_RCVD_SCALE;
 			tp->requested_s_scale = cp[2];
 			if (tp->requested_s_scale > TCP_MAX_WINSHIFT) {
-#if 0	/*XXX*/
-				char *p;
-
+				char buf[INET6_ADDRSTRLEN];
+				struct ip *ip = mtod(m, struct ip *);
+#ifdef INET6
+				struct ip6_hdr *ip6 = mtod(m, struct ip6_hdr *);
+#endif
 				if (ip)
-					p = ntohl(ip->ip_src);
+					in_print(buf, sizeof(buf),
+					    &ip->ip_src);
 #ifdef INET6
 				else if (ip6)
-					p = ip6_sprintf(&ip6->ip6_src);
+					in6_print(buf, sizeof(buf),
+					    &ip6->ip6_src);
 #endif
 				else
-					p = "(unknown)";
+					strlcpy(buf, "(unknown)", sizeof(buf));
 				log(LOG_ERR, "TCP: invalid wscale %d from %s, "
 				    "assuming %d\n",
-				    tp->requested_s_scale, p,
+				    tp->requested_s_scale, buf,
 				    TCP_MAX_WINSHIFT);
-#else
-				log(LOG_ERR, "TCP: invalid wscale %d, "
-				    "assuming %d\n",
-				    tp->requested_s_scale,
-				    TCP_MAX_WINSHIFT);
-#endif
 				tp->requested_s_scale = TCP_MAX_WINSHIFT;
 			}
 			break;
@@ -3919,7 +3923,6 @@ syn_cache_get(struct sockaddr *src, struct sockaddr *dst,
 	struct in6pcb *in6p = NULL;
 #endif
 	struct tcpcb *tp = 0;
-	struct mbuf *am;
 	int s;
 	struct socket *oso;
 
@@ -4034,23 +4037,26 @@ syn_cache_get(struct sockaddr *src, struct sockaddr *dst,
 #endif
 
 #if defined(IPSEC)
-	/*
-	 * we make a copy of policy, instead of sharing the policy,
-	 * for better behavior in terms of SA lookup and dead SA removal.
-	 */
-	if (inp) {
-		/* copy old policy into new socket's */
-		if (ipsec_copy_pcbpolicy(sotoinpcb(oso)->inp_sp, inp->inp_sp))
-			printf("tcp_input: could not copy policy\n");
-	}
+	if (ipsec_used) {
+		/*
+		 * we make a copy of policy, instead of sharing the policy, for
+		 * better behavior in terms of SA lookup and dead SA removal.
+		 */
+		if (inp) {
+			/* copy old policy into new socket's */
+			if (ipsec_copy_pcbpolicy(sotoinpcb(oso)->inp_sp,
+			    inp->inp_sp))
+				printf("tcp_input: could not copy policy\n");
+		}
 #ifdef INET6
-	else if (in6p) {
-		/* copy old policy into new socket's */
-		if (ipsec_copy_pcbpolicy(sotoin6pcb(oso)->in6p_sp,
-		    in6p->in6p_sp))
-			printf("tcp_input: could not copy policy\n");
-	}
+		else if (in6p) {
+			/* copy old policy into new socket's */
+			if (ipsec_copy_pcbpolicy(sotoin6pcb(oso)->in6p_sp,
+			    in6p->in6p_sp))
+				printf("tcp_input: could not copy policy\n");
+		}
 #endif
+	}
 #endif
 
 	/*
@@ -4067,45 +4073,36 @@ syn_cache_get(struct sockaddr *src, struct sockaddr *dst,
 	}
 #endif
 
-	am = m_get(M_DONTWAIT, MT_SONAME);	/* XXX */
-	if (am == NULL)
-		goto resetandabort;
-	MCLAIM(am, &tcp_mowner);
-	am->m_len = src->sa_len;
-	bcopy(src, mtod(am, void *), src->sa_len);
 	if (inp) {
-		if (in_pcbconnect(inp, am, &lwp0)) {
-			(void) m_free(am);
+		struct sockaddr_in sin;
+		memcpy(&sin, src, src->sa_len);
+		if (in_pcbconnect(inp, &sin, &lwp0)) {
 			goto resetandabort;
 		}
 	}
 #ifdef INET6
 	else if (in6p) {
+		struct sockaddr_in6 sin6;
+		memcpy(&sin6, src, src->sa_len);
 		if (src->sa_family == AF_INET) {
 			/* IPv4 packet to AF_INET6 socket */
-			struct sockaddr_in6 *sin6;
-			sin6 = mtod(am, struct sockaddr_in6 *);
-			am->m_len = sizeof(*sin6);
-			memset(sin6, 0, sizeof(*sin6));
-			sin6->sin6_family = AF_INET6;
-			sin6->sin6_len = sizeof(*sin6);
-			sin6->sin6_port = ((struct sockaddr_in *)src)->sin_port;
-			sin6->sin6_addr.s6_addr16[5] = htons(0xffff);
+			memset(&sin6, 0, sizeof(sin6));
+			sin6.sin6_family = AF_INET6;
+			sin6.sin6_len = sizeof(sin6);
+			sin6.sin6_port = ((struct sockaddr_in *)src)->sin_port;
+			sin6.sin6_addr.s6_addr16[5] = htons(0xffff);
 			bcopy(&((struct sockaddr_in *)src)->sin_addr,
-				&sin6->sin6_addr.s6_addr32[3],
-				sizeof(sin6->sin6_addr.s6_addr32[3]));
+				&sin6.sin6_addr.s6_addr32[3],
+				sizeof(sin6.sin6_addr.s6_addr32[3]));
 		}
-		if (in6_pcbconnect(in6p, am, NULL)) {
-			(void) m_free(am);
+		if (in6_pcbconnect(in6p, &sin6, NULL)) {
 			goto resetandabort;
 		}
 	}
 #endif
 	else {
-		(void) m_free(am);
 		goto resetandabort;
 	}
-	(void) m_free(am);
 
 	if (inp)
 		tp = intotcpcb(inp);
@@ -4794,8 +4791,7 @@ syn_cache_respond(struct syn_cache *sc, struct mbuf *m)
 #ifdef INET6
 	case AF_INET6:
 		ip6->ip6_hlim = in6_selecthlim(NULL,
-				(rt = rtcache_validate(ro)) != NULL ? rt->rt_ifp
-				                                    : NULL);
+		    (rt = rtcache_validate(ro)) != NULL ? rt->rt_ifp : NULL);
 
 		error = ip6_output(m, NULL /*XXX*/, ro, 0, NULL, so, NULL);
 		break;

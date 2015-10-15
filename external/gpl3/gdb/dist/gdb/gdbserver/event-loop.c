@@ -1,5 +1,5 @@
 /* Event loop machinery for the remote server for GDB.
-   Copyright (C) 1999-2013 Free Software Foundation, Inc.
+   Copyright (C) 1999-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -22,7 +22,6 @@
 #include "queue.h"
 
 #include <sys/types.h>
-#include <string.h>
 #include <sys/time.h>
 
 #ifdef USE_WIN32API
@@ -30,13 +29,7 @@
 #include <io.h>
 #endif
 
-#ifdef HAVE_ERRNO_H
-#include <errno.h>
-#endif
-
-#ifdef HAVE_UNISTD_H
 #include <unistd.h>
-#endif
 
 typedef struct gdb_event gdb_event;
 typedef int (event_handler_func) (gdb_fildes_t);

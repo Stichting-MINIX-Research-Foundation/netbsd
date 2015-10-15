@@ -1,4 +1,4 @@
-# $NetBSD: Makefile,v 1.15 2013/04/06 02:20:49 christos Exp $
+# $NetBSD: Makefile,v 1.18 2014/10/25 00:57:59 joerg Exp $
 #-
 # Copyright (c) 1998 Juniper Networks, Inc.
 # All rights reserved.
@@ -44,7 +44,7 @@ DIST=   ${NETBSDSRCDIR}/external/bsd/openpam/dist
 LIB=	pam
 NOPROFILE=
 
-WARNS=	4
+WARNS=	6
 # 233: Struct/union never defined
 LINTFLAGS+= -Sw -X 233
 
@@ -72,6 +72,7 @@ SRCS=	openpam_borrow_cred.c \
 	openpam_set_feature.c \
 	openpam_set_option.c \
 	openpam_straddch.c \
+	openpam_strlset.c \
 	openpam_subst.c \
 	openpam_ttyconv.c \
 	pam_acct_mgmt.c \
@@ -204,8 +205,10 @@ openpam_static_modules.o: openpam_static.o ${STATIC_MODULE_LIBS}
 	${CC} ${LDFLAGS} -nostdlib -o ${.TARGET} -r -Wl,--whole-archive \
 	    openpam_static.o ${STATIC_MODULE_LIBS}
 
+CWARNFLAGS.clang+=	-Wno-error=tautological-pointer-compare
+
 .include <bsd.lib.mk>
 .PATH.h: ${DIST}/include
-.PATH.c: ${DIST}/lib
+.PATH.c: ${DIST}/lib/libpam
 .PATH.3: ${DIST}/doc/man
 .PATH.5: ${DIST}/doc/man

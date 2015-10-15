@@ -1,4 +1,4 @@
-#	$NetBSD: genassym.cf,v 1.54 2013/12/01 01:05:16 christos Exp $
+#	$NetBSD: genassym.cf,v 1.59 2015/08/26 03:00:53 uebayasi Exp $
 
 #
 # Copyright (c) 1998, 2006, 2007, 2008 The NetBSD Foundation, Inc.
@@ -181,11 +181,9 @@ define	IP_DST			offsetof(struct ip, ip_dst)
 define	PCB_CR3			offsetof(struct pcb, pcb_cr3)
 define	PCB_RBP			offsetof(struct pcb, pcb_rbp)
 define	PCB_RSP			offsetof(struct pcb, pcb_rsp)
-define	PCB_USERSP		offsetof(struct pcb, pcb_usersp)
 define	PCB_RSP0		offsetof(struct pcb, pcb_rsp0)
 define	PCB_CR0			offsetof(struct pcb, pcb_cr0)
 define	PCB_ONFAULT		offsetof(struct pcb, pcb_onfault)
-define	PCB_FPCPU		offsetof(struct pcb, pcb_fpcpu)
 define	PCB_FLAGS		offsetof(struct pcb, pcb_flags)
 define	PCB_COMPAT32		PCB_COMPAT32
 define	PCB_FS			offsetof(struct pcb, pcb_fs)
@@ -220,7 +218,7 @@ define	TF_SS			offsetof(struct trapframe, tf_ss)
 
 # Size of stack area needed for saving registers
 define	TF_REGSIZE		offsetof(struct trapframe, tf_trapno)
-# Total size includes regsisters pushed by hardware
+# Total size includes registers pushed by hardware
 define	FRAMESIZE		sizeof(struct trapframe)
 
 define	CPU_INFO_SCRATCH	offsetof(struct cpu_info, ci_scratch)

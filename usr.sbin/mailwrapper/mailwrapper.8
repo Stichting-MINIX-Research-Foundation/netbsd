@@ -1,4 +1,4 @@
-.\"	$NetBSD: mailwrapper.8,v 1.13 2013/07/20 21:40:02 wiz Exp $
+.\"	$NetBSD: mailwrapper.8,v 1.16 2014/09/19 16:05:55 wiz Exp $
 .\"
 .\" Copyright (c) 1998
 .\" 	Perry E. Metzger.  All rights reserved.
@@ -39,7 +39,8 @@
 .Tn MTA
 software based on configuration file
 .Sh SYNOPSIS
-Special. See below.
+Special.
+See below.
 .Sh DESCRIPTION
 Once upon time, the only Mail Transfer Agent
 .Pq Tn MTA
@@ -130,9 +131,6 @@ based on configuration information placed in
 This permits the administrator to configure which
 .Tn MTA
 is to be invoked on the system at run time.
-.Sh EXIT STATUS
-.Nm
-exits 0 on success, and \*[Gt]0 if an error occurs.
 .Sh FILES
 Configuration for
 .Nm
@@ -142,6 +140,9 @@ is kept in
 is typically set up as a symlink to
 .Nm
 which is not usually invoked on its own.
+.Sh EXIT STATUS
+.Nm
+exits 0 on success, and \*[Gt]0 if an error occurs.
 .Sh DIAGNOSTICS
 .Nm
 will print a diagnostic if its configuration file is missing or malformed,

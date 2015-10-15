@@ -1,4 +1,4 @@
-/*	$NetBSD: types.h,v 1.22 2012/01/18 09:35:48 skrll Exp $	*/
+/*	$NetBSD: types.h,v 1.24 2015/08/27 12:30:51 pooka Exp $	*/
 
 /*	$OpenBSD: types.h,v 1.6 2001/08/11 01:58:34 art Exp $	*/
 
@@ -68,9 +68,9 @@ typedef	unsigned long		psize_t;
 /*
  * Semaphores must be aligned on 16-byte boundaries on the PA-RISC.
  */
-typedef volatile struct {
+typedef struct {
 	volatile unsigned long csl_lock[4];
-} __cpu_simple_lock_t;
+} __cpu_simple_lock_nv_t;
 
 
 #define __SIMPLELOCK_LOCKED	{ { 0, 0, 0, 0} }
@@ -95,5 +95,9 @@ extern const char __CONCAT(name,_ras_start[]), __CONCAT(name,_ras_end[])
 #define	__HAVE_COMMON___TLS_GET_ADDR
 #define	__HAVE___LWP_GETPRIVATE_FAST
 #define	__HAVE_TLS_VARIANT_I
+#define	__HAVE_NEW_STYLE_BUS_H
+
+#define	__HAVE_MM_MD_DIRECT_MAPPED_PHYS
+#define	__HAVE_MM_MD_KERNACC
 
 #endif	/* _HPPA_TYPES_H_ */

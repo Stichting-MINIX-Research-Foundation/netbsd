@@ -1,4 +1,4 @@
-/*	$NetBSD: ctlreg.h,v 1.59 2012/11/08 16:36:53 nakayama Exp $ */
+/*	$NetBSD: ctlreg.h,v 1.62 2015/04/01 18:38:30 palle Exp $ */
 
 /*
  * Copyright (c) 1996-2002 Eduardo Horvath
@@ -55,7 +55,10 @@
 #define	ASI_PHYS_CACHED_LITTLE		0x1c	/* [4u] MMU bypass to main memory, little endian */
 #define	ASI_PHYS_NON_CACHED_LITTLE	0x1d	/* [4u] MMU bypass to I/O location, little endian */
 
+#define ASI_MMU				0x21	/* [4v] MMU context control - both IMMU and DMMU */
+
 #define	ASI_NUCLEUS_QUAD_LDD		0x24	/* [4u] use w/LDDA to load 128-bit item */
+#define	ASI_QUEUE			0x25	/* [4v] interrupt queue registers */
 #define	ASI_NUCLEUS_QUAD_LDD_LITTLE	0x2c	/* [4u] use w/LDDA to load 128-bit item, little endian */
 
 #define	ASI_FLUSH_D_PAGE_PRIMARY	0x38	/* [4u] flush D-cache page using primary context */
@@ -663,6 +666,8 @@ SPARC64_LD_DEF(lduba, uint8_t, uint32_t)
 SPARC64_LD_DEF(lduha, uint16_t, uint32_t)
 /* load unsigned int from alternate address space */
 SPARC64_LD_DEF(lda, uint32_t, uint32_t)
+/* load unsigned word from alternate address space */
+SPARC64_LD_DEF(lduwa, uint32_t, uint32_t)
 /* load signed int from alternate address space */
 SPARC64_LD_DEF(ldswa, int, int)
 /* load 64-bit unsigned int from alternate address space */

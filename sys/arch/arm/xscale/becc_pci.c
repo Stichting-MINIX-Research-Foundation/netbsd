@@ -1,4 +1,4 @@
-/*	$NetBSD: becc_pci.c,v 1.14 2013/08/18 15:58:20 matt Exp $	*/
+/*	$NetBSD: becc_pci.c,v 1.18 2015/10/02 05:22:50 msaitoh Exp $	*/
 
 /*
  * Copyright (c) 2001, 2002 Wasabi Systems, Inc.
@@ -41,7 +41,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: becc_pci.c,v 1.14 2013/08/18 15:58:20 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: becc_pci.c,v 1.18 2015/10/02 05:22:50 msaitoh Exp $");
 
 #include "opt_pci.h"
 #include "pci.h"
@@ -76,7 +76,8 @@ void		becc_pci_conf_interrupt(void *, int, int, int, int, int *);
 
 int		becc_pci_intr_map(const struct pci_attach_args *,
 		    pci_intr_handle_t *);
-const char	*becc_pci_intr_string(void *, pci_intr_handle_t);
+const char	*becc_pci_intr_string(void *, pci_intr_handle_t,
+		    char *, size_t);
 const struct evcnt *becc_pci_intr_evcnt(void *, pci_intr_handle_t);
 void		*becc_pci_intr_establish(void *, pci_intr_handle_t,
 		    int, int (*)(void *), void *);
@@ -192,6 +193,9 @@ static int
 becc_pci_conf_setup(struct becc_softc *sc, pcitag_t tag, int offset,
     struct pciconf_state *ps)
 {
+
+	if ((unsigned int)offset >= PCI_CONF_SIZE)
+		return (1);
 
 	becc_pci_decompose_tag(sc, tag, &ps->ps_b, &ps->ps_d, &ps->ps_f);
 
@@ -373,10 +377,11 @@ becc_pci_intr_map(const struct pci_attach_args *pa, pci_intr_handle_t *ihp)
 }
 
 const char *
-becc_pci_intr_string(void *v, pci_intr_handle_t ih)
+becc_pci_intr_string(void *v, pci_intr_handle_t ih, char *buf, size_t len)
 {
 
-	return (becc_irqnames[ih]);
+	strlcpy(buf, becc_irqnames[ih], len);
+	return buf;
 }
 
 const struct evcnt *

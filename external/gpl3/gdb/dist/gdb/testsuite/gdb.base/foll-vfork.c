@@ -1,6 +1,6 @@
 /* This testcase is part of GDB, the GNU debugger.
 
-   Copyright 1997-2013 Free Software Foundation, Inc.
+   Copyright 1997-2015 Free Software Foundation, Inc.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -18,18 +18,14 @@
 #include <stdio.h>
 #include <unistd.h>
 
-#ifdef PROTOTYPES
 int main (void)
-#else
-main ()
-#endif
 {
   int  pid;
 
   pid = vfork ();
   if (pid == 0) {
     printf ("I'm the child!\n");
-    execlp ("gdb.base/vforked-prog", "gdb.base/vforked-prog", (char *)0);
+    execlp (BASEDIR "/vforked-prog", BASEDIR "/vforked-prog", (char *)0);
     perror ("exec failed");
     _exit (1);
   }

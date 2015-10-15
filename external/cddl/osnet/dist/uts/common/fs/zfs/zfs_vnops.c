@@ -215,6 +215,7 @@ zfs_close(vnode_t *vp, int flag, int count, offset_t offset, cred_t *cr,
 	    zp->z_phys->zp_size > 0)
 		VERIFY(fs_vscan(vp, cr, 1) == 0);
 
+	ZFS_EXIT(zfsvfs);
 	return (0);
 }
 
@@ -4813,7 +4814,7 @@ zfs_netbsd_access(void *v)
 static int
 zfs_netbsd_lookup(void *v)
 {
-	struct vop_lookup_args /* {
+	struct vop_lookup_v2_args /* {
 		struct vnode *a_dvp;
 		struct vnode **a_vpp;
 		struct componentname *a_cnp;
@@ -4890,9 +4891,6 @@ zfs_netbsd_lookup(void *v)
 	}
 	KASSERT(*vpp != NULL);	/* XXX Correct?  */
 
-	/*
-	 * Do a locking dance in conformance to the VOP_LOOKUP protocol.
-	 */
 	if ((cnp->cn_namelen == 1) && (cnp->cn_nameptr[0] == '.')) {
 		KASSERT(!(cnp->cn_flags & ISDOTDOT));
 		KASSERT(dvp == *vpp);
@@ -4900,17 +4898,12 @@ zfs_netbsd_lookup(void *v)
 	    (cnp->cn_nameptr[0] == '.') &&
 	    (cnp->cn_nameptr[1] == '.')) {
 		KASSERT(cnp->cn_flags & ISDOTDOT);
-		VOP_UNLOCK(dvp);
-		vn_lock(*vpp, LK_EXCLUSIVE | LK_RETRY);
-		vn_lock(dvp, LK_EXCLUSIVE | LK_RETRY);
 	} else {
 		KASSERT(!(cnp->cn_flags & ISDOTDOT));
-		vn_lock(*vpp, LK_EXCLUSIVE | LK_RETRY);
 	}
 
 out:
 	KASSERT(VOP_ISLOCKED(dvp) == LK_EXCLUSIVE);
-	KASSERT((*vpp == NULL) || (VOP_ISLOCKED(*vpp) == LK_EXCLUSIVE));
 
 #if 0				/* Namecache too scary to contemplate.  */
 	/*
@@ -4946,7 +4939,7 @@ out:
 static int
 zfs_netbsd_create(void *v)
 {
-	struct vop_create_args /* {
+	struct vop_create_v3_args /* {
 		struct vnode *a_dvp;
 		struct vnode **a_vpp;
 		struct componentname *a_cnp;
@@ -4966,41 +4959,15 @@ zfs_netbsd_create(void *v)
 	KASSERT(cnp->cn_nameptr != NULL);
 	KASSERT(VOP_ISLOCKED(dvp) == LK_EXCLUSIVE);
 
-#if 0
-	/*
-	 * ZFS doesn't require dvp to be BSD-locked, and the caller
-	 * expects us to drop this lock anyway, so we might as well
-	 * drop it early to encourage concurrency.
-	 */
-	VOP_UNLOCK(dvp);
-#endif
-
 	vattr_init_mask(vap);
 	mode = vap->va_mode & ALLPERMS;
 
 	/* XXX !EXCL is wrong here...  */
 	error = zfs_create(dvp, __UNCONST(cnp->cn_nameptr), vap, !EXCL, mode,
 	    vpp, cnp->cn_cred);
-	if (error) {
-		KASSERT(*vpp == NULL);
-		goto out;
-	}
-	KASSERT(*vpp != NULL);
 
-	/*
-	 * Lock *vpp in conformance to the VOP_CREATE protocol.
-	 */
-	vn_lock(*vpp, LK_EXCLUSIVE | LK_RETRY);
-
-out:
+	KASSERT((error == 0) == (*vpp != NULL));
 	KASSERT(VOP_ISLOCKED(dvp) == LK_EXCLUSIVE);
-	KASSERT((*vpp == NULL) || (VOP_ISLOCKED(*vpp) == LK_EXCLUSIVE));
-
-	/*
-	 * Unlock and release dvp because the VOP_CREATE protocol is insane.
-	 */
-	VOP_UNLOCK(dvp);
-	VN_RELE(dvp);
 
 	return (error);
 }
@@ -5025,15 +4992,6 @@ zfs_netbsd_remove(void *v)
 	KASSERT(VOP_ISLOCKED(dvp) == LK_EXCLUSIVE);
 	KASSERT(VOP_ISLOCKED(vp) == LK_EXCLUSIVE);
 
-#if 0
-	/*
-	 * ZFS doesn't require dvp to be BSD-locked, and the caller
-	 * expects us to drop this lock anyway, so we might as well
-	 * drop it early to encourage concurrency.
-	 */
-	VOP_UNLOCK(dvp);
-#endif
-
 	/*
 	 * zfs_remove will look up the entry again itself, so discard vp.
 	 */
@@ -5057,7 +5015,7 @@ zfs_netbsd_remove(void *v)
 static int
 zfs_netbsd_mkdir(void *v)
 {
-	struct vop_mkdir_args /* {
+	struct vop_mkdir_v3_args /* {
 		struct vnode *a_dvp;
 		struct vnode **a_vpp;
 		struct componentname *a_cnp;
@@ -5076,39 +5034,13 @@ zfs_netbsd_mkdir(void *v)
 	KASSERT(cnp->cn_nameptr != NULL);
 	KASSERT(VOP_ISLOCKED(dvp) == LK_EXCLUSIVE);
 
-#if 0
-	/*
-	 * ZFS doesn't require dvp to be BSD-locked, and the caller
-	 * expects us to drop this lock anyway, so we might as well
-	 * drop it early to encourage concurrency.
-	 */
-	VOP_UNLOCK(dvp);
-#endif
-
 	vattr_init_mask(vap);
 
 	error = zfs_mkdir(dvp, __UNCONST(cnp->cn_nameptr), vap, vpp,
 	    cnp->cn_cred, NULL, 0, NULL);
-	if (error) {
-		KASSERT(*vpp == NULL);
-		goto out;
-	}
-	KASSERT(*vpp != NULL);
 
-	/*
-	 * Lock *vpp in conformance to the VOP_MKDIR protocol.
-	 */
-	vn_lock(*vpp, LK_EXCLUSIVE | LK_RETRY);
-
-out:
+	KASSERT((error == 0) == (*vpp != NULL));
 	KASSERT(VOP_ISLOCKED(dvp) == LK_EXCLUSIVE);
-	KASSERT((*vpp == NULL) || (VOP_ISLOCKED(*vpp) == LK_EXCLUSIVE));
-
-	/*
-	 * Unlock and release dvp because the VOP_MKDIR protocol is insane.
-	 */
-	VOP_UNLOCK(dvp);
-	VN_RELE(dvp);
 
 	return (error);
 }
@@ -5132,15 +5064,6 @@ zfs_netbsd_rmdir(void *v)
 	KASSERT(cnp->cn_nameptr != NULL);
 	KASSERT(VOP_ISLOCKED(dvp) == LK_EXCLUSIVE);
 	KASSERT(VOP_ISLOCKED(vp) == LK_EXCLUSIVE);
-
-#if 0
-	/*
-	 * ZFS doesn't require dvp to be BSD-locked, and the caller
-	 * expects us to drop this lock anyway, so we might as well
-	 * drop it early to encourage concurrency.
-	 */
-	VOP_UNLOCK(dvp);
-#endif
 
 	/*
 	 * zfs_rmdir will look up the entry again itself, so discard vp.
@@ -5230,9 +5153,12 @@ zfs_netbsd_setattr(void *v)
 	xvattr_t xvap;
 	u_long fflags;
 	uint64_t zflags;
+	int flags = 0;
 
 	vattr_init_mask(vap);
 	vap->va_mask &= ~AT_NOSET;
+	if (ISSET(vap->va_vaflags, VA_UTIMES_NULL))
+		flags |= ATTR_UTIME;
 
 	xva_init(&xvap);
 	xvap.xva_vattr = *vap;
@@ -5293,7 +5219,7 @@ zfs_netbsd_setattr(void *v)
 		    xvap.xva_xoptattrs.xoa_nodump);
 #undef	FLAG_CHANGE
 	}
-	return (zfs_setattr(vp, (vattr_t *)&xvap, 0, cred, NULL));
+	return (zfs_setattr(vp, (vattr_t *)&xvap, flags, cred, NULL));
 }
 
 static int
@@ -5373,7 +5299,7 @@ zfs_netbsd_rename(void *v)
 static int
 zfs_netbsd_symlink(void *v)
 {
-	struct vop_symlink_args /* {
+	struct vop_symlink_v3_args /* {
 		struct vnode *a_dvp;
 		struct vnode **a_vpp;
 		struct componentname *a_cnp;
@@ -5395,41 +5321,14 @@ zfs_netbsd_symlink(void *v)
 	KASSERT(cnp->cn_nameptr != NULL);
 	KASSERT(VOP_ISLOCKED(dvp) == LK_EXCLUSIVE);
 
-#if 0
-	/*
-	 * ZFS doesn't require dvp to be BSD-locked, and the caller
-	 * expects us to drop this lock anyway, so we might as well
-	 * drop it early to encourage concurrency.
-	 */
-	VOP_UNLOCK(dvp);
-#endif
-
 	vap->va_type = VLNK;	/* Netbsd: Syscall only sets va_mode. */
 	vattr_init_mask(vap);
 
 	error = zfs_symlink(dvp, vpp, __UNCONST(cnp->cn_nameptr), vap, target,
 	    cnp->cn_cred, 0);
-	if (error) {
-		KASSERT(*vpp == NULL);
-		goto out;
-	}
-	KASSERT(*vpp != NULL);
 
-
-	/*
-	 * Lock *vpp in conformance to the VOP_SYMLINK protocol.
-	 */
-	vn_lock(*vpp, LK_EXCLUSIVE | LK_RETRY);
-
-out:
+	KASSERT((error == 0) == (*vpp != NULL));
 	KASSERT(VOP_ISLOCKED(dvp) == LK_EXCLUSIVE);
-	KASSERT((*vpp == NULL) || (VOP_ISLOCKED(*vpp) == LK_EXCLUSIVE));
-
-	/*
-	 * Unlock and release dvp because the VOP_SYMLINK protocol is insane.
-	 */
-	VOP_UNLOCK(dvp);
-	VN_RELE(dvp);
 
 	return (error);
 }
@@ -5611,7 +5510,7 @@ zfs_netbsd_readlink(void *v)
 static int
 zfs_netbsd_link(void *v)
 {
-	struct vop_link_args /* {
+	struct vop_link_v2_args /* {
 		struct vnode *a_dvp;
 		struct vnode *a_vp;
 		struct componentname *a_cnp;
@@ -5627,25 +5526,8 @@ zfs_netbsd_link(void *v)
 	KASSERT(cnp->cn_nameptr != NULL);
 	KASSERT(VOP_ISLOCKED(dvp) == LK_EXCLUSIVE);
 
-#if 0
-	/*
-	 * ZFS doesn't require dvp to be BSD-locked, and the caller
-	 * expects us to drop this lock anyway, so we might as well
-	 * drop it early to encourage concurrency.
-	 */
-	VOP_UNLOCK(dvp);
-#endif
-
-	error = zfs_link(dvp, vp, __UNCONST(cnp->cn_nameptr), cnp->cn_cred,
-	    NULL, 0);
-
-	/*
-	 * Unlock and release dvp because the VOP_LINK protocol is insane.
-	 */
-	VOP_UNLOCK(dvp);
-	VN_RELE(dvp);
-
-	return (error);
+	return (zfs_link(dvp, vp, __UNCONST(cnp->cn_nameptr), cnp->cn_cred,
+		NULL, 0));
 }
 
 static int
@@ -5783,33 +5665,39 @@ zfs_netbsd_pathconf(void *v)
 	return (error);
 }
 
-#if 1
-#  define	zfs_netbsd_lock		genfs_lock
-#  define	zfs_netbsd_unlock	genfs_unlock
-#  define	zfs_netbsd_islocked	genfs_islocked
-#else
-int
-zfs_netbsd_lock(void *v)
-{
-	struct vop_lock_args *ap = v;
-
-	return 0;
-}
-
-int
-zfs_netbsd_unlock(void *v)
-{
-
-	return 0;
-}
+#define	zfs_netbsd_lock		genfs_lock
+#define	zfs_netbsd_unlock	genfs_unlock
+#define	zfs_netbsd_islocked	genfs_islocked
 
 static int
-zfs_netbsd_islocked(void *v)
+zfs_netbsd_advlock(void *v)
 {
+	struct vop_advlock_args /* {
+		struct vnode *a_vp;
+		void *a_id;
+		int a_op;
+		struct flock *a_fl;
+		int a_flags;
+	} */ *ap = v;
+	struct vnode *vp;
+	struct znode *zp;
+	struct zfsvfs *zfsvfs;
+	int error;
 
-	return LK_EXCLUSIVE;
+	vp = ap->a_vp;
+	KASSERT(vp != NULL);
+	zp = VTOZ(vp);
+	KASSERT(zp != NULL);
+	zfsvfs = zp->z_zfsvfs;
+	KASSERT(zfsvfs != NULL);
+
+	ZFS_ENTER(zfsvfs);
+	ZFS_VERIFY_ZP(zp);
+	error = lf_advlock(ap, &zp->z_lockf, zp->z_phys->zp_size);
+	ZFS_EXIT(zfsvfs);
+
+	return error;
 }
-#endif
 
 /*
 int
@@ -5854,7 +5742,7 @@ zfs_netbsd_putpages(void *v)
 }
 
 #define zfs_netbsd_seek genfs_seek
-#define zfs_netbsd_mmap genfs_mmap
+#define zfs_netbsd_mmap genfs_eopnotsupp
 #define zfs_netbsd_getpages genfs_compat_getpages
 //#define zfs_netbsd_putpages genfs_putpages
 
@@ -5890,8 +5778,8 @@ const struct vnodeopv_entry_desc zfs_vnodeop_entries[] = {
 	{ &vop_putpages_desc,		zfs_netbsd_putpages },
 	{ &vop_mmap_desc,		zfs_netbsd_mmap },
 	{ &vop_islocked_desc,		zfs_netbsd_islocked },
-#ifdef notyet
 	{ &vop_advlock_desc,		zfs_netbsd_advlock },
+#ifdef notyet
 	{ &vop_fcntl_desc,		zfs_netbsd_fcntl },
 	{ &vop_bmap_desc,		zfs_netbsd_bmap },
 	{ &vop_strategy_desc,		zfs_netbsd_strategy },		

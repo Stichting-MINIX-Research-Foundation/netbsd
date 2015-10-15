@@ -1,7 +1,7 @@
-/*	$NetBSD: timer.h,v 1.5 2013/07/27 19:23:13 christos Exp $	*/
+/*	$NetBSD: timer.h,v 1.8 2014/12/10 04:38:00 christos Exp $	*/
 
 /*
- * Copyright (C) 2004-2009, 2012  Internet Systems Consortium, Inc. ("ISC")
+ * Copyright (C) 2004-2009, 2012-2014  Internet Systems Consortium, Inc. ("ISC")
  * Copyright (C) 1998-2002  Internet Software Consortium.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
@@ -88,6 +88,7 @@ ISC_LANG_BEGINDECLS
 
 /*% Timer Type */
 typedef enum {
+	isc_timertype_undefined = -1,	/*%< Undefined */
 	isc_timertype_ticker = 0, 	/*%< Ticker */
 	isc_timertype_once = 1, 	/*%< Once */
 	isc_timertype_limited = 2, 	/*%< Limited */
@@ -114,9 +115,8 @@ typedef struct {
 				       const isc_interval_t *interval,
 				       isc_task_t *task,
 				       isc_taskaction_t action,
-				       const void *arg,
+				       void *arg,
 				       isc_timer_t **timerp);
-	void 		(*poke)(isc_timermgr_t *mgr);
 } isc_timermgrmethods_t;
 
 typedef struct {
@@ -176,7 +176,7 @@ isc_timer_create(isc_timermgr_t *manager,
 		 const isc_interval_t *interval,
 		 isc_task_t *task,
 		 isc_taskaction_t action,
-		 const void *arg,
+		 void *arg,
 		 isc_timer_t **timerp);
 /*%<
  * Create a new 'type' timer managed by 'manager'.  The timers parameters

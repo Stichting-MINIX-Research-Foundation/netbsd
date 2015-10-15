@@ -1,4 +1,4 @@
-/*	$NetBSD: autoconf.c,v 1.251 2013/04/16 06:57:06 jdc Exp $ */
+/*	$NetBSD: autoconf.c,v 1.259 2015/10/04 08:15:46 joerg Exp $ */
 
 /*
  * Copyright (c) 1996
@@ -48,7 +48,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: autoconf.c,v 1.251 2013/04/16 06:57:06 jdc Exp $");
+__KERNEL_RCSID(0, "$NetBSD: autoconf.c,v 1.259 2015/10/04 08:15:46 joerg Exp $");
 
 #include "opt_ddb.h"
 #include "opt_kgdb.h"
@@ -673,9 +673,11 @@ bootpath_fake(struct bootpath *bp, const char *cp)
 			} else {
 				BP_APPEND(bp, "vme", -1, 0, 0);
 			}
-			sprintf(tmpname,"x%cc", cp[1]); /* e.g. `xdc' */
+			/* e.g. `xdc' */
+			snprintf(tmpname, sizeof(tmpname), "x%cc", cp[1]);
 			BP_APPEND(bp, tmpname, -1, v0val[0], 0);
-			sprintf(tmpname,"x%c", cp[1]); /* e.g. `xd' */
+			/* e.g. `xd' */
+			snprintf(tmpname, sizeof(tmpname), "x%c", cp[1]);
 			BP_APPEND(bp, tmpname, v0val[1], v0val[2], 0);
 			return;
 		}
@@ -686,7 +688,7 @@ bootpath_fake(struct bootpath *bp, const char *cp)
 		 */
 		if ((cp[0] == 'i' || cp[0] == 'l') && cp[1] == 'e')  {
 			BP_APPEND(bp, "obio", -1, 0, 0);
-			sprintf(tmpname,"%c%c", cp[0], cp[1]);
+			snprintf(tmpname, sizeof(tmpname), "%c%c", cp[0], cp[1]);
 			BP_APPEND(bp, tmpname, -1, 0, 0);
 			return;
 		}
@@ -735,7 +737,8 @@ bootpath_fake(struct bootpath *bp, const char *cp)
 				target = v0val[1] >> 2; /* old format */
 				lun    = v0val[1] & 0x3;
 			}
-			sprintf(tmpname, "%c%c", cp[0], cp[1]);
+			snprintf(tmpname, sizeof(tmpname),
+			    "%c%c", cp[0], cp[1]);
 			BP_APPEND(bp, tmpname, target, lun, v0val[2]);
 			return;
 		}
@@ -786,9 +789,9 @@ bootpath_fake(struct bootpath *bp, const char *cp)
 		BP_APPEND(bp, "sbus", -1, 0, 0);
 		BP_APPEND(bp, "esp", -1, v0val[0], 0);
 		if (cp[1] == 'r')
-			sprintf(tmpname, "cd"); /* netbsd uses 'cd', not 'sr'*/
+			snprintf(tmpname, sizeof(tmpname), "cd"); /* netbsd uses 'cd', not 'sr'*/
 		else
-			sprintf(tmpname,"%c%c", cp[0], cp[1]);
+			snprintf(tmpname, sizeof(tmpname), "%c%c", cp[0], cp[1]);
 		/* XXX - is TARGET/LUN encoded in v0val[1]? */
 		target = v0val[1];
 		lun = 0;
@@ -1030,19 +1033,15 @@ sync_crash(void)
 char *
 clockfreq(int freq)
 {
-	char *p;
 	static char buf[10];
+	size_t len;
 
 	freq /= 1000;
-	sprintf(buf, "%d", freq / 1000);
+	len = snprintf(buf, sizeof(buf), "%d", freq / 1000);
 	freq %= 1000;
-	if (freq) {
-		freq += 1000;	/* now in 1000..1999 */
-		p = buf + strlen(buf);
-		sprintf(p, "%d", freq);
-		*p = '.';	/* now buf = %d.%3d */
-	}
-	return (buf);
+	if (freq)
+		snprintf(buf + len, sizeof(buf) - len, ".%03d", freq);
+	return buf;
 }
 
 /* ARGSUSED */
@@ -1297,7 +1296,7 @@ extern struct sparc_bus_space_tag mainbus_space_tag;
 		if ((node = findnode(node0, sp)) == 0) {
 			if (ssp->flags & BS_OPTIONAL) continue;
 			printf("could not find %s in OPENPROM\n", sp);
-			panic(sp);
+			panic("%s", sp);
 		}
 
 		memset(&ma, 0, sizeof ma);
@@ -1317,8 +1316,10 @@ extern struct sparc_bus_space_tag mainbus_space_tag;
 		if (prom_getprop_address1(node, &ma.ma_promvaddr) != 0)
 			continue;
 
-		if (config_found(dev, (void *)&ma, mbprint) == NULL)
-			panic(sp);
+		if (config_found(dev, (void *)&ma, mbprint) == NULL) {
+			if (ssp->flags & BS_OPTIONAL) continue;
+			panic("%s", sp);
+		}
 	}
 
 	/*
@@ -1482,11 +1483,11 @@ romgetcursoraddr(int **rowp, int **colp)
 	 * correct cutoff point is unknown, as yet; we use 2.9 here.
 	 */
 	if (prom_version() < 2 || prom_revision() < 0x00020009)
-		sprintf(buf,
+		snprintf(buf, sizeof(buf),
 		    "' line# >body >user %lx ! ' column# >body >user %lx !",
 		    (u_long)rowp, (u_long)colp);
 	else
-		sprintf(buf,
+		snprintf(buf, sizeof(buf),
 		    "stdout @ is my-self addr line# %lx ! addr column# %lx !",
 		    (u_long)rowp, (u_long)colp);
 	*rowp = *colp = NULL;
@@ -1562,6 +1563,7 @@ static struct {
 	{ "SUNW,fdtwo",	"fdc" },
 	{ "network",	"hme" }, /* Krups */
 	{ "SUNW,hme",   "hme" },
+	{ "SUNW,qfe",   "hme" },
 };
 
 static const char *

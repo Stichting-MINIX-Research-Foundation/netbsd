@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.63 2012/07/19 19:23:52 macallan Exp $
+#	$NetBSD: Makefile,v 1.69 2015/09/30 22:58:02 rjs Exp $
 
 # xf86-input drivers
 
@@ -19,8 +19,9 @@ SUBDIR+= \
 
 .endif
 
-
 # xf86-video drivers
+
+.include <bsd.own.mk>
 
 .if ${MACHINE_ARCH} == "i386" || \
     ${MACHINE_ARCH} == "x86_64"
@@ -42,6 +43,7 @@ SUBDIR+= \
 
 SUBDIR+= \
 	xf86-video-intel \
+	xf86-video-intel-old \
 	xf86-video-mach64 \
 	xf86-video-mga \
 	xf86-video-neomagic \
@@ -49,7 +51,7 @@ SUBDIR+= \
 	xf86-video-openchrome \
 	xf86-video-r128 \
 	xf86-video-radeon \
-	xf86-video-radeonhd \
+	xf86-video-radeon-kms \
 	xf86-video-s3 \
 	xf86-video-s3virge \
 	xf86-video-savage \
@@ -90,7 +92,6 @@ SUBDIR+= \
 	xf86-video-nv \
 	xf86-video-r128 \
 	xf86-video-radeon \
-	xf86-video-radeonhd \
 	xf86-video-s3 \
 	xf86-video-s3virge \
 	xf86-video-savage \
@@ -130,7 +131,6 @@ SUBDIR+= \
 	xf86-video-neomagic \
 	xf86-video-nv \
 	xf86-video-radeon \
-	xf86-video-radeonhd \
 	xf86-video-s3 \
 	xf86-video-s3virge \
 	xf86-video-savage \
@@ -181,6 +181,11 @@ SUBDIR+= \
 SUBDIR+= \
 	xf86-video-wsfb
 .endif	# ${MACHINE} == "luna68k"
+
+.if ${MACHINE} == "mac68k"
+SUBDIR+= \
+	xf86-video-wsfb
+.endif	# ${MACHINE} == "mac68k"
 
 .if ${MACHINE} == "macppc"
 SUBDIR+= \
@@ -273,16 +278,5 @@ SUBDIR+= \
 SUBDIR+= \
 	xf86-video-wsfb
 .endif # ${MACHINE} == "zaurus"
-
-# broken with xorg-server 1.6
-# x86
-#	xf86-video-nsc \
-#	xf86-video-vga \
-# alpha
-#	xf86-video-vga \
-# bebox
-#	xf86-video-vga
-# prep
-#	xf86-video-vga
 
 .include <bsd.subdir.mk>

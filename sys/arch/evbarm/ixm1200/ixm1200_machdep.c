@@ -1,4 +1,4 @@
-/*	$NetBSD: ixm1200_machdep.c,v 1.54 2013/08/18 15:58:20 matt Exp $ */
+/*	$NetBSD: ixm1200_machdep.c,v 1.56 2014/09/13 18:08:39 matt Exp $ */
 
 /*
  * Copyright (c) 2002, 2003
@@ -61,7 +61,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ixm1200_machdep.c,v 1.54 2013/08/18 15:58:20 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ixm1200_machdep.c,v 1.56 2014/09/13 18:08:39 matt Exp $");
 
 #include "opt_ddb.h"
 #include "opt_modular.h"
@@ -150,10 +150,10 @@ BootConfig bootconfig;          /* Boot config storage */
 char *boot_args = NULL;
 char *boot_file = NULL;
 
-vm_offset_t physical_start;
-vm_offset_t physical_freestart;
-vm_offset_t physical_freeend;
-vm_offset_t physical_end;
+vaddr_t physical_start;
+vaddr_t physical_freestart;
+vaddr_t physical_freeend;
+vaddr_t physical_end;
 u_int free_pages;
 
 /*int debug_flags;*/
@@ -161,7 +161,7 @@ u_int free_pages;
 int max_processes = 64;                 /* Default number */
 #endif  /* !PMAP_STATIC_L1S */
 
-vm_offset_t msgbufphys;
+paddr_t msgbufphys;
 
 extern int end;
 
@@ -761,14 +761,14 @@ ixdp_ixp12x0_cc_setup(void)
 {
 	int loop;
 	paddr_t kaddr;
-	pt_entry_t *pte;
 
 	(void) pmap_extract(pmap_kernel(), KERNEL_TEXT_BASE, &kaddr);
 	for (loop = 0; loop < CPU_IXP12X0_CACHE_CLEAN_SIZE; loop += PAGE_SIZE) {
-                pte = vtopte(ixp12x0_cc_base + loop);
-                *pte = L2_S_PROTO | kaddr |
+		pt_entry_t * const ptep = vtopte(ixp12x0_cc_base + loop);
+		const pt_entry_t npte = L2_S_PROTO | kaddr |
                     L2_S_PROT(PTE_KERNEL, VM_PROT_READ) | pte_l2_s_cache_mode;
-		PTE_SYNC(pte);
+		l2pte_set(ptep, npte, 0);
+		PTE_SYNC(ptep);
         }
 	ixp12x0_cache_clean_addr = ixp12x0_cc_base;
 	ixp12x0_cache_clean_size = CPU_IXP12X0_CACHE_CLEAN_SIZE / 2;

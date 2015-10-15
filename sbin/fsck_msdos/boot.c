@@ -1,4 +1,3 @@
-/*	$NetBSD: boot.c,v 1.15 2009/04/11 07:14:50 lukem Exp $	*/
 
 /*
  * Copyright (C) 1995, 1997 Wolfgang Solfrank
@@ -28,11 +27,13 @@
 
 #include <sys/cdefs.h>
 #ifndef lint
-__RCSID("$NetBSD: boot.c,v 1.15 2009/04/11 07:14:50 lukem Exp $");
+__RCSID("$NetBSD: boot.c,v 1.19 2015/01/02 06:21:28 mlelstv Exp $");
 #endif /* not lint */
 
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <unistd.h>
 
@@ -64,8 +65,16 @@ readboot(int dosfs, struct bootblock *boot)
 	/* decode bios parameter block */
 	boot->BytesPerSec = block[11] + (block[12] << 8);
 	boot->SecPerClust = block[13];
+	if (boot->SecPerClust == 0 || popcount(boot->SecPerClust) != 1) {
+ 		pfatal("Invalid cluster size: %u\n", boot->SecPerClust);
+		return FSFATAL;
+	}
 	boot->ResSectors = block[14] + (block[15] << 8);
 	boot->FATs = block[16];
+	if (boot->FATs == 0) {
+		pfatal("Invalid number of FATs: %u\n", boot->FATs);
+		return FSFATAL;
+	}
 	boot->RootDirEnts = block[17] + (block[18] << 8);
 	boot->Sectors = block[19] + (block[20] << 8);
 	boot->Media = block[21];
@@ -171,12 +180,15 @@ readboot(int dosfs, struct bootblock *boot)
 		}
 		/* Check backup FSInfo?					XXX */
 	}
+	if (boot->FATsecs == 0) {
+		pfatal("Invalid number of FAT sectors: %u\n", boot->FATsecs);
+		return FSFATAL;
+	}
 
-	boot->ClusterOffset = (boot->RootDirEnts * 32 + boot->BytesPerSec - 1)
+	boot->FirstCluster = (boot->RootDirEnts * 32 + boot->BytesPerSec - 1)
 	    / boot->BytesPerSec
 	    + boot->ResSectors
-	    + boot->FATs * boot->FATsecs
-	    - CLUST_FIRST * boot->SecPerClust;
+	    + boot->FATs * boot->FATsecs;
 
 	if (boot->BytesPerSec % DOSBOOTBLOCKSIZE != 0) {
 		pfatal("Invalid sector size: %u", boot->BytesPerSec);
@@ -191,7 +203,15 @@ readboot(int dosfs, struct bootblock *boot)
 		boot->NumSectors = boot->Sectors;
 	} else
 		boot->NumSectors = boot->HugeSectors;
-	boot->NumClusters = (boot->NumSectors - boot->ClusterOffset) / boot->SecPerClust;
+
+	if (boot->FirstCluster + boot->SecPerClust > boot->NumSectors) {
+		pfatal("Cluster offset too large (%u clusters)\n",
+		    boot->FirstCluster);
+		return FSFATAL;
+	}
+
+	boot->NumClusters = (boot->NumSectors - boot->FirstCluster) / boot->SecPerClust
+			    + CLUST_FIRST;
 
 	if (boot->flags&FAT32)
 		boot->ClustMask = CLUST32_MASK;

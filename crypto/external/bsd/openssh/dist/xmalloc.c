@@ -1,5 +1,5 @@
-/*	$NetBSD: xmalloc.c,v 1.3 2013/11/08 19:18:25 christos Exp $	*/
-/* $OpenBSD: xmalloc.c,v 1.28 2013/05/17 00:13:14 djm Exp $ */
+/*	$NetBSD: xmalloc.c,v 1.6 2015/07/03 01:00:00 christos Exp $	*/
+/* $OpenBSD: xmalloc.c,v 1.32 2015/04/24 01:36:01 deraadt Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
  * Copyright (c) 1995 Tatu Ylonen <ylo@cs.hut.fi>, Espoo, Finland
@@ -15,9 +15,10 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: xmalloc.c,v 1.3 2013/11/08 19:18:25 christos Exp $");
+__RCSID("$NetBSD: xmalloc.c,v 1.6 2015/07/03 01:00:00 christos Exp $");
 #include <sys/param.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -34,7 +35,7 @@ xmalloc(size_t size)
 		fatal("xmalloc: zero size");
 	ptr = malloc(size);
 	if (ptr == NULL)
-		fatal("xmalloc: out of memory (allocating %lu bytes)", (u_long) size);
+		fatal("xmalloc: out of memory (allocating %zu bytes)", size);
 	return ptr;
 }
 
@@ -45,32 +46,24 @@ xcalloc(size_t nmemb, size_t size)
 
 	if (size == 0 || nmemb == 0)
 		fatal("xcalloc: zero size");
-	if (SIZE_T_MAX / nmemb < size)
-		fatal("xcalloc: nmemb * size > SIZE_T_MAX");
+	if (SIZE_MAX / nmemb < size)
+		fatal("xcalloc: nmemb * size > SIZE_MAX");
 	ptr = calloc(nmemb, size);
 	if (ptr == NULL)
-		fatal("xcalloc: out of memory (allocating %lu bytes)",
-		    (u_long)(size * nmemb));
+		fatal("xcalloc: out of memory (allocating %zu bytes)",
+		    size * nmemb);
 	return ptr;
 }
 
 void *
-xrealloc(void *ptr, size_t nmemb, size_t size)
+xreallocarray(void *ptr, size_t nmemb, size_t size)
 {
 	void *new_ptr;
-	size_t new_size = nmemb * size;
 
-	if (new_size == 0)
-		fatal("xrealloc: zero size");
-	if (SIZE_T_MAX / nmemb < size)
-		fatal("xrealloc: nmemb * size > SIZE_T_MAX");
-	if (ptr == NULL)
-		new_ptr = malloc(new_size);
-	else
-		new_ptr = realloc(ptr, new_size);
+	new_ptr = reallocarray(ptr, nmemb, size);
 	if (new_ptr == NULL)
-		fatal("xrealloc: out of memory (new_size %lu bytes)",
-		    (u_long) new_size);
+		fatal("xreallocarray: out of memory (%zu elements of %zu bytes)",
+		    nmemb, size);
 	return new_ptr;
 }
 

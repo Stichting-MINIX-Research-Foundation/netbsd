@@ -1,4 +1,4 @@
-/*	$NetBSD: util.c,v 1.17 2013/10/19 17:16:25 christos Exp $	*/
+/*	$NetBSD: util.c,v 1.19 2015/05/09 18:32:04 dholland Exp $	*/
 
 /*-
  * Copyright (c) 2000 The NetBSD Foundation, Inc.
@@ -46,6 +46,7 @@
 #include <netconfig.h>
 #include <stdio.h>
 #include <arpa/inet.h>
+#include <err.h>
 
 #include "rpcbind.h"
 
@@ -358,8 +359,9 @@ network_init()
 		if (setsockopt(s, IPPROTO_IPV6, IPV6_JOIN_GROUP, &mreq6,
 		    sizeof mreq6) < 0)
 			if (debugging)
-				perror("setsockopt v6 multicast");
+				warn("setsockopt v6 multicast");
 	}
+	freeifaddrs(ifp);
 #endif
 
 	/* close(s); */

@@ -1,4 +1,4 @@
-/*	$NetBSD: if_kse.c,v 1.25 2013/11/08 06:20:48 nisimura Exp $	*/
+/*	$NetBSD: if_kse.c,v 1.28 2014/06/16 16:48:16 msaitoh Exp $	*/
 
 /*-
  * Copyright (c) 2006 The NetBSD Foundation, Inc.
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_kse.c,v 1.25 2013/11/08 06:20:48 nisimura Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_kse.c,v 1.28 2014/06/16 16:48:16 msaitoh Exp $");
 
 
 #include <sys/param.h>
@@ -353,6 +353,7 @@ kse_attach(device_t parent, device_t self, void *aux)
 	int i, error, nseg;
 	pcireg_t pmode;
 	int pmreg;
+	char intrbuf[PCI_INTRSTR_LEN];
 
 	if (pci_mapreg_map(pa, 0x10,
 	    PCI_MAPREG_TYPE_MEM | PCI_MAPREG_MEM_TYPE_32BIT,
@@ -418,7 +419,7 @@ kse_attach(device_t parent, device_t self, void *aux)
 		aprint_error_dev(sc->sc_dev, "unable to map interrupt\n");
 		return;
 	}
-	intrstr = pci_intr_string(pc, ih);
+	intrstr = pci_intr_string(pc, ih, intrbuf, sizeof(intrbuf));
 	sc->sc_ih = pci_intr_establish(pc, ih, IPL_NET, kse_intr, sc);
 	if (sc->sc_ih == NULL) {
 		aprint_error_dev(sc->sc_dev, "unable to establish interrupt");
@@ -530,7 +531,8 @@ kse_attach(device_t parent, device_t self, void *aux)
 	int p = (sc->sc_chip == 0x8842) ? 3 : 1;
 	for (i = 0; i < p; i++) {
 		struct ksext *ee = &sc->sc_ext;
-		sprintf(ee->evcntname[i], "%s.%d", device_xname(sc->sc_dev), i+1);
+		snprintf(ee->evcntname[i], sizeof(ee->evcntname[i]),
+		    "%s.%d", device_xname(sc->sc_dev), i+1);
 		evcnt_attach_dynamic(&ee->pev[i][0], EVCNT_TYPE_MISC,
 		    NULL, ee->evcntname[i], "RxLoPriotyByte");
 		evcnt_attach_dynamic(&ee->pev[i][1], EVCNT_TYPE_MISC,
@@ -1313,11 +1315,11 @@ ifmedia_sts(struct ifnet *ifp, struct ifmediareq *ifmr)
 		if (result & (1U << 3))
 			ifmr->ifm_active |= IFM_100_TX|IFM_FDX;
 		else if (result & (1U << 2))
-			ifmr->ifm_active |= IFM_100_TX;
+			ifmr->ifm_active |= IFM_100_TX|IFM_HDX;
 		else if (result & (1U << 1))
 			ifmr->ifm_active |= IFM_10_T|IFM_FDX;
 		else if (result & (1U << 0))
-			ifmr->ifm_active |= IFM_10_T;
+			ifmr->ifm_active |= IFM_10_T|IFM_HDX;
 		else
 			ifmr->ifm_active |= IFM_NONE;
 		if (ctl & (1U << 4))

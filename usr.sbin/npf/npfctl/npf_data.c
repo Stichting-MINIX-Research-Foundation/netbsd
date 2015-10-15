@@ -1,7 +1,7 @@
-/*	$NetBSD: npf_data.c,v 1.23 2013/11/22 00:25:51 rmind Exp $	*/
+/*	$NetBSD: npf_data.c,v 1.25 2014/02/13 03:34:40 rmind Exp $	*/
 
 /*-
- * Copyright (c) 2009-2012 The NetBSD Foundation, Inc.
+ * Copyright (c) 2009-2014 The NetBSD Foundation, Inc.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -31,7 +31,7 @@
  */
 
 #include <sys/cdefs.h>
-__RCSID("$NetBSD: npf_data.c,v 1.23 2013/11/22 00:25:51 rmind Exp $");
+__RCSID("$NetBSD: npf_data.c,v 1.25 2014/02/13 03:34:40 rmind Exp $");
 
 #include <sys/types.h>
 #include <sys/null.h>
@@ -223,11 +223,14 @@ npfctl_parse_fam_addr_mask(const char *addr, const char *mask,
 npfvar_t *
 npfctl_parse_table_id(const char *name)
 {
-	if (!npfctl_table_exists_p(name)) {
+	u_int tid;
+
+	tid = npfctl_table_getid(name);
+	if (tid == (unsigned)-1) {
 		yyerror("table '%s' is not defined", name);
 		return NULL;
 	}
-	return npfvar_create_from_string(NPFVAR_TABLE, name);
+	return npfvar_create_element(NPFVAR_TABLE, &tid, sizeof(u_int));
 }
 
 /*
@@ -581,4 +584,50 @@ npfctl_parse_icmp(int proto, int type, int code)
 out:
 	npfvar_destroy(vp);
 	return NULL;
+}
+
+/*
+ * npfctl_npt66_calcadj: calculate the adjustment for NPTv6 as per RFC 6296.
+ */
+uint16_t
+npfctl_npt66_calcadj(npf_netmask_t len, const npf_addr_t *pref_in,
+    const npf_addr_t *pref_out)
+{
+	const uint16_t *addr6_in = (const uint16_t *)pref_in;
+	const uint16_t *addr6_out = (const uint16_t *)pref_out;
+	unsigned i, remnant, wordmask, preflen = len >> 4;
+	uint32_t adj, isum = 0, osum = 0;
+
+	/*
+	 * Extract the bits within a 16-bit word (when prefix length is
+	 * not dividable by 16) and include them into the sum.
+	 */
+	remnant = len - (preflen << 4);
+	wordmask = (1U << remnant) - 1;
+	assert(wordmask == 0 || (len % 16) != 0);
+
+	/* Inner prefix - sum and fold. */
+	for (i = 0; i < preflen; i++) {
+		isum += addr6_in[i];
+	}
+	isum += addr6_in[i] & wordmask;
+	while (isum >> 16) {
+		isum = (isum >> 16) + (isum & 0xffff);
+	}
+
+	/* Outer prefix - sum and fold. */
+	for (i = 0; i < preflen; i++) {
+		osum += addr6_out[i];
+	}
+	osum += addr6_out[i] & wordmask;
+	while (osum >> 16) {
+		osum = (osum >> 16) + (osum & 0xffff);
+	}
+
+	/* Calculate 1's complement difference. */
+	adj = isum + ~osum;
+	while (adj >> 16) {
+		adj = (adj >> 16) + (adj & 0xffff);
+	}
+	return (uint16_t)adj;
 }

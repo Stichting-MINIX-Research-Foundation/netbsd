@@ -1,4 +1,4 @@
-/*	$NetBSD: linux_fadvise64_64.c,v 1.1 2011/05/30 17:50:32 alnsn Exp $	*/
+/*	$NetBSD: linux_fadvise64_64.c,v 1.3 2014/11/09 17:48:08 maxv Exp $	*/
 
 /*-
  * Copyright (c) 2011 The NetBSD Foundation, Inc.
@@ -27,7 +27,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: linux_fadvise64_64.c,v 1.1 2011/05/30 17:50:32 alnsn Exp $");
+__KERNEL_RCSID(0, "$NetBSD: linux_fadvise64_64.c,v 1.3 2014/11/09 17:48:08 maxv Exp $");
 
 #include <sys/param.h>
 #include <sys/types.h>
@@ -41,7 +41,6 @@ __KERNEL_RCSID(0, "$NetBSD: linux_fadvise64_64.c,v 1.1 2011/05/30 17:50:32 alnsn
 #include <sys/ioctl.h>
 #include <sys/kernel.h>
 #include <sys/mount.h>
-#include <sys/malloc.h>
 #include <sys/namei.h>
 #include <sys/vnode.h>
 #include <sys/tty.h>
@@ -73,5 +72,5 @@ linux_sys_fadvise64_64(struct lwp *l,
 	} */
 
 	return do_posix_fadvise(SCARG(uap, fd), SCARG(uap, offset),
-	    SCARG(uap, offset), linux_to_bsd_posix_fadv(SCARG(uap, advice)));
+	    SCARG(uap, len), linux_to_bsd_posix_fadv(SCARG(uap, advice)));
 }

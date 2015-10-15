@@ -290,7 +290,7 @@ sim_close(sd, quitting)
 SIM_RC
 sim_load(sd, prog, abfd, from_tty)
      SIM_DESC sd;
-     char *prog;
+     const char *prog;
      bfd *abfd;
      int from_tty;
 {
@@ -479,13 +479,13 @@ sim_trace (sd)
 void
 sim_do_command(sd, cmd)
      SIM_DESC sd;
-    char           *cmd;
+     const char *cmd;
 {
     exec_cmd(&sregs, cmd);
 }
 
 char **
-sim_complete_command (SIM_DESC sd, char *text, char *word)
+sim_complete_command (SIM_DESC sd, const char *text, const char *word)
 {
   return NULL;
 }

@@ -19,7 +19,7 @@
  * CDDL HEADER END
  */
 /*
- * Copyright 2007 Sun Microsystems, Inc.  All rights reserved.
+ * Copyright 2008 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
  */
 
@@ -178,7 +178,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #ifndef _NETBSD_SOURCE
-#define _NETBSD_SOURCE	/* XXX TBD fix this */
+#define _NETBSD_SOURCE /* XXX TBD fix this */
 #include <unistd.h>
 #undef _NETBSD_SOURCE
 #else
@@ -222,10 +222,13 @@ static char *outfile = NULL;
 static char *tmpname = NULL;
 static int dynsym;
 int debug_level = DEBUG_LEVEL;
+#if 0
 static size_t maxpgsize = 0x400000;
+#endif
+static int maxslots = MERGE_PHASE1_MAX_SLOTS;
 
 
-void
+static void
 usage(void)
 {
 	(void) fprintf(stderr,
@@ -238,7 +241,7 @@ usage(void)
 	    "\n"
 	    "  Note: if -L labelenv is specified and labelenv is not set in\n"
 	    "  the environment, a default value is used.\n",
-	    progname, progname, strlen(progname), " ",
+	    progname, progname, (int)strlen(progname), " ",
 	    progname, progname);
 }
 
@@ -374,7 +377,7 @@ wip_save_work(workqueue_t *wq, wip_t *slot, int slotnum)
 	pthread_mutex_lock(&wq->wq_donequeue_lock);
 
 	while (wq->wq_lastdonebatch + 1 < slot->wip_batchid)
-		 pthread_cond_wait(&slot->wip_cv, &wq->wq_donequeue_lock);
+		pthread_cond_wait(&slot->wip_cv, &wq->wq_donequeue_lock);
 	assert(wq->wq_lastdonebatch + 1 == slot->wip_batchid);
 
 	fifo_add(wq->wq_donequeue, slot->wip_td);
@@ -396,7 +399,8 @@ wip_add_work(wip_t *slot, tdata_t *pow)
 		slot->wip_td = pow;
 		slot->wip_nmerged = 1;
 	} else {
-		debug(2, "%d: merging %p into %p\n", pthread_self(),
+		debug(2, "0x%jx: merging %p into %p\n",
+		    (uintmax_t)(uintptr_t)pthread_self(),
 		    (void *)pow, (void *)slot->wip_td);
 
 		merge_into_master(pow, slot->wip_td, NULL, 0);
@@ -466,8 +470,8 @@ worker_runphase2(workqueue_t *wq)
 			pthread_cond_broadcast(&wq->wq_work_avail);
 			pthread_mutex_unlock(&wq->wq_queue_lock);
 
-			debug(2, "%d: entering p2 completion barrier\n",
-			    pthread_self());
+			debug(2, "0x%jx: entering p2 completion barrier\n",
+			    (uintmax_t)(uintptr_t)pthread_self());
 			if (barrier_wait(&wq->wq_bar1)) {
 				pthread_mutex_lock(&wq->wq_queue_lock);
 				wq->wq_alldone = 1;
@@ -494,7 +498,8 @@ worker_runphase2(workqueue_t *wq)
 
 		pthread_mutex_unlock(&wq->wq_queue_lock);
 
-		debug(2, "%d: merging %p into %p\n", pthread_self(),
+		debug(2, "0x%jx: merging %p into %p\n",
+		    (uintmax_t)(uintptr_t)pthread_self(),
 		    (void *)pow1, (void *)pow2);
 		merge_into_master(pow1, pow2, NULL, 0);
 		tdata_free(pow1);
@@ -512,9 +517,9 @@ worker_runphase2(workqueue_t *wq)
 		wq->wq_lastdonebatch = batchid;
 
 		fifo_add(wq->wq_queue, pow2);
-		debug(2, "%d: added %p to queue, len now %d, ninqueue %d\n",
-		    pthread_self(), (void *)pow2, fifo_len(wq->wq_queue),
-		    wq->wq_ninqueue);
+		debug(2, "0x%jx: added %p to queue, len now %d, ninqueue %d\n",
+		    (uintmax_t)(uintptr_t)pthread_self(), (void *)pow2,
+		    fifo_len(wq->wq_queue), wq->wq_ninqueue);
 		pthread_cond_broadcast(&wq->wq_done_cv);
 		pthread_cond_signal(&wq->wq_work_avail);
 		pthread_mutex_unlock(&wq->wq_queue_lock);
@@ -529,25 +534,30 @@ worker_thread(workqueue_t *wq)
 {
 	worker_runphase1(wq);
 
-	debug(2, "%d: entering first barrier\n", pthread_self());
+	debug(2, "0x%jx: entering first barrier\n",
+	    (uintmax_t)(uintptr_t)pthread_self());
 
 	if (barrier_wait(&wq->wq_bar1)) {
 
-		debug(2, "%d: doing work in first barrier\n", pthread_self());
+		debug(2, "0x%jx: doing work in first barrier\n",
+		    (uintmax_t)(uintptr_t)pthread_self());
 
 		finalize_phase_one(wq);
 
 		init_phase_two(wq);
 
-		debug(2, "%d: ninqueue is %d, %d on queue\n", pthread_self(),
+		debug(2, "0x%jx: ninqueue is %d, %d on queue\n",
+		    (uintmax_t)(uintptr_t)pthread_self(),
 		    wq->wq_ninqueue, fifo_len(wq->wq_queue));
 	}
 
-	debug(2, "%d: entering second barrier\n", pthread_self());
+	debug(2, "0x%jx: entering second barrier\n",
+	    (uintmax_t)(uintptr_t)pthread_self());
 
 	(void) barrier_wait(&wq->wq_bar2);
 
-	debug(2, "%d: phase 1 complete\n", pthread_self());
+	debug(2, "0x%jx: phase 1 complete\n",
+	    (uintmax_t)(uintptr_t)pthread_self());
 
 	worker_runphase2(wq);
 }
@@ -571,7 +581,8 @@ merge_ctf_cb(tdata_t *td, char *name, void *arg)
 	}
 
 	fifo_add(wq->wq_queue, td);
-	debug(1, "Thread %d announcing %s\n", pthread_self(), name);
+	debug(1, "Thread 0x%jx announcing %s\n",
+	    (uintmax_t)(uintptr_t)pthread_self(), name);
 	pthread_cond_broadcast(&wq->wq_work_avail);
 	pthread_mutex_unlock(&wq->wq_queue_lock);
 
@@ -630,7 +641,7 @@ copy_ctf_data(char *srcfile, char *destfile, int keep_stabs)
 		terminate("No CTF data found in source file %s\n", srcfile);
 
 	tmpname = mktmpname(destfile, ".ctf");
-	write_ctf(srctd, destfile, tmpname, CTF_COMPRESS | keep_stabs);
+	write_ctf(srctd, destfile, tmpname, CTF_COMPRESS | CTF_SWAP_BYTES | keep_stabs);
 	if (rename(tmpname, destfile) != 0) {
 		terminate("Couldn't rename temp file %s to %s", tmpname,
 		    destfile);
@@ -647,7 +658,7 @@ wq_init(workqueue_t *wq, int nfiles)
 	if (getenv("CTFMERGE_MAX_SLOTS"))
 		nslots = atoi(getenv("CTFMERGE_MAX_SLOTS"));
 	else
-		nslots = MERGE_PHASE1_MAX_SLOTS;
+		nslots = maxslots;
 
 	if (getenv("CTFMERGE_PHASE1_BATCH_SIZE"))
 		wq->wq_maxbatchsz = atoi(getenv("CTFMERGE_PHASE1_BATCH_SIZE"));
@@ -659,7 +670,11 @@ wq_init(workqueue_t *wq, int nfiles)
 
 	wq->wq_wip = xcalloc(sizeof (wip_t) * nslots);
 	wq->wq_nwipslots = nslots;
+#ifdef _SC_NPROCESSORS_ONLN
 	wq->wq_nthreads = MIN(sysconf(_SC_NPROCESSORS_ONLN) * 3 / 2, nslots);
+#else
+	wq->wq_nthreads = 2;
+#endif
 	wq->wq_thread = xmalloc(sizeof (pthread_t) * wq->wq_nthreads);
 
 	if (getenv("CTFMERGE_INPUT_THROTTLE"))
@@ -704,7 +719,6 @@ wq_init(workqueue_t *wq, int nfiles)
 static void
 start_threads(workqueue_t *wq)
 {
-	pthread_t thrid;
 	sigset_t sets;
 	int i;
 
@@ -741,12 +755,11 @@ join_threads(workqueue_t *wq)
 	}
 }
 
-
 static int
 strcompare(const void *p1, const void *p2)
 {
-	char *s1 = *((char **)p1);
-	char *s2 = *((char **)p2);
+	const char *s1 = *((const char * const *)p1);
+	const char *s2 = *((const char * const *)p2);
 
 	return (strcmp(s1, s2));
 }
@@ -807,7 +820,7 @@ main(int argc, char **argv)
 		case 'L':
 			/* Label merged types with getenv(`label`) */
 			if ((label = getenv(optarg)) == NULL)
-				label = CTF_DEFAULT_LABEL;
+				label = __UNCONST(CTF_DEFAULT_LABEL);
 			break;
 		case 'o':
 			/* Place merged types in CTF section in `outfile' */
@@ -898,7 +911,7 @@ main(int argc, char **argv)
 
 	for (i = 0; i < nifiles; i++)
 		tifiles[i] = argv[optind + i];
-	qsort(tifiles, nifiles, sizeof (char *), (int (*)())strcompare);
+	qsort(tifiles, nifiles, sizeof (char *), strcompare);
 
 	ifiles[0] = tifiles[0];
 	for (idx = 0, tidx = 1; tidx < nifiles; tidx++) {
@@ -1028,7 +1041,7 @@ main(int argc, char **argv)
 
 	tmpname = mktmpname(outfile, ".ctf");
 	write_ctf(savetd, outfile, tmpname,
-	    CTF_COMPRESS | write_fuzzy_match | dynsym | keep_stabs);
+	    CTF_COMPRESS | CTF_SWAP_BYTES | write_fuzzy_match | dynsym | keep_stabs);
 	if (rename(tmpname, outfile) != 0)
 		terminate("Couldn't rename output temp file %s", tmpname);
 	free(tmpname);

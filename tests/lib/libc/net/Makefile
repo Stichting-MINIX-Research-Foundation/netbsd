@@ -1,11 +1,11 @@
-# $NetBSD: Makefile,v 1.8 2013/08/16 15:29:45 christos Exp $
+# $NetBSD: Makefile,v 1.10 2014/01/09 02:18:10 christos Exp $
 
 .include <bsd.own.mk>
 
 MKMAN=	no
 
 TESTS_SUBDIRS+=	getaddrinfo
-FILES+=hosts
+FILES+=hosts resolv.conf
 
 TESTSDIR=	${TESTSBASE}/lib/libc/net
 
@@ -28,6 +28,7 @@ PROGS+=		h_nsd_recurse
 PROGS+=		h_protoent
 PROGS+=		h_servent
 PROGS+=		h_hostent
+PROGS+=		h_dns_server
 CPPFLAGS.h_hostent.c += -I${NETBSDSRCDIR}/lib/libc/net
 
 # For easy debugging, without installing libc

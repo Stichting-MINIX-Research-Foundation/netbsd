@@ -1,4 +1,4 @@
-/*	$NetBSD: usb.h,v 1.1.1.3 2013/04/06 15:57:51 christos Exp $	*/
+/*	$NetBSD: usb.h,v 1.3 2015/03/31 21:39:43 christos Exp $	*/
 
 /*
  * Copyright (c) 2006 Paolo Abeni (Italy)
@@ -13,8 +13,8 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  * notice, this list of conditions and the following disclaimer in the
  * documentation and/or other materials provided with the distribution.
- * 3. The name of the author may not be used to endorse or promote 
- * products derived from this software without specific prior written 
+ * 3. The name of the author may not be used to endorse or promote
+ * products derived from this software without specific prior written
  * permission.
  *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
@@ -31,14 +31,12 @@
  *
  * Basic USB data struct
  * By Paolo Abeni <paolo.abeni@email.it>
- *
- * @(#) Header: /tcpdump/master/libpcap/pcap/usb.h,v 1.9 2008-12-23 20:13:29 guy Exp 
  */
- 
+
 #ifndef _PCAP_USB_STRUCTS_H__
 #define _PCAP_USB_STRUCTS_H__
 
-/* 
+/*
  * possible transfer mode
  */
 #define URB_TRANSFER_IN   0x80

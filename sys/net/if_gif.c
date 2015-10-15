@@ -1,4 +1,4 @@
-/*	$NetBSD: if_gif.c,v 1.82 2013/03/01 18:25:56 joerg Exp $	*/
+/*	$NetBSD: if_gif.c,v 1.88 2015/08/24 22:21:26 pooka Exp $	*/
 /*	$KAME: if_gif.c,v 1.76 2001/08/20 02:01:02 kjc Exp $	*/
 
 /*
@@ -31,9 +31,11 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_gif.c,v 1.82 2013/03/01 18:25:56 joerg Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_gif.c,v 1.88 2015/08/24 22:21:26 pooka Exp $");
 
+#ifdef _KERNEL_OPT
 #include "opt_inet.h"
+#endif
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -44,6 +46,7 @@ __KERNEL_RCSID(0, "$NetBSD: if_gif.c,v 1.82 2013/03/01 18:25:56 joerg Exp $");
 #include <sys/errno.h>
 #include <sys/ioctl.h>
 #include <sys/time.h>
+#include <sys/socketvar.h>
 #include <sys/syslog.h>
 #include <sys/proc.h>
 #include <sys/protosw.h>
@@ -78,10 +81,10 @@ __KERNEL_RCSID(0, "$NetBSD: if_gif.c,v 1.82 2013/03/01 18:25:56 joerg Exp $");
 #include <netinet/ip_encap.h>
 #include <net/if_gif.h>
 
-
 #include <net/net_osdep.h>
 
-void	gifattach(int);
+#include "ioconf.h"
+
 static void	gifintr(void *);
 
 /*
@@ -344,12 +347,16 @@ gifintr(void *arg)
 		switch (sc->gif_psrc->sa_family) {
 #ifdef INET
 		case AF_INET:
+			mutex_enter(softnet_lock);
 			error = in_gif_output(ifp, family, m);
+			mutex_exit(softnet_lock);
 			break;
 #endif
 #ifdef INET6
 		case AF_INET6:
+			mutex_enter(softnet_lock);
 			error = in6_gif_output(ifp, family, m);
+			mutex_exit(softnet_lock);
 			break;
 #endif
 		default:
@@ -370,8 +377,9 @@ gifintr(void *arg)
 void
 gif_input(struct mbuf *m, int af, struct ifnet *ifp)
 {
-	int s, isr;
-	struct ifqueue *ifq = NULL;
+	pktqueue_t *pktq;
+	size_t pktlen;
+	int s;
 
 	if (ifp == NULL) {
 		/* just in case */
@@ -380,31 +388,25 @@ gif_input(struct mbuf *m, int af, struct ifnet *ifp)
 	}
 
 	m->m_pkthdr.rcvif = ifp;
+	pktlen = m->m_pkthdr.len;
 
 	bpf_mtap_af(ifp, af, m);
 
 	/*
 	 * Put the packet to the network layer input queue according to the
-	 * specified address family.
-	 * Note: older versions of gif_input directly called network layer
-	 * input functions, e.g. ip6_input, here.  We changed the policy to
-	 * prevent too many recursive calls of such input functions, which
-	 * might cause kernel panic.  But the change may introduce another
-	 * problem; if the input queue is full, packets are discarded.
-	 * The kernel stack overflow really happened, and we believed
-	 * queue-full rarely occurs, so we changed the policy.
+	 * specified address family.  Note: we avoid direct call to the
+	 * input function of the network layer in order to avoid recursion.
+	 * This may be revisited in the future.
 	 */
 	switch (af) {
 #ifdef INET
 	case AF_INET:
-		ifq = &ipintrq;
-		isr = NETISR_IP;
+		pktq = ip_pktq;
 		break;
 #endif
 #ifdef INET6
 	case AF_INET6:
-		ifq = &ip6intrq;
-		isr = NETISR_IPV6;
+		pktq = ip6_pktq;
 		break;
 #endif
 	default:
@@ -413,17 +415,12 @@ gif_input(struct mbuf *m, int af, struct ifnet *ifp)
 	}
 
 	s = splnet();
-	if (IF_QFULL(ifq)) {
-		IF_DROP(ifq);	/* update statistics */
+	if (__predict_true(pktq_enqueue(pktq, m, 0))) {
+		ifp->if_ibytes += pktlen;
+		ifp->if_ipackets++;
+	} else {
 		m_freem(m);
-		splx(s);
-		return;
 	}
-	ifp->if_ipackets++;
-	ifp->if_ibytes += m->m_pkthdr.len;
-	IF_ENQUEUE(ifq, m);
-	/* we need schednetisr since the address family may change */
-	schednetisr(isr);
 	splx(s);
 }
 
@@ -433,12 +430,14 @@ gif_ioctl(struct ifnet *ifp, u_long cmd, void *data)
 {
 	struct gif_softc *sc  = ifp->if_softc;
 	struct ifreq     *ifr = (struct ifreq*)data;
+	struct ifaddr    *ifa = (struct ifaddr*)data;
 	int error = 0, size;
 	struct sockaddr *dst, *src;
 
 	switch (cmd) {
 	case SIOCINITIFADDR:
 		ifp->if_flags |= IFF_UP;
+		ifa->ifa_rtrequest = p2p_rtrequest;
 		break;
 
 	case SIOCADDMULTI:

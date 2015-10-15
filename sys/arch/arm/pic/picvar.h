@@ -1,4 +1,4 @@
-/*	$NetBSD: picvar.h,v 1.7 2012/09/01 00:00:42 matt Exp $	*/
+/*	$NetBSD: picvar.h,v 1.16 2015/07/07 21:43:46 matt Exp $	*/
 /*-
  * Copyright (c) 2008 The NetBSD Foundation, Inc.
  * All rights reserved.
@@ -30,6 +30,10 @@
 #ifndef _ARM_PIC_PICVAR_H_
 #define _ARM_PIC_PICVAR_H_
 
+#ifdef _KERNEL_OPT
+#include "opt_multiprocessor.h"
+#endif
+
 #ifdef MULTIPROCESSOR
 #include <sys/kcpuset.h>
 #endif
@@ -47,18 +51,27 @@ struct cpu_info;
 #define	IPI_AST			0	/* just get an interrupt */
 #define	IPI_XCALL		1	/* xcall */
 #define	IPI_NOP			2	/* just get an interrupt (armv6) */
-#ifndef __HAVE_PREEMPTION
-#define	NIPI			3
+#define	IPI_SHOOTDOWN		3	/* cause a tlb shootdown */
+#define	IPI_DDB			4	/* enter DDB */
+#define	IPI_GENERIC		5	/* generic IPI */
+#ifdef __HAVE_PREEMPTION
+#define	IPI_KPREEMPT		6	/* cause a preemption */
+#define	NIPI			7
 #else
-#define	IPI_KPREEMPT		4	/* cause a preemption */
-#define	NIPI			4
+#define	NIPI			6
+#endif
+
+#if !defined(__HAVE_PIC_SET_PRIORITY)
+#define __HAVE_PIC_PENDING_INTRS
 #endif
 
 int	pic_handle_intr(void *);
+#if defined(__HAVE_PIC_PENDING_INTRS)
 void	pic_mark_pending(struct pic_softc *pic, int irq);
 void	pic_mark_pending_source(struct pic_softc *pic, struct intrsource *is);
 uint32_t pic_mark_pending_sources(struct pic_softc *pic, size_t irq_base,
 	    uint32_t pending);
+#endif /* __HAVE_PIC_PENDING_INTRS */
 void	*pic_establish_intr(struct pic_softc *pic, int irq, int ipl, int type,
 	    int (*func)(void *), void *arg);
 int	pic_alloc_irq(struct pic_softc *pic);
@@ -99,6 +112,7 @@ struct intrsource {
 	uint8_t is_ipl;				/* IPL_xxx */
 	uint8_t is_irq;				/* local to pic */
 	uint8_t is_iplidx;
+	bool is_mpsafe;
 	char is_source[16];
 };
 
@@ -113,9 +127,14 @@ struct pic_percpu {
 struct pic_softc {
 	const struct pic_ops *pic_ops;
 	struct intrsource **pic_sources;
+#ifdef __HAVE_PIC_PENDING_INTRS
 	volatile uint32_t pic_pending_irqs[(PIC_MAXSOURCES + 31) / 32];
 	volatile uint32_t pic_blocked_irqs[(PIC_MAXSOURCES + 31) / 32];
 	volatile uint32_t pic_pending_ipls;
+#endif
+#ifdef MULTIPROCESSOR
+	kcpuset_t *pic_cpus;
+#endif
 	size_t pic_maxsources;
 	percpu_t *pic_percpu;
 	uint8_t pic_id;
@@ -155,8 +174,13 @@ void	pic_set_priority(struct cpu_info *, int);
 void	pic_add(struct pic_softc *, int);
 void	pic_do_pending_int(void);
 #ifdef MULTIPROCESSOR
+int	pic_ipi_ast(void *);
 int	pic_ipi_nop(void *);
 int	pic_ipi_xcall(void *);
+int	pic_ipi_generic(void *);
+int	pic_ipi_shootdown(void *);
+int	pic_ipi_ddb(void *);
+int	pic_ipi_kpreempt(void *);
 #endif
 #ifdef __HAVE_PIC_FAST_SOFTINTS
 int	pic_handle_softint(void *);

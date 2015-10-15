@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.125 2013/11/16 17:14:06 skrll Exp $
+#	$NetBSD: Makefile,v 1.129 2014/09/19 17:43:33 matt Exp $
 #
 # NOTE: when changing ld.so, ensure that ldd still compiles.
 #
@@ -26,14 +26,17 @@ ARCHSUBDIR=	${MACHINE_CPU}
 .endif
 M=		${.CURDIR}/arch/${ARCHSUBDIR}
 
-.if ((${LDELFSO_MACHINE_ARCH} == "alpha") ||				\
+.if ((${MACHINE_CPU} == "aarch64") ||					\
+     (${LDELFSO_MACHINE_ARCH} == "alpha") ||				\
      (${MACHINE_CPU} == "arm") ||					\
      (${LDELFSO_MACHINE_ARCH} == "coldfire") ||				\
      (${LDELFSO_MACHINE_ARCH} == "hppa") ||				\
      (${LDELFSO_MACHINE_ARCH} == "i386") ||				\
      (${LDELFSO_MACHINE_ARCH} == "m68k") ||				\
      (${MACHINE_CPU} == "mips") ||					\
-     (${LDELFSO_MACHINE_ARCH} == "powerpc") ||				\
+     (${MACHINE_CPU} == "or1k") ||					\
+     (${MACHINE_CPU} == "powerpc") ||					\
+     (${MACHINE_CPU} == "riscv") ||					\
      (${MACHINE_CPU} == "sh3") ||					\
      (${LDELFSO_MACHINE_ARCH} == "sparc") ||				\
      (${LDELFSO_MACHINE_ARCH} == "sparc64") ||				\
@@ -45,6 +48,7 @@ LDFLAGS+=	${${ACTIVE_CC} == "clang":? -Wl,-Bsymbolic : -symbolic} \
 		-shared -nostartfiles -nodefaultlibs
 LDFLAGS+=	-Wl,-static
 LDFLAGS+=	-Wl,--warn-shared-textrel
+LDFLAGS+=	-Wl,-Map=${.TARGET}.map
 
 COPTS+=		-fvisibility=hidden
 
@@ -82,7 +86,7 @@ errlist_concat.h: ${NETBSDSRCDIR}/lib/libc/gen/errlist.awk ${NETBSDSRCDIR}/sys/s
 
 xprintf.c: errlist_concat.h
 
-CLEANFILES+=	errlist_concat.h
+CLEANFILES+=	errlist_concat.h ${PROG}.map
 
 BINDIR=		${SHLINKINSTALLDIR}
 

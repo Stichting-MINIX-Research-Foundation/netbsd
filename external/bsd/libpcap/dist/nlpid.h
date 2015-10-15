@@ -1,4 +1,4 @@
-/*	$NetBSD: nlpid.h,v 1.1.1.3 2013/04/06 15:57:48 christos Exp $	*/
+/*	$NetBSD: nlpid.h,v 1.2 2014/11/19 19:33:30 christos Exp $	*/
 
 /*
  * Copyright (c) 1996
@@ -16,8 +16,6 @@
  * THIS SOFTWARE IS PROVIDED ``AS IS'' AND WITHOUT ANY EXPRESS OR IMPLIED
  * WARRANTIES, INCLUDING, WITHOUT LIMITATION, THE IMPLIED WARRANTIES OF
  * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE.
- *
- * @(#) Header: /tcpdump/master/libpcap/nlpid.h,v 1.2 2002-12-06 00:01:34 hannes Exp  (Juniper)
  */
 
 /* Types missing from some systems */

@@ -1,4 +1,4 @@
-/*	$NetBSD: ip_dstlist.c,v 1.6 2013/09/14 12:39:09 joerg Exp $	*/
+/*	$NetBSD: ip_dstlist.c,v 1.8 2014/06/28 07:59:26 darrenr Exp $	*/
 
 /*
  * Copyright (C) 2012 by Darren Reed.
@@ -72,7 +72,7 @@ struct file;
 # include "md5.h"
 #endif
 
-__KERNEL_RCSID(0, "@(#)Id: ip_dstlist.c,v 1.1.1.2 2012/07/22 13:45:11 darrenr Exp");
+__KERNEL_RCSID(0, "Id: ip_dstlist.c,v 1.1.1.2 2012/07/22 13:45:11 darrenr Exp");
 
 typedef struct ipf_dstl_softc_s {
 	ippool_dst_t	*dstlist[LOOKUP_POOL_SZ];
@@ -1141,7 +1141,7 @@ ipf_dstlist_select(fr_info_t *fin, ippool_dst_t *d)
 		MD5Update(&ctx, (u_char *)&fin->fin_dst6,
 			  sizeof(fin->fin_dst6));
 		MD5Final(h.bytes, &ctx);
-		x = h.hash[0] % d->ipld_nodes;
+		x = ntohl(h.hash[0]) % d->ipld_nodes;
 		sel = d->ipld_dests[x];
 		break;
 
@@ -1151,7 +1151,7 @@ ipf_dstlist_select(fr_info_t *fin, ippool_dst_t *d)
 		MD5Update(&ctx, (u_char *)&fin->fin_src6,
 			  sizeof(fin->fin_src6));
 		MD5Final(h.bytes, &ctx);
-		x = h.hash[0] % d->ipld_nodes;
+		x = ntohl(h.hash[0]) % d->ipld_nodes;
 		sel = d->ipld_dests[x];
 		break;
 
@@ -1161,7 +1161,7 @@ ipf_dstlist_select(fr_info_t *fin, ippool_dst_t *d)
 		MD5Update(&ctx, (u_char *)&fin->fin_dst6,
 			  sizeof(fin->fin_dst6));
 		MD5Final(h.bytes, &ctx);
-		x = h.hash[0] % d->ipld_nodes;
+		x = ntohl(h.hash[0]) % d->ipld_nodes;
 		sel = d->ipld_dests[x];
 		break;
 

@@ -1,4 +1,4 @@
-/*	$NetBSD: param.h,v 1.51 2013/01/03 09:40:55 martin Exp $ */
+/*	$NetBSD: param.h,v 1.55 2014/10/08 10:30:27 macallan Exp $ */
 
 /*
  * Copyright (c) 1992, 1993
@@ -168,13 +168,12 @@ extern int nbpg, pgofset, pgshift;
 
 #define	_MAXNBPG	8192	/* fixed VAs, independent of actual NBPG */
 
-#define	AUXREG_VA	(      KERNEND + _MAXNBPG) /* 1 page REDZONE */
-#define	TMPMAP_VA	(    AUXREG_VA + _MAXNBPG)
-#define	MSGBUF_VA	(    TMPMAP_VA + _MAXNBPG)
+#define	MSGBUF_VA	(      KERNEND + _MAXNBPG) /* 1 page REDZONE */
 /*
+ * Maximum message buffer size is 248k.
  * Here's the location of the interrupt stack and CPU structure.
  */
-#define	INTSTACK	(      KERNEND + 8*_MAXNBPG)
+#define	INTSTACK	(      KERNEND + 32*_MAXNBPG)
 #define	EINTSTACK	(     INTSTACK + 4*_MAXNBPG)
 #define	CPUINFO_VA	(    EINTSTACK              )
 #define	PANICSTACK	(     INTSTACK + 8*_MAXNBPG)
@@ -197,7 +196,13 @@ extern int nbpg, pgofset, pgshift;
 
 #define	MCLBYTES	(1 << MCLSHIFT)	/* size of a m_buf cluster */
 
-#define MSGBUFSIZE	NBPG
+#if !defined (MSGBUFSIZE)		/* options MSGBUFSIZE=integer	*/
+#define MSGBUFSIZE	4 * NBPG
+#else
+#if INTSTACK - MSGBUF_VA - MSGBUFSIZE < 0
+#error MSGBUFSIZE is too large
+#endif
+#endif
 
 /*
  * Minimum size of the kernel kmem_arena in PAGE_SIZE-sized
@@ -228,11 +233,18 @@ extern void	delay(unsigned int);
 #define mstohz(ms) ((ms + 0UL) * hz / 1000)
 #endif
 
-extern int cputyp;
+/* Keep this a const so compiler optimization is done */
+extern const int cputyp;
 
+#if defined (SUN4US) || defined (SUN4V)
 #define CPU_ISSUN4U     (cputyp == CPU_SUN4U)
 #define CPU_ISSUN4US    (cputyp == CPU_SUN4US)
 #define CPU_ISSUN4V     (cputyp == CPU_SUN4V)
+#else
+#define CPU_ISSUN4U	(1)
+#define CPU_ISSUN4US	(0)
+#define CPU_ISSUN4V	(0)
+#endif
 
 #endif /* _LOCORE */
 #endif /* _KERNEL */
@@ -269,3 +281,5 @@ extern int cputyp;
 #define	PGSHIFT		13		/* log2(NBPG) */
 #define	NBPG		(1<<PGSHIFT)	/* bytes/page */
 #define	PGOFSET		(NBPG-1)	/* byte offset into page */
+
+#define PCI_MAGIC_IO_RANGE	0x100000000LL

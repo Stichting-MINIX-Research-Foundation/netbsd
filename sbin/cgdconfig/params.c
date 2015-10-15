@@ -1,4 +1,4 @@
-/* $NetBSD: params.c,v 1.24 2008/09/12 16:51:55 christos Exp $ */
+/* $NetBSD: params.c,v 1.26 2015/06/16 23:18:54 christos Exp $ */
 
 /*-
  * Copyright (c) 2002, 2003 The NetBSD Foundation, Inc.
@@ -31,7 +31,7 @@
 
 #include <sys/cdefs.h>
 #ifndef lint
-__RCSID("$NetBSD: params.c,v 1.24 2008/09/12 16:51:55 christos Exp $");
+__RCSID("$NetBSD: params.c,v 1.26 2015/06/16 23:18:54 christos Exp $");
 #endif
 
 #include <sys/types.h>
@@ -268,12 +268,16 @@ params_verify_method(string_t *in)
 		p->verify_method = VERIFY_FFS;
 	if (!strcmp("re-enter", vm))
 		p->verify_method = VERIFY_REENTER;
+	if (!strcmp("mbr", vm))
+		p->verify_method = VERIFY_MBR;
+	if (!strcmp("gpt", vm))
+		p->verify_method = VERIFY_GPT;
 
 	string_free(in);
 
 	if (p->verify_method == VERIFY_UNKNOWN)
 		warnx("params_setverify_method: unrecognized "
-		    "verify method \"%s\"\n", vm);
+		    "verify method \"%s\"", vm);
 	return p;
 }
 
@@ -511,7 +515,7 @@ keygen_method(string_t *in)
 	string_free(in);
 
 	if (kg->kg_method == KEYGEN_UNKNOWN)
-		warnx("unrecognized key generation method \"%s\"\n", kgm);
+		warnx("unrecognized key generation method \"%s\"", kgm);
 	return kg;
 }
 
@@ -764,6 +768,12 @@ params_fput(struct params *p, FILE *f)
 		break;
 	case VERIFY_REENTER:
 		print_kvpair_cstr(f, ts, "verify_method", "re-enter");
+		break;
+	case VERIFY_MBR:
+		print_kvpair_cstr(f, ts, "verify_method", "mbr");
+		break;
+	case VERIFY_GPT:
+		print_kvpair_cstr(f, ts, "verify_method", "gpt");
 		break;
 	default:
 		warnx("unsupported verify_method (%d)", p->verify_method);

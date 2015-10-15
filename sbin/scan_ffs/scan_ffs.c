@@ -1,4 +1,4 @@
-/* $NetBSD: scan_ffs.c,v 1.25 2013/06/23 22:03:34 dholland Exp $ */
+/* $NetBSD: scan_ffs.c,v 1.31 2015/08/02 18:18:09 dholland Exp $ */
 
 /*
  * Copyright (c) 2005-2007 Juan Romero Pardines
@@ -33,7 +33,7 @@
  
 #include <sys/cdefs.h>
 #ifndef lint
-__RCSID("$NetBSD: scan_ffs.c,v 1.25 2013/06/23 22:03:34 dholland Exp $");
+__RCSID("$NetBSD: scan_ffs.c,v 1.31 2015/08/02 18:18:09 dholland Exp $");
 #endif /* not lint */
 
 #include <sys/types.h>
@@ -45,6 +45,7 @@ __RCSID("$NetBSD: scan_ffs.c,v 1.25 2013/06/23 22:03:34 dholland Exp $");
 #include <sys/mount.h>
 
 #include <ufs/lfs/lfs.h>
+#include <ufs/lfs/lfs_accessors.h>
 #include <ufs/lfs/lfs_extern.h>
 
 #include <ufs/ufs/dinode.h>
@@ -248,34 +249,35 @@ static void
 lfs_printpart(struct sblockinfo *sbi, int flag, int n)
 {
 	if (flags & VERBOSE)
-               	(void)printf("offset: %" PRIu64 " size %" PRIu32
-			" fsid %" PRIx32 "\n", sbi->lfs_off, sbi->lfs->lfs_size,
-			sbi->lfs->lfs_ident);
+               	(void)printf("offset: %" PRIu64 " size %" PRIu64
+			" fsid %" PRIx32 "\n", sbi->lfs_off,
+			lfs_sb_getsize(sbi->lfs),
+			lfs_sb_getident(sbi->lfs));
 	switch (flag) {
 	case LABELS:
 		(void)printf("X:  %9" PRIu64,
-               		(uint64_t)(sbi->lfs->lfs_size *
-               		sbi->lfs->lfs_fsize / 512));
+               		(lfs_sb_getsize(sbi->lfs) *
+               		lfs_sb_getfsize(sbi->lfs) / 512));
 		(void)printf(" %9" PRIu64, sbi->lfs_off); 
 		(void)printf(" 4.4LFS %6d %5d %7d # %s [LFSv%d]\n",
-			sbi->lfs->lfs_fsize, sbi->lfs->lfs_bsize,
-			sbi->lfs->lfs_nseg, sbi->lfs_path, 
-			sbi->lfs->lfs_version);
+			lfs_sb_getfsize(sbi->lfs), lfs_sb_getbsize(sbi->lfs),
+			lfs_sb_getnseg(sbi->lfs), sbi->lfs_path, 
+			lfs_sb_getversion(sbi->lfs));
 		break;
 	case BLOCKS:
-		(void)printf("LFSv%d", sbi->lfs->lfs_version);
+		(void)printf("LFSv%d", lfs_sb_getversion(sbi->lfs));
 		(void)printf(" sb at %" PRIu64, sbi->lfs_off + btodb(LFS_LABELPAD));
-		(void)printf(" fsid %" PRIx32, sbi->lfs->lfs_ident);
+		(void)printf(" fsid %" PRIx32, lfs_sb_getident(sbi->lfs));
 		(void)printf(" size %" PRIu64 ", last mounted on %s\n",
-			(uint64_t)(sbi->lfs->lfs_size *
-			sbi->lfs->lfs_fsize / 512), sbi->lfs_path);
+			(lfs_sb_getsize(sbi->lfs) *
+			lfs_sb_getfsize(sbi->lfs) / 512), sbi->lfs_path);
 		break;
 	default:
-		(void)printf("LFSv%d ", sbi->lfs->lfs_version);
+		(void)printf("LFSv%d ", lfs_sb_getversion(sbi->lfs));
 		(void)printf("at %" PRIu64, sbi->lfs_off);
 		(void)printf(" size %" PRIu64 ", last mounted on %s\n",
-			(uint64_t)(sbi->lfs->lfs_size *
-			sbi->lfs->lfs_fsize / 512), sbi->lfs_path);
+			(lfs_sb_getsize(sbi->lfs) *
+			lfs_sb_getfsize(sbi->lfs) / 512), sbi->lfs_path);
 		break;
 	}
 }
@@ -283,8 +285,10 @@ lfs_printpart(struct sblockinfo *sbi, int flag, int n)
 static void
 lfs_scan(struct sblockinfo *sbi, int n)
 {
+	size_t namesize;
+
 	/* Check to see if the sb checksums correctly */
-	if (lfs_sb_cksum(&(sbi->lfs->lfs_dlfs)) != sbi->lfs->lfs_cksum) {
+	if (lfs_sb_cksum(sbi->lfs) != lfs_sb_getcksum(sbi->lfs)) {
 		if (flags & VERBOSE)
 			printf("LFS bad superblock at %" PRIu64 "\n",
 				BLK_CNT);
@@ -314,7 +318,12 @@ lfs_scan(struct sblockinfo *sbi, int n)
 		break;
 	case SECOND_SBLOCK_ADDRESS:
 		/* copy the path of last mount */
-		(void)memcpy(sbi->lfs_path, sbi->lfs->lfs_fsmnt, MAXMNTLEN);
+		namesize = MIN(sizeof(sbi->lfs_path), MIN(
+			       sizeof(sbi->lfs->lfs_dlfs_u.u_32.dlfs_fsmnt),
+			       sizeof(sbi->lfs->lfs_dlfs_u.u_64.dlfs_fsmnt)));
+		(void)memcpy(sbi->lfs_path, lfs_sb_getfsmnt(sbi->lfs),
+			     namesize);
+		sbi->lfs_path[namesize - 1] = '\0';
 		/* print now that we have the info */
 		if (flags & LABELS)
 			lfs_printpart(sbi, LABELS, n);
@@ -373,7 +382,7 @@ scan_disk(int fd, daddr_t beg, daddr_t end, int fflags)
 				break;
 			case FSTYPE_NONE:
 				/* maybe LFS? */
-				if (sbinfo.lfs->lfs_magic == LFS_MAGIC)
+				if (sbinfo.lfs->lfs_dlfs_u.u_32.dlfs_magic == LFS_MAGIC)
 					lfs_scan(&sbinfo, n);
 				break;
 			default:

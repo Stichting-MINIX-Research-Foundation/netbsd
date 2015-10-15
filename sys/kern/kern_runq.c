@@ -1,4 +1,4 @@
-/*	$NetBSD: kern_runq.c,v 1.41 2013/11/24 21:58:38 rmind Exp $	*/
+/*	$NetBSD: kern_runq.c,v 1.44 2015/10/07 00:32:34 christos Exp $	*/
 
 /*
  * Copyright (c) 2007, 2008 Mindaugas Rasiukevicius <rmind at NetBSD org>
@@ -27,7 +27,9 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: kern_runq.c,v 1.41 2013/11/24 21:58:38 rmind Exp $");
+__KERNEL_RCSID(0, "$NetBSD: kern_runq.c,v 1.44 2015/10/07 00:32:34 christos Exp $");
+
+#include "opt_dtrace.h"
 
 #include <sys/param.h>
 #include <sys/kernel.h>
@@ -47,7 +49,7 @@ __KERNEL_RCSID(0, "$NetBSD: kern_runq.c,v 1.41 2013/11/24 21:58:38 rmind Exp $")
 #include <sys/evcnt.h>
 
 /*
- * Priority related defintions.
+ * Priority related definitions.
  */
 #define	PRI_TS_COUNT	(NPRI_USER)
 #define	PRI_RT_COUNT	(PRI_COUNT - PRI_TS_COUNT)
@@ -119,6 +121,10 @@ static u_int	balance_period;		/* Balance period */
 static struct cpu_info *worker_ci;	/* Victim CPU */
 #ifdef MULTIPROCESSOR
 static struct callout balance_ch;	/* Callout of balancer */
+#endif
+
+#ifdef KDTRACE_HOOKS
+struct lwp *curthread;
 #endif
 
 void
@@ -712,6 +718,9 @@ sched_lwp_stats(struct lwp *l)
 
 	/* Scheduler-specific hook */
 	sched_pstats_hook(l, batch);
+#ifdef KDTRACE_HOOKS
+	curthread = l;
+#endif
 }
 
 /*
@@ -807,11 +816,6 @@ SYSCTL_SETUP(sysctl_sched_setup, "sysctl sched setup")
 {
 	const struct sysctlnode *node = NULL;
 
-	sysctl_createv(clog, 0, NULL, NULL,
-		CTLFLAG_PERMANENT,
-		CTLTYPE_NODE, "kern", NULL,
-		NULL, 0, NULL, 0,
-		CTL_KERN, CTL_EOL);
 	sysctl_createv(clog, 0, NULL, &node,
 		CTLFLAG_PERMANENT,
 		CTLTYPE_NODE, "sched",

@@ -1,4 +1,4 @@
-/*	$NetBSD: dir.c,v 1.25 2011/02/20 21:42:50 christos Exp $	*/
+/*	$NetBSD: dir.c,v 1.27 2015/01/02 06:21:28 mlelstv Exp $	*/
 
 /*
  * Copyright (C) 1995, 1996, 1997 Wolfgang Solfrank
@@ -30,7 +30,7 @@
 
 #include <sys/cdefs.h>
 #ifndef lint
-__RCSID("$NetBSD: dir.c,v 1.25 2011/02/20 21:42:50 christos Exp $");
+__RCSID("$NetBSD: dir.c,v 1.27 2015/01/02 06:21:28 mlelstv Exp $");
 #endif /* not lint */
 
 #include <stdio.h>
@@ -326,7 +326,7 @@ delete(int f, struct bootblock *boot, struct fatEntry *fat, cl_t startcl,
 				break;
 			e = delbuf + endoff;
 		}
-		off = startcl * boot->SecPerClust + boot->ClusterOffset;
+		off = (startcl - CLUST_FIRST) * boot->SecPerClust + boot->FirstCluster;
 		off *= boot->BytesPerSec;
 		if (lseek(f, off, SEEK_SET) != off
 		    || read(f, delbuf, clsz) != clsz) {
@@ -420,12 +420,14 @@ checksize(struct bootblock *boot, struct fatEntry *fat, u_char *p,
 		      fullpath(dir));
 		if (ask(1, "Drop superfluous clusters")) {
 			cl_t cl;
-			u_int32_t sz = 0;
+			u_int32_t sz, len;
 
-			for (cl = dir->head; (sz += boot->ClusterSize) < dir->size;)
+			for (cl = dir->head, len = sz = 0;
+			    (sz += boot->ClusterSize) < dir->size; len++)
 				cl = fat[cl].next;
 			clearchain(boot, fat, fat[cl].next);
 			fat[cl].next = CLUST_EOF;
+			fat[dir->head].length = len;
 			return FSFATMOD;
 		} else
 			return FSERROR;
@@ -489,7 +491,7 @@ readDosDirSection(int f, struct bootblock *boot, struct fatEntry *fat,
 			off = boot->ResSectors + boot->FATs * boot->FATsecs;
 		} else {
 			last = boot->SecPerClust * boot->BytesPerSec;
-			off = cl * boot->SecPerClust + boot->ClusterOffset;
+			off = (cl - CLUST_FIRST) * boot->SecPerClust + boot->FirstCluster;
 		}
 
 		off *= boot->BytesPerSec;
@@ -965,8 +967,8 @@ reconnect(int dosfs, struct bootblock *boot, struct fatEntry *fat, cl_t head)
 			pwarn("No space in %s\n", LOSTDIR);
 			return FSERROR;
 		}
-		lfoff = lfcl * boot->ClusterSize
-		    + boot->ClusterOffset * boot->BytesPerSec;
+		lfoff = (lfcl - CLUST_FIRST) * boot->ClusterSize
+		    + boot->FirstCluster * boot->BytesPerSec;
 		if (lseek(dosfs, lfoff, SEEK_SET) != lfoff
 		    || (size_t)read(dosfs, lfbuf, boot->ClusterSize) != boot->ClusterSize) {
 			perr("could not read LOST.DIR");

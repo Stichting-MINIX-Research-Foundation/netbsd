@@ -1,4 +1,4 @@
-/*	$NetBSD: if_axe.c,v 1.66 2013/11/08 17:46:35 roy Exp $	*/
+/*	$NetBSD: if_axe.c,v 1.69 2015/04/13 16:33:25 riastradh Exp $	*/
 /*	$OpenBSD: if_axe.c,v 1.96 2010/01/09 05:33:08 jsg Exp $ */
 
 /*
@@ -89,7 +89,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_axe.c,v 1.66 2013/11/08 17:46:35 roy Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_axe.c,v 1.69 2015/04/13 16:33:25 riastradh Exp $");
 
 #ifdef _KERNEL_OPT
 #include "opt_inet.h"
@@ -106,7 +106,7 @@ __KERNEL_RCSID(0, "$NetBSD: if_axe.c,v 1.66 2013/11/08 17:46:35 roy Exp $");
 #include <sys/sockio.h>
 #include <sys/systm.h>
 
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 
 #include <net/if.h>
 #include <net/if_dl.h>
@@ -843,7 +843,7 @@ axe_attach(device_t parent, device_t self, void *aux)
 	if_attach(ifp);
 	ether_ifattach(ifp, eaddr);
 	rnd_attach_source(&sc->rnd_source, device_xname(sc->axe_dev),
-	    RND_TYPE_NET, 0);
+	    RND_TYPE_NET, RND_FLAG_DEFAULT);
 
 	callout_init(&sc->axe_stat_ch, 0);
 	callout_setfunc(&sc->axe_stat_ch, axe_tick, sc);
@@ -852,6 +852,9 @@ axe_attach(device_t parent, device_t self, void *aux)
 	splx(s);
 
 	usbd_add_drv_event(USB_EVENT_DRIVER_ATTACH, sc->axe_udev, sc->axe_dev);
+
+	if (!pmf_device_register(self, NULL, NULL))
+		aprint_error_dev(self, "couldn't establish power handler\n");
 }
 
 int
@@ -866,6 +869,8 @@ axe_detach(device_t self, int flags)
 	/* Detached before attached finished, so just bail out. */
 	if (!sc->axe_attached)
 		return 0;
+
+	pmf_device_deregister(self);
 
 	sc->axe_dying = true;
 

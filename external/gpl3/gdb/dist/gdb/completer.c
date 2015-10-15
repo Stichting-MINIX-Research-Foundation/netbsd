@@ -1,5 +1,5 @@
 /* Line completion stuff for GDB, the GNU debugger.
-   Copyright (C) 2000-2013 Free Software Foundation, Inc.
+   Copyright (C) 2000-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -22,9 +22,10 @@
 #include "expression.h"
 #include "filenames.h"		/* For DOSish file names.  */
 #include "language.h"
-#include "gdb_assert.h"
-#include "exceptions.h"
 #include "gdb_signals.h"
+#include "target.h"
+#include "reggroups.h"
+#include "user-regs.h"
 
 #include "cli/cli-decode.h"
 
@@ -107,7 +108,7 @@ readline_line_completion_function (const char *text, int matches)
    symbols but don't want to complete on anything else either.  */
 VEC (char_ptr) *
 noop_completer (struct cmd_list_element *ignore, 
-		char *text, char *prefix)
+		const char *text, const char *prefix)
 {
   return NULL;
 }
@@ -115,7 +116,7 @@ noop_completer (struct cmd_list_element *ignore,
 /* Complete on filenames.  */
 VEC (char_ptr) *
 filename_completer (struct cmd_list_element *ignore, 
-		    char *text, char *word)
+		    const char *text, const char *word)
 {
   int subsequent_name;
   VEC (char_ptr) *return_val = NULL;
@@ -184,19 +185,19 @@ filename_completer (struct cmd_list_element *ignore,
 
 VEC (char_ptr) *
 location_completer (struct cmd_list_element *ignore, 
-		    char *text, char *word)
+		    const char *text, const char *word)
 {
   int n_syms, n_files, ix;
   VEC (char_ptr) *fn_list = NULL;
   VEC (char_ptr) *list = NULL;
-  char *p;
+  const char *p;
   int quote_found = 0;
   int quoted = *text == '\'' || *text == '"';
   int quote_char = '\0';
-  char *colon = NULL;
+  const char *colon = NULL;
   char *file_to_match = NULL;
-  char *symbol_start = text;
-  char *orig_text = text;
+  const char *symbol_start = text;
+  const char *orig_text = text;
   size_t text_len;
 
   /* Do we have an unquoted colon, as in "break foo.c:bar"?  */
@@ -285,8 +286,10 @@ location_completer (struct cmd_list_element *ignore,
     }
   else
     {
-      for (ix = 0; VEC_iterate (char_ptr, fn_list, ix, p); ++ix)
-	VEC_safe_push (char_ptr, list, p);
+      char *fn;
+
+      for (ix = 0; VEC_iterate (char_ptr, fn_list, ix, fn); ++ix)
+	VEC_safe_push (char_ptr, list, fn);
       VEC_free (char_ptr, fn_list);
     }
 
@@ -296,6 +299,8 @@ location_completer (struct cmd_list_element *ignore,
     }
   else if (n_files)
     {
+      char *fn;
+
       /* If we only have file names as possible completion, we should
 	 bring them in sync with what rl_complete expects.  The
 	 problem is that if the user types "break /foo/b TAB", and the
@@ -311,10 +316,10 @@ location_completer (struct cmd_list_element *ignore,
 	 completion, because rl_complete will prepend "/foo/" to each
 	 candidate completion.  The loop below removes that leading
 	 part.  */
-      for (ix = 0; VEC_iterate (char_ptr, list, ix, p); ++ix)
+      for (ix = 0; VEC_iterate (char_ptr, list, ix, fn); ++ix)
 	{
-	  memmove (p, p + (word - text),
-		   strlen (p) + 1 - (word - text));
+	  memmove (fn, fn + (word - text),
+		   strlen (fn) + 1 - (word - text));
 	}
     }
   else if (!n_syms)
@@ -385,10 +390,11 @@ add_struct_fields (struct type *type, VEC (char_ptr) **output,
    field names.  */
 VEC (char_ptr) *
 expression_completer (struct cmd_list_element *ignore, 
-		      char *text, char *word)
+		      const char *text, const char *word)
 {
   struct type *type = NULL;
-  char *fieldname, *p;
+  char *fieldname;
+  const char *p;
   volatile struct gdb_exception except;
   enum type_code code = TYPE_CODE_UNDEF;
 
@@ -443,6 +449,21 @@ expression_completer (struct cmd_list_element *ignore,
 
   /* Not ideal but it is what we used to do before...  */
   return location_completer (ignore, p, word);
+}
+
+/* See definition in completer.h.  */
+
+void
+set_gdb_completion_word_break_characters (completer_ftype *fn)
+{
+  /* So far we are only interested in differentiating filename
+     completers from everything else.  */
+  if (fn == filename_completer)
+    rl_completer_word_break_characters
+      = gdb_completer_file_name_break_characters;
+  else
+    rl_completer_word_break_characters
+      = gdb_completer_command_word_break_characters;
 }
 
 /* Here are some useful test cases for completion.  FIXME: These
@@ -506,11 +527,12 @@ complete_line_internal_reason;
 
 static VEC (char_ptr) *
 complete_line_internal (const char *text, 
-			char *line_buffer, int point,
+			const char *line_buffer, int point,
 			complete_line_internal_reason reason)
 {
   VEC (char_ptr) *list = NULL;
-  char *tmp_command, *p;
+  char *tmp_command;
+  const char *p;
   int ignore_help_classes;
   /* Pointer within tmp_command which corresponds to text.  */
   char *word;
@@ -567,7 +589,7 @@ complete_line_internal (const char *text,
     }
   else if (c == CMD_LIST_AMBIGUOUS)
     {
-      char *q;
+      const char *q;
 
       /* lookup_cmd_1 advances p up to the first ambiguous thing, but
 	 doesn't advance over that thing itself.  Do so now.  */
@@ -672,6 +694,9 @@ complete_line_internal (const char *text,
 			   p--)
 			;
 		    }
+		  if (reason == handle_brkchars
+		      && c->completer_handle_brkchars != NULL)
+		    (*c->completer_handle_brkchars) (c, p, word);
 		  if (reason != handle_brkchars && c->completer != NULL)
 		    list = (*c->completer) (c, p, word);
 		}
@@ -682,7 +707,7 @@ complete_line_internal (const char *text,
 		 complete on the command itself, e.g. "p" which is a
 		 command itself but also can complete to "print", "ptype"
 		 etc.  */
-	      char *q;
+	      const char *q;
 
 	      /* Find the command we are completing on.  */
 	      q = p;
@@ -745,6 +770,9 @@ complete_line_internal (const char *text,
 		       p--)
 		    ;
 		}
+	      if (reason == handle_brkchars
+		  && c->completer_handle_brkchars != NULL)
+		(*c->completer_handle_brkchars) (c, p, word);
 	      if (reason != handle_brkchars && c->completer != NULL)
 		list = (*c->completer) (c, p, word);
 	    }
@@ -766,7 +794,7 @@ complete_line_internal (const char *text,
    should pretend that the line ends at POINT.  */
 
 VEC (char_ptr) *
-complete_line (const char *text, char *line_buffer, int point)
+complete_line (const char *text, const char *line_buffer, int point)
 {
   return complete_line_internal (text, line_buffer, 
 				 point, handle_completions);
@@ -775,7 +803,7 @@ complete_line (const char *text, char *line_buffer, int point)
 /* Complete on command names.  Used by "help".  */
 VEC (char_ptr) *
 command_completer (struct cmd_list_element *ignore, 
-		   char *text, char *word)
+		   const char *text, const char *word)
 {
   return complete_line_internal (word, text, 
 				 strlen (text), handle_help);
@@ -785,7 +813,7 @@ command_completer (struct cmd_list_element *ignore,
 
 VEC (char_ptr) *
 signal_completer (struct cmd_list_element *ignore,
-		  char *text, char *word)
+		  const char *text, const char *word)
 {
   VEC (char_ptr) *return_val = NULL;
   size_t len = strlen (word);
@@ -810,6 +838,45 @@ signal_completer (struct cmd_list_element *ignore,
 
   return return_val;
 }
+
+/* Complete on a register or reggroup.  */
+
+VEC (char_ptr) *
+reg_or_group_completer (struct cmd_list_element *ignore,
+			const char *text, const char *word)
+{
+  VEC (char_ptr) *result = NULL;
+  size_t len = strlen (word);
+  struct gdbarch *gdbarch;
+  struct reggroup *group;
+  const char *name;
+  int i;
+
+  if (!target_has_registers)
+    return result;
+
+  gdbarch = get_frame_arch (get_selected_frame (NULL));
+
+  for (i = 0;
+       (name = user_reg_map_regnum_to_name (gdbarch, i)) != NULL;
+       i++)
+    {
+      if (*name != '\0' && strncmp (word, name, len) == 0)
+	VEC_safe_push (char_ptr, result, xstrdup (name));
+    }
+
+  for (group = reggroup_next (gdbarch, NULL);
+       group != NULL;
+       group = reggroup_next (gdbarch, group))
+    {
+      name = reggroup_name (group);
+      if (strncmp (word, name, len) == 0)
+	VEC_safe_push (char_ptr, result, xstrdup (name));
+    }
+
+  return result;
+}
+
 
 /* Get the list of chars that are considered as word breaks
    for the current command.  */
@@ -905,11 +972,12 @@ line_completion_function (const char *text, int matches,
    QUOTECHARS or BREAKCHARS is NULL, use the same values used by the
    completer.  */
 
-char *
-skip_quoted_chars (char *str, char *quotechars, char *breakchars)
+const char *
+skip_quoted_chars (const char *str, const char *quotechars,
+		   const char *breakchars)
 {
   char quote_char = '\0';
-  char *scan;
+  const char *scan;
 
   if (quotechars == NULL)
     quotechars = gdb_completer_quote_characters;
@@ -947,8 +1015,8 @@ skip_quoted_chars (char *str, char *quotechars, char *breakchars)
    characters and word break characters used by the completer).
    Returns pointer to the location after the "word".  */
 
-char *
-skip_quoted (char *str)
+const char *
+skip_quoted (const char *str)
 {
   return skip_quoted_chars (str, NULL, NULL);
 }

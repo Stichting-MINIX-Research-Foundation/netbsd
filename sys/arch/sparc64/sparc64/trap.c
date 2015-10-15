@@ -1,4 +1,4 @@
-/*	$NetBSD: trap.c,v 1.179 2013/09/15 14:49:50 martin Exp $ */
+/*	$NetBSD: trap.c,v 1.181 2015/02/28 21:44:33 martin Exp $ */
 
 /*
  * Copyright (c) 1996-2002 Eduardo Horvath.  All rights reserved.
@@ -50,7 +50,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: trap.c,v 1.179 2013/09/15 14:49:50 martin Exp $");
+__KERNEL_RCSID(0, "$NetBSD: trap.c,v 1.181 2015/02/28 21:44:33 martin Exp $");
 
 #include "opt_ddb.h"
 #include "opt_multiprocessor.h"
@@ -577,7 +577,7 @@ dopanic:
 				printf(" npc=%lx pstate=%s\n",
 				       (long)tf->tf_npc, sb);
 				DEBUGGER(type, tf);
-				panic(type < N_TRAP_TYPES ? trap_type[type] : T);
+				panic("%s", type < N_TRAP_TYPES ? trap_type[type] : T);
 			}
 			/* NOTREACHED */
 		}
@@ -1198,17 +1198,25 @@ kfault:
 		}
 #endif
 		KSI_INIT_TRAP(&ksi);
-		if (rv == ENOMEM) {
-			printf("UVM: pid %d (%s), uid %d killed: out of swap\n",
-			       p->p_pid, p->p_comm,
-			       l->l_cred ?
-			       kauth_cred_geteuid(l->l_cred) : -1);
-			ksi.ksi_signo = SIGKILL;
-			ksi.ksi_code = SI_NOINFO;
-		} else {
+		switch (rv) {
+		case EINVAL:
+			ksi.ksi_signo = SIGBUS;
+			ksi.ksi_code = BUS_ADRERR;
+			break;
+		case EACCES:
 			ksi.ksi_signo = SIGSEGV;
-			ksi.ksi_code = (rv == EACCES
-				? SEGV_ACCERR : SEGV_MAPERR);
+			ksi.ksi_code = SEGV_ACCERR;
+			break;
+		case ENOMEM:
+			ksi.ksi_signo = SIGKILL;
+			printf("UVM: pid %d (%s), uid %d killed: out of swap\n",
+			    p->p_pid, p->p_comm,
+			    l->l_cred ? kauth_cred_geteuid(l->l_cred) : -1);
+			break;
+		default:
+			ksi.ksi_signo = SIGSEGV;
+			ksi.ksi_code = SEGV_MAPERR;
+			break;
 		}
 		ksi.ksi_trap = type;
 		ksi.ksi_addr = (void *)sfva;

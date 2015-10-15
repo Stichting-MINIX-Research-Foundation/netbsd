@@ -1,4 +1,4 @@
-/*	$NetBSD: wd.c,v 1.15 2011/07/17 20:54:38 joerg Exp $	*/
+/*	$NetBSD: wd.c,v 1.17 2015/01/02 19:42:05 christos Exp $	*/
 
 /*-
  * Copyright (c) 2003 The NetBSD Foundation, Inc.
@@ -121,9 +121,9 @@ wdgetdefaultlabel(struct wd_softc *wd, struct disklabel *lp)
 	lp->d_secpercyl = lp->d_ntracks * lp->d_nsectors;
 
 	if (strcmp(wd->sc_params.atap_model, "ST506") == 0)
-		lp->d_type = DTYPE_ST506;
+		lp->d_type = DKTYPE_ST506;
 	else
-		lp->d_type = DTYPE_ESDI;
+		lp->d_type = DKTYPE_ESDI;
 
 	strncpy(lp->d_typename, wd->sc_params.atap_model, 16);
 	strncpy(lp->d_packname, "fictitious", 16);
@@ -157,6 +157,7 @@ wdgetdisklabel(struct wd_softc *wd)
 	size_t rsize;
 	struct disklabel *lp;
 	uint8_t buf[DEV_BSIZE];
+	uint16_t magic;
 
 	wdgetdefaultlabel(wd, &wd->sc_label);
 
@@ -167,7 +168,8 @@ wdgetdisklabel(struct wd_softc *wd)
 	if (wdstrategy(wd, F_READ, MBR_BBSECTOR, DEV_BSIZE, buf, &rsize))
 		return EOFFSET;
 
-	if (*(uint16_t *)&buf[MBR_MAGIC_OFFSET] == MBR_MAGIC) {
+	memcpy(&magic, &buf[MBR_MAGIC_OFFSET], sizeof(magic));
+	if (magic == MBR_MAGIC) {
 		int i;
 		struct mbr_partition *mp;
 

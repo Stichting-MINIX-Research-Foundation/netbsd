@@ -1,5 +1,5 @@
 /* ARM assembler/disassembler support.
-   Copyright 2004, 2010, 2011 Free Software Foundation, Inc.
+   Copyright (C) 2004-2015 Free Software Foundation, Inc.
 
    This file is part of GDB and GAS.
 
@@ -78,10 +78,11 @@
 #define FPU_VFP_EXT_FP16 0x00100000	/* Half-precision extensions. */
 #define FPU_NEON_EXT_FMA 0x00080000	/* Neon fused multiply-add    */
 #define FPU_VFP_EXT_FMA	 0x00040000	/* VFP fused multiply-add     */
-#define FPU_VFP_EXT_ARMV8 0x00020000	/* FP for ARMv8.  */
+#define FPU_VFP_EXT_ARMV8 0x00020000	/* Double-precision FP for ARMv8.  */
 #define FPU_NEON_EXT_ARMV8 0x00010000	/* Neon for ARMv8.  */
 #define FPU_CRYPTO_EXT_ARMV8 0x00008000	/* Crypto for ARMv8.  */
 #define CRC_EXT_ARMV8	 0x00004000	/* CRC32 for ARMv8.  */
+#define FPU_VFP_EXT_ARMV8xD 0x00002000	/* Single-precision FP for ARMv8.  */
 
 /* Architectures are the sum of the base and extensions.  The ARM ARM (rev E)
    defines the following: ARMv3, ARMv3M, ARMv4xM, ARMv4, ARMv4TxM, ARMv4T,
@@ -116,6 +117,8 @@
 #define ARM_AEXT_V6ZKT2 (ARM_AEXT_V6T2 | ARM_EXT_V6K | ARM_EXT_SEC)
 #define ARM_AEXT_V7_ARM	(ARM_AEXT_V6KT2 | ARM_EXT_V7 | ARM_EXT_BARRIER)
 #define ARM_AEXT_V7A	(ARM_AEXT_V7_ARM | ARM_EXT_V7A)
+#define ARM_AEXT_V7VE	(ARM_AEXT_V7A  | ARM_EXT_DIV | ARM_EXT_ADIV \
+    | ARM_EXT_VIRT | ARM_EXT_SEC | ARM_EXT_MP)
 #define ARM_AEXT_V7R	(ARM_AEXT_V7_ARM | ARM_EXT_V7R | ARM_EXT_DIV)
 #define ARM_AEXT_NOTM \
   (ARM_AEXT_V4 | ARM_EXT_V5ExP | ARM_EXT_V5J | ARM_EXT_V6_NOTM \
@@ -151,7 +154,9 @@
 #define FPU_VFP_V4D16	(FPU_VFP_V3D16 | FPU_VFP_EXT_FP16 | FPU_VFP_EXT_FMA)
 #define FPU_VFP_V4	(FPU_VFP_V3 | FPU_VFP_EXT_FP16 | FPU_VFP_EXT_FMA)
 #define FPU_VFP_V4_SP_D16 (FPU_VFP_V3xD | FPU_VFP_EXT_FP16 | FPU_VFP_EXT_FMA)
-#define FPU_VFP_ARMV8	(FPU_VFP_V4 | FPU_VFP_EXT_ARMV8)
+#define FPU_VFP_V5D16	(FPU_VFP_V4D16 | FPU_VFP_EXT_ARMV8xD | FPU_VFP_EXT_ARMV8)
+#define FPU_VFP_V5_SP_D16 (FPU_VFP_V4_SP_D16 | FPU_VFP_EXT_ARMV8xD)
+#define FPU_VFP_ARMV8	(FPU_VFP_V4 | FPU_VFP_EXT_ARMV8 | FPU_VFP_EXT_ARMV8xD)
 #define FPU_NEON_ARMV8	(FPU_NEON_EXT_V1 | FPU_NEON_EXT_FMA | FPU_NEON_EXT_ARMV8)
 #define FPU_CRYPTO_ARMV8 (FPU_CRYPTO_EXT_ARMV8)
 #define FPU_VFP_HARD	(FPU_VFP_EXT_V1xD | FPU_VFP_EXT_V1 | FPU_VFP_EXT_V2 \
@@ -184,6 +189,8 @@
 #define FPU_ARCH_VFP_V4 ARM_FEATURE(0, FPU_VFP_V4)
 #define FPU_ARCH_VFP_V4D16 ARM_FEATURE(0, FPU_VFP_V4D16)
 #define FPU_ARCH_VFP_V4_SP_D16 ARM_FEATURE(0, FPU_VFP_V4_SP_D16)
+#define FPU_ARCH_VFP_V5D16 ARM_FEATURE(0, FPU_VFP_V5D16)
+#define FPU_ARCH_VFP_V5_SP_D16 ARM_FEATURE(0, FPU_VFP_V5_SP_D16)
 #define FPU_ARCH_NEON_VFP_V4 \
   ARM_FEATURE(0, FPU_VFP_V4 | FPU_NEON_EXT_V1 | FPU_NEON_EXT_FMA)
 #define FPU_ARCH_VFP_ARMV8 ARM_FEATURE(0, FPU_VFP_ARMV8)
@@ -224,6 +231,7 @@
 #define ARM_ARCH_V6SM	ARM_FEATURE (ARM_AEXT_V6SM, 0)
 #define ARM_ARCH_V7	ARM_FEATURE (ARM_AEXT_V7, 0)
 #define ARM_ARCH_V7A	ARM_FEATURE (ARM_AEXT_V7A, 0)
+#define ARM_ARCH_V7VE	ARM_FEATURE (ARM_AEXT_V7VE, 0)
 #define ARM_ARCH_V7R	ARM_FEATURE (ARM_AEXT_V7R, 0)
 #define ARM_ARCH_V7M	ARM_FEATURE (ARM_AEXT_V7M, 0)
 #define ARM_ARCH_V7EM	ARM_FEATURE (ARM_AEXT_V7EM, 0)
@@ -241,11 +249,6 @@
 #define ARM_ARCH_V7A_MP_SEC \
 			ARM_FEATURE (ARM_AEXT_V7A | ARM_EXT_MP | ARM_EXT_SEC, \
 				     0)
-/* v7-a+idiv+mp+sec+virt.  */
-#define ARM_ARCH_V7A_IDIV_MP_SEC_VIRT \
-			ARM_FEATURE (ARM_AEXT_V7A | ARM_EXT_MP | ARM_EXT_SEC \
-				     | ARM_EXT_DIV | ARM_EXT_ADIV \
-				     | ARM_EXT_VIRT, 0)
 /* v7-r+idiv.  */
 #define ARM_ARCH_V7R_IDIV	ARM_FEATURE (ARM_AEXT_V7R | ARM_EXT_ADIV, 0)
 /* Features that are present in v6M and v6S-M but not other v6 cores.  */

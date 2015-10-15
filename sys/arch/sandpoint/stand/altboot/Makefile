@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.13 2013/08/21 06:44:02 matt Exp $
+#	$NetBSD: Makefile,v 1.16 2014/08/10 17:46:54 joerg Exp $
 
 S=		${.CURDIR}/../../../..
 
@@ -10,7 +10,8 @@ SRCS+=		nif.c fxp.c tlp.c rge.c skg.c stg.c
 SRCS+=		dsk.c pciide.c siisata.c
 SRCS+=		exception.c vers.c
 CLEANFILES+=	vers.c ${PROG} ${PROG}.bin ${PROG}.img
-CFLAGS+=	-Wall -Wno-main -ffreestanding -msoft-float -mmultiple
+CFLAGS+=	-Wall -Wno-main -ffreestanding
+CFLAGS+=	${${ACTIVE_CC} == "gcc":? -msoft-float :}
 CFLAGS+=	-Wmissing-prototypes -Wstrict-prototypes -Wpointer-arith
 CPPFLAGS+=	-D_STANDALONE -DSUPPORT_DHCP -DLIBSA_PRINTF_WIDTH_SUPPORT
 #CPPFLAGS+=	-DCONSNAME=\"com\" -DCONSPORT=0x3f8 -DCONSSPEED=115200
@@ -23,6 +24,7 @@ DBG=		-Os
 
 # XXX SHOULD NOT NEED TO DEFINE THESE!
 LIBCRT0=
+LIBCRTI=
 LIBC=
 LIBCRTBEGIN=
 LIBCRTEND=

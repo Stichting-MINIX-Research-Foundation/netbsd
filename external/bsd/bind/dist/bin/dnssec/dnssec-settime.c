@@ -1,7 +1,7 @@
-/*	$NetBSD: dnssec-settime.c,v 1.7 2013/07/27 19:23:09 christos Exp $	*/
+/*	$NetBSD: dnssec-settime.c,v 1.12 2015/07/08 17:28:55 christos Exp $	*/
 
 /*
- * Copyright (C) 2009-2013  Internet Systems Consortium, Inc. ("ISC")
+ * Copyright (C) 2009-2015  Internet Systems Consortium, Inc. ("ISC")
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -15,8 +15,6 @@
  * OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
  * PERFORMANCE OF THIS SOFTWARE.
  */
-
-/* Id: dnssec-settime.c,v 1.32 2011/06/02 20:24:45 each Exp  */
 
 /*! \file */
 
@@ -43,6 +41,10 @@
 
 #include <dst/dst.h>
 
+#ifdef PKCS11CRYPTO
+#include <pk11/result.h>
+#endif
+
 #include "dnssectool.h"
 
 const char *program = "dnssec-settime";
@@ -59,9 +61,12 @@ usage(void) {
 	fprintf(stderr,	"    %s [options] keyfile\n\n", program);
 	fprintf(stderr, "Version: %s\n", VERSION);
 	fprintf(stderr, "General options:\n");
-#ifdef USE_PKCS11
+#if defined(PKCS11CRYPTO)
+	fprintf(stderr, "    -E engine:          specify PKCS#11 provider "
+					"(default: %s)\n", PK11_LIB_LOCATION);
+#elif defined(USE_PKCS11)
 	fprintf(stderr, "    -E engine:          specify OpenSSL engine "
-						 "(default \"pkcs11\")\n");
+					   "(default \"pkcs11\")\n");
 #else
 	fprintf(stderr, "    -E engine:          specify OpenSSL engine\n");
 #endif
@@ -70,6 +75,7 @@ usage(void) {
 	fprintf(stderr, "    -K directory:       set key file location\n");
 	fprintf(stderr, "    -L ttl:             set default key TTL\n");
 	fprintf(stderr, "    -v level:           set level of verbosity\n");
+	fprintf(stderr, "    -V:                 print version information\n");
 	fprintf(stderr, "    -h:                 help\n");
 	fprintf(stderr, "Timing options:\n");
 	fprintf(stderr, "    -P date/[+-]offset/none: set/unset key "
@@ -121,7 +127,7 @@ int
 main(int argc, char **argv) {
 	isc_result_t	result;
 #ifdef USE_PKCS11
-	const char	*engine = "pkcs11";
+	const char	*engine = PKCS11_ENGINE;
 #else
 	const char	*engine = NULL;
 #endif
@@ -158,7 +164,6 @@ main(int argc, char **argv) {
 	isc_boolean_t   changed = ISC_FALSE;
 	isc_log_t       *log = NULL;
 
-	isc__mem_register();
 	if (argc == 1)
 		usage();
 
@@ -166,15 +171,18 @@ main(int argc, char **argv) {
 	if (result != ISC_R_SUCCESS)
 		fatal("Out of memory");
 
-	setup_logging(verbose, mctx, &log);
+	setup_logging(mctx, &log);
 
+#ifdef PKCS11CRYPTO
+	pk11_result_register();
+#endif
 	dns_result_register();
 
 	isc_commandline_errprint = ISC_FALSE;
 
 	isc_stdtime_get(&now);
 
-#define CMDLINE_FLAGS "A:D:E:fhI:i:K:L:P:p:R:S:uv:"
+#define CMDLINE_FLAGS "A:D:E:fhI:i:K:L:P:p:R:S:uv:V"
 	while ((ch = isc_commandline_parse(argc, argv, CMDLINE_FLAGS)) != -1) {
 		switch (ch) {
 		case 'E':
@@ -239,10 +247,7 @@ main(int argc, char **argv) {
 			}
 			break;
 		case 'L':
-			if (strcmp(isc_commandline_argument, "none") == 0)
-				ttl = 0;
-			else
-				ttl = strtottl(isc_commandline_argument);
+			ttl = strtottl(isc_commandline_argument);
 			setttl = ISC_TRUE;
 			break;
 		case 'v':
@@ -255,65 +260,45 @@ main(int argc, char **argv) {
 				fatal("-P specified more than once");
 
 			changed = ISC_TRUE;
-			if (!strcasecmp(isc_commandline_argument, "none")) {
-				unsetpub = ISC_TRUE;
-			} else {
-				setpub = ISC_TRUE;
-				pub = strtotime(isc_commandline_argument,
-						now, now);
-			}
+			pub = strtotime(isc_commandline_argument,
+					now, now, &setpub);
+			unsetpub = !setpub;
 			break;
 		case 'A':
 			if (setact || unsetact)
 				fatal("-A specified more than once");
 
 			changed = ISC_TRUE;
-			if (!strcasecmp(isc_commandline_argument, "none")) {
-				unsetact = ISC_TRUE;
-			} else {
-				setact = ISC_TRUE;
-				act = strtotime(isc_commandline_argument,
-						now, now);
-			}
+			act = strtotime(isc_commandline_argument,
+					now, now, &setact);
+			unsetact = !setact;
 			break;
 		case 'R':
 			if (setrev || unsetrev)
 				fatal("-R specified more than once");
 
 			changed = ISC_TRUE;
-			if (!strcasecmp(isc_commandline_argument, "none")) {
-				unsetrev = ISC_TRUE;
-			} else {
-				setrev = ISC_TRUE;
-				rev = strtotime(isc_commandline_argument,
-						now, now);
-			}
+			rev = strtotime(isc_commandline_argument,
+					now, now, &setrev);
+			unsetrev = !setrev;
 			break;
 		case 'I':
 			if (setinact || unsetinact)
 				fatal("-I specified more than once");
 
 			changed = ISC_TRUE;
-			if (!strcasecmp(isc_commandline_argument, "none")) {
-				unsetinact = ISC_TRUE;
-			} else {
-				setinact = ISC_TRUE;
-				inact = strtotime(isc_commandline_argument,
-						now, now);
-			}
+			inact = strtotime(isc_commandline_argument,
+					now, now, &setinact);
+			unsetinact = !setinact;
 			break;
 		case 'D':
 			if (setdel || unsetdel)
 				fatal("-D specified more than once");
 
 			changed = ISC_TRUE;
-			if (!strcasecmp(isc_commandline_argument, "none")) {
-				unsetdel = ISC_TRUE;
-			} else {
-				setdel = ISC_TRUE;
-				del = strtotime(isc_commandline_argument,
-						now, now);
-			}
+			del = strtotime(isc_commandline_argument,
+					now, now, &setdel);
+			unsetdel = !setdel;
 			break;
 		case 'S':
 			predecessor = isc_commandline_argument;
@@ -327,7 +312,12 @@ main(int argc, char **argv) {
 					program, isc_commandline_option);
 			/* Falls into */
 		case 'h':
+			/* Does not return. */
 			usage();
+
+		case 'V':
+			/* Does not return. */
+			version(program);
 
 		default:
 			fprintf(stderr, "%s: unhandled option -%c\n",
@@ -355,7 +345,6 @@ main(int argc, char **argv) {
 	isc_entropy_stopcallbacksources(ectx);
 
 	if (predecessor != NULL) {
-		char keystr[DST_KEY_FORMATSIZE];
 		int major, minor;
 
 		if (prepub == -1)
@@ -373,7 +362,7 @@ main(int argc, char **argv) {
 		if (result != ISC_R_SUCCESS)
 			fatal("Invalid keyfile %s: %s",
 			      filename, isc_result_totext(result));
-		if (!dst_key_isprivate(prevkey))
+		if (!dst_key_isprivate(prevkey) && !dst_key_isexternal(prevkey))
 			fatal("%s is not a private key", filename);
 
 		name = dst_key_name(prevkey);
@@ -465,7 +454,7 @@ main(int argc, char **argv) {
 		fatal("Invalid keyfile %s: %s",
 		      filename, isc_result_totext(result));
 
-	if (!dst_key_isprivate(key))
+	if (!dst_key_isprivate(key) && !dst_key_isexternal(key))
 		fatal("%s is not a private key", filename);
 
 	dst_key_format(key, keystr, sizeof(keystr));

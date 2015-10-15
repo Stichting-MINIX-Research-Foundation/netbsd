@@ -6,7 +6,7 @@
  ******************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -42,8 +42,7 @@
  * POSSIBILITY OF SUCH DAMAGES.
  */
 
-
-#define __NSXFOBJ_C__
+#define EXPORT_ACPI_INTERFACES
 
 #include "acpi.h"
 #include "accommon.h"
@@ -202,8 +201,8 @@ ACPI_EXPORT_SYMBOL (AcpiGetParent)
  *
  * RETURN:      Status
  *
- * DESCRIPTION: Return the next peer object within the namespace.  If Handle is
- *              valid, Scope is ignored.  Otherwise, the first object within
+ * DESCRIPTION: Return the next peer object within the namespace. If Handle is
+ *              valid, Scope is ignored. Otherwise, the first object within
  *              Scope is returned.
  *
  ******************************************************************************/
@@ -282,4 +281,3 @@ UnlockAndExit:
 }
 
 ACPI_EXPORT_SYMBOL (AcpiGetNextObject)
-

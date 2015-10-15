@@ -1,4 +1,4 @@
-/*	$NetBSD: kern_ksyms.c,v 1.70 2013/04/07 00:49:45 chs Exp $	*/
+/*	$NetBSD: kern_ksyms.c,v 1.81 2015/08/30 01:46:02 uebayasi Exp $	*/
 
 /*-
  * Copyright (c) 2008 The NetBSD Foundation, Inc.
@@ -68,15 +68,17 @@
  * TODO:
  *
  *	Add support for mmap, poll.
+ *	Constify tables.
+ *	Constify db_symtab and move it to .rodata.
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: kern_ksyms.c,v 1.70 2013/04/07 00:49:45 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: kern_ksyms.c,v 1.81 2015/08/30 01:46:02 uebayasi Exp $");
 
 #if defined(_KERNEL) && defined(_KERNEL_OPT)
+#include "opt_copy_symtab.h"
 #include "opt_ddb.h"
 #include "opt_dtrace.h"
-#include "opt_ksyms.h"
 #endif
 
 #define _KSYMS_PRIVATE
@@ -96,6 +98,9 @@ __KERNEL_RCSID(0, "$NetBSD: kern_ksyms.c,v 1.70 2013/04/07 00:49:45 chs Exp $");
 #endif
 
 #include "ksyms.h"
+#if NKSYMS > 0
+#include "ioconf.h"
+#endif
 
 #define KSYMS_MAX_ID	65536
 #ifdef KDTRACE_HOOKS
@@ -111,8 +116,7 @@ static bool ksyms_loaded;
 static kmutex_t ksyms_lock __cacheline_aligned;
 static struct ksyms_symtab kernel_symtab;
 
-void ksymsattach(int);
-static void ksyms_hdr_init(void *);
+static void ksyms_hdr_init(const void *);
 static void ksyms_sizes_calc(void);
 
 #ifdef KSYMS_DEBUG
@@ -122,11 +126,11 @@ static void ksyms_sizes_calc(void);
 static int ksyms_debug;
 #endif
 
-#ifdef SYMTAB_SPACE
 #define		SYMTAB_FILLER	"|This is the symbol table!"
 
-char		db_symtab[SYMTAB_SPACE] = SYMTAB_FILLER;
-int		db_symtabsize = SYMTAB_SPACE;
+#ifdef makeoptions_COPY_SYMTAB
+extern char db_symtab[];
+extern int db_symtabsize;
 #endif
 
 /*
@@ -140,7 +144,7 @@ TAILQ_HEAD(, ksyms_symtab) ksyms_symtabs =
     TAILQ_HEAD_INITIALIZER(ksyms_symtabs);
 
 static int
-ksyms_verify(void *symstart, void *strstart)
+ksyms_verify(const void *symstart, const void *strstart)
 {
 #if defined(DIAGNOSTIC) || defined(DEBUG)
 	if (symstart == NULL)
@@ -210,17 +214,25 @@ findsym(const char *name, struct ksyms_symtab *table, int type)
 /*
  * The "attach" is in reality done in ksyms_init().
  */
+#if NKSYMS > 0
+/*
+ * ksyms can be loaded even if the kernel has a missing "pseudo-device ksyms"
+ * statement because ddb and modules require it. Fixing it properly requires
+ * fixing config to warn about required, but missing preudo-devices. For now,
+ * if we don't have the pseudo-device we don't need the attach function; this
+ * is fine, as it does nothing.
+ */
 void
 ksymsattach(int arg)
 {
-
 }
+#endif
 
 void
 ksyms_init(void)
 {
 
-#ifdef SYMTAB_SPACE
+#ifdef makeoptions_COPY_SYMTAB
 	if (!ksyms_loaded &&
 	    strncmp(db_symtab, SYMTAB_FILLER, sizeof(SYMTAB_FILLER))) {
 		ksyms_addsyms_elf(db_symtabsize, db_symtab,
@@ -844,9 +856,19 @@ ksyms_sizes_calc(void)
 }
 
 static void
-ksyms_hdr_init(void *hdraddr)
+ksyms_fill_note(void)
 {
+	int32_t *note = ksyms_hdr.kh_note;
+	note[0] = ELF_NOTE_NETBSD_NAMESZ;
+	note[1] = ELF_NOTE_NETBSD_DESCSZ;
+	note[2] = ELF_NOTE_TYPE_NETBSD_TAG;
+	memcpy(&note[3],  "NetBSD\0", 8);
+	note[5] = __NetBSD_Version__;
+}
 
+static void
+ksyms_hdr_init(const void *hdraddr)
+{
 	/* Copy the loaded elf exec header */
 	memcpy(&ksyms_hdr.kh_ehdr, hdraddr, sizeof(Elf_Ehdr));
 
@@ -864,59 +886,64 @@ ksyms_hdr_init(void *hdraddr)
 	ksyms_hdr.kh_phdr[0].p_memsz = (unsigned long)-1L;
 	ksyms_hdr.kh_phdr[0].p_flags = PF_R | PF_X | PF_W;
 
-	/* First section is null */
+#define SHTCOPY(name)  strlcpy(&ksyms_hdr.kh_strtab[offs], (name), \
+    sizeof(ksyms_hdr.kh_strtab) - offs), offs += sizeof(name)
+
+	uint32_t offs = 1;
+	/* First section header ".note.netbsd.ident" */
+	ksyms_hdr.kh_shdr[SHNOTE].sh_name = offs;
+	ksyms_hdr.kh_shdr[SHNOTE].sh_type = SHT_NOTE;
+	ksyms_hdr.kh_shdr[SHNOTE].sh_offset = 
+	    offsetof(struct ksyms_hdr, kh_note[0]);
+	ksyms_hdr.kh_shdr[SHNOTE].sh_size = sizeof(ksyms_hdr.kh_note);
+	ksyms_hdr.kh_shdr[SHNOTE].sh_addralign = sizeof(int);
+	SHTCOPY(".note.netbsd.ident");
+	ksyms_fill_note();
 
 	/* Second section header; ".symtab" */
-	ksyms_hdr.kh_shdr[SYMTAB].sh_name = 1; /* Section 3 offset */
+	ksyms_hdr.kh_shdr[SYMTAB].sh_name = offs;
 	ksyms_hdr.kh_shdr[SYMTAB].sh_type = SHT_SYMTAB;
 	ksyms_hdr.kh_shdr[SYMTAB].sh_offset = sizeof(struct ksyms_hdr);
 /*	ksyms_hdr.kh_shdr[SYMTAB].sh_size = filled in at open */
-	ksyms_hdr.kh_shdr[SYMTAB].sh_link = 2; /* Corresponding strtab */
+	ksyms_hdr.kh_shdr[SYMTAB].sh_link = STRTAB; /* Corresponding strtab */
 	ksyms_hdr.kh_shdr[SYMTAB].sh_addralign = sizeof(long);
 	ksyms_hdr.kh_shdr[SYMTAB].sh_entsize = sizeof(Elf_Sym);
+	SHTCOPY(".symtab");
 
 	/* Third section header; ".strtab" */
-	ksyms_hdr.kh_shdr[STRTAB].sh_name = 9; /* Section 3 offset */
+	ksyms_hdr.kh_shdr[STRTAB].sh_name = offs;
 	ksyms_hdr.kh_shdr[STRTAB].sh_type = SHT_STRTAB;
 /*	ksyms_hdr.kh_shdr[STRTAB].sh_offset = filled in at open */
 /*	ksyms_hdr.kh_shdr[STRTAB].sh_size = filled in at open */
 	ksyms_hdr.kh_shdr[STRTAB].sh_addralign = sizeof(char);
+	SHTCOPY(".strtab");
 
 	/* Fourth section, ".shstrtab" */
-	ksyms_hdr.kh_shdr[SHSTRTAB].sh_name = 17; /* This section name offset */
+	ksyms_hdr.kh_shdr[SHSTRTAB].sh_name = offs;
 	ksyms_hdr.kh_shdr[SHSTRTAB].sh_type = SHT_STRTAB;
 	ksyms_hdr.kh_shdr[SHSTRTAB].sh_offset =
 	    offsetof(struct ksyms_hdr, kh_strtab);
 	ksyms_hdr.kh_shdr[SHSTRTAB].sh_size = SHSTRSIZ;
 	ksyms_hdr.kh_shdr[SHSTRTAB].sh_addralign = sizeof(char);
+	SHTCOPY(".shstrtab");
 
 	/* Fifth section, ".bss". All symbols reside here. */
-	ksyms_hdr.kh_shdr[SHBSS].sh_name = 27; /* This section name offset */
+	ksyms_hdr.kh_shdr[SHBSS].sh_name = offs;
 	ksyms_hdr.kh_shdr[SHBSS].sh_type = SHT_NOBITS;
 	ksyms_hdr.kh_shdr[SHBSS].sh_offset = 0;
 	ksyms_hdr.kh_shdr[SHBSS].sh_size = (unsigned long)-1L;
 	ksyms_hdr.kh_shdr[SHBSS].sh_addralign = PAGE_SIZE;
 	ksyms_hdr.kh_shdr[SHBSS].sh_flags = SHF_ALLOC | SHF_EXECINSTR;
+	SHTCOPY(".bss");
 
 	/* Sixth section header; ".SUNW_ctf" */
-	ksyms_hdr.kh_shdr[SHCTF].sh_name = 32; /* Section 6 offset */
+	ksyms_hdr.kh_shdr[SHCTF].sh_name = offs;
 	ksyms_hdr.kh_shdr[SHCTF].sh_type = SHT_PROGBITS;
 /*	ksyms_hdr.kh_shdr[SHCTF].sh_offset = filled in at open */
 /*	ksyms_hdr.kh_shdr[SHCTF].sh_size = filled in at open */
 	ksyms_hdr.kh_shdr[SHCTF].sh_link = SYMTAB; /* Corresponding symtab */
 	ksyms_hdr.kh_shdr[SHCTF].sh_addralign = sizeof(char);
-
-	/* Set section names */
-	strlcpy(&ksyms_hdr.kh_strtab[1], ".symtab",
-	    sizeof(ksyms_hdr.kh_strtab) - 1);
-	strlcpy(&ksyms_hdr.kh_strtab[9], ".strtab",
-	    sizeof(ksyms_hdr.kh_strtab) - 9);
-	strlcpy(&ksyms_hdr.kh_strtab[17], ".shstrtab",
-	    sizeof(ksyms_hdr.kh_strtab) - 17);
-	strlcpy(&ksyms_hdr.kh_strtab[27], ".bss",
-	    sizeof(ksyms_hdr.kh_strtab) - 27);
-	strlcpy(&ksyms_hdr.kh_strtab[32], ".SUNW_ctf",
-	    sizeof(ksyms_hdr.kh_strtab) - 32);
+	SHTCOPY(".SUNW_ctf");
 }
 
 static int
@@ -1051,10 +1078,15 @@ ksymswrite(dev_t dev, struct uio *uio, int ioflag)
 	return EROFS;
 }
 
+__CTASSERT(offsetof(struct ksyms_ogsymbol, kg_name) == offsetof(struct ksyms_gsymbol, kg_name));
+__CTASSERT(offsetof(struct ksyms_gvalue, kv_name) == offsetof(struct ksyms_gsymbol, kg_name));
+
 static int
 ksymsioctl(dev_t dev, u_long cmd, void *data, int fflag, struct lwp *l)
 {
+	struct ksyms_ogsymbol *okg = (struct ksyms_ogsymbol *)data;
 	struct ksyms_gsymbol *kg = (struct ksyms_gsymbol *)data;
+	struct ksyms_gvalue *kv = (struct ksyms_gvalue *)data;
 	struct ksyms_symtab *st;
 	Elf_Sym *sym = NULL, copy;
 	unsigned long val;
@@ -1065,7 +1097,8 @@ ksymsioctl(dev_t dev, u_long cmd, void *data, int fflag, struct lwp *l)
 	/* Read ksyms_maxlen only once while not holding the lock. */
 	len = ksyms_maxlen;
 
-	if (cmd == KIOCGVALUE || cmd == KIOCGSYMBOL) {
+	if (cmd == OKIOCGVALUE || cmd == OKIOCGSYMBOL
+	    || cmd == KIOCGVALUE || cmd == KIOCGSYMBOL) {
 		str = kmem_alloc(len, KM_SLEEP);
 		if ((error = copyinstr(kg->kg_name, str, len, NULL)) != 0) {
 			kmem_free(str, len);
@@ -1074,6 +1107,48 @@ ksymsioctl(dev_t dev, u_long cmd, void *data, int fflag, struct lwp *l)
 	}
 
 	switch (cmd) {
+	case OKIOCGVALUE:
+		/*
+		 * Use the in-kernel symbol lookup code for fast
+		 * retreival of a value.
+		 */
+		error = ksyms_getval(NULL, str, &val, KSYMS_EXTERN);
+		if (error == 0)
+			error = copyout(&val, okg->kg_value, sizeof(long));
+		kmem_free(str, len);
+		break;
+
+	case OKIOCGSYMBOL:
+		/*
+		 * Use the in-kernel symbol lookup code for fast
+		 * retreival of a symbol.
+		 */
+		mutex_enter(&ksyms_lock);
+		TAILQ_FOREACH(st, &ksyms_symtabs, sd_queue) {
+			if (st->sd_gone)
+				continue;
+			if ((sym = findsym(str, st, KSYMS_ANY)) == NULL)
+				continue;
+#ifdef notdef
+			/* Skip if bad binding */
+			if (ELF_ST_BIND(sym->st_info) != STB_GLOBAL) {
+				sym = NULL;
+				continue;
+			}
+#endif
+			break;
+		}
+		if (sym != NULL) {
+			memcpy(&copy, sym, sizeof(copy));
+			mutex_exit(&ksyms_lock);
+			error = copyout(&copy, okg->kg_sym, sizeof(Elf_Sym));
+		} else {
+			mutex_exit(&ksyms_lock);
+			error = ENOENT;
+		}
+		kmem_free(str, len);
+		break;
+
 	case KIOCGVALUE:
 		/*
 		 * Use the in-kernel symbol lookup code for fast
@@ -1081,7 +1156,7 @@ ksymsioctl(dev_t dev, u_long cmd, void *data, int fflag, struct lwp *l)
 		 */
 		error = ksyms_getval(NULL, str, &val, KSYMS_EXTERN);
 		if (error == 0)
-			error = copyout(&val, kg->kg_value, sizeof(long));
+			kv->kv_value = val;
 		kmem_free(str, len);
 		break;
 
@@ -1106,13 +1181,11 @@ ksymsioctl(dev_t dev, u_long cmd, void *data, int fflag, struct lwp *l)
 			break;
 		}
 		if (sym != NULL) {
-			memcpy(&copy, sym, sizeof(copy));
-			mutex_exit(&ksyms_lock);
-			error = copyout(&copy, kg->kg_sym, sizeof(Elf_Sym));
+			kg->kg_sym = *sym;
 		} else {
-			mutex_exit(&ksyms_lock);
 			error = ENOENT;
 		}
+		mutex_exit(&ksyms_lock);
 		kmem_free(str, len);
 		break;
 
@@ -1135,6 +1208,16 @@ ksymsioctl(dev_t dev, u_long cmd, void *data, int fflag, struct lwp *l)
 }
 
 const struct cdevsw ksyms_cdevsw = {
-	ksymsopen, ksymsclose, ksymsread, ksymswrite, ksymsioctl,
-	nullstop, notty, nopoll, nommap, nullkqfilter, D_OTHER | D_MPSAFE
+	.d_open = ksymsopen,
+	.d_close = ksymsclose,
+	.d_read = ksymsread,
+	.d_write = ksymswrite,
+	.d_ioctl = ksymsioctl,
+	.d_stop = nullstop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nullkqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_OTHER | D_MPSAFE
 };

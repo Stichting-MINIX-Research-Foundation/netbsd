@@ -1,4 +1,4 @@
-/*	$NetBSD: edvar.h,v 1.16 2012/10/27 17:18:26 chs Exp $	*/
+/*	$NetBSD: edvar.h,v 1.18 2015/04/14 20:32:36 riastradh Exp $	*/
 
 /*
  * Copyright (c) 2001 The NetBSD Foundation, Inc.
@@ -29,7 +29,8 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <sys/simplelock.h>
+#include <sys/mutex.h>
+#include <sys/rndsource.h>
 
 struct edc_mca_softc;
 
@@ -39,7 +40,7 @@ struct ed_softc {
 	/* General disk infos */
 	struct disk sc_dk;
 	struct bufq_state *sc_q;
-	struct simplelock sc_q_lock;
+	kmutex_t sc_q_lock;
 
 	struct edc_mca_softc *edc_softc;   /* pointer to our controller */
 

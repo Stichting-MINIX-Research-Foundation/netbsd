@@ -1,4 +1,4 @@
-/*      $NetBSD: opms.c,v 1.24 2011/07/26 08:56:26 mrg Exp $        */
+/*      $NetBSD: opms.c,v 1.27 2014/10/18 08:33:26 snj Exp $        */
 
 /*
  * Copyright 1997
@@ -70,11 +70,11 @@
 **    Super I/O chip.  The main modification has been to change the 
 **    driver to use the bus_space_ macros.  This allows the mouse
 **    to be configured to any base address.  It relies on the keyboard
-**    passing it's io handle in the isa_attach_args structure.
+**    passing its io handle in the isa_attach_args structure.
 **
 **    NOTE : The mouse is an auxiliary device off the keyboard and as such
 **           shares the same device registers.  This shouldn't be an issue
-**           since each logical device generates it's own unique IRQ.  But
+**           since each logical device generates its own unique IRQ.  But
 **           it is worth noting that reseting or mucking with one can affect
 **           the other.
 **
@@ -91,7 +91,7 @@
 */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: opms.c,v 1.24 2011/07/26 08:56:26 mrg Exp $");
+__KERNEL_RCSID(0, "$NetBSD: opms.c,v 1.27 2014/10/18 08:33:26 snj Exp $");
 
 #include "opms.h"
 #if NOPMS > 1
@@ -203,8 +203,18 @@ dev_type_poll(opmspoll);
 dev_type_kqfilter(opmskqfilter);
 
 const struct cdevsw opms_cdevsw = {
-	opmsopen, opmsclose, opmsread, nowrite, opmsioctl,
-	nostop, notty, opmspoll, nommap, opmskqfilter,
+	.d_open = opmsopen,
+	.d_close = opmsclose,
+	.d_read = opmsread,
+	.d_write = nowrite,
+	.d_ioctl = opmsioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = opmspoll,
+	.d_mmap = nommap,
+	.d_kqfilter = opmskqfilter,
+	.d_discard = nodiscard,
+	.d_flag = 0
 };
 
 /* variable to control which debugs printed if kernel compiled with 

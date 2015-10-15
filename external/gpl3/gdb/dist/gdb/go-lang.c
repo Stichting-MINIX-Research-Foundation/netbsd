@@ -1,6 +1,6 @@
 /* Go language support routines for GDB, the GNU debugger.
 
-   Copyright (C) 2012-2013 Free Software Foundation, Inc.
+   Copyright (C) 2012-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -32,12 +32,11 @@
 */
 
 #include "defs.h"
-#include "gdb_assert.h"
 #include "gdb_obstack.h"
-#include "gdb_string.h"
 #include "block.h"
 #include "symtab.h"
 #include "language.h"
+#include "varobj.h"
 #include "go-lang.h"
 #include "c-lang.h"
 #include "parser-defs.h"
@@ -55,10 +54,10 @@ static const char GO_MAIN_MAIN[] = "main.main";
 const char *
 go_main_name (void)
 {
-  struct minimal_symbol *msym;
+  struct bound_minimal_symbol msym;
 
   msym = lookup_minimal_symbol (GO_MAIN_MAIN, NULL, NULL);
-  if (msym != NULL)
+  if (msym.minsym != NULL)
     return GO_MAIN_MAIN;
 
   /* No known entry procedure found, the main program is probably not Go.  */
@@ -560,6 +559,7 @@ go_language_arch_info (struct gdbarch *gdbarch,
 static const struct language_defn go_language_defn =
 {
   "go",
+  "Go",
   language_go,
   range_check_off,
   case_sensitive_on,
@@ -596,6 +596,9 @@ static const struct language_defn go_language_defn =
   c_get_string,
   NULL,
   iterate_over_symbols,
+  &default_varobj_ops,
+  NULL,
+  NULL,
   LANG_MAGIC
 };
 

@@ -1,8 +1,8 @@
-/* $NetBSD: arp.h,v 1.1.1.3 2013/06/21 19:33:08 roy Exp $ */
+/* $NetBSD: arp.h,v 1.11 2015/07/09 10:15:34 roy Exp $ */
 
 /*
  * dhcpcd - DHCP client daemon
- * Copyright (c) 2006-2013 Roy Marples <roy@marples.name>
+ * Copyright (c) 2006-2015 Roy Marples <roy@marples.name>
  * All rights reserved
 
  * Redistribution and use in source and binary forms, with or without
@@ -44,7 +44,53 @@
 
 #include "dhcpcd.h"
 
-void arp_announce(void *);
-void arp_probe(void *);
-void arp_start(struct interface *);
+struct arp_msg {
+	uint16_t op;
+	unsigned char sha[HWADDR_LEN];
+	struct in_addr sip;
+	unsigned char tha[HWADDR_LEN];
+	struct in_addr tip;
+};
+
+struct arp_state {
+	TAILQ_ENTRY(arp_state) next;
+	struct interface *iface;
+
+	void (*probed_cb)(struct arp_state *);
+	void (*announced_cb)(struct arp_state *);
+	void (*conflicted_cb)(struct arp_state *, const struct arp_msg *);
+	void (*free_cb)(struct arp_state *);
+
+	struct in_addr addr;
+	int probes;
+	int claims;
+	struct in_addr failed;
+};
+TAILQ_HEAD(arp_statehead, arp_state);
+
+struct iarp_state {
+	int fd;
+	struct arp_statehead arp_states;
+};
+
+#define ARP_STATE(ifp)							       \
+	((struct iarp_state *)(ifp)->if_data[IF_DATA_ARP])
+#define ARP_CSTATE(ifp)							       \
+	((const struct iarp_state *)(ifp)->if_data[IF_DATA_ARP])
+
+#ifdef INET
+void arp_report_conflicted(const struct arp_state *, const struct arp_msg *);
+void arp_announce(struct arp_state *);
+void arp_probe(struct arp_state *);
+struct arp_state *arp_new(struct interface *, const struct in_addr *);
+void arp_cancel(struct arp_state *);
+void arp_free(struct arp_state *);
+void arp_free_but(struct arp_state *);
+struct arp_state *arp_find(struct interface *, const struct in_addr *);
+void arp_close(struct interface *);
+
+void arp_handleifa(int, struct interface *, const struct in_addr *, int);
+#else
+#define arp_close(a) {}
+#endif
 #endif

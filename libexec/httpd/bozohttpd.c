@@ -1,9 +1,9 @@
-/*	$NetBSD: bozohttpd.c,v 1.44 2013/10/12 18:46:12 mbalmer Exp $	*/
+/*	$NetBSD: bozohttpd.c,v 1.66 2015/07/16 12:19:23 shm Exp $	*/
 
 /*	$eterna: bozohttpd.c,v 1.178 2011/11/18 09:21:15 mrg Exp $	*/
 
 /*
- * Copyright (c) 1997-2013 Matthew R. Green
+ * Copyright (c) 1997-2015 Matthew R. Green
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -55,17 +55,17 @@
 
 /*
  * requirements for minimal http/1.1 (at least, as documented in
- * <draft-ietf-http-v11-spec-rev-06> which expired may 18, 1999):
+ * RFC 2616 (HTTP/1.1):
  *
- *	- 14.15: content-encoding handling. [1]
+ *	- 14.11: content-encoding handling. [1]
  *
- *	- 14.16: content-length handling.  this is only a SHOULD header
+ *	- 14.13: content-length handling.  this is only a SHOULD header
  *	  thus we could just not send it ever.  [1]
  *
  *	- 14.17: content-type handling. [1]
  *
- *	- 14.25/28: if-{,un}modified-since handling.  maybe do this, but
- *	  i really don't want to have to parse 3 differnet date formats
+ *	- 14.28: if-unmodified-since handling.  if-modified-since is
+ *	  done since, shouldn't be too hard for this one.
  *
  * [1] need to revisit to ensure proper behaviour
  *
@@ -88,28 +88,28 @@
  *
  *	- 10.3.3/10.3.4/10.3.8:  just use '302' codes always.
  *
- *	- 14.1/14.2/14.3/14.27: we do not support Accept: headers..
+ *	- 14.1/14.2/14.3/14.27: we do not support Accept: headers.
  *	  just ignore them and send the request anyway.  they are
  *	  only SHOULD.
  *
- *	- 14.5/14.16/14.35: we don't do ranges.  from section 14.35.2
- *	  `A server MAY ignore the Range header'.  but it might be nice.
- *	  since 20080301 we support simple range headers.
+ *	- 14.5/14.16/14.35: only support simple ranges: %d- and %d-%d
+ *	  would be nice to support more.
  *
  *	- 14.9: we aren't a cache.
  *
- *	- 14.15: content-md5 would be nice...
+ *	- 14.15: content-md5 would be nice.
  *
- *	- 14.24/14.26/14.27: be nice to support this...
+ *	- 14.24/14.26/14.27: if-match, if-none-match, if-range.  be
+ *	  nice to support this.
  *
- *	- 14.44: not sure about this Vary: header.  ignore it for now.
+ *	- 14.44: Vary: seems unneeded.  ignore it for now.
  */
 
 #ifndef INDEX_HTML
 #define INDEX_HTML		"index.html"
 #endif
 #ifndef SERVER_SOFTWARE
-#define SERVER_SOFTWARE		"bozohttpd/20130711"
+#define SERVER_SOFTWARE		"bozohttpd/20150501"
 #endif
 #ifndef DIRECT_ACCESS_FILE
 #define DIRECT_ACCESS_FILE	".bzdirect"
@@ -333,15 +333,14 @@ bozo_clean_request(bozo_httpreq_t *request)
 	bozo_ssl_destroy(request->hr_httpd);
 
 	/* clean up request */
-#define MF(x)	if (request->x) free(request->x)
-	MF(hr_remotehost);
-	MF(hr_remoteaddr);
-	MF(hr_serverport);
-	MF(hr_virthostname);
-	MF(hr_file);
-	MF(hr_oldfile);
-	MF(hr_query);
-#undef MF
+	free(request->hr_remotehost);
+	free(request->hr_remoteaddr);
+	free(request->hr_serverport);
+	free(request->hr_virthostname);
+	free(request->hr_file);
+	free(request->hr_oldfile);
+	free(request->hr_query);
+	free(request->hr_host);
 	bozo_auth_cleanup(request);
 	for (hdr = SIMPLEQ_FIRST(&request->hr_headers); hdr;
 	    hdr = SIMPLEQ_NEXT(hdr, h_next)) {
@@ -528,7 +527,8 @@ bozo_read_request(bozohttpd_t *httpd)
 	 */
 	if (bozo_daemon_fork(httpd))
 		return NULL;
-	bozo_ssl_accept(httpd);
+	if (bozo_ssl_accept(httpd))
+		return NULL;
 
 	request = bozomalloc(httpd, sizeof(*request));
 	memset(request, 0, sizeof(*request));
@@ -541,6 +541,7 @@ bozo_read_request(bozohttpd_t *httpd)
 	request->hr_virthostname = NULL;
 	request->hr_file = NULL;
 	request->hr_oldfile = NULL;
+	bozo_auth_init(request);
 
 	slen = sizeof(ss);
 	if (getpeername(0, (struct sockaddr *)(void *)&ss, &slen) < 0)
@@ -681,8 +682,8 @@ bozo_read_request(bozohttpd_t *httpd)
 			else if (strcasecmp(hdr->h_header, "content-length") == 0)
 				request->hr_content_length = hdr->h_value;
 			else if (strcasecmp(hdr->h_header, "host") == 0)
-				request->hr_host = hdr->h_value;
-			/* HTTP/1.1 rev06 draft spec: 14.20 */
+				request->hr_host = bozostrdup(httpd, hdr->h_value);
+			/* RFC 2616 (HTTP/1.1): 14.20 */
 			else if (strcasecmp(hdr->h_header, "expect") == 0) {
 				(void)bozo_http_error(httpd, 417, request,
 						"we don't support Expect:");
@@ -719,8 +720,9 @@ next_header:
 		goto cleanup;
 	}
 
-	/* HTTP/1.1 draft rev-06, 14.23 & 19.6.1.1 */
+	/* RFC 2616 (HTTP/1.1), 14.23 & 19.6.1.1 */
 	if (request->hr_proto == httpd->consts.http_11 &&
+	    /*(strncasecmp(request->hr_file, "http://", 7) != 0) &&*/
 	    request->hr_host == NULL) {
 		(void)bozo_http_error(httpd, 400, request,
 				"missing Host header");
@@ -876,7 +878,6 @@ bozo_escape_rfc3986(bozohttpd_t *httpd, const char *url)
 			goto encode_it;
 		switch (*s) {
 		case ':':
-		case '/':
 		case '?':
 		case '#':
 		case '[':
@@ -894,8 +895,12 @@ bozo_escape_rfc3986(bozohttpd_t *httpd, const char *url)
 		case ';':
 		case '=':
 		case '%':
+		case '\n':
+		case '\r':
+		case ' ':
+		case '"':
 		encode_it:
-			snprintf(d, 4, "%%%2X", *s++);
+			snprintf(d, 4, "%%%02X", *s++);
 			d += 3;
 			len += 3;
 			break;
@@ -935,7 +940,12 @@ check_direct_access(bozo_httpreq_t *request)
 		bozo_check_special_files(request, basename);
 	}
 
-	snprintf(dirfile, sizeof(dirfile), "%s/%s", dir, DIRECT_ACCESS_FILE);
+	if ((size_t)snprintf(dirfile, sizeof(dirfile), "%s/%s", dir,
+	  DIRECT_ACCESS_FILE) >= sizeof(dirfile)) {
+		bozo_http_error(request->hr_httpd, 404, request,
+		  "directfile path too long");
+		return 0;
+	}
 	if (stat(dirfile, &sb) < 0 ||
 	    (fp = fopen(dirfile, "r")) == NULL)
 		return 0;
@@ -1042,9 +1052,13 @@ check_virtual(bozo_httpreq_t *request)
 	if (strncasecmp(file, "http://", 7) == 0) {
 		/* we would do virtual hosting here? */
 		file += 7;
+		/* RFC 2616 (HTTP/1.1), 5.2: URI takes precedence over Host: */
+		free(request->hr_host);
+		request->hr_host = bozostrdup(request->hr_httpd, file);
+		if ((s = strchr(request->hr_host, '/')) != NULL)
+			*s = '\0';
 		s = strchr(file, '/');
-		/* HTTP/1.1 draft rev-06, 5.2: URI takes precedence over Host: */
-		request->hr_host = file;
+		free(request->hr_file);
 		request->hr_file = bozostrdup(request->hr_httpd, s ? s : "/");
 		debug((httpd, DEBUG_OBESE, "got host ``%s'' file is now ``%s''",
 		    request->hr_host, request->hr_file));
@@ -1052,12 +1066,20 @@ check_virtual(bozo_httpreq_t *request)
 		goto use_slashdir;
 
 	/*
-	 * ok, we have a virtual host, use scandir(3) to find a case
+	 * canonicalise hr_host - that is, remove any :80.
+	 */
+	len = strlen(request->hr_host);
+	if (len > 3 && strcmp(request->hr_host + len - 3, ":80") == 0) {
+		request->hr_host[len - 3] = '\0';
+		len = strlen(request->hr_host);
+	}
+	
+	/*
+	 * ok, we have a virtual host, use opendir(3) to find a case
 	 * insensitive match for the virtual host we are asked for.
 	 * note that if the virtual host is the same as the master,
 	 * we don't need to do anything special.
 	 */
-	len = strlen(request->hr_host);
 	debug((httpd, DEBUG_OBESE,
 	    "check_virtual: checking host `%s' under httpd->virtbase `%s' "
 	    "for file `%s'",
@@ -1075,8 +1097,7 @@ check_virtual(bozo_httpreq_t *request)
 				}
 				debug((httpd, DEBUG_OBESE, "looking at dir``%s''",
 			 	   d->d_name));
-				if (strncasecmp(d->d_name, request->hr_host,
-				    len) == 0) {
+				if (strcmp(d->d_name, request->hr_host) == 0) {
 					/* found it, punch it */
 					debug((httpd, DEBUG_OBESE, "found it punch it"));
 					request->hr_virthostname =
@@ -1115,7 +1136,7 @@ use_slashdir:
 /*
  * checks to see if this request has a valid .bzredirect file.  returns
  * 0 when no redirection happend, or 1 when handle_redirect() has been
- * called.
+ * called, -1 on error.
  */
 static int
 check_bzredirect(bozo_httpreq_t *request)
@@ -1130,7 +1151,12 @@ check_bzredirect(bozo_httpreq_t *request)
 	 * if this pathname is really a directory, but doesn't end in /,
 	 * use it as the directory to look for the redir file.
 	 */
-	snprintf(dir, sizeof(dir), "%s", request->hr_file + 1);
+	if((size_t)snprintf(dir, sizeof(dir), "%s", request->hr_file + 1) >=
+	  sizeof(dir)) {
+		bozo_http_error(request->hr_httpd, 404, request,
+		  "file path too long");
+		return -1;
+	}
 	debug((request->hr_httpd, DEBUG_FAT, "check_bzredirect: dir %s", dir));
 	basename = strrchr(dir, '/');
 
@@ -1144,13 +1170,23 @@ check_bzredirect(bozo_httpreq_t *request)
 		bozo_check_special_files(request, basename);
 	}
 
-	snprintf(redir, sizeof(redir), "%s/%s", dir, REDIRECT_FILE);
+	if ((size_t)snprintf(redir, sizeof(redir), "%s/%s", dir,
+	  REDIRECT_FILE) >= sizeof(redir)) {
+		bozo_http_error(request->hr_httpd, 404, request,
+		  "redirectfile path too long");
+		return -1;
+	}
 	if (lstat(redir, &sb) == 0) {
 		if (!S_ISLNK(sb.st_mode))
 			return 0;
 		absolute = 0;
 	} else {
-		snprintf(redir, sizeof(redir), "%s/%s", dir, ABSREDIRECT_FILE);
+		if((size_t)snprintf(redir, sizeof(redir), "%s/%s", dir,
+		  ABSREDIRECT_FILE) >= sizeof(redir)) {
+			bozo_http_error(request->hr_httpd, 404, request,
+			  "redirectfile path too long");
+			return -1;
+		}
 		if (lstat(redir, &sb) < 0 || !S_ISLNK(sb.st_mode))
 			return 0;
 		absolute = 1;
@@ -1174,9 +1210,14 @@ check_bzredirect(bozo_httpreq_t *request)
 	/* now we have the link pointer, redirect to the real place */
 	if (absolute)
 		finalredir = redirpath;
-	else
-		snprintf(finalredir = redir, sizeof(redir), "/%s/%s", dir,
-			 redirpath);
+	else {
+		if ((size_t)snprintf(finalredir = redir, sizeof(redir), "/%s/%s",
+		  dir, redirpath) >= sizeof(redir)) {
+			bozo_http_error(request->hr_httpd, 404, request,
+			  "redirect path too long");
+			return -1;
+		}
+	}
 
 	debug((request->hr_httpd, DEBUG_FAT,
 	       "check_bzredirect: new redir %s", finalredir));
@@ -1185,7 +1226,7 @@ check_bzredirect(bozo_httpreq_t *request)
 }
 
 /* this fixes the %HH hack that RFC2396 requires.  */
-static void
+static int
 fix_url_percent(bozo_httpreq_t *request)
 {
 	bozohttpd_t *httpd = request->hr_httpd;
@@ -1198,7 +1239,7 @@ fix_url_percent(bozo_httpreq_t *request)
 
 	/* fast forward to the first % */
 	if ((s = strchr(url, '%')) == NULL)
-		return;
+		return 0;
 
 	t = s;
 	do {
@@ -1215,17 +1256,17 @@ fix_url_percent(bozo_httpreq_t *request)
 		if (s[1] == '\0' || s[2] == '\0') {
 			(void)bozo_http_error(httpd, 400, request,
 			    "percent hack missing two chars afterwards");
-			goto copy_rest;
+			return 1;
 		}
 		if (s[1] == '0' && s[2] == '0') {
 			(void)bozo_http_error(httpd, 404, request,
 					"percent hack was %00");
-			goto copy_rest;
+			return 1;
 		}
 		if (s[1] == '2' && s[2] == 'f') {
 			(void)bozo_http_error(httpd, 404, request,
 					"percent hack was %2f (/)");
-			goto copy_rest;
+			return 1;
 		}
 
 		buf[0] = *++s;
@@ -1238,7 +1279,7 @@ fix_url_percent(bozo_httpreq_t *request)
 		if (*t++ == '\0') {
 			(void)bozo_http_error(httpd, 400, request,
 					"percent hack got a 0 back");
-			goto copy_rest;
+			return 1;
 		}
 
 		while (*s && *s != '%') {
@@ -1247,15 +1288,12 @@ fix_url_percent(bozo_httpreq_t *request)
 			*t++ = *s++;
 		}
 	} while (*s);
-copy_rest:
-	while (*s) {
-		if (s >= end)
-			break;
-		*t++ = *s++;
-	}
 	*t = '\0';
+
 	debug((httpd, DEBUG_FAT, "fix_url_percent returns %s in url",
 			request->hr_file));
+
+	return 0;
 }
 
 /*
@@ -1285,7 +1323,9 @@ transform_request(bozo_httpreq_t *request, int *isindex)
 	file = NULL;
 	*isindex = 0;
 	debug((httpd, DEBUG_FAT, "tf_req: file %s", request->hr_file));
-	fix_url_percent(request);
+	if (fix_url_percent(request)) {
+		goto bad_done;
+	}
 	if (check_virtual(request)) {
 		goto bad_done;
 	}
@@ -1296,8 +1336,16 @@ transform_request(bozo_httpreq_t *request, int *isindex)
 		goto bad_done;
 	}
 
-	if (check_bzredirect(request))
+	/* omit additional slashes at the beginning */
+	while (file[1] == '/')
+		file++;
+
+	switch(check_bzredirect(request)) {
+	case -1:
+		goto bad_done;
+	case 1:
 		return 0;
+	}
 
 	if (httpd->untrustedref) {
 		int to_indexhtml = 0;
@@ -1522,15 +1570,22 @@ bozo_process_request(bozo_httpreq_t *request)
 
 	if (fd < 0) {
 		debug((httpd, DEBUG_FAT, "open failed: %s", strerror(errno)));
-		if (errno == EPERM)
+		switch(errno) {
+		case EPERM:
+		case EACCES:
 			(void)bozo_http_error(httpd, 403, request,
 						"no permission to open file");
-		else if (errno == ENOENT) {
+			break;
+		case ENAMETOOLONG:
+			/*FALLTHROUGH*/
+		case ENOENT:
 			if (!bozo_dir_index(request, file, isindex))
 				(void)bozo_http_error(httpd, 404, request,
 							"no file");
-		} else
+			break;
+		default:
 			(void)bozo_http_error(httpd, 500, request, "open file");
+		}
 		goto cleanup_nofd;
 	}
 	if (fstat(fd, &sb) < 0) {
@@ -1813,6 +1868,7 @@ static struct errors_map {
 	{ 404, 	"404 Not Found",	"This item has not been found", },
 	{ 408, 	"408 Request Timeout",	"This request took too long", },
 	{ 417,	"417 Expectation Failed","Expectations not available", },
+	{ 420,	"420 Enhance Your Calm","Chill, Winston", },
 	{ 500,	"500 Internal Error",	"An error occured on the server", },
 	{ 501,	"501 Not Implemented",	"This request is not available", },
 	{ 0,	NULL,			NULL, },
@@ -1853,7 +1909,6 @@ bozo_http_error(bozohttpd_t *httpd, int code, bozo_httpreq_t *request,
 	const char *reason = http_errors_long(code);
 	const char *proto = (request && request->hr_proto) ?
 				request->hr_proto : httpd->consts.http_11;
-	const char *hostname = BOZOHOST(httpd, request);
 	int	size;
 
 	debug((httpd, DEBUG_FAT, "bozo_http_error %d: %s", code, msg));
@@ -1873,6 +1928,7 @@ bozo_http_error(bozohttpd_t *httpd, int code, bozo_httpreq_t *request,
 
 	if (request && request->hr_file) {
 		char *file = NULL;
+		const char *hostname = BOZOHOST(httpd, request);
 
 		/* bozo_escape_html() failure here is just too bad. */
 		file = bozo_escape_html(NULL, request->hr_file);
@@ -1904,7 +1960,9 @@ bozo_http_error(bozohttpd_t *httpd, int code, bozo_httpreq_t *request,
 	if (request && request->hr_allow)
 		bozo_printf(httpd, "Allow: %s\r\n", request->hr_allow);
 	bozo_printf(httpd, "\r\n");
-	if (size)
+	/* According to the RFC 2616 sec. 9.4 HEAD method MUST NOT return a
+	 * message-body in the response */
+	if (size && request && request->hr_method != HTTP_HEAD)
 		bozo_printf(httpd, "%s", httpd->errorbuf);
 	bozo_flush(httpd, stdout);
 

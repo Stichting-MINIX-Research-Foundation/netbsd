@@ -1,4 +1,4 @@
-/*	$NetBSD: kern_proc.c,v 1.190 2013/11/14 12:07:11 martin Exp $	*/
+/*	$NetBSD: kern_proc.c,v 1.194 2015/09/24 14:33:01 christos Exp $	*/
 
 /*-
  * Copyright (c) 1999, 2006, 2007, 2008 The NetBSD Foundation, Inc.
@@ -62,7 +62,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: kern_proc.c,v 1.190 2013/11/14 12:07:11 martin Exp $");
+__KERNEL_RCSID(0, "$NetBSD: kern_proc.c,v 1.194 2015/09/24 14:33:01 christos Exp $");
 
 #ifdef _KERNEL_OPT
 #include "opt_kstack.h"
@@ -95,12 +95,14 @@ __KERNEL_RCSID(0, "$NetBSD: kern_proc.c,v 1.190 2013/11/14 12:07:11 martin Exp $
 #include <sys/sleepq.h>
 #include <sys/atomic.h>
 #include <sys/kmem.h>
+#include <sys/namei.h>
 #include <sys/dtrace_bsd.h>
 #include <sys/sysctl.h>
 #include <sys/exec.h>
 #include <sys/cpu.h>
 
 #include <uvm/uvm_extern.h>
+#include <uvm/uvm.h>
 
 #ifdef COMPAT_NETBSD32
 #include <compat/netbsd32/netbsd32.h>
@@ -212,7 +214,6 @@ static const int	maxuprc	= MAXUPRC;
 
 static int sysctl_doeproc(SYSCTLFN_PROTO);
 static int sysctl_kern_proc_args(SYSCTLFN_PROTO);
-static void fill_kproc2(struct proc *, struct kinfo_proc2 *, bool);
 
 /*
  * The process list descriptors, used during pid allocation and
@@ -234,6 +235,8 @@ static specificdata_domain_t proc_specificdata_domain;
 static pool_cache_t proc_cache;
 
 static kauth_listener_t proc_listener;
+
+static int fill_pathname(struct lwp *, pid_t, void *, size_t *);
 
 static int
 proc_listener_cb(kauth_cred_t cred, kauth_action_t action, void *cookie,
@@ -359,12 +362,6 @@ procinit_sysctl(void)
 
 	sysctl_createv(&clog, 0, NULL, NULL,
 		       CTLFLAG_PERMANENT,
-		       CTLTYPE_NODE, "kern", NULL,
-		       NULL, 0, NULL, 0,
-		       CTL_KERN, CTL_EOL);
-
-	sysctl_createv(&clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
 		       CTLTYPE_NODE, "proc",
 		       SYSCTL_DESCR("System-wide process information"),
 		       sysctl_doeproc, 0, NULL, 0,
@@ -484,7 +481,7 @@ proc0_init(void)
 	 */
 	uvmspace_init(&vmspace0, pmap_kernel(), round_page(VM_MIN_ADDRESS),
 	    trunc_page(VM_MAX_ADDRESS),
-#ifdef __USING_TOPDOWN_VM
+#ifdef __USE_TOPDOWN_VM
 	    true
 #else
 	    false
@@ -1640,18 +1637,25 @@ sysctl_doeproc(SYSCTLFN_ARGS)
 	type = rnode->sysctl_num;
 
 	if (type == KERN_PROC) {
-		if (namelen != 2 && !(namelen == 1 && name[0] == KERN_PROC_ALL))
-			return (EINVAL);
-		op = name[0];
-		if (op != KERN_PROC_ALL)
+		if (namelen == 0)
+			return EINVAL;
+		switch (op = name[0]) {
+		case KERN_PROC_ALL:
+			if (namelen != 1)
+				return EINVAL;
+			arg = 0;
+			break;
+		default:
+			if (namelen != 2)
+				return EINVAL;
 			arg = name[1];
-		else
-			arg = 0;		/* Quell compiler warning */
+			break;
+		}
 		elem_count = 0;	/* Ditto */
 		kelem_size = elem_size = sizeof(kbuf->kproc);
 	} else {
 		if (namelen != 4)
-			return (EINVAL);
+			return EINVAL;
 		op = name[0];
 		arg = name[1];
 		elem_size = name[2];
@@ -1900,6 +1904,12 @@ sysctl_kern_proc_args(SYSCTLFN_ARGS)
 	type = name[1];
 
 	switch (type) {
+	case KERN_PROC_PATHNAME:
+		sysctl_unlock();
+		error = fill_pathname(l, pid, oldp, oldlenp);
+		sysctl_relock();
+		return error;
+
 	case KERN_PROC_ARGV:
 	case KERN_PROC_NARGV:
 	case KERN_PROC_ENV:
@@ -2206,7 +2216,7 @@ fill_eproc(struct proc *p, struct eproc *ep, bool zombie)
 /*
  * Fill in a kinfo_proc2 structure for the specified process.
  */
-static void
+void
 fill_kproc2(struct proc *p, struct kinfo_proc2 *ki, bool zombie)
 {
 	struct tty *tp;
@@ -2392,4 +2402,75 @@ fill_kproc2(struct proc *p, struct kinfo_proc2 *ki, bool zombie)
 		ki->p_uctime_sec = ut.tv_sec;
 		ki->p_uctime_usec = ut.tv_usec;
 	}
+}
+
+
+int
+proc_find_locked(struct lwp *l, struct proc **p, pid_t pid)
+{
+	int error;
+
+	mutex_enter(proc_lock);
+	if (pid == -1)
+		*p = l->l_proc;
+	else
+		*p = proc_find(pid);
+
+	if (*p == NULL) {
+		if (pid != -1)
+			mutex_exit(proc_lock);
+		return ESRCH;
+	}
+	if (pid != -1)
+		mutex_enter((*p)->p_lock);
+	mutex_exit(proc_lock);
+
+	error = kauth_authorize_process(l->l_cred,
+	    KAUTH_PROCESS_CANSEE, *p,
+	    KAUTH_ARG(KAUTH_REQ_PROCESS_CANSEE_ENTRY), NULL, NULL);
+	if (error) {
+		if (pid != -1)
+			mutex_exit((*p)->p_lock);
+	}
+	return error;
+}
+
+static int
+fill_pathname(struct lwp *l, pid_t pid, void *oldp, size_t *oldlenp)
+{
+#ifndef _RUMPKERNEL
+	int error;
+	struct proc *p;
+	char *path;
+	size_t len;
+
+	if ((error = proc_find_locked(l, &p, pid)) != 0)
+		return error;
+
+	if (p->p_textvp == NULL) {
+		if (pid != -1)
+			mutex_exit(p->p_lock);
+		return ENOENT;
+	}
+
+	path = PNBUF_GET();
+	error = vnode_to_path(path, MAXPATHLEN / 2, p->p_textvp, l, p);
+	if (error)
+		goto out;
+
+	len = strlen(path) + 1;
+	if (oldp != NULL) {
+		error = sysctl_copyout(l, path, oldp, *oldlenp);
+		if (error == 0 && *oldlenp < len)
+			error = ENOSPC;
+	}
+	*oldlenp = len;
+out:
+	PNBUF_PUT(path);
+	if (pid != -1)
+		mutex_exit(p->p_lock);
+	return error;
+#else
+	return 0;
+#endif
 }

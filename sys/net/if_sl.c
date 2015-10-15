@@ -1,4 +1,4 @@
-/*	$NetBSD: if_sl.c,v 1.118 2011/09/23 15:29:09 christos Exp $	*/
+/*	$NetBSD: if_sl.c,v 1.121 2015/08/24 22:21:26 pooka Exp $	*/
 
 /*
  * Copyright (c) 1987, 1989, 1992, 1993
@@ -60,9 +60,11 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_sl.c,v 1.118 2011/09/23 15:29:09 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_sl.c,v 1.121 2015/08/24 22:21:26 pooka Exp $");
 
+#ifdef _KERNEL_OPT
 #include "opt_inet.h"
+#endif
 
 #include <sys/param.h>
 #include <sys/proc.h>
@@ -104,6 +106,8 @@ __KERNEL_RCSID(0, "$NetBSD: if_sl.c,v 1.118 2011/09/23 15:29:09 christos Exp $")
 
 #include <sys/time.h>
 #include <net/bpf.h>
+
+#include "ioconf.h"
 
 /*
  * SLMAX is a hard limit on input packet size.  To simplify the code
@@ -211,10 +215,8 @@ static struct linesw slip_disc = {
 	.l_poll = ttyerrpoll
 };
 
-void	slattach(void);
-
 void
-slattach(void)
+slattach(int n __unused)
 {
 
 	if (ttyldisc_attach(&slip_disc) != 0)
@@ -935,14 +937,10 @@ slintr(void *arg)
 
 #ifdef INET
 		s = splnet();
-		if (IF_QFULL(&ipintrq)) {
-			IF_DROP(&ipintrq);
+		if (__predict_false(!pktq_enqueue(ip_pktq, m, 0))) {
 			sc->sc_if.if_ierrors++;
 			sc->sc_if.if_iqdrops++;
 			m_freem(m);
-		} else {
-			IF_ENQUEUE(&ipintrq, m);
-			schednetisr(NETISR_IP);
 		}
 		splx(s);
 #endif

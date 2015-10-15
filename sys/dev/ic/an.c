@@ -1,4 +1,4 @@
-/*	$NetBSD: an.c,v 1.60 2013/09/12 11:42:26 martin Exp $	*/
+/*	$NetBSD: an.c,v 1.62 2015/02/07 04:11:06 christos Exp $	*/
 /*
  * Copyright (c) 1997, 1998, 1999
  *	Bill Paul <wpaul@ctr.columbia.edu>.  All rights reserved.
@@ -77,7 +77,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: an.c,v 1.60 2013/09/12 11:42:26 martin Exp $");
+__KERNEL_RCSID(0, "$NetBSD: an.c,v 1.62 2015/02/07 04:11:06 christos Exp $");
 
 
 #include <sys/param.h>
@@ -349,14 +349,9 @@ SYSCTL_SETUP(sysctl_an, "sysctl an(4) subtree setup")
 	const struct sysctlnode *cnode, *rnode;
 
 	if ((rc = sysctl_createv(clog, 0, NULL, &rnode,
-	    CTLFLAG_PERMANENT, CTLTYPE_NODE, "hw", NULL,
-	    NULL, 0, NULL, 0, CTL_HW, CTL_EOL)) != 0)
-		goto err;
-
-	if ((rc = sysctl_createv(clog, 0, &rnode, &rnode,
 	    CTLFLAG_PERMANENT, CTLTYPE_NODE, "an",
 	    "Cisco/Aironet 802.11 controls",
-	    NULL, 0, NULL, 0, CTL_CREATE, CTL_EOL)) != 0)
+	    NULL, 0, NULL, 0, CTL_HW, CTL_CREATE, CTL_EOL)) != 0)
 		goto err;
 
 	/* control debugging printfs */
@@ -574,8 +569,8 @@ an_init(struct ifnet *ifp)
 	if (ic->ic_des_esslen)
 		memcpy(sc->sc_buf.sc_ssidlist.an_entry[0].an_ssid,
 		    ic->ic_des_essid, ic->ic_des_esslen);
-	if (an_write_rid(sc, AN_RID_SSIDLIST, &sc->sc_buf,
-	    sizeof(sc->sc_buf.sc_ssidlist)) != 0) {
+	if ((error = an_write_rid(sc, AN_RID_SSIDLIST, &sc->sc_buf,
+	    sizeof(sc->sc_buf.sc_ssidlist))) != 0) {
 		printf("%s: failed to write ssid list\n", ifp->if_xname);
 		an_stop(ifp, 1);
 		return error;
@@ -609,8 +604,8 @@ an_init(struct ifnet *ifp)
 		printf("\n");
 	}
 #endif
-	if (an_write_rid(sc, AN_RID_GENCONFIG, &sc->sc_config,
-	    sizeof(sc->sc_config)) != 0) {
+	if ((error = an_write_rid(sc, AN_RID_GENCONFIG, &sc->sc_config,
+	    sizeof(sc->sc_config))) != 0) {
 		printf("%s: failed to write config\n", ifp->if_xname);
 		an_stop(ifp, 1);
 		return error;

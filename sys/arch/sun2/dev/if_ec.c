@@ -1,4 +1,4 @@
-/*	$NetBSD: if_ec.c,v 1.20 2012/02/02 19:43:00 tls Exp $	*/
+/*	$NetBSD: if_ec.c,v 1.23 2015/05/20 09:17:17 ozaki-r Exp $	*/
 
 /*
  * Copyright (c) 2001 The NetBSD Foundation, Inc.
@@ -34,7 +34,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_ec.c,v 1.20 2012/02/02 19:43:00 tls Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_ec.c,v 1.23 2015/05/20 09:17:17 ozaki-r Exp $");
 
 #include "opt_inet.h"
 #include "opt_ns.h"
@@ -48,7 +48,7 @@ __KERNEL_RCSID(0, "$NetBSD: if_ec.c,v 1.20 2012/02/02 19:43:00 tls Exp $");
 #include <sys/syslog.h>
 #include <sys/device.h>
 #include <sys/endian.h>
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 
 #include <net/if.h>
 #include <net/if_dl.h>
@@ -63,11 +63,6 @@ __KERNEL_RCSID(0, "$NetBSD: if_ec.c,v 1.20 2012/02/02 19:43:00 tls Exp $");
 #include <netinet/in_var.h>
 #include <netinet/ip.h>
 #include <netinet/if_inarp.h>
-#endif
-
-#ifdef NS
-#include <netns/ns.h>
-#include <netns/ns_if.h>
 #endif
 
 #include <net/bpf.h>
@@ -245,7 +240,7 @@ ec_attach(device_t parent, device_t self, void *aux)
 	    ec_intr, sc);
 
 	rnd_attach_source(&sc->rnd_source, device_xname(self),
-	    RND_TYPE_NET, 0);
+	    RND_TYPE_NET, RND_FLAG_DEFAULT);
 }
 
 /*

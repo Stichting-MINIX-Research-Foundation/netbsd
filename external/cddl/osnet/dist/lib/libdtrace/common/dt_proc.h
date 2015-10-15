@@ -44,9 +44,7 @@ typedef struct dt_proc {
 	dtrace_hdl_t *dpr_hdl;		/* back pointer to libdtrace handle */
 	struct ps_prochandle *dpr_proc;	/* proc handle for libproc calls */
 	char dpr_errmsg[BUFSIZ];	/* error message */
-#if defined(sun)
 	rd_agent_t *dpr_rtld;		/* rtld handle for librtld_db calls */
-#endif
 	pthread_mutex_t dpr_lock;	/* lock for manipulating dpr_hdl */
 	pthread_cond_t dpr_cv;		/* cond for dpr_stop/quit/done */
 	pid_t dpr_pid;			/* pid of process */
@@ -82,7 +80,7 @@ typedef struct dt_bkpt {
 	dt_bkpt_f *dbp_func;		/* callback function to execute */
 	void *dbp_data;			/* callback function private data */
 	uintptr_t dbp_addr;		/* virtual address of breakpoint */
-	ulong_t dbp_instr;		/* saved instruction from breakpoint */
+	proc_breakpoint_t dbp_instr;	/* saved instruction from breakpoint */
 	ulong_t dbp_hits;		/* count of breakpoint hits for debug */
 	int dbp_active;			/* flag indicating breakpoint is on */
 } dt_bkpt_t;

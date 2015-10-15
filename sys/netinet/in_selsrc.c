@@ -1,4 +1,4 @@
-/*	$NetBSD: in_selsrc.c,v 1.10 2013/10/21 14:25:14 christos Exp $	*/
+/*	$NetBSD: in_selsrc.c,v 1.16 2015/09/21 13:32:26 skrll Exp $	*/
 
 /*-
  * Copyright (c) 2005 David Young.  All rights reserved.
@@ -29,10 +29,12 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: in_selsrc.c,v 1.10 2013/10/21 14:25:14 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: in_selsrc.c,v 1.16 2015/09/21 13:32:26 skrll Exp $");
 
+#ifdef _KERNEL_OPT
 #include "opt_inet.h"
 #include "opt_inet_conf.h"
+#endif
 
 #include <lib/libkern/libkern.h>
 
@@ -107,12 +109,6 @@ SYSCTL_SETUP(sysctl_selectsrc_setup, "sysctl selectsrc subtree setup")
 	int rc;
 	const struct sysctlnode *rnode, *cnode;
 
-	if ((rc = sysctl_createv(clog, 0, NULL, &rnode,
-	    CTLFLAG_PERMANENT, CTLTYPE_NODE, "net",
-	    NULL, NULL, 0, NULL, 0, CTL_NET, CTL_EOL)) != 0) {
-		printf("%s: could not create net, rc = %d\n", __func__, rc);
-		return;
-	}
 	if ((rc = sysctl_createv(clog, 0, NULL, &rnode,
 	    CTLFLAG_PERMANENT, CTLTYPE_NODE, "inet",
 	    NULL, NULL, 0, NULL, 0, CTL_NET, PF_INET, CTL_EOL)) != 0) {
@@ -306,6 +302,7 @@ in_getifa(struct ifaddr *ifa, const struct sockaddr *dst0)
 	struct in_ifsysctl *isc;
 	struct in_ifselsrc *iss;
 	int best_score[IN_SCORE_SRC_MAX], score[IN_SCORE_SRC_MAX];
+	struct in_ifaddr *ia;
 
 	if (ifa->ifa_addr->sa_family != AF_INET ||
 	    dst0 == NULL || dst0->sa_family != AF_INET) {	/* Possible. */
@@ -314,7 +311,8 @@ in_getifa(struct ifaddr *ifa, const struct sockaddr *dst0)
 	}
 
 	ifp = ifa->ifa_ifp;
-	isc = (struct in_ifsysctl *)ifp->if_afdata[AF_INET];
+	KASSERT(ifp->if_afdata[AF_INET] != NULL);
+	isc = ((struct in_ifinfo *)(ifp)->if_afdata[AF_INET])->ii_selsrc;
 	if (isc != NULL && isc->isc_selsrc != NULL &&
 	    isc->isc_selsrc->iss_score_src[0] != NULL)
 		iss = isc->isc_selsrc;
@@ -352,6 +350,9 @@ in_getifa(struct ifaddr *ifa, const struct sockaddr *dst0)
 
 		if (alt_ifa == ifa || src->sin_family != AF_INET)
 			continue;
+		ia = (struct in_ifaddr *)alt_ifa;
+		if (ia->ia4_flags & IN_IFF_NOTREADY)
+			continue;
 
 		in_score(score_src, score, NULL, &src->sin_addr,
 		         alt_ifa->ifa_preference, idx, &dst->sin_addr);
@@ -369,6 +370,11 @@ in_getifa(struct ifaddr *ifa, const struct sockaddr *dst0)
 			best_ifa = alt_ifa;
 		}
 	}
+
+	ia = (struct in_ifaddr *)best_ifa;
+	if (ia->ia4_flags & IN_IFF_NOTREADY)
+		return NULL;
+
 #ifdef GETIFA_DEBUG
 	if (in_selsrc_debug) {
 		printf("%s: choose src %#" PRIx32 " score ", __func__,
@@ -539,7 +545,7 @@ err:
 }
 
 void *
-in_domifattach(struct ifnet *ifp)
+in_selsrc_domifattach(struct ifnet *ifp)
 {
 	struct in_ifsysctl *isc;
 	struct in_ifselsrc *iss;
@@ -567,7 +573,7 @@ err:
 }
 
 void
-in_domifdetach(struct ifnet *ifp, void *aux)
+in_selsrc_domifdetach(struct ifnet *ifp, void *aux)
 {
 	struct in_ifsysctl *isc;
 	struct in_ifselsrc *iss;

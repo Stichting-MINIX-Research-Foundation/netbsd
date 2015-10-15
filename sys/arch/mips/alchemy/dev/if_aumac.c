@@ -1,4 +1,4 @@
-/* $NetBSD: if_aumac.c,v 1.37 2012/07/22 14:32:51 matt Exp $ */
+/* $NetBSD: if_aumac.c,v 1.39 2015/04/13 21:18:42 riastradh Exp $ */
 
 /*
  * Copyright (c) 2001 Wasabi Systems, Inc.
@@ -46,7 +46,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_aumac.c,v 1.37 2012/07/22 14:32:51 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_aumac.c,v 1.39 2015/04/13 21:18:42 riastradh Exp $");
 
 
 
@@ -71,7 +71,7 @@ __KERNEL_RCSID(0, "$NetBSD: if_aumac.c,v 1.37 2012/07/22 14:32:51 matt Exp $");
 #include <net/if_ether.h>
 
 #include <net/bpf.h>
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 
 #include <dev/mii/mii.h>
 #include <dev/mii/miivar.h>
@@ -341,7 +341,7 @@ aumac_attach(device_t parent, device_t self, void *aux)
 	ether_ifattach(ifp, enaddr);
 
 	rnd_attach_source(&sc->rnd_source, device_xname(self),
-	    RND_TYPE_NET, 0);
+	    RND_TYPE_NET, RND_FLAG_DEFAULT);
 
 #ifdef AUMAC_EVENT_COUNTERS
 	evcnt_attach_dynamic(&sc->sc_ev_txstall, EVCNT_TYPE_MISC,

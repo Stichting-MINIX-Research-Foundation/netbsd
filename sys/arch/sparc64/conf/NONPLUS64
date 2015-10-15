@@ -1,8 +1,8 @@
-# 	$NetBSD: NONPLUS64,v 1.40 2013/06/30 21:38:59 rmind Exp $
+# 	$NetBSD: NONPLUS64,v 1.46 2015/09/26 11:16:13 maxv Exp $
 
 include "arch/sparc64/conf/std.sparc64"
 
-#ident		"NONPLUS64-$Revision: 1.40 $"
+#ident		"NONPLUS64-$Revision: 1.46 $"
 
 #options 	INCLUDE_CONFIG_FILE	# embed config file in kernel binary
 
@@ -35,11 +35,6 @@ config		netbsd	root on ? type ?
 ## System call tracing (see ktrace(1)).
 options 	KTRACE
 
-## Collect statistics on kernel malloc's and free's.  This does have a
-## significant performance hit on slower machines, so it is intended for
-## diagnostic use only.
-#options 	KMEMSTATS
-
 ## System V compatible IPC subsystem.  (msgctl(2), semctl(2), and shmctl(2))
 options 	SYSVMSG		# System V message queues
 options 	SYSVSEM		# System V semaphores
@@ -60,8 +55,9 @@ options 	NFS_BOOT_BOOTPARAM
 ## serial console break or keyboard reset, where the PROM would normally
 ## intercept.  DDB_HISTORY_SIZE adds up/down arrow command history.
 options 	DDB			# kernel dynamic debugger
+pseudo-device	ksyms
 options 	DDB_HISTORY_SIZE=100	# enable history editing in DDB
-options 	DDB_ONPANIC=1		# see also sysctl(8): `ddb.onpanic'
+options 	DDB_ONPANIC=1		# see also sysctl(7): `ddb.onpanic'
 
 ## Compile the kernel with debugging symbols (`netbsd.gdb' is the debug file),
 ## such that gdb(1) can be used on a kernel coredump.
@@ -107,17 +103,17 @@ options 	SCSIVERBOSE
 ## compat_sunos(8) and compat_svr4(8).
 
 options 	COMPAT_43	# 4.3BSD system interfaces
-options 	COMPAT_09	# NetBSD 0.9 binary compatibility
-options 	COMPAT_10	# NetBSD 1.0 binary compatibility
-options 	COMPAT_11	# NetBSD 1.1 binary compatibility
-options 	COMPAT_12	# NetBSD 1.2 binary compatibility
-options 	COMPAT_13	# NetBSD 1.3 binary compatibility
-options 	COMPAT_14	# NetBSD 1.4 binary compatibility
-options 	COMPAT_15	# NetBSD 1.5 binary compatibility
-options 	COMPAT_16	# NetBSD 1.6 binary compatibility
-options 	COMPAT_20	# NetBSD 2.0 binary compatibility
-options 	COMPAT_30	# NetBSD 3.0 compatibility.
-options 	COMPAT_40	# NetBSD 4.0 compatibility.
+options 	COMPAT_09	# NetBSD 0.9,
+options 	COMPAT_10	# NetBSD 1.0,
+options 	COMPAT_11	# NetBSD 1.1,
+options 	COMPAT_12	# NetBSD 1.2,
+options 	COMPAT_13	# NetBSD 1.3,
+options 	COMPAT_14	# NetBSD 1.4,
+options 	COMPAT_15	# NetBSD 1.5,
+options 	COMPAT_16	# NetBSD 1.6,
+options 	COMPAT_20	# NetBSD 2.0,
+options 	COMPAT_30	# NetBSD 3.0, and
+options 	COMPAT_40	# NetBSD 4.0 binary compatibility.
 options 	COMPAT_SUNOS	# SunOS 4.x binary compatibility
 options 	COMPAT_SVR4	# SunOS 5.x binary compatibility
 options 	COMPAT_SVR4_32	# 32-bit SVR4 binaries
@@ -152,6 +148,7 @@ options 	QUOTA		# legacy UFS quotas
 options 	QUOTA2		# new, in-filesystem UFS quotas
 #options 	FFS_EI		# FFS Endian Independent support
 #options 	FFS_NO_SNAPSHOT	# No FFS snapshot support
+options 	UFS_EXTATTR	# Extended attribute support for UFS1
 
 ## Network protocol support.  In most environments, INET is required.
 options 	INET		# IP (Internet Protocol) v4

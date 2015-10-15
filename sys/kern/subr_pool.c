@@ -1,13 +1,14 @@
-/*	$NetBSD: subr_pool.c,v 1.200 2013/03/11 21:37:54 pooka Exp $	*/
+/*	$NetBSD: subr_pool.c,v 1.205 2015/08/24 22:50:32 pooka Exp $	*/
 
 /*-
- * Copyright (c) 1997, 1999, 2000, 2002, 2007, 2008, 2010
+ * Copyright (c) 1997, 1999, 2000, 2002, 2007, 2008, 2010, 2014, 2015
  *     The NetBSD Foundation, Inc.
  * All rights reserved.
  *
  * This code is derived from software contributed to The NetBSD Foundation
  * by Paul Kranenburg; by Jason R. Thorpe of the Numerical Aerospace
- * Simulation Facility, NASA Ames Research Center, and by Andrew Doran.
+ * Simulation Facility, NASA Ames Research Center; by Andrew Doran, and by
+ * Maxime Villard.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -32,13 +33,16 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: subr_pool.c,v 1.200 2013/03/11 21:37:54 pooka Exp $");
+__KERNEL_RCSID(0, "$NetBSD: subr_pool.c,v 1.205 2015/08/24 22:50:32 pooka Exp $");
 
+#ifdef _KERNEL_OPT
 #include "opt_ddb.h"
 #include "opt_lockdebug.h"
+#endif
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/sysctl.h>
 #include <sys/bitops.h>
 #include <sys/proc.h>
 #include <sys/errno.h>
@@ -67,8 +71,8 @@ __KERNEL_RCSID(0, "$NetBSD: subr_pool.c,v 1.200 2013/03/11 21:37:54 pooka Exp $"
  * an internal pool of page headers (`phpool').
  */
 
-/* List of all pools */
-static TAILQ_HEAD(, pool) pool_head = TAILQ_HEAD_INITIALIZER(pool_head);
+/* List of all pools. Non static as needed by 'vmstat -i' */
+TAILQ_HEAD(, pool) pool_head = TAILQ_HEAD_INITIALIZER(pool_head);
 
 /* Private pool for page header structures */
 #define	PHPOOL_MAX	8
@@ -79,6 +83,17 @@ static struct pool phpool[PHPOOL_MAX];
 #ifdef POOL_SUBPAGE
 /* Pool of subpages for use by normal pools. */
 static struct pool psppool;
+#endif
+
+#ifdef POOL_REDZONE
+# define POOL_REDZONE_SIZE 2
+static void pool_redzone_init(struct pool *, size_t);
+static void pool_redzone_fill(struct pool *, void *);
+static void pool_redzone_check(struct pool *, void *);
+#else
+# define pool_redzone_init(pp, sz)	/* NOTHING */
+# define pool_redzone_fill(pp, ptr)	/* NOTHING */
+# define pool_redzone_check(pp, ptr)	/* NOTHING */
 #endif
 
 static void *pool_page_alloc_meta(struct pool *, int);
@@ -458,7 +473,7 @@ pool_init(struct pool *pp, size_t size, u_int align, u_int ioff, int flags,
     const char *wchan, struct pool_allocator *palloc, int ipl)
 {
 	struct pool *pp1;
-	size_t trysize, phsize;
+	size_t trysize, phsize, prsize;
 	int off, slack;
 
 #ifdef DEBUG
@@ -505,13 +520,14 @@ pool_init(struct pool *pp, size_t size, u_int align, u_int ioff, int flags,
 	if (align == 0)
 		align = ALIGN(1);
 
-	if ((flags & PR_NOTOUCH) == 0 && size < sizeof(struct pool_item))
-		size = sizeof(struct pool_item);
+	prsize = size;
+	if ((flags & PR_NOTOUCH) == 0 && prsize < sizeof(struct pool_item))
+		prsize = sizeof(struct pool_item);
 
-	size = roundup(size, align);
+	prsize = roundup(prsize, align);
 #ifdef DIAGNOSTIC
-	if (size > palloc->pa_pagesz)
-		panic("pool_init: pool item size (%zu) too large", size);
+	if (prsize > palloc->pa_pagesz)
+		panic("pool_init: pool item size (%zu) too large", prsize);
 #endif
 
 	/*
@@ -528,7 +544,7 @@ pool_init(struct pool *pp, size_t size, u_int align, u_int ioff, int flags,
 	pp->pr_maxpages = UINT_MAX;
 	pp->pr_roflags = flags;
 	pp->pr_flags = 0;
-	pp->pr_size = size;
+	pp->pr_size = prsize;
 	pp->pr_align = align;
 	pp->pr_wchan = wchan;
 	pp->pr_alloc = palloc;
@@ -543,6 +559,7 @@ pool_init(struct pool *pp, size_t size, u_int align, u_int ioff, int flags,
 	pp->pr_drain_hook = NULL;
 	pp->pr_drain_hook_arg = NULL;
 	pp->pr_freecheck = NULL;
+	pool_redzone_init(pp, size);
 
 	/*
 	 * Decide whether to put the page header off page to avoid
@@ -561,9 +578,10 @@ pool_init(struct pool *pp, size_t size, u_int align, u_int ioff, int flags,
 	/* See the comment below about reserved bytes. */
 	trysize = palloc->pa_pagesz - ((align - ioff) % align);
 	phsize = ALIGN(sizeof(struct pool_item_header));
-	if ((pp->pr_roflags & (PR_NOTOUCH | PR_NOALIGN)) == 0 &&
+	if (pp->pr_roflags & PR_PHINPAGE ||
+	    ((pp->pr_roflags & (PR_NOTOUCH | PR_NOALIGN)) == 0 &&
 	    (pp->pr_size < MIN(palloc->pa_pagesz / 16, phsize << 3) ||
-	    trysize / pp->pr_size == (trysize - phsize) / pp->pr_size)) {
+	    trysize / pp->pr_size == (trysize - phsize) / pp->pr_size))) {
 		/* Use the end of the page for the page header */
 		pp->pr_roflags |= PR_PHINPAGE;
 		pp->pr_phoffset = off = palloc->pa_pagesz - phsize;
@@ -933,6 +951,7 @@ pool_get(struct pool *pp, int flags)
 	mutex_exit(&pp->pr_lock);
 	KASSERT((((vaddr_t)v + pp->pr_itemoffset) & (pp->pr_align - 1)) == 0);
 	FREECHECK_OUT(&pp->pr_freecheck, v);
+	pool_redzone_fill(pp, v);
 	return (v);
 }
 
@@ -946,6 +965,7 @@ pool_do_put(struct pool *pp, void *v, struct pool_pagelist *pq)
 	struct pool_item_header *ph;
 
 	KASSERT(mutex_owned(&pp->pr_lock));
+	pool_redzone_check(pp, v);
 	FREECHECK_IN(&pp->pr_freecheck, v);
 	LOCKDEBUG_MEM_CHECK(v, pp->pr_size);
 
@@ -2186,6 +2206,7 @@ pool_cache_get_slow(pool_cache_cpu_t *cc, int s, void **objectp,
 	}
 
 	FREECHECK_OUT(&pc->pc_freecheck, object);
+	pool_redzone_fill(&pc->pc_pool, object);
 	return false;
 }
 
@@ -2231,6 +2252,7 @@ pool_cache_get_paddr(pool_cache_t pc, int flags, paddr_t *pap)
 			cc->cc_hits++;
 			splx(s);
 			FREECHECK_OUT(&pc->pc_freecheck, object);
+			pool_redzone_fill(&pc->pc_pool, object);
 			return object;
 		}
 
@@ -2374,6 +2396,7 @@ pool_cache_put_paddr(pool_cache_t pc, void *object, paddr_t pa)
 	int s;
 
 	KASSERT(object != NULL);
+	pool_redzone_check(&pc->pc_pool, object);
 	FREECHECK_IN(&pc->pc_freecheck, object);
 
 	/* Lock out interrupts and disable preemption. */
@@ -2595,6 +2618,120 @@ pool_page_free_meta(struct pool *pp, void *v)
 	vmem_free(kmem_meta_arena, (vmem_addr_t)v, pp->pr_alloc->pa_pagesz);
 }
 
+#ifdef POOL_REDZONE
+#if defined(_LP64)
+# define PRIME 0x9e37fffffffc0000UL
+#else /* defined(_LP64) */
+# define PRIME 0x9e3779b1
+#endif /* defined(_LP64) */
+#define STATIC_BYTE	0xFE
+CTASSERT(POOL_REDZONE_SIZE > 1);
+
+static inline uint8_t
+pool_pattern_generate(const void *p)
+{
+	return (uint8_t)(((uintptr_t)p) * PRIME
+	   >> ((sizeof(uintptr_t) - sizeof(uint8_t))) * CHAR_BIT);
+}
+
+static void
+pool_redzone_init(struct pool *pp, size_t requested_size)
+{
+	size_t nsz;
+
+	if (pp->pr_roflags & PR_NOTOUCH) {
+		pp->pr_reqsize = 0;
+		pp->pr_redzone = false;
+		return;
+	}
+
+	/*
+	 * We may have extended the requested size earlier; check if
+	 * there's naturally space in the padding for a red zone.
+	 */
+	if (pp->pr_size - requested_size >= POOL_REDZONE_SIZE) {
+		pp->pr_reqsize = requested_size;
+		pp->pr_redzone = true;
+		return;
+	}
+
+	/*
+	 * No space in the natural padding; check if we can extend a
+	 * bit the size of the pool.
+	 */
+	nsz = roundup(pp->pr_size + POOL_REDZONE_SIZE, pp->pr_align);
+	if (nsz <= pp->pr_alloc->pa_pagesz) {
+		/* Ok, we can */
+		pp->pr_size = nsz;
+		pp->pr_reqsize = requested_size;
+		pp->pr_redzone = true;
+	} else {
+		/* No space for a red zone... snif :'( */
+		pp->pr_reqsize = 0;
+		pp->pr_redzone = false;
+		printf("pool redzone disabled for '%s'\n", pp->pr_wchan);
+	}
+}
+
+static void
+pool_redzone_fill(struct pool *pp, void *p)
+{
+	uint8_t *cp, pat;
+	const uint8_t *ep;
+
+	if (!pp->pr_redzone)
+		return;
+
+	cp = (uint8_t *)p + pp->pr_reqsize;
+	ep = cp + POOL_REDZONE_SIZE;
+
+	/*
+	 * We really don't want the first byte of the red zone to be '\0';
+	 * an off-by-one in a string may not be properly detected.
+	 */
+	pat = pool_pattern_generate(cp);
+	*cp = (pat == '\0') ? STATIC_BYTE: pat;
+	cp++;
+
+	while (cp < ep) {
+		*cp = pool_pattern_generate(cp);
+		cp++;
+	}
+}
+
+static void
+pool_redzone_check(struct pool *pp, void *p)
+{
+	uint8_t *cp, pat, expected;
+	const uint8_t *ep;
+
+	if (!pp->pr_redzone)
+		return;
+
+	cp = (uint8_t *)p + pp->pr_reqsize;
+	ep = cp + POOL_REDZONE_SIZE;
+
+	pat = pool_pattern_generate(cp);
+	expected = (pat == '\0') ? STATIC_BYTE: pat;
+	if (expected != *cp) {
+		panic("%s: %p: 0x%02x != 0x%02x\n",
+		   __func__, cp, *cp, expected);
+	}
+	cp++;
+
+	while (cp < ep) {
+		expected = pool_pattern_generate(cp);
+		if (*cp != expected) {
+			panic("%s: %p: 0x%02x != 0x%02x\n",
+			   __func__, cp, *cp, expected);
+		}
+		cp++;
+	}
+}
+
+#endif /* POOL_REDZONE */
+
+
 #ifdef POOL_SUBPAGE
 /* Sub-page allocator, for machines with large hardware pages. */
 void *
@@ -2750,3 +2887,100 @@ print:
 	}
 }
 #endif /* defined(DDB) */
+
+static int
+pool_sysctl(SYSCTLFN_ARGS)
+{
+	struct pool_sysctl data;
+	struct pool *pp;
+	struct pool_cache *pc;
+	pool_cache_cpu_t *cc;
+	int error;
+	size_t i, written;
+
+	if (oldp == NULL) {
+		*oldlenp = 0;
+		TAILQ_FOREACH(pp, &pool_head, pr_poollist)
+			*oldlenp += sizeof(data);
+		return 0;
+	}
+
+	memset(&data, 0, sizeof(data));
+	error = 0;
+	written = 0;
+	TAILQ_FOREACH(pp, &pool_head, pr_poollist) {
+		if (written + sizeof(data) > *oldlenp)
+			break;
+		strlcpy(data.pr_wchan, pp->pr_wchan, sizeof(data.pr_wchan));
+		data.pr_pagesize = pp->pr_alloc->pa_pagesz;
+		data.pr_flags = pp->pr_roflags | pp->pr_flags;
+#define COPY(field) data.field = pp->field
+		COPY(pr_size);
+
+		COPY(pr_itemsperpage);
+		COPY(pr_nitems);
+		COPY(pr_nout);
+		COPY(pr_hardlimit);
+		COPY(pr_npages);
+		COPY(pr_minpages);
+		COPY(pr_maxpages);
+
+		COPY(pr_nget);
+		COPY(pr_nfail);
+		COPY(pr_nput);
+		COPY(pr_npagealloc);
+		COPY(pr_npagefree);
+		COPY(pr_hiwat);
+		COPY(pr_nidle);
+#undef COPY
+
+		data.pr_cache_nmiss_pcpu = 0;
+		data.pr_cache_nhit_pcpu = 0;
+		if (pp->pr_cache) {
+			pc = pp->pr_cache;
+			data.pr_cache_meta_size = pc->pc_pcgsize;
+			data.pr_cache_nfull = pc->pc_nfull;
+			data.pr_cache_npartial = pc->pc_npart;
+			data.pr_cache_nempty = pc->pc_nempty;
+			data.pr_cache_ncontended = pc->pc_contended;
+			data.pr_cache_nmiss_global = pc->pc_misses;
+			data.pr_cache_nhit_global = pc->pc_hits;
+			for (i = 0; i < pc->pc_ncpu; ++i) {
+				cc = pc->pc_cpus[i];
+				if (cc == NULL)
+					continue;
+				data.pr_cache_nmiss_pcpu = cc->cc_misses;
+				data.pr_cache_nhit_pcpu = cc->cc_hits;
+			}
+		} else {
+			data.pr_cache_meta_size = 0;
+			data.pr_cache_nfull = 0;
+			data.pr_cache_npartial = 0;
+			data.pr_cache_nempty = 0;
+			data.pr_cache_ncontended = 0;
+			data.pr_cache_nmiss_global = 0;
+			data.pr_cache_nhit_global = 0;
+		}
+
+		error = sysctl_copyout(l, &data, oldp, sizeof(data));
+		if (error)
+			break;
+		written += sizeof(data);
+		oldp = (char *)oldp + sizeof(data);
+	}
+
+	*oldlenp = written;
+	return error;
+}
+
+SYSCTL_SETUP(sysctl_pool_setup, "sysctl kern.pool setup")
+{
+	const struct sysctlnode *rnode = NULL;
+
+	sysctl_createv(clog, 0, NULL, &rnode,
+		       CTLFLAG_PERMANENT,
+		       CTLTYPE_STRUCT, "pool",
+		       SYSCTL_DESCR("Get pool statistics"),
+		       pool_sysctl, 0, NULL, 0,
+		       CTL_KERN, CTL_CREATE, CTL_EOL);
+}

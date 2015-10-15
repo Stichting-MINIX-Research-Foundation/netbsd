@@ -1,4 +1,4 @@
-/*	$NetBSD: fd.c,v 1.106 2013/05/24 18:24:27 christos Exp $	*/
+/*	$NetBSD: fd.c,v 1.118 2015/07/11 10:32:46 kamil Exp $	*/
 
 /*-
  * Copyright (c) 1998 The NetBSD Foundation, Inc.
@@ -64,7 +64,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: fd.c,v 1.106 2013/05/24 18:24:27 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: fd.c,v 1.118 2015/07/11 10:32:46 kamil Exp $");
 
 #include "opt_ddb.h"
 #include "opt_m68k_arch.h"
@@ -89,7 +89,7 @@ __KERNEL_RCSID(0, "$NetBSD: fd.c,v 1.106 2013/05/24 18:24:27 christos Exp $");
 #include <sys/queue.h>
 #include <sys/proc.h>
 #include <sys/fdio.h>
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 
 #include <dev/cons.h>
 
@@ -271,17 +271,36 @@ dev_type_ioctl(fdioctl);
 dev_type_strategy(fdstrategy);
 
 const struct bdevsw fd_bdevsw = {
-	fdopen, fdclose, fdstrategy, fdioctl, nodump, nosize, D_DISK
+	.d_open = fdopen,
+	.d_close = fdclose,
+	.d_strategy = fdstrategy,
+	.d_ioctl = fdioctl,
+	.d_dump = nodump,
+	.d_psize = nosize,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
 const struct cdevsw fd_cdevsw = {
-	fdopen, fdclose, fdread, fdwrite, fdioctl,
-	nostop, notty, nopoll, nommap, nokqfilter, D_DISK
+	.d_open = fdopen,
+	.d_close = fdclose,
+	.d_read = fdread,
+	.d_write = fdwrite,
+	.d_ioctl = fdioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
 void fdstart(struct fd_softc *);
 
-struct dkdriver fddkdriver = { fdstrategy };
+struct dkdriver fddkdriver = {
+	.d_strategy = fdstrategy
+};
 
 void fd_set_motor(struct fdc_softc *, int);
 void fd_motor_off(void *);
@@ -335,7 +354,7 @@ fdc_dmastart(struct fdc_softc *fdc, int read, void *addr, vsize_t count)
 	 * Note 2:
 	 *  FDC is connected to LSB 8 bits of X68000 16 bit bus
 	 *  (as BUS_SPACE_MAP_SHIFTED_ODD defined in bus.h)
-	 *  so each FDC regsiter is mapped at sparse odd address.
+	 *  so each FDC register is mapped at sparse odd address.
 	 *
 	 * XXX: No proper API to get DMA address of FDC register for DMAC.
 	 */
@@ -508,12 +527,12 @@ fdcreset(struct fdc_softc *fdc)
 static int
 fdcpoll(struct fdc_softc *fdc)
 {
-	int i = 25000, n;
+	int i = 25000;
 
 	while (--i > 0) {
 		if ((intio_get_sicilian_intr() & SICILIAN_STAT_FDC) != 0) {
 			out_fdc(fdc->sc_iot, fdc->sc_ioh, NE7CMD_SENSEI);
-			n = fdcresult(fdc);
+			fdcresult(fdc);
 			break;
 		}
 		DELAY(100);
@@ -645,7 +664,7 @@ fdattach(device_t parent, device_t self, void *aux)
 	mountroothook_establish(fd_mountroot_hook, fd->sc_dev);
 
 	rnd_attach_source(&fd->rnd_source, device_xname(fd->sc_dev),
-	    RND_TYPE_DISK, 0);
+	    RND_TYPE_DISK, RND_FLAG_DEFAULT);
 }
 
 struct fd_type *
@@ -1598,34 +1617,12 @@ fdioctl(dev_t dev, u_long cmd, void *addr, int flag, struct lwp *l)
 	int il[FD_MAX_NSEC + 1];
 	int i, j;
 
+	error = disk_ioctl(&fd->sc_dk, dev, cmd, addr, flag, l);
+	if (error != EPASSTHROUGH)
+		return error;
+
 	DPRINTF(("fdioctl:"));
 	switch (cmd) {
-	case DIOCGDINFO:
-		DPRINTF(("DIOCGDINFO\n"));
-#if 1
-		*(struct disklabel *)addr = *fd->sc_dk.dk_label;
-		return 0;
-#else
-		memset(&buffer, 0, sizeof(buffer));
-
-		buffer.d_secpercyl = fd->sc_type->seccyl;
-		buffer.d_type = DTYPE_FLOPPY;
-		buffer.d_secsize = 128 << fd->sc_type->secsize;
-
-		if (readdisklabel(dev, fdstrategy, &buffer, NULL) != NULL)
-			return EINVAL;
-
-		*(struct disklabel *)addr = buffer;
-		return 0;
-#endif
-
-	case DIOCGPART:
-		DPRINTF(("DIOCGPART\n"));
-		((struct partinfo *)addr)->disklab = fd->sc_dk.dk_label;
-		((struct partinfo *)addr)->part =
-		    &fd->sc_dk.dk_label->d_partitions[part];
-		return 0;
-
 	case DIOCWLABEL:
 		DPRINTF(("DIOCWLABEL\n"));
 		if ((flag & FWRITE) == 0)
@@ -1882,7 +1879,7 @@ fdgetdisklabel(struct fd_softc *sc, dev_t dev)
 	lp->d_ncylinders  = sc->sc_type->size / lp->d_secpercyl;
 	lp->d_secperunit  = sc->sc_type->size;
 
-	lp->d_type        = DTYPE_FLOPPY;
+	lp->d_type        = DKTYPE_FLOPPY;
 	lp->d_rpm         = 300; 	/* XXX */
 	lp->d_interleave  = 1;		/* FIXME: is this OK?		*/
 	lp->d_bbsize      = 0;

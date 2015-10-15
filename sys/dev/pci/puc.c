@@ -1,4 +1,4 @@
-/*	$NetBSD: puc.c,v 1.36 2013/07/23 07:40:38 soren Exp $	*/
+/*	$NetBSD: puc.c,v 1.38 2015/05/04 21:21:39 ryo Exp $	*/
 
 /*
  * Copyright (c) 1996, 1998, 1999
@@ -53,7 +53,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: puc.c,v 1.36 2013/07/23 07:40:38 soren Exp $");
+__KERNEL_RCSID(0, "$NetBSD: puc.c,v 1.38 2015/05/04 21:21:39 ryo Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -164,7 +164,7 @@ puc_attach(device_t parent, device_t self, void *aux)
 		printf(": unknown PCI communications device\n");
 		printf("%s: compile kernel with PUC_PRINT_REGS and larger\n",
 		    device_xname(self));
-		printf("%s: mesage buffer (via 'options MSGBUFSIZE=...'),\n",
+		printf("%s: message buffer (via 'options MSGBUFSIZE=...'),\n",
 		    device_xname(self));
 		printf("%s: and report the result with send-pr\n",
 		    device_xname(self));
@@ -236,7 +236,8 @@ puc_attach(device_t parent, device_t self, void *aux)
 
 	/* SB16C10xx board specific initialization */
 	if (PCI_VENDOR(pa->pa_id) == PCI_VENDOR_SYSTEMBASE &&
-	    (PCI_PRODUCT(pa->pa_id) == PCI_PRODUCT_SYSTEMBASE_SB16C1054 ||
+	    (PCI_PRODUCT(pa->pa_id) == PCI_PRODUCT_SYSTEMBASE_SB16C1050 ||
+	    PCI_PRODUCT(pa->pa_id) == PCI_PRODUCT_SYSTEMBASE_SB16C1054 ||
 	    PCI_PRODUCT(pa->pa_id) == PCI_PRODUCT_SYSTEMBASE_SB16C1058)) {
 		if (!sc->sc_bar_mappings[1].mapped) {
 			aprint_error_dev(self,

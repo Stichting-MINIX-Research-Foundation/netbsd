@@ -1,4 +1,4 @@
-/*	$NetBSD: psycho.c,v 1.117 2013/11/08 15:44:26 nakayama Exp $	*/
+/*	$NetBSD: psycho.c,v 1.121 2015/10/02 05:22:52 msaitoh Exp $	*/
 
 /*
  * Copyright (c) 1999, 2000 Matthew R. Green
@@ -55,7 +55,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: psycho.c,v 1.117 2013/11/08 15:44:26 nakayama Exp $");
+__KERNEL_RCSID(0, "$NetBSD: psycho.c,v 1.121 2015/10/02 05:22:52 msaitoh Exp $");
 
 #include "opt_ddb.h"
 
@@ -286,7 +286,7 @@ psycho_dump_intmap(struct psycho_softc *sc)
  *	- get interrupt-map and interrupt-map-mask
  *	- setup the chipsets.
  *	- if we're the first of the pair, initialise the IOMMU, otherwise
- *	  just copy it's tags and addresses.
+ *	  just copy its tags and addresses.
  */
 static	void
 psycho_attach(device_t parent, device_t self, void *aux)
@@ -755,7 +755,7 @@ psycho_power_button_pressed(void *arg)
  */
 
 /*
- * allocate a PCI chipset tag and set it's cookie.
+ * allocate a PCI chipset tag and set its cookie.
  */
 static pci_chipset_tag_t
 psycho_alloc_chipset(struct psycho_pbm *pp, int node, pci_chipset_tag_t pc)
@@ -1272,8 +1272,7 @@ psycho_intr_establish(bus_space_tag_t t, int ihandle, int level,
 	int ino;
 	long vec = INTVEC(ihandle);
 
-	ih = (struct intrhand *)
-		malloc(sizeof(struct intrhand), M_DEVBUF, M_NOWAIT);
+	ih = malloc(sizeof(struct intrhand), M_DEVBUF, M_NOWAIT);
 	if (ih == NULL)
 		return (NULL);
 
@@ -1342,6 +1341,7 @@ psycho_intr_establish(bus_space_tag_t t, int ihandle, int level,
 	}
 
 	printf("Cannot find interrupt vector %lx\n", vec);
+	free(ih, M_DEVBUF);
 	return (NULL);
 
 found:
@@ -1405,7 +1405,7 @@ psycho_pci_conf_read(pci_chipset_tag_t pc, pcitag_t tag, int reg)
 
 	DPRINTF(PDB_CONF, ("%s: tag %lx reg %x ", __func__,
 		(long)tag, reg));
-	if (PCITAG_NODE(tag) != -1) {
+	if (PCITAG_NODE(tag) != -1 && (unsigned int)reg < PCI_CONF_SIZE) {
 
 		DPRINTF(PDB_CONF, ("asi=%x addr=%qx (offset=%x) ...",
 			sc->sc_configaddr._asi,
@@ -1451,7 +1451,10 @@ psycho_pci_conf_write(pci_chipset_tag_t pc, pcitag_t tag, int reg, pcireg_t data
 		DPRINTF(PDB_CONF, ("%s: bad addr", __func__));
 		return;
 	}
-		
+
+	if ((unsigned int)reg >= PCI_CONF_SIZE)
+		return;
+
 	bus_space_write_4(sc->sc_configtag, sc->sc_configaddr,
 		PCITAG_OFFSET(tag) + reg, data);
 }
@@ -1572,6 +1575,14 @@ psycho_getstick(void)
 	    (bus_space_read_8(psycho0->sc_bustag, psycho0->sc_bh,
 	    STICK_CNT_HIGH) & 0x7fffffff) << 32;
 	return stick;
+}
+
+uint32_t
+psycho_getstick32(void)
+{
+
+	return bus_space_read_8(psycho0->sc_bustag, psycho0->sc_bh,
+	    STICK_CNT_LOW);
 }
 
 void

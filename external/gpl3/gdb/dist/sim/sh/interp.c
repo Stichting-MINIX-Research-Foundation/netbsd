@@ -473,22 +473,22 @@ int valid[16];
 #define UNDEF(x)
 #endif
 
-static void parse_and_set_memory_size PARAMS ((char *str));
-static int IOMEM PARAMS ((int addr, int write, int value));
-static struct loop_bounds get_loop_bounds PARAMS ((int, int, unsigned char *,
-						   unsigned char *, int, int));
-static void process_wlat_addr PARAMS ((int, int));
-static void process_wwat_addr PARAMS ((int, int));
-static void process_wbat_addr PARAMS ((int, int));
-static int process_rlat_addr PARAMS ((int));
-static int process_rwat_addr PARAMS ((int));
-static int process_rbat_addr PARAMS ((int));
-static void INLINE wlat_fast PARAMS ((unsigned char *, int, int, int));
-static void INLINE wwat_fast PARAMS ((unsigned char *, int, int, int, int));
-static void INLINE wbat_fast PARAMS ((unsigned char *, int, int, int));
-static int INLINE rlat_fast PARAMS ((unsigned char *, int, int));
-static int INLINE rwat_fast PARAMS ((unsigned char *, int, int, int));
-static int INLINE rbat_fast PARAMS ((unsigned char *, int, int));
+static void parse_and_set_memory_size (const char *str);
+static int IOMEM (int addr, int write, int value);
+static struct loop_bounds get_loop_bounds (int, int, unsigned char *,
+					   unsigned char *, int, int);
+static void process_wlat_addr (int, int);
+static void process_wwat_addr (int, int);
+static void process_wbat_addr (int, int);
+static int process_rlat_addr (int);
+static int process_rwat_addr (int);
+static int process_rbat_addr (int);
+static void INLINE wlat_fast (unsigned char *, int, int, int);
+static void INLINE wwat_fast (unsigned char *, int, int, int, int);
+static void INLINE wbat_fast (unsigned char *, int, int, int);
+static int INLINE rlat_fast (unsigned char *, int, int);
+static int INLINE rwat_fast (unsigned char *, int, int, int);
+static int INLINE rbat_fast (unsigned char *, int, int);
 
 static host_callback *callback;
 
@@ -1261,16 +1261,6 @@ trap (i, regs, insn_ptr, memory, maskl, maskw, endianw)
   return 0;
 }
 
-void
-control_c (sig, code, scp, addr)
-     int sig;
-     int code;
-     char *scp;
-     char *addr;
-{
-  raise_exception (SIGINT);
-}
-
 static int
 div1 (R, iRn2, iRn1/*, T*/)
      int *R;
@@ -1979,7 +1969,6 @@ sim_resume (sd, step, siggnal)
   register int endianw = global_endianw;
 
   int tick_start = get_now ();
-  void (*prev) ();
   void (*prev_fpe) ();
 
   register unsigned short *jump_table = sh_jump_table;
@@ -1996,7 +1985,6 @@ sim_resume (sd, step, siggnal)
   register unsigned char *memory;
   register unsigned int sbit = ((unsigned int) 1 << 31);
 
-  prev = signal (SIGINT, control_c);
   prev_fpe = signal (SIGFPE, SIG_IGN);
 
   init_pointers ();
@@ -2134,7 +2122,6 @@ sim_resume (sd, step, siggnal)
     }
 
   signal (SIGFPE, prev_fpe);
-  signal (SIGINT, prev);
 }
 
 int
@@ -2676,7 +2663,7 @@ sim_open (kind, cb, abfd, argv)
 
 static void
 parse_and_set_memory_size (str)
-     char *str;
+     const char *str;
 {
   int n;
 
@@ -2698,7 +2685,7 @@ sim_close (sd, quitting)
 SIM_RC
 sim_load (sd, prog, abfd, from_tty)
      SIM_DESC sd;
-     char *prog;
+     const char *prog;
      bfd *abfd;
      int from_tty;
 {
@@ -2752,9 +2739,9 @@ sim_create_inferior (sd, prog_bfd, argv, env)
 void
 sim_do_command (sd, cmd)
      SIM_DESC sd;
-     char *cmd;
+     const char *cmd;
 {
-  char *sms_cmd = "set-memory-size";
+  const char *sms_cmd = "set-memory-size";
   int cmdsize;
 
   if (cmd == NULL || *cmd == '\0')
@@ -2789,7 +2776,7 @@ sim_set_callbacks (p)
 }
 
 char **
-sim_complete_command (SIM_DESC sd, char *text, char *word)
+sim_complete_command (SIM_DESC sd, const char *text, const char *word)
 {
   return NULL;
 }

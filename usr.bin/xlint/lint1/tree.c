@@ -1,4 +1,4 @@
-/*	$NetBSD: tree.c,v 1.73 2013/04/19 18:51:14 christos Exp $	*/
+/*	$NetBSD: tree.c,v 1.81 2015/08/28 09:42:07 joerg Exp $	*/
 
 /*
  * Copyright (c) 1994, 1995 Jochen Pohl
@@ -37,7 +37,7 @@
 
 #include <sys/cdefs.h>
 #if defined(__RCSID) && !defined(lint)
-__RCSID("$NetBSD: tree.c,v 1.73 2013/04/19 18:51:14 christos Exp $");
+__RCSID("$NetBSD: tree.c,v 1.81 2015/08/28 09:42:07 joerg Exp $");
 #endif
 
 #include <stdlib.h>
@@ -88,6 +88,45 @@ static	void	chkcomp(op_t, tnode_t *, tnode_t *);
 static	void	precconf(tnode_t *);
 
 extern sig_atomic_t fpe;
+
+#if 0
+static char *
+dumpnode(char *buf, size_t len, tnode_t *tn) {
+	const char *n = getopname(tn->tn_op);
+	const char *s;
+	char tbuf[256];
+
+	switch (tn->tn_op) {
+	case NAME:
+		s = tn->tn_sym->s_name;
+		break;
+	case CON:
+	case STRING:
+		s = "*";	/* todo */
+		break;
+	default:
+		s = NULL;
+		break;
+	}
+	char lb[1024];
+	char rb[1024];
+
+	if (s == NULL && tn->tn_left != NULL)
+		dumpnode(lb, sizeof(lb), tn->tn_left);
+	else
+		strcpy(lb, "(null)");
+
+	if (s == NULL && tn->tn_right != NULL)
+		dumpnode(rb, sizeof(rb), tn->tn_right);
+	else
+		strcpy(rb, "(null)");
+
+
+	snprintf(buf, len, "%s: (%s) = %s [%s, %s]", n,
+	    tyname(tbuf, sizeof(tbuf), tn->tn_type), s, lb, rb);
+	return buf;
+}
+#endif
 
 /*
  * Increase degree of reference.
@@ -204,7 +243,7 @@ getnnode(sym_t *sym, int ntok)
 	}
 
 	if (sym->s_kind != FVFT && sym->s_kind != FMOS)
-		LERROR("getnnode()");
+		LERROR("getnnode(%d)", sym->s_kind);
 
 	n = getnode();
 	n->tn_type = sym->s_type;
@@ -392,11 +431,14 @@ strmemb(tnode_t *tn, op_t op, sym_t *msym)
 				error(103);
 			}
 		} else {
+			char buf[64];
 			/* left operand of "->" must be pointer to ... */
 			if (tflag && tn->tn_type->t_tspec == PTR) {
-				warning(104);
+				tyname(buf, sizeof(buf), tn->tn_type);
+				warning(104, buf);
 			} else {
-				error(104);
+				tyname(buf, sizeof(buf), tn->tn_type);
+				error(104, buf);
 			}
 		}
 	} else {
@@ -1616,9 +1658,6 @@ convert(op_t op, int arg, type_t *tp, tnode_t *tn)
 	tnode_t	*ntn;
 	tspec_t	nt, ot, ost = NOTSPEC;
 
-	if (tn->tn_lvalue)
-		LERROR("convert()");
-
 	nt = tp->t_tspec;
 	if ((ot = tn->tn_type->t_tspec) == PTR)
 		ost = tn->tn_type->t_subt->t_tspec;
@@ -1640,6 +1679,7 @@ convert(op_t op, int arg, type_t *tp, tnode_t *tn)
 	ntn->tn_op = CVT;
 	ntn->tn_type = tp;
 	ntn->tn_cast = op == CVT;
+	ntn->tn_right = NULL;
 	if (tn->tn_op != CON || nt == VOID) {
 		ntn->tn_left = tn;
 	} else {
@@ -1965,9 +2005,18 @@ cvtcon(op_t op, int arg, type_t *tp, val_t *nv, val_t *v)
 		v->v_ansiu = 0;
 	}
 
-	if (nt != FLOAT && nt != DOUBLE && nt != LDOUBLE) {
+	switch (nt) {
+	case FLOAT:
+	case FCOMPLEX:
+	case DOUBLE:
+	case DCOMPLEX:
+	case LDOUBLE:
+	case LCOMPLEX:
+		break;
+	default:
 		sz = tp->t_isfield ? tp->t_flen : size(nt);
 		nv->v_quad = xsign(nv->v_quad, nt, sz);
+		break;
 	}
 
 	if (rchk && op != CVT) {
@@ -2332,6 +2381,7 @@ bldri(op_t op, tnode_t *ln)
 		return NULL;
 	}
 	ntn = mktnode(op, cn->tn_type, ln, cn);
+	ntn->tn_lvalue = 1;
 
 	return (ntn);
 }
@@ -2484,12 +2534,12 @@ bldcol(tnode_t *ln, tnode_t *rn)
 	} else if (lt == PTR && ln->tn_type->t_subt->t_tspec == VOID) {
 		if (rt != PTR)
 			LERROR("bldcol()");
-		rtp = ln->tn_type;
+		rtp = rn->tn_type;
 		mrgqual(&rtp, ln->tn_type, rn->tn_type);
 	} else if (rt == PTR && rn->tn_type->t_subt->t_tspec == VOID) {
 		if (lt != PTR)
 			LERROR("bldcol()");
-		rtp = rn->tn_type;
+		rtp = ln->tn_type;
 		mrgqual(&rtp, ln->tn_type, rn->tn_type);
 	} else {
 		if (lt != PTR || rt != PTR)
@@ -2960,17 +3010,21 @@ bldszof(type_t *tp)
 int64_t
 tsize(type_t *tp)
 {
-	int	elem, elsz;
+	int	elem, elsz, flex;
 
 	elem = 1;
+	flex = 0;
 	while (tp->t_tspec == ARRAY) {
+		flex = 1;	/* allow c99 flex arrays [] [0] */
 		elem *= tp->t_dim;
 		tp = tp->t_subt;
 	}
 	if (elem == 0) {
-		/* cannot take size of incomplete type */
-		error(143);
-		elem = 1;
+		if (!flex) {
+			/* cannot take size of incomplete type */
+			error(143);
+			elem = 1;
+		}
 	}
 	switch (tp->t_tspec) {
 	case FUNC:
@@ -3170,8 +3224,9 @@ funccall(tnode_t *func, tnode_t *args)
 
 	if (func->tn_type->t_tspec != PTR ||
 	    func->tn_type->t_subt->t_tspec != FUNC) {
+		char buf[256];
 		/* illegal function */
-		error(149);
+		error(149, tyname(buf, sizeof(buf), func->tn_type));
 		return (NULL);
 	}
 
@@ -3567,7 +3622,9 @@ chkmisc(tnode_t *tn, int vctx, int tctx, int eqwarn, int fcall, int rvdisc,
 		break;
 	case CALL:
 		if (ln->tn_op != AMPER || ln->tn_left->tn_op != NAME)
-			LERROR("chkmisc()");
+			LERROR("chkmisc(op=%s != %s || %s != %s)",
+			    getopname(ln->tn_op), getopname(AMPER),
+			    getopname(ln->tn_left->tn_op), getopname(NAME));
 		if (!szof)
 			outcall(tn, vctx || tctx, rvdisc);
 		break;
@@ -3738,14 +3795,14 @@ chkcomp(op_t op, tnode_t *ln, tnode_t *rn)
 
 	if ((hflag || pflag) && lt == CHAR && rn->tn_op == CON &&
 	    (rn->tn_val->v_quad < 0 ||
-	     rn->tn_val->v_quad > ~(~0 << (CHAR_BIT - 1)))) {
+	     rn->tn_val->v_quad > (int)~(~0U << (CHAR_BIT - 1)))) {
 		/* nonportable character comparison, op %s */
 		warning(230, mp->m_name);
 		return;
 	}
 	if ((hflag || pflag) && rt == CHAR && ln->tn_op == CON &&
 	    (ln->tn_val->v_quad < 0 ||
-	     ln->tn_val->v_quad > ~(~0 << (CHAR_BIT - 1)))) {
+	     ln->tn_val->v_quad > (int)~(~0U << (CHAR_BIT - 1)))) {
 		/* nonportable character comparison, op %s */
 		warning(230, mp->m_name);
 		return;

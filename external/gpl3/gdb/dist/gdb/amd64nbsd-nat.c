@@ -1,6 +1,6 @@
 /* Native-dependent code for NetBSD/amd64.
 
-   Copyright (C) 2003-2013 Free Software Foundation, Inc.
+   Copyright (C) 2003-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -19,8 +19,6 @@
 
 #include "defs.h"
 #include "target.h"
-
-#include "gdb_assert.h"
 
 #include "nbsd-nat.h"
 #include "amd64-tdep.h"
@@ -78,6 +76,7 @@ amd64nbsd_supply_pcb (struct regcache *regcache, struct pcb *pcb)
 {
   struct switchframe sf;
   int regnum;
+  long zero = 0;
 
   /* The following is true for NetBSD/amd64:
 

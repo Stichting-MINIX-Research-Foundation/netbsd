@@ -1,4 +1,4 @@
-/*	$NetBSD: rumpblk.c,v 1.54 2013/04/30 00:03:54 pooka Exp $	*/
+/*	$NetBSD: rumpblk.c,v 1.60 2015/05/26 16:48:05 pooka Exp $	*/
 
 /*
  * Copyright (c) 2009 Antti Kantee.  All Rights Reserved.
@@ -37,7 +37,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: rumpblk.c,v 1.54 2013/04/30 00:03:54 pooka Exp $");
+__KERNEL_RCSID(0, "$NetBSD: rumpblk.c,v 1.60 2015/05/26 16:48:05 pooka Exp $");
 
 #include <sys/param.h>
 #include <sys/buf.h>
@@ -95,18 +95,40 @@ dev_type_dump(rumpblk_dump);
 dev_type_size(rumpblk_size);
 
 static const struct bdevsw rumpblk_bdevsw = {
-	rumpblk_open, rumpblk_close, rumpblk_strategy, rumpblk_ioctl,
-	nodump, nosize, D_DISK
+	.d_open = rumpblk_open,
+	.d_close = rumpblk_close,
+	.d_strategy = rumpblk_strategy,
+	.d_ioctl = rumpblk_ioctl,
+	.d_dump = nodump,
+	.d_psize = nosize,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
 static const struct bdevsw rumpblk_bdevsw_fail = {
-	rumpblk_open, rumpblk_close, rumpblk_strategy_fail, rumpblk_ioctl,
-	nodump, nosize, D_DISK
+	.d_open = rumpblk_open,
+	.d_close = rumpblk_close,
+	.d_strategy = rumpblk_strategy_fail,
+	.d_ioctl = rumpblk_ioctl,
+	.d_dump = nodump,
+	.d_psize = nosize,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
 static const struct cdevsw rumpblk_cdevsw = {
-	rumpblk_open, rumpblk_close, rumpblk_read, rumpblk_write,
-	rumpblk_ioctl, nostop, notty, nopoll, nommap, nokqfilter, D_DISK
+	.d_open = rumpblk_open,
+	.d_close = rumpblk_close,
+	.d_read = rumpblk_read,
+	.d_write = rumpblk_write,
+	.d_ioctl = rumpblk_ioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
 static int backend_open(struct rblkdev *, const char *);
@@ -137,7 +159,7 @@ makedefaultlabel(struct disklabel *lp, off_t size, int part)
 	strncpy(lp->d_typename, "rumpd", sizeof(lp->d_typename));
 	strncpy(lp->d_packname, "fictitious", sizeof(lp->d_packname));
 
-	lp->d_type = DTYPE_RUMPD;
+	lp->d_type = DKTYPE_RUMPD;
 	lp->d_rpm = 11;
 	lp->d_interleave = 1;
 	lp->d_flags = 0;
@@ -319,6 +341,25 @@ rumpblk_deregister(const char *path)
 	return 0;
 }
 
+/*
+ * Release all backend resources, to be called only when the rump
+ * kernel is being shut down.
+ * This routine does not do a full "fini" since we're going down anyway.
+ */
+void
+rumpblk_fini(void)
+{
+	int i;
+
+	for (i = 0; i < RUMPBLK_SIZE; i++) {
+		struct rblkdev *rblk;
+
+		rblk = &minors[i];
+		if (rblk->rblk_fd != -1)
+			backend_close(rblk);
+	}
+}
+
 static int
 backend_open(struct rblkdev *rblk, const char *path)
 {
@@ -396,6 +437,10 @@ rumpblk_ioctl(dev_t dev, u_long xfer, void *addr, int flag, struct lwp *l)
 
 	/* it's synced enough along the write path */
 	case DIOCCACHESYNC:
+		break;
+
+	case DIOCGMEDIASIZE:
+		*(off_t *)addr = (off_t)rblk->rblk_size;
 		break;
 
 	default:

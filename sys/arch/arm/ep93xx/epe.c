@@ -1,4 +1,4 @@
-/*	$NetBSD: epe.c,v 1.29 2012/11/12 18:00:36 skrll Exp $	*/
+/*	$NetBSD: epe.c,v 1.32 2015/05/20 09:17:17 ozaki-r Exp $	*/
 
 /*
  * Copyright (c) 2004 Jesse Off
@@ -27,7 +27,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: epe.c,v 1.29 2012/11/12 18:00:36 skrll Exp $");
+__KERNEL_RCSID(0, "$NetBSD: epe.c,v 1.32 2015/05/20 09:17:17 ozaki-r Exp $");
 
 #include <sys/types.h>
 #include <sys/param.h>
@@ -63,11 +63,6 @@ __KERNEL_RCSID(0, "$NetBSD: epe.c,v 1.29 2012/11/12 18:00:36 skrll Exp $");
 #include <netinet/in_var.h>
 #include <netinet/ip.h>
 #include <netinet/if_inarp.h>
-#endif
-
-#ifdef NS
-#include <netns/ns.h>
-#include <netns/ns_if.h>
 #endif
 
 #include <net/bpf.h>
@@ -422,7 +417,8 @@ epe_init(struct epe_softc *sc)
 	/* maximum valid max frame length */
 	EPE_WRITE(MaxFrmLen, (0x7ff << 16)|MHLEN);
 	/* wait for receiver ready */
-	while((EPE_READ(BMSts) & BMSts_RxAct) == 0); 
+	while((EPE_READ(BMSts) & BMSts_RxAct) == 0)
+		continue;
 	/* enqueue the entries in RXStsQ and RXDQ */
 	CTRLPAGE_DMASYNC(0, sc->ctrlpage_dmamap->dm_mapsize, 
 		BUS_DMASYNC_PREWRITE|BUS_DMASYNC_PREREAD);
@@ -459,10 +455,7 @@ epe_mediachange(struct ifnet *ifp)
 int
 epe_mii_readreg(device_t self, int phy, int reg)
 {
-	struct epe_softc *sc;
 	uint32_t d, v;
-
-	sc = device_private(self);
 
 	d = EPE_READ(SelfCtl);
 	EPE_WRITE(SelfCtl, d & ~SelfCtl_PSPRS); /* no preamble suppress */
@@ -476,10 +469,7 @@ epe_mii_readreg(device_t self, int phy, int reg)
 void
 epe_mii_writereg(device_t self, int phy, int reg, int val)
 {
-	struct epe_softc *sc;
 	uint32_t d;
-
-	sc = device_private(self);
 
 	d = EPE_READ(SelfCtl);
 	EPE_WRITE(SelfCtl, d & ~SelfCtl_PSPRS); /* no preamble suppress */

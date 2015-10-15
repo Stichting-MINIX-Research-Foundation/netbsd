@@ -1,4 +1,4 @@
-/*	$NetBSD: vfs_lookup.c,v 1.200 2012/11/18 17:41:53 manu Exp $	*/
+/*	$NetBSD: vfs_lookup.c,v 1.203 2015/08/24 22:50:32 pooka Exp $	*/
 
 /*
  * Copyright (c) 1982, 1986, 1989, 1993
@@ -37,9 +37,11 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: vfs_lookup.c,v 1.200 2012/11/18 17:41:53 manu Exp $");
+__KERNEL_RCSID(0, "$NetBSD: vfs_lookup.c,v 1.203 2015/08/24 22:50:32 pooka Exp $");
 
+#ifdef _KERNEL_OPT
 #include "opt_magiclinks.h"
+#endif
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -482,9 +484,9 @@ struct namei_state {
 static void
 namei_init(struct namei_state *state, struct nameidata *ndp)
 {
+
 	state->ndp = ndp;
 	state->cnp = &ndp->ni_cnd;
-	KASSERT((state->cnp->cn_flags & INRELOOKUP) == 0);
 
 	state->docache = 0;
 	state->rdonly = 0;
@@ -1054,9 +1056,20 @@ unionlookup:
 	}
 
 	/*
-	 * "foundobj" and "searchdir" are both locked and held,
-	 * and may be the same vnode.
+	 * "searchdir" is locked and held, "foundobj" is held,
+	 * they may be the same vnode.
 	 */
+	if (searchdir != foundobj) {
+		if (cnp->cn_flags & ISDOTDOT)
+			VOP_UNLOCK(searchdir);
+		error = vn_lock(foundobj, LK_EXCLUSIVE);
+		if (cnp->cn_flags & ISDOTDOT)
+			vn_lock(searchdir, LK_EXCLUSIVE | LK_RETRY);
+		if (error != 0) {
+			vrele(foundobj);
+			goto done;
+		}
+	}
 
 	/*
 	 * Check to see if the vnode has been mounted on;
@@ -1725,9 +1738,7 @@ relookup(struct vnode *dvp, struct vnode **vpp, struct componentname *cnp, int d
 	 * We now have a segment name to search for, and a directory to search.
 	 */
 	*vpp = NULL;
-	cnp->cn_flags |= INRELOOKUP;
 	error = VOP_LOOKUP(dvp, vpp, cnp);
-	cnp->cn_flags &= ~INRELOOKUP;
 	if ((error) != 0) {
 #ifdef DIAGNOSTIC
 		if (*vpp != NULL)
@@ -1751,9 +1762,19 @@ relookup(struct vnode *dvp, struct vnode **vpp, struct componentname *cnp, int d
 	if (rdonly && cnp->cn_nameiop != LOOKUP) {
 		error = EROFS;
 		if (*vpp) {
-			vput(*vpp);
+			vrele(*vpp);
 		}
 		goto bad;
+	}
+	/*
+	 * Lock result.
+	 */
+	if (*vpp && *vpp != dvp) {
+		error = vn_lock(*vpp, LK_EXCLUSIVE);
+		if (error != 0) {
+			vrele(*vpp);
+			goto bad;
+		}
 	}
 	return (0);
 

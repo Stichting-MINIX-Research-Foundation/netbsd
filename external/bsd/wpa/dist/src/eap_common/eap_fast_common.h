@@ -2,14 +2,8 @@
  * EAP-FAST definitions (RFC 4851)
  * Copyright (c) 2004-2008, Jouni Malinen <j@w1.fi>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #ifndef EAP_FAST_H
@@ -108,6 +102,6 @@ u8 * eap_fast_derive_key(void *ssl_ctx, struct tls_connection *conn,
 void eap_fast_derive_eap_msk(const u8 *simck, u8 *msk);
 void eap_fast_derive_eap_emsk(const u8 *simck, u8 *emsk);
 int eap_fast_parse_tlv(struct eap_fast_tlv_parse *tlv,
-		       int tlv_type, u8 *pos, int len);
+		       int tlv_type, u8 *pos, size_t len);
 
 #endif /* EAP_FAST_H */

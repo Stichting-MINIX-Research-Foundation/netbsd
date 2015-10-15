@@ -1,4 +1,4 @@
-/*	$NetBSD: trap.c,v 1.104 2013/10/25 09:46:10 martin Exp $	*/
+/*	$NetBSD: trap.c,v 1.107 2015/03/02 11:05:12 martin Exp $	*/
 
 /*-
  * Copyright (c) 2001, 2002 The NetBSD Foundation, Inc.
@@ -58,7 +58,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: trap.c,v 1.104 2013/10/25 09:46:10 martin Exp $");
+__KERNEL_RCSID(0, "$NetBSD: trap.c,v 1.107 2015/03/02 11:05:12 martin Exp $");
 
 /* #define INTRDEBUG */
 /* #define TRAPDEBUG */
@@ -79,6 +79,7 @@ __KERNEL_RCSID(0, "$NetBSD: trap.c,v 1.104 2013/10/25 09:46:10 martin Exp $");
 #include <sys/acct.h>
 #include <sys/signal.h>
 #include <sys/device.h>
+#include <sys/kauth.h>
 #include <sys/kmem.h>
 #include <sys/userret.h>
 
@@ -881,9 +882,29 @@ do_onfault:
 				user_backtrace(frame, l, type);
 #endif
 				KSI_INIT_TRAP(&ksi);
-				ksi.ksi_signo = SIGSEGV;
-				ksi.ksi_code = (ret == EACCES ?
-						SEGV_ACCERR : SEGV_MAPERR);
+				switch (ret) {
+				case EACCES:
+					ksi.ksi_signo = SIGSEGV;
+					ksi.ksi_code = SEGV_ACCERR;
+					break;
+				case ENOMEM:
+					ksi.ksi_signo = SIGKILL;
+					printf("UVM: pid %d (%s), uid %d "
+					    "killed: out of swap\n",
+					    p->p_pid, p->p_comm,
+					    l->l_cred ? 
+						kauth_cred_geteuid(l->l_cred)
+						: -1);
+					break;
+				case EINVAL:
+					ksi.ksi_signo = SIGBUS;
+					ksi.ksi_code = BUS_ADRERR;
+					break;
+				default:
+					ksi.ksi_signo = SIGSEGV;
+					ksi.ksi_code = SEGV_MAPERR;
+					break;
+				}
 				ksi.ksi_trap = type;
 				ksi.ksi_addr = (void *)va;
 				trapsignal(l, &ksi);
@@ -983,27 +1004,6 @@ child_return(void *arg)
 void
 cpu_spawn_return(struct lwp *l)
 {
-	struct proc *p = l->l_proc;
-	pmap_t pmap = p->p_vmspace->vm_map.pmap;
-	pa_space_t space = pmap->pm_space;
-	struct trapframe *tf = l->l_md.md_regs;
-
-	/* Load all of the user's space registers. */
-	tf->tf_sr0 = tf->tf_sr1 = tf->tf_sr3 = tf->tf_sr2 =
-	tf->tf_sr4 = tf->tf_sr5 = tf->tf_sr6 = space;
-	tf->tf_iisq_head = tf->tf_iisq_tail = space;
-
-	/* Load the protection registers */
-	tf->tf_pidr1 = tf->tf_pidr2 = pmap->pm_pid;
-
-	/*
-	 * theoretically these could be inherited from the father,
-	 * but just in case.
-	 */
-	tf->tf_sr7 = HPPA_SID_KERNEL;
-	mfctl(CR_EIEM, tf->tf_eiem);
-	tf->tf_ipsw = PSW_C | PSW_Q | PSW_P | PSW_D | PSW_I /* | PSW_L */ |
-	    (curcpu()->ci_psw & PSW_O);
 
 	userret(l, l->l_md.md_regs->tf_iioq_head, 0);
 #ifdef DEBUG
@@ -1257,7 +1257,7 @@ syscall(struct trapframe *frame, int *args)
 		 * run reads as:
 		 *
 		 *	ldil	L%SYSCALLGATE, r1
-		 *	ble	4(sr7, r1)
+		 *	ble	4(srX, r1)
 		 *	ldi	__CONCAT(SYS_,x), t1
 		 *	comb,<>	%r0, %t1, __cerror
 		 *

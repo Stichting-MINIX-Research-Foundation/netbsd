@@ -1,4 +1,4 @@
-/*	$NetBSD: fmt_scaled.h,v 1.3 2013/11/08 19:18:25 christos Exp $	*/
+/*	$NetBSD: fmt_scaled.h,v 1.5 2015/04/03 23:58:19 christos Exp $	*/
 #ifndef FMT_SCALED_STRSIZE
 #define FMT_SCALED_STRSIZE	7
 #endif

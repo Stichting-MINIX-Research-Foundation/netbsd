@@ -1,4 +1,4 @@
-/*	$NetBSD: omapfb.c,v 1.24 2013/06/09 05:52:04 kiyohara Exp $	*/
+/*	$NetBSD: omapfb.c,v 1.27 2014/08/20 00:40:33 macallan Exp $	*/
 
 /*
  * Copyright (c) 2010 Michael Lorenz
@@ -31,7 +31,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: omapfb.c,v 1.24 2013/06/09 05:52:04 kiyohara Exp $");
+__KERNEL_RCSID(0, "$NetBSD: omapfb.c,v 1.27 2014/08/20 00:40:33 macallan Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -189,7 +189,7 @@ omapfb_attach(device_t parent, device_t self, void *aux)
 	unsigned long		defattr;
 	bool			is_console = false;
 	uint32_t		sz, reg;
-	int			segs, i, j, adr;
+	int			segs, i, j;
 
 	sc->sc_iot = obio->obio_iot;
 	sc->sc_dev = self;
@@ -256,7 +256,7 @@ omapfb_attach(device_t parent, device_t self, void *aux)
 	}
 
 	/* setup video DMA */
-	sc->sc_vramsize = (12 << 20) + 0x1000; /* 12MB + CLUT */
+	sc->sc_vramsize = (12 << 20) + PAGE_SIZE; /* 12MB + CLUT */
 
 	if (bus_dmamem_alloc(sc->sc_dmat, sc->sc_vramsize, 0, 0,
 	    sc->sc_dmamem, 1, &segs, BUS_DMA_NOWAIT) != 0) {
@@ -271,7 +271,7 @@ omapfb_attach(device_t parent, device_t self, void *aux)
 		aprint_error_dev(sc->sc_dev, "failed to map video RAM\n");
 		return;
 	}
-	sc->sc_fbaddr = (uint8_t *)sc->sc_vramaddr + 0x1000;
+	sc->sc_fbaddr = (uint8_t *)sc->sc_vramaddr + PAGE_SIZE;
 	sc->sc_clut = sc->sc_vramaddr;
 
 	if (bus_dmamap_create(sc->sc_dmat, sc->sc_vramsize, 1, sc->sc_vramsize,
@@ -321,7 +321,7 @@ omapfb_attach(device_t parent, device_t self, void *aux)
 	/* we use overlay 1 for the console and X */
 	bus_space_write_4(sc->sc_iot, sc->sc_regh, OMAPFB_DISPC_GLOBAL_ALPHA,
 	    0x00ff00ff);
-	sc->sc_fbhwaddr = sc->sc_dmamem->ds_addr + 0x1000;
+	sc->sc_fbhwaddr = sc->sc_dmamem->ds_addr + PAGE_SIZE;
 	bus_space_write_4(sc->sc_iot, sc->sc_regh, OMAPFB_DISPC_VID1_BASE_0,
 	    sc->sc_fbhwaddr);
 	bus_space_write_4(sc->sc_iot, sc->sc_regh,
@@ -378,9 +378,9 @@ omapfb_attach(device_t parent, device_t self, void *aux)
 	    OMAP_DSSCTRL_DAC_DEMEN);
 #endif
 
-	/* VENC to NTSC mode */
-	adr = OMAPFB_VENC_F_CONTROL;
 #if 0
+	/* VENC to NTSC mode */
+	int adr = OMAPFB_VENC_F_CONTROL;
 	for (i = 0; i < __arraycount(venc_mode_ntsc); i++) {
 		bus_space_write_4(sc->sc_iot, sc->sc_regh, adr,
 		    venc_mode_ntsc[i]);
@@ -626,7 +626,7 @@ omapfb_mmap(void *v, void *vs, off_t offset, int prot)
 	/* 'regular' framebuffer mmap()ing */
 	if (offset < sc->sc_vramsize) {
 		pa = bus_dmamem_mmap(sc->sc_dmat, sc->sc_dmamem, 1,
-		    offset + 0x1000, prot, BUS_DMA_PREFETCHABLE);
+		    offset + PAGE_SIZE, prot, BUS_DMA_PREFETCHABLE);
 		return pa;
 	}
 	return pa;
@@ -915,10 +915,6 @@ omapfb_bitblt(struct omapfb_softc *sc, int xs, int ys, int xd, int yd,
 	int hstep, vstep;
 	uint32_t saddr, daddr;
 
-	/*
-	 * TODO:
-	 * - use 32bit transfers if we're properly aligned
-	 */
 	saddr = sc->sc_fbhwaddr + sc->sc_stride * ys + xs * bpp;
 	daddr = sc->sc_fbhwaddr + sc->sc_stride * yd + xd * bpp;
 
@@ -981,10 +977,8 @@ omapfb_cursor(void *cookie, int on, int row, int col)
 	struct rasops_info *ri = cookie;
 	struct vcons_screen *scr = ri->ri_hw;
 	struct omapfb_softc *sc = scr->scr_cookie;
-	int wi, he, pos;
+	int pos;
 
-	wi = ri->ri_font->fontwidth;
-	he = ri->ri_font->fontheight;
 	pos = col + row * ri->ri_cols;
 #ifdef WSDISPLAY_SCROLLSUPPORT
 	pos += scr->scr_offset_to_zero;

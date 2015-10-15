@@ -1,4 +1,4 @@
-/*	$NetBSD: st_scsi.c,v 1.35 2012/04/19 17:45:21 bouyer Exp $ */
+/*	$NetBSD: st_scsi.c,v 1.37 2015/08/24 23:13:15 pooka Exp $ */
 
 /*-
  * Copyright (c) 1998, 2004 The NetBSD Foundation, Inc.
@@ -50,9 +50,11 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: st_scsi.c,v 1.35 2012/04/19 17:45:21 bouyer Exp $");
+__KERNEL_RCSID(0, "$NetBSD: st_scsi.c,v 1.37 2015/08/24 23:13:15 pooka Exp $");
 
+#ifdef _KERNEL_OPT
 #include "opt_scsi.h"
+#endif
 
 #include <sys/param.h>
 #include <sys/device.h>
@@ -135,7 +137,7 @@ st_scsibus_ops(struct st_softc *st, int op, int flags)
 }
 
 /*
- * Ask the drive what it's min and max blk sizes are.
+ * Ask the drive what its min and max blk sizes are.
  */
 static int
 st_scsibus_read_block_limits(struct st_softc *st, int flags)

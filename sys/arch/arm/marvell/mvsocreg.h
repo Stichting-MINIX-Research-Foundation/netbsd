@@ -1,4 +1,4 @@
-/*	$NetBSD: mvsocreg.h,v 1.6 2013/11/20 12:36:16 kiyohara Exp $	*/
+/*	$NetBSD: mvsocreg.h,v 1.12 2015/06/03 03:04:21 hsuenaga Exp $	*/
 /*
  * Copyright (c) 2007, 2008 KIYOHARA Takashi
  * All rights reserved.
@@ -78,16 +78,6 @@
 #define MVSOC_COM1_BASE		(MVSOC_DEVBUS_BASE + 0x2100)
 
 /*
- * Miscellanseous Register
- */
-#define MVSOC_MISC_BASE		(MVSOC_DEVBUS_BASE + 0x8200) /* For Armada XP */
-
-#define MVSOC_MISC_RSTOUTNMASKR		  0x60 /* RSTOUTn Mask Register */
-#define MVSOC_MISC_RSTOUTNMASKR_GLOBALSOFTRSTOUTEN (1 << 0)
-#define MVSOC_MISC_SSRR			  0x64	/* System Soft Reset Register */
-#define MVSOC_MISC_SSRR_GLOBALSOFTRST           (1 << 0)
-
-/*
  * Mbus-L to Mbus Bridge Registers
  */
 #define MVSOC_MLMB_BASE		(UNITID2PHYS(MLMB))	/* 0x20000 */
@@ -96,18 +86,26 @@
 #define MVSOC_MLMB_WCR(w)		  ((w) < 8 ? ((w) << 4) + 0x0 :\
 						     (((w) - 8) << 3) + 0x90)
 #define MVSOC_MLMB_WCR_WINEN			(1 << 0)
+#define MVSOC_MLMB_WCR_SYNC			(1 << 1) /* sync barrier */
 #define MVSOC_MLMB_WCR_TARGET(t)		(((t) & 0xf) << 4)
+#define MVSOC_MLMB_WCR_GET_TARGET(reg)		(((reg) >> 4) & 0xf)
 #define MVSOC_MLMB_WCR_ATTR(a)			(((a) & 0xff) << 8)
+#define MVSOC_MLMB_WCR_GET_ATTR(reg)		(((reg) >> 8) & 0xff)
 #define MVSOC_MLMB_WCR_SIZE_MASK		0xffff0000
 #define MVSOC_MLMB_WCR_SIZE(s)		  (((s) - 1) & MVSOC_MLMB_WCR_SIZE_MASK)
+#define MVSOC_MLMB_WCR_GET_SIZE(reg) \
+    (((reg) & MVSOC_MLMB_WCR_SIZE_MASK) + (1 << 16))
 #define MVSOC_MLMB_WBR(w)		  ((w) < 8 ? ((w) << 4) + 0x4 :\
 						     (((w) - 8) << 3) + 0x94)
 #define MVSOC_MLMB_WBR_BASE_MASK		0xffff0000
+#define MVSOC_MLMB_WBR_GET_BASE(reg)		(reg & MVSOC_MLMB_WBR_BASE_MASK)
 #define MVSOC_MLMB_WRLR(w)		  (((w) << 4) + 0x8)
 #define MVSOC_MLMB_WRLR_REMAP_MASK		0xffff0000
+#define MVSOC_MLMB_WRLR_GET_REMAP(reg) \
+    (reg & MVSOC_MLMB_WRLR_REMAP_MASK)
 #define MVSOC_MLMB_WRHR(w)		  (((w) << 4) + 0xc)
 #define MVSOC_MLMB_IRBAR		  0x080 /* Internal regs Base Address */
-#define MVSOC_MLMB_IRBAR_BASE_MASK	0xfff00000
+#define MVSOC_MLMB_IRBAR_BASE_MASK		0xfff00000
 
 /* CPU Control and Status Registers */
 #define MVSOC_MLMB_CPUCR		  0x100	/* CPU Configuration Register */
@@ -122,16 +120,53 @@
 #define MVSOC_MLMB_MLMBIMR		  0x114	/*Mb-L to Mb Bridge Intr Mask */
 
 #define MVSOC_MLMB_CLKGATING		  0x11c	/* Clock Gating Control */
+#define MVSOC_MLMB_CLKGATING_LNR	  (1 << 13) /* Load New Ratio */
+#define MVSOC_MLMB_CLKGATING_GPH	  (1 << 12) /* Go To Power Half */
+#define MVSOC_MLMB_CLKGATING_GPS	  (1 << 11) /* Go To Power Save */
+#define MVSOC_MLMB_CLKGATING_CR		  (1 << 10) /* Production Realignment */
 #define MVSOC_MLMB_CLKGATING_BIT(n)	  (1 << (n))
 
 #define MVSOC_MLMB_L2CFG		  0x128	/* L2 Cache Config */
 
-/* Coherent Fabric Control and Status */
-#define MVSOC_MLMB_COHERENCY_FABRIC_CTRL  0x200
-#define MVSOC_MLMB_COHERENCY_FABRIC_CFG	  0x204
+#define MVSOC_MLMB_NWIN			  4
+#define MVSOC_MLMB_WINBAR(w)		  (((w) << 3) + 0x180)
+#define MVSOC_MLMB_WINBAR_BASE_MASK		0xff000000
+#define MVSOC_MLMB_WINCR(w)		  (((w) << 3) + 0x184)
+#define MVSOC_MLMB_WINCR_EN			(1 << 0)
+#define MVSOC_MLMB_WINCR_WINCS(x)		(((x) & 0x1c) >> 2)
+#define MVSOC_MLMB_WINCR_SIZE_MASK		0xff000000
+
+/* Coherent Fabric(CFU) Control and Status */
+#define MVSOC_MLMB_CFU_FAB_CTRL			0x200
+#define MVSOC_MLMB_CFU_FAB_CTRL_PROP_ERR	(0x1 << 8)
+#define MVSOC_MLMB_CFU_FAB_CTRL_SNOOP_CPU0	(0x1 << 24)
+#define MVSOC_MLMB_CFU_FAB_CTRL_SNOOP_CPU1	(0x1 << 25)
+#define MVSOC_MLMB_CFU_FAB_CTRL_SNOOP_CPU2	(0x1 << 26)
+#define MVSOC_MLMB_CFU_FAB_CTRL_SNOOP_CPU3	(0x1 << 27)
+
+/* Coherent Fabiric Configuration */
+#define MVSOC_MLMB_CFU_FAB_CFG			0x204
+
+/* CFU IO Event Affinity */
+#define MVSOC_MLMB_CFU_EVA			0x208
+
+/* CFU IO Snoop Affinity */
+#define MVSOC_MLMB_CFU_IOA			0x20c
+
+/* CFU Configuration XXX: changed in ARMADA 370 */ 
+#define MVSOC_MLMB_CFU_CFG			0x228
+#define MVSOC_MLMB_CFU_CFG_L2_NOTIFY		(0x1 << 16)
 
 /* CIB registers offsets */
-#define MVSOC_MLMB_CIB_CTRL_CFG		  0x280
+#define MVSOC_MLMB_CIB_CTRL_CFG			0x280
+#define MVSOC_MLMB_CIB_CTRL_CFG_WB_EN		(0x1 << 0)
+#define MVSOC_MLMB_CIB_CTRL_CFG_STOP		(0x1 << 9)
+#define MVSOC_MLMB_CIB_CTRL_CFG_IGN_SHARE	(0x2 << 10)
+#define MVSOC_MLMB_CIB_CTRL_CFG_EMPTY		(0x1 << 13)
+
+/* CIB barrier register */
+#define MVSOC_MLMB_CIB_BARRIER(cpu)		(0x1810 + 0x100 * (cpu))
+#define MVSOC_MLMB_CIB_BARRIER_TRIGGER		(0x1 << 0)
 
 #define MVSOC_TMR_BASE		(MVSOC_MLMB_BASE + 0x0300)
 

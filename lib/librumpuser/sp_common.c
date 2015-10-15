@@ -1,4 +1,4 @@
-/*      $NetBSD: sp_common.c,v 1.36 2013/01/14 21:00:16 pooka Exp $	*/
+/*      $NetBSD: sp_common.c,v 1.38 2014/01/08 01:45:29 pooka Exp $	*/
 
 /*
  * Copyright (c) 2010, 2011 Antti Kantee.  All Rights Reserved.
@@ -36,6 +36,7 @@
 #include <sys/queue.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/uio.h>
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -714,7 +715,7 @@ success(void)
 	return 0;
 }
 
-struct {
+static struct {
 	const char *id;
 	int domain;
 	socklen_t slen;

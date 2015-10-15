@@ -1,4 +1,4 @@
-/*	$NetBSD: if_iy.c,v 1.92 2013/11/08 03:12:17 christos Exp $	*/
+/*	$NetBSD: if_iy.c,v 1.94 2015/04/13 16:33:24 riastradh Exp $	*/
 /* #define IYDEBUG */
 /* #define IYMEMDEBUG */
 
@@ -39,7 +39,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_iy.c,v 1.92 2013/11/08 03:12:17 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_iy.c,v 1.94 2015/04/13 16:33:24 riastradh Exp $");
 
 #include "opt_inet.h"
 
@@ -54,7 +54,7 @@ __KERNEL_RCSID(0, "$NetBSD: if_iy.c,v 1.92 2013/11/08 03:12:17 christos Exp $");
 #include <sys/syslog.h>
 #include <sys/device.h>
 #include <sys/endian.h>
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 
 #include <net/if.h>
 #include <net/if_types.h>
@@ -363,7 +363,7 @@ iyattach(device_t parent, device_t self, void *aux)
 	    IST_EDGE, IPL_NET, iyintr, sc);
 
 	rnd_attach_source(&sc->rnd_source, device_xname(sc->sc_dev),
-			  RND_TYPE_NET, 0);
+			  RND_TYPE_NET, RND_FLAG_DEFAULT);
 
 	temp = bus_space_read_1(iot, ioh, INT_NO_REG);
 	bus_space_write_1(iot, ioh, INT_NO_REG, (temp & 0xf8) | sc->mappedirq);

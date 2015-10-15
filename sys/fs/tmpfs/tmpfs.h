@@ -1,4 +1,4 @@
-/*	$NetBSD: tmpfs.h,v 1.48 2013/11/23 16:35:32 rmind Exp $	*/
+/*	$NetBSD: tmpfs.h,v 1.52 2015/07/06 10:07:12 hannken Exp $	*/
 
 /*
  * Copyright (c) 2005, 2006, 2007 The NetBSD Foundation, Inc.
@@ -72,7 +72,7 @@ TAILQ_HEAD(tmpfs_dir, tmpfs_dirent);
  * a particular type.
  *
  * All fields are protected by vnode lock.  The vnode association itself
- * is protected by tmpfs_node_t::tn_vlock.
+ * is protected by vcache.
  */
 typedef struct tmpfs_node {
 	LIST_ENTRY(tmpfs_node)	tn_entries;
@@ -88,8 +88,10 @@ typedef struct tmpfs_node {
 	 * tn_vnode.  It may be NULL when the node is unused (that is,
 	 * no vnode has been allocated or it has been reclaimed).
 	 */
-	kmutex_t		tn_vlock;
 	vnode_t *		tn_vnode;
+
+	/* Prevent node from being reclaimed. */
+	uint32_t		tn_holdcount;
 
 	/* Directory entry.  Only a hint, since hard link can have multiple. */
 	tmpfs_dirent_t *	tn_dirent_hint;
@@ -160,6 +162,8 @@ typedef struct tmpfs_node {
 
 #if defined(_KERNEL)
 
+VFS_PROTOS(tmpfs);
+
 LIST_HEAD(tmpfs_node_list, tmpfs_node);
 
 #define	TMPFS_MAXNAMLEN		255
@@ -186,21 +190,23 @@ CTASSERT(TMPFS_MAXNAMLEN < UINT16_MAX);
 #define	TMPFS_UPDATE_CTIME	0x04
 
 /*
- * Bits indicating vnode reclamation and whiteout use for the directory.
+ * Bits indicating whiteout use for the directory.
  * We abuse tmpfs_node_t::tn_gen for that.
  */
-#define	TMPFS_RECLAIMING_BIT	(1U << 31)
-#define	TMPFS_WHITEOUT_BIT	(1U << 30)
+#define	TMPFS_WHITEOUT_BIT	(1U << 31)
 #define	TMPFS_NODE_GEN_MASK	(TMPFS_WHITEOUT_BIT - 1)
-
-#define	TMPFS_NODE_RECLAIMING(node) \
-    (((node)->tn_gen & TMPFS_RECLAIMING_BIT) != 0)
 
 #define	TMPFS_NODE_GEN(node) \
     ((node)->tn_gen & TMPFS_NODE_GEN_MASK)
 
 /* White-out inode indicator. */
 #define	TMPFS_NODE_WHITEOUT	((tmpfs_node_t *)-1)
+
+/*
+ * Bit indicating this node must be reclaimed when holdcount reaches zero.
+ * Ored into tmpfs_node_t::tn_holdcount.
+ */
+#define TMPFS_NODE_RECLAIMED		(1U << 30)
 
 /*
  * Internal representation of a tmpfs mount point.
@@ -240,14 +246,10 @@ typedef struct tmpfs_fid {
  * Prototypes for tmpfs_subr.c.
  */
 
-int		tmpfs_alloc_node(tmpfs_mount_t *, enum vtype, uid_t, gid_t,
-		    mode_t, char *, dev_t, tmpfs_node_t **);
 void		tmpfs_free_node(tmpfs_mount_t *, tmpfs_node_t *);
 
 int		tmpfs_construct_node(vnode_t *, vnode_t **, struct vattr *,
 		    struct componentname *, char *);
-
-int		tmpfs_vnode_get(struct mount *, tmpfs_node_t *, vnode_t **);
 
 int		tmpfs_alloc_dirent(tmpfs_mount_t *, const char *, uint16_t,
 		    tmpfs_dirent_t **);
@@ -279,6 +281,7 @@ void		tmpfs_update(vnode_t *, unsigned);
 
 void		tmpfs_mntmem_init(tmpfs_mount_t *, uint64_t);
 void		tmpfs_mntmem_destroy(tmpfs_mount_t *);
+int		tmpfs_mntmem_set(tmpfs_mount_t *, uint64_t);
 
 size_t		tmpfs_mem_info(bool);
 uint64_t	tmpfs_bytes_max(tmpfs_mount_t *);
@@ -304,13 +307,6 @@ bool		tmpfs_strname_neqlen(struct componentname *, struct componentname *);
     KASSERT((node)->tn_vnode == NULL || VOP_ISLOCKED((node)->tn_vnode)); \
     KASSERT((node)->tn_type == VDIR); \
     KASSERT((node)->tn_size % sizeof(tmpfs_dirent_t) == 0);
-
-/*
- * Memory management stuff.
- */
-
-/* Amount of memory pages to reserve for the system. */
-#define	TMPFS_PAGES_RESERVED	(4 * 1024 * 1024 / PAGE_SIZE)
 
 /*
  * Routines to convert VFS structures to tmpfs internal ones.

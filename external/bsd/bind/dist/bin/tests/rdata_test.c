@@ -1,7 +1,7 @@
-/*	$NetBSD: rdata_test.c,v 1.6 2013/07/27 19:23:10 christos Exp $	*/
+/*	$NetBSD: rdata_test.c,v 1.8 2014/12/10 04:37:53 christos Exp $	*/
 
 /*
- * Copyright (C) 2004-2007, 2011, 2012  Internet Systems Consortium, Inc. ("ISC")
+ * Copyright (C) 2004-2007, 2011, 2012, 2014  Internet Systems Consortium, Inc. ("ISC")
  * Copyright (C) 1998-2003  Internet Software Consortium.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
@@ -16,8 +16,6 @@
  * OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
  * PERFORMANCE OF THIS SOFTWARE.
  */
-
-/* Id: rdata_test.c,v 1.52 2011/08/28 09:10:41 marka Exp  */
 
 #include <config.h>
 
@@ -286,6 +284,11 @@ viastruct(dns_rdata_t *rdata, isc_mem_t *mctx,
 		result = dns_rdata_tostruct(rdata, sp = &uri, NULL);
 		break;
 	}
+	case dns_rdatatype_caa: {
+		static dns_rdata_caa_t caa;
+		result = dns_rdata_tostruct(rdata, sp = &caa, NULL);
+		break;
+	}
 	case dns_rdatatype_wks: {
 		static dns_rdata_in_wks_t in_wks;
 		result = dns_rdata_tostruct(rdata, sp = &in_wks, NULL);
@@ -551,6 +554,11 @@ viastruct(dns_rdata_t *rdata, isc_mem_t *mctx,
 	case dns_rdatatype_uri: {
 		static dns_rdata_uri_t uri;
 		result = dns_rdata_tostruct(rdata, sp = &uri, mctx);
+		break;
+	}
+	case dns_rdatatype_caa: {
+		static dns_rdata_caa_t caa;
+		result = dns_rdata_tostruct(rdata, sp = &caa, mctx);
 		break;
 	}
 	case dns_rdatatype_wks: {
@@ -850,6 +858,11 @@ viastruct(dns_rdata_t *rdata, isc_mem_t *mctx,
 		result = dns_rdata_fromstruct(rdata2, rdc, rdt, &uri, b);
 		break;
 	}
+	case dns_rdatatype_caa: {
+		dns_rdata_caa_t caa;
+		result = dns_rdata_fromstruct(rdata2, rdc, rdt, &caa, b);
+		break;
+	}
 	case dns_rdatatype_wks: {
 		dns_rdata_in_wks_t in_wks;
 		result = dns_rdata_fromstruct(rdata2, rdc, rdt, &in_wks, b);
@@ -918,10 +931,6 @@ main(int argc, char *argv[]) {
 	int raw = 0;
 	int tostruct = 0;
 
-	isc__mem_register();
-	isc__task_register();
-	isc__timer_register();
-	isc__socket_register();
 	while ((c = isc_commandline_parse(argc, argv, "dqswtarzS")) != -1) {
 		switch (c) {
 		case 'd':
@@ -1199,7 +1208,7 @@ main(int argc, char *argv[]) {
 		dns_rdata_init(&last);
 		region.base = malloc(region.length = rdata.length);
 		if (region.base) {
-			memcpy(region.base, rdata.data, rdata.length);
+			memmove(region.base, rdata.data, rdata.length);
 			dns_rdata_fromregion(&last, class, type, &region);
 			lasttype = type;
 			first = 0;

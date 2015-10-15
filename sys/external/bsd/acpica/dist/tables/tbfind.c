@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -40,8 +40,6 @@
  * IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGES.
  */
-
-#define __TBFIND_C__
 
 #include "acpi.h"
 #include "accommon.h"
@@ -85,16 +83,16 @@ AcpiTbFindTable (
 
     /* Normalize the input strings */
 
-    ACPI_MEMSET (&Header, 0, sizeof (ACPI_TABLE_HEADER));
-    ACPI_STRNCPY (Header.Signature, Signature, ACPI_NAME_SIZE);
-    ACPI_STRNCPY (Header.OemId, OemId, ACPI_OEM_ID_SIZE);
-    ACPI_STRNCPY (Header.OemTableId, OemTableId, ACPI_OEM_TABLE_ID_SIZE);
+    memset (&Header, 0, sizeof (ACPI_TABLE_HEADER));
+    ACPI_MOVE_NAME (Header.Signature, Signature);
+    strncpy (Header.OemId, OemId, ACPI_OEM_ID_SIZE);
+    strncpy (Header.OemTableId, OemTableId, ACPI_OEM_TABLE_ID_SIZE);
 
     /* Search for the table */
 
     for (i = 0; i < AcpiGbl_RootTableList.CurrentTableCount; ++i)
     {
-        if (ACPI_MEMCMP (&(AcpiGbl_RootTableList.Tables[i].Signature),
+        if (memcmp (&(AcpiGbl_RootTableList.Tables[i].Signature),
                             Header.Signature, ACPI_NAME_SIZE))
         {
             /* Not the requested table */
@@ -108,7 +106,7 @@ AcpiTbFindTable (
         {
             /* Table is not currently mapped, map it */
 
-            Status = AcpiTbVerifyTable (&AcpiGbl_RootTableList.Tables[i]);
+            Status = AcpiTbValidateTable (&AcpiGbl_RootTableList.Tables[i]);
             if (ACPI_FAILURE (Status))
             {
                 return_ACPI_STATUS (Status);
@@ -122,13 +120,13 @@ AcpiTbFindTable (
 
         /* Check for table match on all IDs */
 
-        if (!ACPI_MEMCMP (AcpiGbl_RootTableList.Tables[i].Pointer->Signature,
+        if (!memcmp (AcpiGbl_RootTableList.Tables[i].Pointer->Signature,
                             Header.Signature, ACPI_NAME_SIZE) &&
             (!OemId[0] ||
-             !ACPI_MEMCMP (AcpiGbl_RootTableList.Tables[i].Pointer->OemId,
+             !memcmp (AcpiGbl_RootTableList.Tables[i].Pointer->OemId,
                              Header.OemId, ACPI_OEM_ID_SIZE)) &&
             (!OemTableId[0] ||
-             !ACPI_MEMCMP (AcpiGbl_RootTableList.Tables[i].Pointer->OemTableId,
+             !memcmp (AcpiGbl_RootTableList.Tables[i].Pointer->OemTableId,
                              Header.OemTableId, ACPI_OEM_TABLE_ID_SIZE)))
         {
             *TableIndex = i;

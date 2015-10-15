@@ -1,4 +1,4 @@
-/*	$NetBSD: dkwedge_gpt.c,v 1.12 2010/05/17 23:09:52 jakllsch Exp $	*/
+/*	$NetBSD: dkwedge_gpt.c,v 1.15 2015/08/23 18:40:15 jakllsch Exp $	*/
 
 /*-
  * Copyright (c) 2004 The NetBSD Foundation, Inc.
@@ -34,7 +34,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: dkwedge_gpt.c,v 1.12 2010/05/17 23:09:52 jakllsch Exp $");
+__KERNEL_RCSID(0, "$NetBSD: dkwedge_gpt.c,v 1.15 2015/08/23 18:40:15 jakllsch Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -54,7 +54,7 @@ __KERNEL_RCSID(0, "$NetBSD: dkwedge_gpt.c,v 1.12 2010/05/17 23:09:52 jakllsch Ex
  * GUID to dkw_ptype mapping information.
  *
  * GPT_ENT_TYPE_MS_BASIC_DATA is not suited to mapping.  Aside from being
- * used for multiple Microsoft file systems, Linux uses it for it's own
+ * used for multiple Microsoft file systems, Linux uses it for its own
  * set of native file systems.  Treating this GUID as unknown seems best.
  */
 
@@ -178,11 +178,11 @@ dkwedge_discover_gpt(struct disk *pdk, struct vnode *vp)
 	}
 	gpe_crc = le32toh(hdr->hdr_crc_table);
 
-	/* XXX Clamp entries at 128 for now. */
-	if (entries > 128) {
+	/* XXX Clamp entries at 512 for now. */
+	if (entries > 512) {
 		aprint_error("%s: WARNING: clamping number of GPT entries to "
-		    "128 (was %u)\n", pdk->dk_name, entries);
-		entries = 128;
+		    "512 (was %u)\n", pdk->dk_name, entries);
+		entries = 512;
 	}
 
 	lba_start = le64toh(hdr->hdr_lba_start);
@@ -265,13 +265,15 @@ dkwedge_discover_gpt(struct disk *pdk, struct vnode *vp)
 		 * Try with the partition name first.  If that fails,
 		 * use the GUID string.  If that fails, punt.
 		 */
-		if ((error = dkwedge_add(&dkw)) == EEXIST) {
-			aprint_error("%s: wedge named '%s' already exists, "
-			    "trying '%s'\n", pdk->dk_name,
-			    dkw.dkw_wname, /* XXX Unicode */
-			    ent_guid_str);
+		if ((error = dkwedge_add(&dkw)) == EEXIST &&
+		    strcmp(dkw.dkw_wname, ent_guid_str) != 0) {
 			strcpy(dkw.dkw_wname, ent_guid_str);
 			error = dkwedge_add(&dkw);
+			if (!error)
+				aprint_error("%s: wedge named '%s' already "
+				    "existed, using '%s'\n", pdk->dk_name,
+				    dkw.dkw_wname, /* XXX Unicode */
+				    ent_guid_str);
 		}
 		if (error == EEXIST)
 			aprint_error("%s: wedge named '%s' already exists, "

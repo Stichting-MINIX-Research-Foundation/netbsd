@@ -1,11 +1,4 @@
-#ifdef PROTOTYPES
 int main (int argc, char **argv, char **envp)
-#else
-main (argc, argv, envp)
-     int argc;
-     char **argv;
-     char **envp;
-#endif
 {
     extern void dummy();
     dummy();
@@ -185,6 +178,7 @@ union tu_link {
 enum colors {red, green, blue} color;
 enum cars {chevy, ford, porsche} clunker;
 
+struct t_struct *null_t_struct;
 
 void dummy()
 {

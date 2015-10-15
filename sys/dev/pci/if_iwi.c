@@ -1,4 +1,4 @@
-/*	$NetBSD: if_iwi.c,v 1.95 2013/11/26 09:46:24 roy Exp $  */
+/*	$NetBSD: if_iwi.c,v 1.98 2015/01/07 07:05:48 ozaki-r Exp $  */
 /*	$OpenBSD: if_iwi.c,v 1.111 2010/11/15 19:11:57 damien Exp $	*/
 
 /*-
@@ -19,7 +19,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_iwi.c,v 1.95 2013/11/26 09:46:24 roy Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_iwi.c,v 1.98 2015/01/07 07:05:48 ozaki-r Exp $");
 
 /*-
  * Intel(R) PRO/Wireless 2200BG/2225BG/2915ABG driver
@@ -209,6 +209,7 @@ iwi_attach(device_t parent, device_t self, void *aux)
 	pcireg_t data;
 	uint16_t val;
 	int error, i;
+	char intrbuf[PCI_INTRSTR_LEN];
 
 	sc->sc_dev = self;
 	sc->sc_pct = pa->pa_pc;
@@ -257,7 +258,7 @@ iwi_attach(device_t parent, device_t self, void *aux)
 		return;
 	}
 
-	intrstr = pci_intr_string(sc->sc_pct, ih);
+	intrstr = pci_intr_string(sc->sc_pct, ih, intrbuf, sizeof(intrbuf));
 	sc->sc_ih = pci_intr_establish(sc->sc_pct, ih, IPL_NET, iwi_intr, sc);
 	if (sc->sc_ih == NULL) {
 		aprint_error_dev(self, "could not establish interrupt");
@@ -2186,6 +2187,7 @@ iwi_cache_firmware(struct iwi_softc *sc)
 		error = EIO;
 		goto fail1;
 	}
+	sc->sc_blobsize = size;
 
 	sc->sc_blob = firmware_malloc(size);
 	if (sc->sc_blob == NULL) {
@@ -2245,7 +2247,7 @@ iwi_cache_firmware(struct iwi_softc *sc)
 	return 0;
 
 
-fail2:	firmware_free(sc->sc_blob, 0);
+fail2:	firmware_free(sc->sc_blob, sc->sc_blobsize);
 fail1:
 	return error;
 }
@@ -2257,7 +2259,7 @@ iwi_free_firmware(struct iwi_softc *sc)
 	if (!(sc->flags & IWI_FLAG_FW_CACHED))
 		return;
 
-	firmware_free(sc->sc_blob, 0);
+	firmware_free(sc->sc_blob, sc->sc_blobsize);
 
 	sc->flags &= ~IWI_FLAG_FW_CACHED;
 }
@@ -2787,14 +2789,9 @@ SYSCTL_SETUP(sysctl_iwi, "sysctl iwi(4) subtree setup")
 	const struct sysctlnode *cnode;
 
 	if ((rc = sysctl_createv(clog, 0, NULL, &rnode,
-	    CTLFLAG_PERMANENT, CTLTYPE_NODE, "hw", NULL,
-	    NULL, 0, NULL, 0, CTL_HW, CTL_EOL)) != 0)
-		goto err;
-
-	if ((rc = sysctl_createv(clog, 0, &rnode, &rnode,
 	    CTLFLAG_PERMANENT, CTLTYPE_NODE, "iwi",
 	    SYSCTL_DESCR("iwi global controls"),
-	    NULL, 0, NULL, 0, CTL_CREATE, CTL_EOL)) != 0)
+	    NULL, 0, NULL, 0, CTL_HW, CTL_CREATE, CTL_EOL)) != 0)
 		goto err;
 
 	/* control debugging printfs */
@@ -2824,14 +2821,9 @@ iwi_sysctlattach(struct iwi_softc *sc)
 	struct sysctllog **clog = &sc->sc_sysctllog;
 
 	if ((rc = sysctl_createv(clog, 0, NULL, &rnode,
-	    CTLFLAG_PERMANENT, CTLTYPE_NODE, "hw", NULL,
-	    NULL, 0, NULL, 0, CTL_HW, CTL_EOL)) != 0)
-		goto err;
-
-	if ((rc = sysctl_createv(clog, 0, &rnode, &rnode,
 	    CTLFLAG_PERMANENT, CTLTYPE_NODE, device_xname(sc->sc_dev),
 	    SYSCTL_DESCR("iwi controls and statistics"),
-	    NULL, 0, NULL, 0, CTL_CREATE, CTL_EOL)) != 0)
+	    NULL, 0, NULL, 0, CTL_HW, CTL_CREATE, CTL_EOL)) != 0)
 		goto err;
 
 	if ((rc = sysctl_createv(clog, 0, &rnode, &cnode,
@@ -2936,19 +2928,11 @@ SYSCTL_SETUP(sysctl_hw_iwi_accept_eula_setup, "sysctl hw.iwi.accept_eula")
 
 	sysctl_createv(NULL, 0, NULL, &rnode,
 		CTLFLAG_PERMANENT,
-		CTLTYPE_NODE, "hw",
-		NULL,
-		NULL, 0,
-		NULL, 0,
-		CTL_HW, CTL_EOL);
-
-	sysctl_createv(NULL, 0, &rnode, &rnode,
-		CTLFLAG_PERMANENT,
 		CTLTYPE_NODE, "iwi",
 		NULL,
 		NULL, 0,
 		NULL, 0,
-		CTL_CREATE, CTL_EOL);
+		CTL_HW, CTL_CREATE, CTL_EOL);
 
 	sysctl_createv(NULL, 0, &rnode, &cnode,
 		CTLFLAG_PERMANENT | CTLFLAG_READWRITE,

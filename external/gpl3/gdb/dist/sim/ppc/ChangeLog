@@ -1,3 +1,58 @@
+2014-11-23  Joel Sherrill <joel.sherrill@oarcorp.com>
+
+	* ChangeLog, ChangeLog.00, hw_com.c, ld-cache.h, ppc-instructions:
+	Change immediatly to immediately.
+
+2014-08-27  Joel Sherrill <joel.sherrill@oarcorp.com>
+
+	* basics.h, device.c, device.h, hw_htab.c, hw_memory.c:
+	Correct spelling in comments.
+
+2014-08-19  Alan Modra  <amodra@gmail.com>
+
+	* configure.ac: Invoke AC_PLUGINS.
+	* configure: Regenerate.
+	* config.in: Regenerate.
+
+2014-03-10  Mike Frysinger  <vapier@gentoo.org>
+
+	* sim_calls.c (sim_do_command): Add const to cmd.
+
+2014-03-05  Mike Frysinger  <vapier@gentoo.org>
+
+	* sim_calls.c (sim_load): Add const to prog.
+
+2014-02-17  Aaro Koskinen  <aaro.koskinen@iki.fi>
+
+	PR gdb/12202
+	* Makefile.in (psim): Delete $(LIBS) from dependency.
+
+2013-10-15  Hans-Peter Nilsson  <hp@axis.com>
+
+	* Makefile.in (srcsim): New variable.
+	(version.c): Adjust call to $(srccom)/create-version.sh as per change.
+
+2013-06-28  Tom Tromey  <tromey@redhat.com>
+
+	* Make-common.in (version.c): Use version.in, not
+	common/version.in.
+
+2013-06-24  Joel Brobecker  <brobecker@adacore.com>
+
+	* Makefile.in (srccom): New variable.
+	(version.c): Update rule dependencies, and re-implement using
+	sim/common/create-version.sh.
+
+2013-05-03  Hafiz Abid Qadeer  <abidh@codesourcery.com>
+
+	revert:
+	2013-04-19  Nathan Froyd  <froydnj@codesourcery.com>
+	* ppc-instructions (isel): New instruction.
+
+2013-04-19  Nathan Froyd  <froydnj@codesourcery.com>
+
+	* ppc-instructions (isel): New instruction.
+
 2012-12-19  Joel Brobecker  <brobecker@adacore.com>
 
 	* COPYING: Update to GPL version 3.
@@ -9,8 +64,7 @@
 2012-05-24  Pedro Alves  <palves@redhat.com>
 
 	PR gdb/7205
-
-        Replace TARGET_SIGNAL_ with GDB_SIGNAL_ throughout.
+	* Replace TARGET_SIGNAL_ with GDB_SIGNAL_ throughout.
 
 2012-03-14  Michael Haubenwallner  <michael.haubenwallner@salomon.at>
 
@@ -3934,7 +3988,7 @@ Wed Jan 17 19:46:07 1996  Andrew Cagney  <cagney@highland.com.au>
         device tree load from file code.
 
 	* psim.c (psim_create): Dump device tree if enabled. If nump
-        selected, exit psim immediatly.
+        selected, exit psim immediately.
 
 Wed Jan 17 19:36:52 1996  Andrew Cagney  <cagney@highland.com.au>
 

@@ -1,4 +1,4 @@
-/*	$NetBSD: machdep.c,v 1.116 2012/07/28 23:08:56 matt Exp $	*/
+/*	$NetBSD: machdep.c,v 1.120 2015/06/30 02:39:03 matt Exp $	*/
 
 /*-
  * Copyright (c) 1999 Shin Takemura, All rights reserved.
@@ -69,7 +69,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.116 2012/07/28 23:08:56 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.120 2015/06/30 02:39:03 matt Exp $");
 
 #include "opt_vr41xx.h"
 #include "opt_tx39xx.h"
@@ -97,6 +97,7 @@ __KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.116 2012/07/28 23:08:56 matt Exp $");
 #include <sys/ksyms.h>
 #include <sys/device.h>
 #include <sys/lwp.h>
+#include <sys/cpu.h>
 
 #include <uvm/uvm_extern.h>
 
@@ -151,7 +152,7 @@ static int __bicons_enable;
 #endif
 
 /* the following is used externally (sysctl_hw) */
-char	hpcmips_cpuname[40];		/* set CPU depend xx_init() */
+static char	hpcmips_cpuname[40];		/* set CPU depend xx_init() */
 
 int	cpuspeed = 1;			/* approx # instr per usec. */
 
@@ -457,6 +458,19 @@ mach_init(int argc, char *argv[], struct bootinfo *bi)
 	mips_init_lwp0_uarea();
 }
 
+int
+cpuname_printf(const char *fmt, ...)
+{
+	int len;
+	va_list ap;
+
+	va_start(ap, fmt);
+	len = vsnprintf(hpcmips_cpuname, sizeof(hpcmips_cpuname), fmt, ap);
+	va_end(ap);
+
+	return len;
+}
+
 /*
  * Machine-dependent startup code.
  * allocate memory for variable-sized tables, initialize CPU.
@@ -464,55 +478,19 @@ mach_init(int argc, char *argv[], struct bootinfo *bi)
 void
 cpu_startup(void)
 {
-	vaddr_t minaddr, maxaddr;
-	char pbuf[9];
-	size_t i;
-#ifdef DEBUG
-	extern int pmapdebug;
-	int opmapdebug = pmapdebug;
+	cpu_setmodel("%s (%s)", platid_name(&platid), hpcmips_cpuname);
 
-	pmapdebug = 0;
-#endif
-
-	/*
-	 * Good {morning,afternoon,evening,night}.
-	 */
-	printf("%s%s", copyright, version);
-	sprintf(cpu_model, "%s (%s)", platid_name(&platid), hpcmips_cpuname);
-	printf("%s\n", cpu_model);
-	format_bytes(pbuf, sizeof(pbuf), ctob(physmem));
-	printf("total memory = %s\n", pbuf);
-	if (bootverbose) {
-		/* show again when verbose mode */
-		printf("total memory banks = %d\n", mem_cluster_cnt);
-		for (i = 0; i < mem_cluster_cnt; i++) {
-			printf("memory bank %zu = "
-			    "0x%08"PRIxPADDR" %"PRIdPSIZE"KB(0x%08"PRIxPSIZE")\n", i,
-			    (paddr_t)mem_clusters[i].start,
-			    (psize_t)mem_clusters[i].size/1024,
-			    (psize_t)mem_clusters[i].size);
-		}
+	/* show again when verbose mode */
+	aprint_verbose("total memory banks = %d\n", mem_cluster_cnt);
+	for (size_t i = 0; i < mem_cluster_cnt; i++) {
+		aprint_verbose("memory bank %zu = "
+		    "%#08"PRIxPADDR" %"PRIdPSIZE"KB(%#"PRIxPSIZE")\n", i,
+		    (paddr_t)mem_clusters[i].start,
+		    (psize_t)mem_clusters[i].size/1024,
+		    (psize_t)mem_clusters[i].size);
 	}
 
-	minaddr = 0;
-
-	/*
-	 * Allocate a submap for physio
-	 */
-	phys_map = uvm_km_suballoc(kernel_map, &minaddr, &maxaddr,
-	    VM_PHYS_SIZE, 0, false, NULL);
-
-	/*
-	 * No need to allocate an mbuf cluster submap.  Mbuf clusters
-	 * are allocated via the pool allocator, and we use KSEG to
-	 * map those pages.
-	 */
-
-#ifdef DEBUG
-	pmapdebug = opmapdebug;
-#endif
-	format_bytes(pbuf, sizeof(pbuf), ptoa(uvmexp.free));
-	printf("avail memory = %s\n", pbuf);
+	cpu_startup_common();
 }
 
 void

@@ -1,7 +1,7 @@
-/*	$NetBSD: master_test.c,v 1.3 2013/07/27 19:23:12 christos Exp $	*/
+/*	$NetBSD: master_test.c,v 1.6 2015/07/08 17:28:59 christos Exp $	*/
 
 /*
- * Copyright (C) 2011-2013  Internet Systems Consortium, Inc. ("ISC")
+ * Copyright (C) 2011-2013, 2015  Internet Systems Consortium, Inc. ("ISC")
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -24,9 +24,11 @@
 
 #include <atf-c.h>
 
+#include <stdio.h>
 #include <unistd.h>
 
 #include <isc/print.h>
+#include <isc/xml.h>
 
 #include <dns/cache.h>
 #include <dns/callbacks.h>
@@ -50,6 +52,12 @@
 
 static dns_masterrawheader_t header;
 static isc_boolean_t headerset;
+
+dns_name_t dns_origin;
+char origin[sizeof(TEST_ORIGIN)];
+unsigned char name_buf[BUFLEN];
+dns_rdatacallbacks_t callbacks;
+char *include_file = NULL;
 
 static isc_result_t
 add_callback(void *arg, dns_name_t *owner, dns_rdataset_t *dataset);
@@ -78,19 +86,14 @@ rawdata_callback(dns_zone_t *zone, dns_masterrawheader_t *h) {
 	headerset = ISC_TRUE;
 }
 
-static int
-test_master(const char *testfile, dns_masterformat_t format,
-	    void (*warn)(struct dns_rdatacallbacks *, const char *, ...),
-	    void (*error)(struct dns_rdatacallbacks *, const char *, ...))
+static isc_result_t
+setup_master(void (*warn)(struct dns_rdatacallbacks *, const char *, ...),
+	     void (*error)(struct dns_rdatacallbacks *, const char *, ...))
 {
 	isc_result_t		result;
 	int			len;
-	char			origin[sizeof(TEST_ORIGIN)];
-	dns_name_t		dns_origin;
 	isc_buffer_t		source;
 	isc_buffer_t		target;
-	unsigned char		name_buf[BUFLEN];
-	dns_rdatacallbacks_t	callbacks;
 
 	strcpy(origin, TEST_ORIGIN);
 	len = strlen(origin);
@@ -115,10 +118,30 @@ test_master(const char *testfile, dns_masterformat_t format,
 	if (error != NULL)
 		callbacks.error = error;
 	headerset = ISC_FALSE;
+	return (result);
+}
+
+static isc_result_t
+test_master(const char *testfile, dns_masterformat_t format,
+	    void (*warn)(struct dns_rdatacallbacks *, const char *, ...),
+	    void (*error)(struct dns_rdatacallbacks *, const char *, ...))
+{
+	isc_result_t		result;
+
+	result = setup_master(warn, error);
+	if (result != ISC_R_SUCCESS)
+		return(result);
+
 	result = dns_master_loadfile2(testfile, &dns_origin, &dns_origin,
 				      dns_rdataclass_in, ISC_TRUE,
 				      &callbacks, mctx, format);
 	return (result);
+}
+
+static void
+include_callback(const char *filename, void *arg) {
+	char **argp = (char **) arg;
+	*argp = isc_mem_strdup(mctx, filename);
 }
 
 /*
@@ -346,6 +369,39 @@ ATF_TC_BODY(include, tc) {
 	dns_test_end();
 }
 
+/* Include file list test */
+ATF_TC(master_includelist);
+ATF_TC_HEAD(master_includelist, tc) {
+	atf_tc_set_md_var(tc, "descr", "dns_master_loadfile4() returns "
+				       "names of included file");
+}
+ATF_TC_BODY(master_includelist, tc) {
+	isc_result_t result;
+	char *filename = NULL;
+
+	UNUSED(tc);
+
+	result = dns_test_begin(NULL, ISC_FALSE);
+	ATF_REQUIRE_EQ(result, ISC_R_SUCCESS);
+
+	result = setup_master(NULL, NULL);
+	ATF_REQUIRE_EQ(result, ISC_R_SUCCESS);
+
+	result = dns_master_loadfile4("testdata/master/master8.data",
+				      &dns_origin, &dns_origin,
+				      dns_rdataclass_in, 0, ISC_TRUE,
+				      &callbacks, include_callback,
+				      &filename, mctx, dns_masterformat_text);
+	ATF_CHECK_EQ(result, DNS_R_SEENINCLUDE);
+	ATF_CHECK(filename != NULL);
+	if (filename != NULL) {
+		ATF_CHECK_STREQ(filename, "testdata/master/master7.data");
+		isc_mem_free(mctx, filename);
+	}
+
+	dns_test_end();
+}
+
 /* Include failure test */
 ATF_TC(includefail);
 ATF_TC_HEAD(includefail, tc) {
@@ -503,29 +559,29 @@ ATF_TC_BODY(dumpraw, tc) {
 	isc_result_t result;
 	dns_db_t *db = NULL;
 	dns_dbversion_t *version = NULL;
-	char origin[sizeof(TEST_ORIGIN)];
-	dns_name_t dns_origin;
+	char myorigin[sizeof(TEST_ORIGIN)];
+	dns_name_t dnsorigin;
 	isc_buffer_t source, target;
-	unsigned char name_buf[BUFLEN];
+	unsigned char namebuf[BUFLEN];
 	int len;
 
 	UNUSED(tc);
 
-	strcpy(origin, TEST_ORIGIN);
-	len = strlen(origin);
-	isc_buffer_init(&source, origin, len);
+	strcpy(myorigin, TEST_ORIGIN);
+	len = strlen(myorigin);
+	isc_buffer_init(&source, myorigin, len);
 	isc_buffer_add(&source, len);
 	isc_buffer_setactive(&source, len);
-	isc_buffer_init(&target, name_buf, BUFLEN);
-	dns_name_init(&dns_origin, NULL);
-	result = dns_name_fromtext(&dns_origin, &source, dns_rootname,
+	isc_buffer_init(&target, namebuf, BUFLEN);
+	dns_name_init(&dnsorigin, NULL);
+	result = dns_name_fromtext(&dnsorigin, &source, dns_rootname,
 				   0, &target);
 	ATF_REQUIRE_EQ(result, ISC_R_SUCCESS);
 
 	result = dns_test_begin(NULL, ISC_FALSE);
 	ATF_REQUIRE_EQ(result, ISC_R_SUCCESS);
 
-	result = dns_db_create(mctx, "rbt", &dns_origin, dns_dbtype_zone,
+	result = dns_db_create(mctx, "rbt", &dnsorigin, dns_dbtype_zone,
 			       dns_rdataclass_in, 0, NULL, &db);
 	ATF_REQUIRE_EQ(result, ISC_R_SUCCESS);
 
@@ -570,11 +626,11 @@ static const char *warn_expect_value;
 static isc_boolean_t warn_expect_result;
 
 static void
-warn_expect(struct dns_rdatacallbacks *callbacks, const char *fmt, ...) {
+warn_expect(struct dns_rdatacallbacks *mycallbacks, const char *fmt, ...) {
 	char buf[4096];
 	va_list ap;
 
-	UNUSED(callbacks);
+	UNUSED(mycallbacks);
 
 	va_start(ap, fmt);
 	vsnprintf(buf, sizeof(buf), fmt, ap);
@@ -600,7 +656,6 @@ ATF_TC_BODY(neworigin, tc) {
 
 	warn_expect_value = "record with inherited owner";
 	warn_expect_result = ISC_FALSE;
-
 	result = test_master("testdata/master/master17.data",
 			     dns_masterformat_text, warn_expect, NULL);
 	ATF_REQUIRE_EQ(result, ISC_R_SUCCESS);
@@ -622,6 +677,7 @@ ATF_TP_ADD_TCS(tp) {
 	ATF_TP_ADD_TC(tp, dnskey);
 	ATF_TP_ADD_TC(tp, dnsnokey);
 	ATF_TP_ADD_TC(tp, include);
+	ATF_TP_ADD_TC(tp, master_includelist);
 	ATF_TP_ADD_TC(tp, includefail);
 	ATF_TP_ADD_TC(tp, blanklines);
 	ATF_TP_ADD_TC(tp, leadingzero);

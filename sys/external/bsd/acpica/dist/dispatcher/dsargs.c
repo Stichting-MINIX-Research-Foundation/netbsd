@@ -6,7 +6,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -41,8 +41,6 @@
  * IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGES.
  */
-
-#define __DSARGS_C__
 
 #include "acpi.h"
 #include "accommon.h"
@@ -96,7 +94,7 @@ AcpiDsExecuteArguments (
 
     /* Allocate a new parser op to be the root of the parsed tree */
 
-    Op = AcpiPsAllocOp (AML_INT_EVAL_SUBTREE_OP);
+    Op = AcpiPsAllocOp (AML_INT_EVAL_SUBTREE_OP, AmlStart);
     if (!Op)
     {
         return_ACPI_STATUS (AE_NO_MEMORY);
@@ -143,7 +141,7 @@ AcpiDsExecuteArguments (
 
     /* Evaluate the deferred arguments */
 
-    Op = AcpiPsAllocOp (AML_INT_EVAL_SUBTREE_OP);
+    Op = AcpiPsAllocOp (AML_INT_EVAL_SUBTREE_OP, AmlStart);
     if (!Op)
     {
         return_ACPI_STATUS (AE_NO_MEMORY);
@@ -424,7 +422,15 @@ AcpiDsGetRegionArguments (
 
     /* Execute the argument AML */
 
-    Status = AcpiDsExecuteArguments (Node, Node->Parent,
+    Status = AcpiDsExecuteArguments (Node, ExtraDesc->Extra.ScopeNode,
                 ExtraDesc->Extra.AmlLength, ExtraDesc->Extra.AmlStart);
+    if (ACPI_FAILURE (Status))
+    {
+        return_ACPI_STATUS (Status);
+    }
+
+    Status = AcpiUtAddAddressRange (ObjDesc->Region.SpaceId,
+                 ObjDesc->Region.Address, ObjDesc->Region.Length,
+                 Node);
     return_ACPI_STATUS (Status);
 }

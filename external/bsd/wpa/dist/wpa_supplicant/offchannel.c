@@ -3,14 +3,8 @@
  * Copyright (c) 2009-2010, Atheros Communications
  * Copyright (c) 2011, Qualcomm Atheros
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #include "includes.h"
@@ -18,6 +12,7 @@
 #include "common.h"
 #include "utils/eloop.h"
 #include "wpa_supplicant_i.h"
+#include "p2p_supplicant.h"
 #include "driver_i.h"
 #include "offchannel.h"
 
@@ -36,8 +31,7 @@ wpas_get_tx_interface(struct wpa_supplicant *wpa_s, const u8 *src)
 	 */
 	iface = wpa_s->global->ifaces;
 	while (iface) {
-		if (os_memcmp(wpa_s->pending_action_src,
-			      iface->own_addr, ETH_ALEN) == 0)
+		if (os_memcmp(src, iface->own_addr, ETH_ALEN) == 0)
 			break;
 		iface = iface->next;
 	}
@@ -61,11 +55,12 @@ static void wpas_send_action_cb(void *eloop_ctx, void *timeout_ctx)
 
 	without_roc = wpa_s->pending_action_without_roc;
 	wpa_s->pending_action_without_roc = 0;
-	wpa_printf(MSG_DEBUG, "Off-channel: Send Action callback "
-		   "(without_roc=%d pending_action_tx=%p)",
-		   without_roc, wpa_s->pending_action_tx);
+	wpa_printf(MSG_DEBUG,
+		   "Off-channel: Send Action callback (without_roc=%d pending_action_tx=%p pending_action_tx_done=%d)",
+		   without_roc, wpa_s->pending_action_tx,
+		   !!wpa_s->pending_action_tx_done);
 
-	if (wpa_s->pending_action_tx == NULL)
+	if (wpa_s->pending_action_tx == NULL || wpa_s->pending_action_tx_done)
 		return;
 
 	/*
@@ -89,6 +84,7 @@ static void wpas_send_action_cb(void *eloop_ctx, void *timeout_ctx)
 			   wpa_s->off_channel_freq,
 			   iface->assoc_freq);
 		if (without_roc && wpa_s->off_channel_freq == 0) {
+			unsigned int duration = 200;
 			/*
 			 * We may get here if wpas_send_action() found us to be
 			 * on the correct channel, but remain-on-channel cancel
@@ -96,9 +92,18 @@ static void wpas_send_action_cb(void *eloop_ctx, void *timeout_ctx)
 			 */
 			wpa_printf(MSG_DEBUG, "Off-channel: Schedule "
 				   "remain-on-channel to send Action frame");
+#ifdef CONFIG_TESTING_OPTIONS
+			if (wpa_s->extra_roc_dur) {
+				wpa_printf(MSG_DEBUG,
+					   "TESTING: Increase ROC duration %u -> %u",
+					   duration,
+					   duration + wpa_s->extra_roc_dur);
+				duration += wpa_s->extra_roc_dur;
+	}
+#endif /* CONFIG_TESTING_OPTIONS */
 			if (wpa_drv_remain_on_channel(
-				    wpa_s, wpa_s->pending_action_freq, 200) <
-			    0) {
+				    wpa_s, wpa_s->pending_action_freq,
+				    duration) < 0) {
 				wpa_printf(MSG_DEBUG, "Off-channel: Failed to "
 					   "request driver to remain on "
 					   "channel (%u MHz) for Action Frame "
@@ -138,6 +143,17 @@ static void wpas_send_action_cb(void *eloop_ctx, void *timeout_ctx)
 }
 
 
+/**
+ * offchannel_send_action_tx_status - TX status callback
+ * @wpa_s: Pointer to wpa_supplicant data
+ * @dst: Destination MAC address of the transmitted Action frame
+ * @data: Transmitted frame payload
+ * @data_len: Length of @data in bytes
+ * @result: TX status
+ *
+ * This function is called whenever the driver indicates a TX status event for
+ * a frame sent by offchannel_send_action() using wpa_drv_send_action().
+ */
 void offchannel_send_action_tx_status(
 	struct wpa_supplicant *wpa_s, const u8 *dst, const u8 *data,
 	size_t data_len, enum offchannel_send_action_result result)
@@ -154,6 +170,21 @@ void offchannel_send_action_tx_status(
 		return;
 	}
 
+	/* Accept report only if the contents of the frame matches */
+	if (data_len - wpabuf_len(wpa_s->pending_action_tx) != 24 ||
+	    os_memcmp(data + 24, wpabuf_head(wpa_s->pending_action_tx),
+		      wpabuf_len(wpa_s->pending_action_tx)) != 0) {
+		wpa_printf(MSG_DEBUG, "Off-channel: Ignore Action TX status - "
+				   "mismatching contents with pending frame");
+		wpa_hexdump(MSG_MSGDUMP, "TX status frame data",
+			    data, data_len);
+		wpa_hexdump_buf(MSG_MSGDUMP, "Pending TX frame",
+				wpa_s->pending_action_tx);
+		return;
+	}
+
+	wpa_printf(MSG_DEBUG, "Off-channel: Delete matching pending action frame");
+
 	wpabuf_free(wpa_s->pending_action_tx);
 	wpa_s->pending_action_tx = NULL;
 
@@ -167,9 +198,38 @@ void offchannel_send_action_tx_status(
 			wpa_s->pending_action_bssid,
 			data, data_len, result);
 	}
+
+#ifdef CONFIG_P2P
+	if (wpa_s->p2p_long_listen > 0) {
+		/* Continue the listen */
+		wpa_printf(MSG_DEBUG, "P2P: Continuing long Listen state");
+		wpas_p2p_listen_start(wpa_s, wpa_s->p2p_long_listen);
+	}
+#endif /* CONFIG_P2P */
 }
 
 
+/**
+ * offchannel_send_action - Request off-channel Action frame TX
+ * @wpa_s: Pointer to wpa_supplicant data
+ * @freq: The frequency in MHz indicating the channel on which the frame is to
+ *	transmitted or 0 for the current channel (only if associated)
+ * @dst: Action frame destination MAC address
+ * @src: Action frame source MAC address
+ * @bssid: Action frame BSSID
+ * @buf: Frame to transmit starting from the Category field
+ * @len: Length of @buf in bytes
+ * @wait_time: Wait time for response in milliseconds
+ * @tx_cb: Callback function for indicating TX status or %NULL for now callback
+ * @no_cck: Whether CCK rates are to be disallowed for TX rate selection
+ * Returns: 0 on success or -1 on failure
+ *
+ * This function is used to request an Action frame to be transmitted on the
+ * current operating channel or on another channel (off-channel). The actual
+ * frame transmission will be delayed until the driver is ready on the specified
+ * channel. The @wait_time parameter can be used to request the driver to remain
+ * awake on the channel to wait for a response.
+ */
 int offchannel_send_action(struct wpa_supplicant *wpa_s, unsigned int freq,
 			   const u8 *dst, const u8 *src, const u8 *bssid,
 			   const u8 *buf, size_t len, unsigned int wait_time,
@@ -194,6 +254,7 @@ int offchannel_send_action(struct wpa_supplicant *wpa_s, unsigned int freq,
 			   MAC2STR(wpa_s->pending_action_dst));
 		wpabuf_free(wpa_s->pending_action_tx);
 	}
+	wpa_s->pending_action_tx_done = 0;
 	wpa_s->pending_action_tx = wpabuf_alloc(len);
 	if (wpa_s->pending_action_tx == NULL) {
 		wpa_printf(MSG_DEBUG, "Off-channel: Failed to allocate Action "
@@ -210,18 +271,21 @@ int offchannel_send_action(struct wpa_supplicant *wpa_s, unsigned int freq,
 
 	if (freq != 0 && wpa_s->drv_flags & WPA_DRIVER_FLAGS_OFFCHANNEL_TX) {
 		struct wpa_supplicant *iface;
+		int ret;
 
-		iface = wpas_get_tx_interface(wpa_s,
-					      wpa_s->pending_action_src);
+		iface = wpas_get_tx_interface(wpa_s, src);
 		wpa_s->action_tx_wait_time = wait_time;
 
-		return wpa_drv_send_action(
+		ret = wpa_drv_send_action(
 			iface, wpa_s->pending_action_freq,
 			wait_time, wpa_s->pending_action_dst,
 			wpa_s->pending_action_src, wpa_s->pending_action_bssid,
 			wpabuf_head(wpa_s->pending_action_tx),
 			wpabuf_len(wpa_s->pending_action_tx),
 			wpa_s->pending_action_no_cck);
+		if (ret == 0)
+			wpa_s->pending_action_tx_done = 1;
+		return ret;
 	}
 
 	if (freq) {
@@ -259,6 +323,15 @@ int offchannel_send_action(struct wpa_supplicant *wpa_s, unsigned int freq,
 		   "channel");
 	if (wait_time > wpa_s->max_remain_on_chan)
 		wait_time = wpa_s->max_remain_on_chan;
+	else if (wait_time == 0)
+		wait_time = 20;
+#ifdef CONFIG_TESTING_OPTIONS
+	if (wpa_s->extra_roc_dur) {
+		wpa_printf(MSG_DEBUG, "TESTING: Increase ROC duration %u -> %u",
+			   wait_time, wait_time + wpa_s->extra_roc_dur);
+		wait_time += wpa_s->extra_roc_dur;
+	}
+#endif /* CONFIG_TESTING_OPTIONS */
 	if (wpa_drv_remain_on_channel(wpa_s, freq, wait_time) < 0) {
 		wpa_printf(MSG_DEBUG, "Off-channel: Failed to request driver "
 			   "to remain on channel (%u MHz) for Action "
@@ -272,17 +345,27 @@ int offchannel_send_action(struct wpa_supplicant *wpa_s, unsigned int freq,
 }
 
 
+/**
+ * offchannel_send_send_action_done - Notify completion of Action frame sequence
+ * @wpa_s: Pointer to wpa_supplicant data
+ *
+ * This function can be used to cancel a wait for additional response frames on
+ * the channel that was used with offchannel_send_action().
+ */
 void offchannel_send_action_done(struct wpa_supplicant *wpa_s)
 {
-	wpa_printf(MSG_DEBUG, "Off-channel: Action frame sequence done "
-		   "notification");
+	wpa_printf(MSG_DEBUG,
+		   "Off-channel: Action frame sequence done notification: pending_action_tx=%p drv_offchan_tx=%d action_tx_wait_time=%d off_channel_freq=%d roc_waiting_drv_freq=%d",
+		   wpa_s->pending_action_tx,
+		   !!(wpa_s->drv_flags & WPA_DRIVER_FLAGS_OFFCHANNEL_TX),
+		   wpa_s->action_tx_wait_time, wpa_s->off_channel_freq,
+		   wpa_s->roc_waiting_drv_freq);
 	wpabuf_free(wpa_s->pending_action_tx);
 	wpa_s->pending_action_tx = NULL;
 	if (wpa_s->drv_flags & WPA_DRIVER_FLAGS_OFFCHANNEL_TX &&
 	    wpa_s->action_tx_wait_time)
 		wpa_drv_send_action_cancel_wait(wpa_s);
-
-	if (wpa_s->off_channel_freq || wpa_s->roc_waiting_drv_freq) {
+	else if (wpa_s->off_channel_freq || wpa_s->roc_waiting_drv_freq) {
 		wpa_drv_cancel_remain_on_channel(wpa_s);
 		wpa_s->off_channel_freq = 0;
 		wpa_s->roc_waiting_drv_freq = 0;
@@ -290,6 +373,15 @@ void offchannel_send_action_done(struct wpa_supplicant *wpa_s)
 }
 
 
+/**
+ * offchannel_remain_on_channel_cb - Remain-on-channel callback function
+ * @wpa_s: Pointer to wpa_supplicant data
+ * @freq: Frequency (in MHz) of the selected channel
+ * @duration: Duration of the remain-on-channel operation in milliseconds
+ *
+ * This function is called whenever the driver notifies beginning of a
+ * remain-on-channel operation.
+ */
 void offchannel_remain_on_channel_cb(struct wpa_supplicant *wpa_s,
 				     unsigned int freq, unsigned int duration)
 {
@@ -299,6 +391,14 @@ void offchannel_remain_on_channel_cb(struct wpa_supplicant *wpa_s,
 }
 
 
+/**
+ * offchannel_cancel_remain_on_channel_cb - Remain-on-channel stopped callback
+ * @wpa_s: Pointer to wpa_supplicant data
+ * @freq: Frequency (in MHz) of the selected channel
+ *
+ * This function is called whenever the driver notifies termination of a
+ * remain-on-channel operation.
+ */
 void offchannel_cancel_remain_on_channel_cb(struct wpa_supplicant *wpa_s,
 					    unsigned int freq)
 {
@@ -306,9 +406,42 @@ void offchannel_cancel_remain_on_channel_cb(struct wpa_supplicant *wpa_s,
 }
 
 
-void offchannel_deinit(struct wpa_supplicant *wpa_s)
+/**
+ * offchannel_pending_action_tx - Check whether there is a pending Action TX
+ * @wpa_s: Pointer to wpa_supplicant data
+ * Returns: Pointer to pending frame or %NULL if no pending operation
+ *
+ * This function can be used to check whether there is a pending Action frame TX
+ * operation. The returned pointer should be used only for checking whether it
+ * is %NULL (no pending frame) or to print the pointer value in debug
+ * information (i.e., the pointer should not be dereferenced).
+ */
+const void * offchannel_pending_action_tx(struct wpa_supplicant *wpa_s)
+{
+	return wpa_s->pending_action_tx;
+}
+
+
+/**
+ * offchannel_clear_pending_action_tx - Clear pending Action frame TX
+ * @wpa_s: Pointer to wpa_supplicant data
+ */
+void offchannel_clear_pending_action_tx(struct wpa_supplicant *wpa_s)
 {
 	wpabuf_free(wpa_s->pending_action_tx);
 	wpa_s->pending_action_tx = NULL;
+}
+
+
+/**
+ * offchannel_deinit - Deinit off-channel operations
+ * @wpa_s: Pointer to wpa_supplicant data
+ *
+ * This function is used to free up any allocated resources for off-channel
+ * operations.
+ */
+void offchannel_deinit(struct wpa_supplicant *wpa_s)
+{
+	offchannel_clear_pending_action_tx(wpa_s);
 	eloop_cancel_timeout(wpas_send_action_cb, wpa_s, NULL);
 }

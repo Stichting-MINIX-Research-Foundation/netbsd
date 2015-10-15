@@ -1,4 +1,4 @@
-/*	$NetBSD: vm.c,v 1.146 2013/11/23 22:24:31 christos Exp $	*/
+/*	$NetBSD: vm.c,v 1.167 2015/06/02 14:07:48 pooka Exp $	*/
 
 /*
  * Copyright (c) 2007-2011 Antti Kantee.  All Rights Reserved.
@@ -41,7 +41,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: vm.c,v 1.146 2013/11/23 22:24:31 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: vm.c,v 1.167 2015/06/02 14:07:48 pooka Exp $");
 
 #include <sys/param.h>
 #include <sys/atomic.h>
@@ -62,11 +62,13 @@ __KERNEL_RCSID(0, "$NetBSD: vm.c,v 1.146 2013/11/23 22:24:31 christos Exp $");
 #include <uvm/uvm_pdpolicy.h>
 #include <uvm/uvm_prot.h>
 #include <uvm/uvm_readahead.h>
+#include <uvm/uvm_device.h>
 
 #include "rump_private.h"
 #include "rump_vfs_private.h"
 
-kmutex_t uvm_pageqlock;
+kmutex_t uvm_pageqlock; /* non-free page lock */
+kmutex_t uvm_fpageqlock; /* free page lock, non-gpl license */
 kmutex_t uvm_swap_data_lock;
 
 struct uvmexp uvmexp;
@@ -78,13 +80,15 @@ const int * const uvmexp_pagemask = &uvmexp.pagemask;
 const int * const uvmexp_pageshift = &uvmexp.pageshift;
 #endif
 
-struct vm_map rump_vmmap;
-
 static struct vm_map kernel_map_store;
 struct vm_map *kernel_map = &kernel_map_store;
 
 static struct vm_map module_map_store;
 extern struct vm_map *module_map;
+
+static struct pmap pmap_kernel;
+struct pmap rump_pmap_local;
+struct pmap *const kernel_pmap_ptr = &pmap_kernel;
 
 vmem_t *kmem_arena;
 vmem_t *kmem_va_arena;
@@ -93,11 +97,16 @@ static unsigned int pdaemon_waiters;
 static kmutex_t pdaemonmtx;
 static kcondvar_t pdaemoncv, oomwait;
 
+/* all local non-proc0 processes share this vmspace */
+struct vmspace *rump_vmspace_local;
+
 unsigned long rump_physmemlimit = RUMPMEM_UNLIMITED;
+static unsigned long pdlimit = RUMPMEM_UNLIMITED; /* page daemon memlimit */
 static unsigned long curphysmem;
 static unsigned long dddlim;		/* 90% of memory limit used */
 #define NEED_PAGEDAEMON() \
     (rump_physmemlimit != RUMPMEM_UNLIMITED && curphysmem > dddlim)
+#define PDRESERVE (2*MAXPHYS)
 
 /*
  * Try to free two pages worth of pages from objects.
@@ -304,9 +313,18 @@ uvm_init(void)
 
 		if (rump_physmemlimit / mult != tmp)
 			panic("uvm_init: RUMP_MEMLIMIT overflow: %s", buf);
-		/* it's not like we'd get far with, say, 1 byte, but ... */
-		if (rump_physmemlimit == 0)
-			panic("uvm_init: no memory");
+
+		/* reserve some memory for the pager */
+		if (rump_physmemlimit <= PDRESERVE)
+			panic("uvm_init: system reserves %d bytes of mem, "
+			    "only %lu bytes given",
+			    PDRESERVE, rump_physmemlimit);
+		pdlimit = rump_physmemlimit;
+		rump_physmemlimit -= PDRESERVE;
+
+		if (pdlimit < 1024*1024)
+			printf("uvm_init: WARNING: <1MB RAM limit, "
+			    "hope you know what you're doing\n");
 
 #define HUMANIZE_BYTES 9
 		CTASSERT(sizeof(buf) >= HUMANIZE_BYTES);
@@ -320,7 +338,20 @@ uvm_init(void)
 
 	TAILQ_INIT(&vmpage_lruqueue);
 
-	uvmexp.free = 1024*1024; /* XXX: arbitrary & not updated */
+	if (rump_physmemlimit == RUMPMEM_UNLIMITED) {
+		uvmexp.npages = physmem;
+	} else {
+		uvmexp.npages = pdlimit >> PAGE_SHIFT;
+		uvmexp.reserve_pagedaemon = PDRESERVE >> PAGE_SHIFT;
+		uvmexp.freetarg = (rump_physmemlimit-dddlim) >> PAGE_SHIFT;
+	}
+	/*
+	 * uvmexp.free is not used internally or updated.  The reason is
+	 * that the memory hypercall allocator is allowed to allocate
+	 * non-page sized chunks.  We use a byte count in curphysmem
+	 * instead.
+	 */
+	uvmexp.free = uvmexp.npages;
 
 #ifndef __uvmexp_pagesize
 	uvmexp.pagesize = PAGE_SIZE;
@@ -337,6 +368,9 @@ uvm_init(void)
 	mutex_init(&pagermtx, MUTEX_DEFAULT, IPL_NONE);
 	mutex_init(&uvm_pageqlock, MUTEX_DEFAULT, IPL_NONE);
 	mutex_init(&uvm_swap_data_lock, MUTEX_DEFAULT, IPL_NONE);
+
+	/* just to appease linkage */
+	mutex_init(&uvm_fpageqlock, MUTEX_SPIN, IPL_VM);
 
 	mutex_init(&pdaemonmtx, MUTEX_DEFAULT, IPL_NONE);
 	cv_init(&pdaemoncv, "pdaemon");
@@ -360,6 +394,10 @@ uvm_init(void)
 
 	pool_cache_bootstrap(&pagecache, sizeof(struct vm_page), 0, 0, 0,
 	    "page$", NULL, IPL_NONE, pgctor, pgdtor, NULL);
+
+	/* create vmspace used by local clients */
+	rump_vmspace_local = kmem_zalloc(sizeof(*rump_vmspace_local), KM_SLEEP);
+	uvmspace_init(rump_vmspace_local, &rump_pmap_local, 0, 0, false);
 }
 
 void
@@ -367,7 +405,7 @@ uvmspace_init(struct vmspace *vm, struct pmap *pmap, vaddr_t vmin, vaddr_t vmax,
     bool topdown)
 {
 
-	vm->vm_map.pmap = pmap_kernel();
+	vm->vm_map.pmap = pmap;
 	vm->vm_refcnt = 1;
 }
 
@@ -392,7 +430,11 @@ void
 uvm_init_limits(struct proc *p)
 {
 
-	PUNLIMIT(RLIMIT_STACK);
+#ifndef DFLSSIZ
+#define DFLSSIZ (16*1024*1024)
+#endif
+	p->p_rlimit[RLIMIT_STACK].rlim_cur = DFLSSIZ;
+	p->p_rlimit[RLIMIT_STACK].rlim_max = MAXSSIZ;
 	PUNLIMIT(RLIMIT_DATA);
 	PUNLIMIT(RLIMIT_RSS);
 	PUNLIMIT(RLIMIT_AS);
@@ -402,36 +444,34 @@ uvm_init_limits(struct proc *p)
 
 /*
  * This satisfies the "disgusting mmap hack" used by proplib.
- * We probably should grow some more assertables to make sure we're
- * not satisfying anything we shouldn't be satisfying.
  */
 int
-uvm_mmap(struct vm_map *map, vaddr_t *addr, vsize_t size, vm_prot_t prot,
-	vm_prot_t maxprot, int flags, void *handle, voff_t off, vsize_t locklim)
+uvm_mmap_anon(struct proc *p, void **addrp, size_t size)
 {
-	void *uaddr;
 	int error;
 
-	if (prot != (VM_PROT_READ | VM_PROT_WRITE))
-		panic("uvm_mmap() variant unsupported");
-	if (flags != (MAP_PRIVATE | MAP_ANON))
-		panic("uvm_mmap() variant unsupported");
-
 	/* no reason in particular, but cf. uvm_default_mapaddr() */
-	if (*addr != 0)
+	if (*addrp != NULL)
 		panic("uvm_mmap() variant unsupported");
 
 	if (RUMP_LOCALPROC_P(curproc)) {
-		error = rumpuser_anonmmap(NULL, size, 0, 0, &uaddr);
+		error = rumpuser_anonmmap(NULL, size, 0, 0, addrp);
 	} else {
-		error = rumpuser_sp_anonmmap(curproc->p_vmspace->vm_map.pmap,
-		    size, &uaddr);
+		error = rump_sysproxy_anonmmap(RUMP_SPVM2CTL(p->p_vmspace),
+		    size, addrp);
 	}
-	if (error)
-		return error;
+	return error;
+}
 
-	*addr = (vaddr_t)uaddr;
-	return 0;
+/*
+ * Stubs for things referenced from vfs_vnode.c but not used.
+ */
+const dev_t zerodev;
+
+struct uvm_object *
+udv_attach(dev_t device, vm_prot_t accessprot, voff_t off, vsize_t size)
+{
+	return NULL;
 }
 
 struct pagerinfo {
@@ -446,9 +486,15 @@ static LIST_HEAD(, pagerinfo) pagerlist = LIST_HEAD_INITIALIZER(pagerlist);
 
 /*
  * Pager "map" in routine.  Instead of mapping, we allocate memory
- * and copy page contents there.  Not optimal or even strictly
- * correct (the caller might modify the page contents after mapping
- * them in), but what the heck.  Assumes UVMPAGER_MAPIN_WAITOK.
+ * and copy page contents there.  The reason for copying instead of
+ * mapping is simple: we do not assume we are running on virtual
+ * memory.  Even if we could emulate virtual memory in some envs
+ * such as userspace, copying is much faster than trying to awkardly
+ * cope with remapping (see "Design and Implementation" pp.95-98).
+ * The downside of the approach is that the pager requires MAXPHYS
+ * free memory to perform paging, but short of virtual memory or
+ * making the pager do I/O in page-sized chunks we cannot do much
+ * about that.
  */
 vaddr_t
 uvm_pagermapin(struct vm_page **pgs, int npages, int flags)
@@ -652,16 +698,6 @@ ubc_purge(struct uvm_object *uobj)
 {
 
 }
-
-#ifdef DEBUGPRINT
-void
-uvm_object_printit(struct uvm_object *uobj, bool full,
-	void (*pr)(const char *, ...))
-{
-
-	pr("VM OBJECT at %p, refs %d", uobj, uobj->uo_refs);
-}
-#endif
 
 vaddr_t
 uvm_default_mapaddr(struct proc *p, vaddr_t base, vsize_t sz)
@@ -911,6 +947,21 @@ uvm_vm_page_to_phys(const struct vm_page *pg)
 	return 0;
 }
 
+vaddr_t
+uvm_uarea_alloc(void)
+{
+
+	/* non-zero */
+	return (vaddr_t)11;
+}
+
+void
+uvm_uarea_free(vaddr_t uarea)
+{
+
+	/* nata, so creamy */
+}
+
 /*
  * Routines related to the Page Baroness.
  */
@@ -919,10 +970,14 @@ void
 uvm_wait(const char *msg)
 {
 
-	if (__predict_false(curlwp == uvm.pagedaemon_lwp))
-		panic("pagedaemon out of memory");
 	if (__predict_false(rump_threads == 0))
 		panic("pagedaemon missing (RUMP_THREADS = 0)");
+
+	if (curlwp == uvm.pagedaemon_lwp) {
+		/* is it possible for us to later get memory? */
+		if (!uvmexp.paging)
+			panic("pagedaemon out of memory");
+	}
 
 	mutex_enter(&pdaemonmtx);
 	pdaemon_waiters++;
@@ -1101,8 +1156,7 @@ uvm_pageout(void *arg)
 		 * And then drain the pools.  Wipe them out ... all of them.
 		 */
 		for (pp_first = NULL;;) {
-			if (rump_vfs_drainbufs)
-				rump_vfs_drainbufs(10 /* XXX: estimate! */);
+			rump_vfs_drainbufs(10 /* XXX: estimate! */);
 
 			succ = pool_drain(&pp);
 			if (succ || pp == pp_first)
@@ -1122,7 +1176,7 @@ uvm_pageout(void *arg)
 		    uvmexp.paging == 0) {
 			rumpuser_dprintf("pagedaemoness: failed to reclaim "
 			    "memory ... sleeping (deadlock?)\n");
-			cv_timedwait(&pdaemoncv, &pdaemonmtx, hz);
+			kpause("pddlk", false, hz, &pdaemonmtx);
 		}
 	}
 
@@ -1148,6 +1202,8 @@ uvm_kick_pdaemon()
 void *
 rump_hypermalloc(size_t howmuch, int alignment, bool waitok, const char *wmsg)
 {
+	const unsigned long thelimit =
+	    curlwp == uvm.pagedaemon_lwp ? pdlimit : rump_physmemlimit;
 	unsigned long newmem;
 	void *rv;
 	int error;
@@ -1156,9 +1212,9 @@ rump_hypermalloc(size_t howmuch, int alignment, bool waitok, const char *wmsg)
 
 	/* first we must be within the limit */
  limitagain:
-	if (rump_physmemlimit != RUMPMEM_UNLIMITED) {
+	if (thelimit != RUMPMEM_UNLIMITED) {
 		newmem = atomic_add_long_nv(&curphysmem, howmuch);
-		if (newmem > rump_physmemlimit) {
+		if (newmem > thelimit) {
 			newmem = atomic_add_long_nv(&curphysmem, -howmuch);
 			if (!waitok) {
 				return NULL;
@@ -1187,9 +1243,4 @@ rump_hyperfree(void *what, size_t size)
 		atomic_add_long(&curphysmem, -size);
 	}
 	rumpuser_free(what, size);
-}
-
-void
-uvm_swap_shutdown(struct lwp *lwp)
-{
 }

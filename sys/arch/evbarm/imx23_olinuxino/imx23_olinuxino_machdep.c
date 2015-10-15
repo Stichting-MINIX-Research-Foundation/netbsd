@@ -1,4 +1,4 @@
-/* $Id: imx23_olinuxino_machdep.c,v 1.3 2013/10/07 17:36:40 matt Exp $ */
+/* $Id: imx23_olinuxino_machdep.c,v 1.6 2015/01/10 12:18:09 jmcneill Exp $ */
 
 /*
  * Copyright (c) 2012 The NetBSD Foundation, Inc.
@@ -28,6 +28,8 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
+
+#include "opt_imx.h"
 
 #include <sys/bus.h>
 #include <sys/cdefs.h>
@@ -65,6 +67,7 @@
 #endif
 
 #include "opt_evbarm_boardtype.h"
+#include "opt_machdep.h"
 
 #define	KERNEL_VM_BASE	(KERNEL_BASE + 0x8000000)
 #define	KERNEL_VM_SIZE	0x20000000
@@ -161,6 +164,9 @@ initarm(void *arg)
 	/* Copy boot arguments passed from bootimx23. */
 	boot_args = (char *)KERN_PHYSTOV(BOOTIMX23_ARGS);
 	memcpy(kernel_boot_args, boot_args, MAX_BOOT_STRING);
+#ifdef BOOT_ARGS
+	strcpy(kernel_boot_args, BOOT_ARGS);
+#endif
 	boot_args = kernel_boot_args;
 #ifdef VERBOSE_INIT_ARM
 	printf("boot_args @ %lx: '%s'\n", KERN_PHYSTOV(BOOTIMX23_ARGS),
@@ -179,7 +185,7 @@ initarm(void *arg)
             ((vsize_t)&KERNEL_BASE_phys));
 
         arm32_kernel_vm_init(KERNEL_VM_BASE, ARM_VECTORS_HIGH, 0, devmap,
-	    true);
+	    false);
 
         return initarm_common(KERNEL_VM_BASE, KERNEL_VM_SIZE, NULL, 0);
 }

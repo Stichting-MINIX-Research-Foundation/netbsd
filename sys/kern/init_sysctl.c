@@ -1,4 +1,4 @@
-/*	$NetBSD: init_sysctl.c,v 1.198 2013/09/14 13:18:02 joerg Exp $ */
+/*	$NetBSD: init_sysctl.c,v 1.209 2015/08/25 14:52:31 pooka Exp $ */
 
 /*-
  * Copyright (c) 2003, 2007, 2008, 2009 The NetBSD Foundation, Inc.
@@ -30,14 +30,12 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: init_sysctl.c,v 1.198 2013/09/14 13:18:02 joerg Exp $");
+__KERNEL_RCSID(0, "$NetBSD: init_sysctl.c,v 1.209 2015/08/25 14:52:31 pooka Exp $");
 
 #include "opt_sysv.h"
 #include "opt_compat_netbsd.h"
 #include "opt_modular.h"
 #include "pty.h"
-
-#define SYSCTL_PRIVATE
 
 #include <sys/types.h>
 #include <sys/param.h>
@@ -52,7 +50,6 @@ __KERNEL_RCSID(0, "$NetBSD: init_sysctl.c,v 1.198 2013/09/14 13:18:02 joerg Exp 
 #include <sys/vnode.h>
 #include <sys/mount.h>
 #include <sys/namei.h>
-#include <sys/msgbuf.h>
 #include <dev/cons.h>
 #include <sys/socketvar.h>
 #include <sys/file.h>
@@ -76,6 +73,16 @@ char security_setidcore_path[MAXPATHLEN] = "/var/crash/%n.core";
 uid_t security_setidcore_owner = 0;
 gid_t security_setidcore_group = 0;
 mode_t security_setidcore_mode = (S_IRUSR|S_IWUSR);
+
+/*
+ * Current status of SysV IPC capability.  Initially, these are
+ * 0 if the capability is not built-in to the kernel, but can
+ * be updated if the appropriate kernel module is (auto)loaded.
+ */
+
+int kern_has_sysvmsg = 0;
+int kern_has_sysvshm = 0;
+int kern_has_sysvsem = 0;
 
 static const u_int sysctl_lwpprflagmap[] = {
 	LPR_DETACHED, L_DETACHED,
@@ -107,16 +114,11 @@ static int sysctl_kern_maxvnodes(SYSCTLFN_PROTO);
 static int sysctl_kern_rtc_offset(SYSCTLFN_PROTO);
 static int sysctl_kern_maxproc(SYSCTLFN_PROTO);
 static int sysctl_kern_hostid(SYSCTLFN_PROTO);
-static int sysctl_setlen(SYSCTLFN_PROTO);
-static int sysctl_kern_clockrate(SYSCTLFN_PROTO);
-static int sysctl_msgbuf(SYSCTLFN_PROTO);
 static int sysctl_kern_defcorename(SYSCTLFN_PROTO);
 static int sysctl_kern_cptime(SYSCTLFN_PROTO);
 #if NPTY > 0
 static int sysctl_kern_maxptys(SYSCTLFN_PROTO);
 #endif /* NPTY > 0 */
-static int sysctl_kern_urnd(SYSCTLFN_PROTO);
-static int sysctl_kern_arnd(SYSCTLFN_PROTO);
 static int sysctl_kern_lwp(SYSCTLFN_PROTO);
 static int sysctl_kern_forkfsleep(SYSCTLFN_PROTO);
 static int sysctl_kern_root_partition(SYSCTLFN_PROTO);
@@ -149,36 +151,6 @@ SYSCTL_SETUP(sysctl_kern_setup, "sysctl kern subtree setup")
 	const struct sysctlnode *rnode;
 
 	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
-		       CTLTYPE_NODE, "kern", NULL,
-		       NULL, 0, NULL, 0,
-		       CTL_KERN, CTL_EOL);
-
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
-		       CTLTYPE_STRING, "ostype",
-		       SYSCTL_DESCR("Operating system type"),
-		       NULL, 0, __UNCONST(&ostype), 0,
-		       CTL_KERN, KERN_OSTYPE, CTL_EOL);
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
-		       CTLTYPE_STRING, "osrelease",
-		       SYSCTL_DESCR("Operating system release"),
-		       NULL, 0, __UNCONST(&osrelease), 0,
-		       CTL_KERN, KERN_OSRELEASE, CTL_EOL);
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT|CTLFLAG_IMMEDIATE,
-		       CTLTYPE_INT, "osrevision",
-		       SYSCTL_DESCR("Operating system revision"),
-		       NULL, __NetBSD_Version__, NULL, 0,
-		       CTL_KERN, KERN_OSREV, CTL_EOL);
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
-		       CTLTYPE_STRING, "version",
-		       SYSCTL_DESCR("Kernel version"),
-		       NULL, 0, __UNCONST(&version), 0,
-		       CTL_KERN, KERN_VERSION, CTL_EOL);
-	sysctl_createv(clog, 0, NULL, NULL,
 		       CTLFLAG_PERMANENT|CTLFLAG_READWRITE,
 		       CTLTYPE_INT, "maxvnodes",
 		       SYSCTL_DESCR("Maximum number of vnodes"),
@@ -204,30 +176,11 @@ SYSCTL_SETUP(sysctl_kern_setup, "sysctl kern subtree setup")
 		       NULL, ARG_MAX, NULL, 0,
 		       CTL_KERN, KERN_ARGMAX, CTL_EOL);
 	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT|CTLFLAG_READWRITE,
-		       CTLTYPE_STRING, "hostname",
-		       SYSCTL_DESCR("System hostname"),
-		       sysctl_setlen, 0, hostname, MAXHOSTNAMELEN,
-		       CTL_KERN, KERN_HOSTNAME, CTL_EOL);
-	sysctl_createv(clog, 0, NULL, NULL,
 		       CTLFLAG_PERMANENT|CTLFLAG_READWRITE|CTLFLAG_HEX,
 		       CTLTYPE_INT, "hostid",
 		       SYSCTL_DESCR("System host ID number"),
 		       sysctl_kern_hostid, 0, NULL, 0,
 		       CTL_KERN, KERN_HOSTID, CTL_EOL);
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
-		       CTLTYPE_STRUCT, "clockrate",
-		       SYSCTL_DESCR("Kernel clock rates"),
-		       sysctl_kern_clockrate, 0, NULL,
-		       sizeof(struct clockinfo),
-		       CTL_KERN, KERN_CLOCKRATE, CTL_EOL);
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
-		       CTLTYPE_INT, "hardclock_ticks",
-		       SYSCTL_DESCR("Number of hardclock ticks"),
-		       NULL, 0, &hardclock_ticks, sizeof(hardclock_ticks),
-		       CTL_KERN, KERN_HARDCLOCK_TICKS, CTL_EOL);
 	sysctl_createv(clog, 0, NULL, NULL,
 		       CTLFLAG_PERMANENT,
 		       CTLTYPE_STRUCT, "vnode",
@@ -286,24 +239,12 @@ SYSCTL_SETUP(sysctl_kern_setup, "sysctl kern subtree setup")
 		       NULL, 0, &boottime, sizeof(boottime),
 		       CTL_KERN, KERN_BOOTTIME, CTL_EOL);
 	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT|CTLFLAG_READWRITE,
-		       CTLTYPE_STRING, "domainname",
-		       SYSCTL_DESCR("YP domain name"),
-		       sysctl_setlen, 0, domainname, MAXHOSTNAMELEN,
-		       CTL_KERN, KERN_DOMAINNAME, CTL_EOL);
-	sysctl_createv(clog, 0, NULL, NULL,
 		       CTLFLAG_PERMANENT|CTLFLAG_IMMEDIATE,
 		       CTLTYPE_INT, "maxpartitions",
 		       SYSCTL_DESCR("Maximum number of partitions allowed per "
 				    "disk"),
 		       NULL, MAXPARTITIONS, NULL, 0,
 		       CTL_KERN, KERN_MAXPARTITIONS, CTL_EOL);
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT|CTLFLAG_IMMEDIATE,
-		       CTLTYPE_INT, "rawpartition",
-		       SYSCTL_DESCR("Raw partition of a disk"),
-		       NULL, RAW_PART, NULL, 0,
-		       CTL_KERN, KERN_RAWPARTITION, CTL_EOL);
 	sysctl_createv(clog, 0, NULL, NULL,
 		       CTLFLAG_PERMANENT,
 		       CTLTYPE_STRUCT, "timex", NULL,
@@ -323,12 +264,6 @@ SYSCTL_SETUP(sysctl_kern_setup, "sysctl kern subtree setup")
 		       sysctl_root_device, 0, NULL, 0,
 		       CTL_KERN, KERN_ROOT_DEVICE, CTL_EOL);
 	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
-		       CTLTYPE_INT, "msgbufsize",
-		       SYSCTL_DESCR("Size of the kernel message buffer"),
-		       sysctl_msgbuf, 0, NULL, 0,
-		       CTL_KERN, KERN_MSGBUFSIZE, CTL_EOL);
-	sysctl_createv(clog, 0, NULL, NULL,
 		       CTLFLAG_PERMANENT|CTLFLAG_IMMEDIATE,
 		       CTLTYPE_INT, "fsync",
 		       SYSCTL_DESCR("Whether the POSIX 1003.1b File "
@@ -343,38 +278,25 @@ SYSCTL_SETUP(sysctl_kern_setup, "sysctl kern subtree setup")
 		       NULL, 0, NULL, 0,
 		       CTL_KERN, KERN_SYSVIPC, CTL_EOL);
 	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT|CTLFLAG_IMMEDIATE,
+		       CTLFLAG_PERMANENT|CTLFLAG_READONLY,
 		       CTLTYPE_INT, "sysvmsg",
 		       SYSCTL_DESCR("System V style message support available"),
-		       NULL,
-#ifdef SYSVMSG
-		       1,
-#else /* SYSVMSG */
-		       0,
-#endif /* SYSVMSG */
-		       NULL, 0, CTL_KERN, KERN_SYSVIPC, KERN_SYSVIPC_MSG, CTL_EOL);
+		       NULL, 0, &kern_has_sysvmsg, sizeof(int),
+		       CTL_KERN, KERN_SYSVIPC, KERN_SYSVIPC_MSG, CTL_EOL);
 	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT|CTLFLAG_IMMEDIATE,
+		       CTLFLAG_PERMANENT|CTLFLAG_READONLY,
 		       CTLTYPE_INT, "sysvsem",
 		       SYSCTL_DESCR("System V style semaphore support "
-				    "available"), NULL,
-#ifdef SYSVSEM
-		       1,
-#else /* SYSVSEM */
-		       0,
-#endif /* SYSVSEM */
-		       NULL, 0, CTL_KERN, KERN_SYSVIPC, KERN_SYSVIPC_SEM, CTL_EOL);
+				    "available"),
+		       NULL, 0, &kern_has_sysvsem, sizeof(int),
+		       CTL_KERN, KERN_SYSVIPC, KERN_SYSVIPC_SEM, CTL_EOL);
 	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT|CTLFLAG_IMMEDIATE,
+		       CTLFLAG_PERMANENT|CTLFLAG_READONLY,
 		       CTLTYPE_INT, "sysvshm",
 		       SYSCTL_DESCR("System V style shared memory support "
-				    "available"), NULL,
-#ifdef SYSVSHM
-		       1,
-#else /* SYSVSHM */
-		       0,
-#endif /* SYSVSHM */
-		       NULL, 0, CTL_KERN, KERN_SYSVIPC, KERN_SYSVIPC_SHM, CTL_EOL);
+				    "available"),
+		       NULL, 0, &kern_has_sysvshm, sizeof(int),
+		       CTL_KERN, KERN_SYSVIPC, KERN_SYSVIPC_SHM, CTL_EOL);
 	sysctl_createv(clog, 0, NULL, NULL,
 		       CTLFLAG_PERMANENT|CTLFLAG_IMMEDIATE,
 		       CTLTYPE_INT, "synchronized_io",
@@ -458,12 +380,6 @@ SYSCTL_SETUP(sysctl_kern_setup, "sysctl kern subtree setup")
 		       CTL_KERN, KERN_CP_TIME, CTL_EOL);
 	sysctl_createv(clog, 0, NULL, NULL,
 		       CTLFLAG_PERMANENT,
-		       CTLTYPE_INT, "msgbuf",
-		       SYSCTL_DESCR("Kernel message buffer"),
-		       sysctl_msgbuf, 0, NULL, 0,
-		       CTL_KERN, KERN_MSGBUF, CTL_EOL);
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
 		       CTLTYPE_STRUCT, "consdev",
 		       SYSCTL_DESCR("Console device"),
 		       sysctl_consdev, 0, NULL, sizeof(dev_t),
@@ -490,18 +406,6 @@ SYSCTL_SETUP(sysctl_kern_setup, "sysctl kern subtree setup")
 		       /* XXX _POSIX_VERSION */
 		       NULL, _POSIX_MONOTONIC_CLOCK, NULL, 0,
 		       CTL_KERN, KERN_MONOTONIC_CLOCK, CTL_EOL);
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
-		       CTLTYPE_INT, "urandom",
-		       SYSCTL_DESCR("Random integer value"),
-		       sysctl_kern_urnd, 0, NULL, 0,
-		       CTL_KERN, KERN_URND, CTL_EOL);
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
-		       CTLTYPE_INT, "arandom",
-		       SYSCTL_DESCR("n bytes of random data"),
-		       sysctl_kern_arnd, 0, NULL, 0,
-		       CTL_KERN, KERN_ARND, CTL_EOL);
 	sysctl_createv(clog, 0, NULL, NULL,
 		       CTLFLAG_PERMANENT|CTLFLAG_IMMEDIATE,
 		       CTLTYPE_INT, "labelsector",
@@ -675,6 +579,19 @@ SYSCTL_SETUP(sysctl_kern_setup, "sysctl kern subtree setup")
 		       "it doesn't"),
 		       NULL, 1, NULL, 0,
 		       CTL_KERN, CTL_CREATE, CTL_EOL);
+	sysctl_createv(clog, 0, NULL, NULL,
+			CTLFLAG_PERMANENT,
+			CTLTYPE_STRING, "configname",
+			SYSCTL_DESCR("Name of config file"),
+			NULL, 0, __UNCONST(kernel_ident), 0,
+			CTL_KERN, CTL_CREATE, CTL_EOL);
+	sysctl_createv(clog, 0, NULL, NULL,
+			CTLFLAG_PERMANENT,
+			CTLTYPE_STRING, "buildinfo",
+			SYSCTL_DESCR("Information from build environment"),
+			NULL, 0, __UNCONST(buildinfo), 0,
+			CTL_KERN, CTL_CREATE, CTL_EOL);
+
 	/* kern.posix. */
 	sysctl_createv(clog, 0, NULL, &rnode,
 			CTLFLAG_PERMANENT,
@@ -688,57 +605,11 @@ SYSCTL_SETUP(sysctl_kern_setup, "sysctl kern subtree setup")
 			SYSCTL_DESCR("Maximal number of semaphores"),
 			NULL, 0, &ksem_max, 0,
 			CTL_CREATE, CTL_EOL);
-	sysctl_createv(clog, 0, NULL, NULL,
-			CTLFLAG_PERMANENT,
-			CTLTYPE_STRING, "configname",
-			SYSCTL_DESCR("Name of config file"),
-			NULL, 0, __UNCONST(kernel_ident), 0,
-			CTL_KERN, CTL_CREATE, CTL_EOL);
 }
 
-SYSCTL_SETUP(sysctl_hw_setup, "sysctl hw subtree setup")
+SYSCTL_SETUP(sysctl_hw_misc_setup, "sysctl hw subtree misc setup")
 {
-	u_int u;
-	u_quad_t q;
 
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
-		       CTLTYPE_NODE, "hw", NULL,
-		       NULL, 0, NULL, 0,
-		       CTL_HW, CTL_EOL);
-
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
-		       CTLTYPE_STRING, "machine",
-		       SYSCTL_DESCR("Machine class"),
-		       NULL, 0, machine, 0,
-		       CTL_HW, HW_MACHINE, CTL_EOL);
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
-		       CTLTYPE_STRING, "model",
-		       SYSCTL_DESCR("Machine model"),
-		       NULL, 0, cpu_model, 0,
-		       CTL_HW, HW_MODEL, CTL_EOL);
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
-		       CTLTYPE_INT, "ncpu",
-		       SYSCTL_DESCR("Number of CPUs configured"),
-		       NULL, 0, &ncpu, 0,
-		       CTL_HW, HW_NCPU, CTL_EOL);
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT|CTLFLAG_IMMEDIATE,
-		       CTLTYPE_INT, "byteorder",
-		       SYSCTL_DESCR("System byte order"),
-		       NULL, BYTE_ORDER, NULL, 0,
-		       CTL_HW, HW_BYTEORDER, CTL_EOL);
-	u = ((u_int)physmem > (UINT_MAX / PAGE_SIZE)) ?
-		UINT_MAX : physmem * PAGE_SIZE;
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT|CTLFLAG_IMMEDIATE,
-		       CTLTYPE_INT, "physmem",
-		       SYSCTL_DESCR("Bytes of physical memory"),
-		       NULL, u, NULL, 0,
-		       CTL_HW, HW_PHYSMEM, CTL_EOL);
 	sysctl_createv(clog, 0, NULL, NULL,
 		       CTLFLAG_PERMANENT,
 		       CTLTYPE_INT, "usermem",
@@ -746,49 +617,17 @@ SYSCTL_SETUP(sysctl_hw_setup, "sysctl hw subtree setup")
 		       sysctl_hw_usermem, 0, NULL, 0,
 		       CTL_HW, HW_USERMEM, CTL_EOL);
 	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT|CTLFLAG_IMMEDIATE,
-		       CTLTYPE_INT, "pagesize",
-		       SYSCTL_DESCR("Software page size"),
-		       NULL, PAGE_SIZE, NULL, 0,
-		       CTL_HW, HW_PAGESIZE, CTL_EOL);
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
-		       CTLTYPE_STRING, "machine_arch",
-		       SYSCTL_DESCR("Machine CPU class"),
-		       NULL, 0, machine_arch, 0,
-		       CTL_HW, HW_MACHINE_ARCH, CTL_EOL);
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT|CTLFLAG_IMMEDIATE,
-		       CTLTYPE_INT, "alignbytes",
-		       SYSCTL_DESCR("Alignment constraint for all possible "
-				    "data types"),
-		       NULL, ALIGNBYTES, NULL, 0,
-		       CTL_HW, HW_ALIGNBYTES, CTL_EOL);
-	sysctl_createv(clog, 0, NULL, NULL,
 		       CTLFLAG_PERMANENT|CTLFLAG_READWRITE|CTLFLAG_HEX,
 		       CTLTYPE_STRING, "cnmagic",
 		       SYSCTL_DESCR("Console magic key sequence"),
 		       sysctl_hw_cnmagic, 0, NULL, CNS_LEN,
 		       CTL_HW, HW_CNMAGIC, CTL_EOL);
-	q = (u_quad_t)physmem * PAGE_SIZE;
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT|CTLFLAG_IMMEDIATE,
-		       CTLTYPE_QUAD, "physmem64",
-		       SYSCTL_DESCR("Bytes of physical memory"),
-		       NULL, q, NULL, 0,
-		       CTL_HW, HW_PHYSMEM64, CTL_EOL);
 	sysctl_createv(clog, 0, NULL, NULL,
 		       CTLFLAG_PERMANENT,
 		       CTLTYPE_QUAD, "usermem64",
 		       SYSCTL_DESCR("Bytes of non-kernel memory"),
 		       sysctl_hw_usermem, 0, NULL, 0,
 		       CTL_HW, HW_USERMEM64, CTL_EOL);
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
-		       CTLTYPE_INT, "ncpuonline",
-		       SYSCTL_DESCR("Number of CPUs online"),
-		       NULL, 0, &ncpuonline, 0,
-		       CTL_HW, HW_NCPUONLINE, CTL_EOL);
 }
 
 #ifdef DEBUG
@@ -832,12 +671,6 @@ SYSCTL_SETUP(sysctl_debug_setup, "sysctl debug subtree setup")
 	 int	debug.name
 
 	 */
-
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
-		       CTLTYPE_NODE, "debug", NULL,
-		       NULL, 0, NULL, 0,
-		       CTL_DEBUG, CTL_EOL);
 
 	for (i = 0; i < CTL_DEBUG_MAXID; i++) {
 		cdp = debugvars[i];
@@ -930,12 +763,10 @@ sysctl_kern_maxvnodes(SYSCTLFN_ARGS)
 
 	old_vnodes = desiredvnodes;
 	desiredvnodes = new_vnodes;
-	if (new_vnodes < old_vnodes) {
-		error = vfs_drainvnodes(new_vnodes);
-		if (error) {
-			desiredvnodes = old_vnodes;
-			return (error);
-		}
+	error = vfs_drainvnodes(new_vnodes);
+	if (error) {
+		desiredvnodes = old_vnodes;
+		return (error);
 	}
 	vfs_reinit();
 	nchreinit();
@@ -1024,130 +855,6 @@ sysctl_kern_hostid(SYSCTLFN_ARGS)
 	hostid = (unsigned)inthostid;
 
 	return (0);
-}
-
-/*
- * sysctl helper function for kern.hostname and kern.domainnname.
- * resets the relevant recorded length when the underlying name is
- * changed.
- */
-static int
-sysctl_setlen(SYSCTLFN_ARGS)
-{
-	int error;
-
-	error = sysctl_lookup(SYSCTLFN_CALL(rnode));
-	if (error || newp == NULL)
-		return (error);
-
-	switch (rnode->sysctl_num) {
-	case KERN_HOSTNAME:
-		hostnamelen = strlen((const char*)rnode->sysctl_data);
-		break;
-	case KERN_DOMAINNAME:
-		domainnamelen = strlen((const char*)rnode->sysctl_data);
-		break;
-	}
-
-	return (0);
-}
-
-/*
- * sysctl helper routine for kern.clockrate. Assembles a struct on
- * the fly to be returned to the caller.
- */
-static int
-sysctl_kern_clockrate(SYSCTLFN_ARGS)
-{
-	struct clockinfo clkinfo;
-	struct sysctlnode node;
-
-	clkinfo.tick = tick;
-	clkinfo.tickadj = tickadj;
-	clkinfo.hz = hz;
-	clkinfo.profhz = profhz;
-	clkinfo.stathz = stathz ? stathz : hz;
-
-	node = *rnode;
-	node.sysctl_data = &clkinfo;
-	return (sysctl_lookup(SYSCTLFN_CALL(&node)));
-}
-
-/*
- * sysctl helper routine for kern.msgbufsize and kern.msgbuf. For the
- * former it merely checks the message buffer is set up. For the latter,
- * it also copies out the data if necessary.
- */
-static int
-sysctl_msgbuf(SYSCTLFN_ARGS)
-{
-	char *where = oldp;
-	size_t len, maxlen;
-	long beg, end;
-	extern kmutex_t log_lock;
-	int error;
-
-	if (!msgbufenabled || msgbufp->msg_magic != MSG_MAGIC) {
-		msgbufenabled = 0;
-		return (ENXIO);
-	}
-
-	switch (rnode->sysctl_num) {
-	case KERN_MSGBUFSIZE: {
-		struct sysctlnode node = *rnode;
-		int msg_bufs = (int)msgbufp->msg_bufs;
-		node.sysctl_data = &msg_bufs;
-		return (sysctl_lookup(SYSCTLFN_CALL(&node)));
-	}
-	case KERN_MSGBUF:
-		break;
-	default:
-		return (EOPNOTSUPP);
-	}
-
-	if (newp != NULL)
-		return (EPERM);
-
-	if (oldp == NULL) {
-		/* always return full buffer size */
-		*oldlenp = msgbufp->msg_bufs;
-		return (0);
-	}
-
-	sysctl_unlock();
-
-	/*
-	 * First, copy from the write pointer to the end of
-	 * message buffer.
-	 */
-	error = 0;
-	mutex_spin_enter(&log_lock);
-	maxlen = MIN(msgbufp->msg_bufs, *oldlenp);
-	beg = msgbufp->msg_bufx;
-	end = msgbufp->msg_bufs;
-	mutex_spin_exit(&log_lock);
-
-	while (maxlen > 0) {
-		len = MIN(end - beg, maxlen);
-		if (len == 0)
-			break;
-		/* XXX unlocked, but hardly matters. */
-		error = dcopyout(l, &msgbufp->msg_bufc[beg], where, len);
-		if (error)
-			break;
-		where += len;
-		maxlen -= len;
-
-		/*
-		 * ... then, copy from the beginning of message buffer to
-		 * the write pointer.
-		 */
-		beg = 0;
-		end = msgbufp->msg_bufx;
-	}
-
-	sysctl_relock();
-	return (error);
 }
 
 /*
@@ -1297,64 +1004,6 @@ sysctl_kern_maxptys(SYSCTLFN_ARGS)
 }
 #endif /* NPTY > 0 */
 
-/*
- * sysctl helper routine for kern.urandom node. Picks a random number
- * for you.
- */
-static int
-sysctl_kern_urnd(SYSCTLFN_ARGS)
-{
-	int v, rv;
-
-	rv = cprng_strong(sysctl_prng, &v, sizeof(v), 0);
-	if (rv == sizeof(v)) {
-		struct sysctlnode node = *rnode;
-		node.sysctl_data = &v;
-		return (sysctl_lookup(SYSCTLFN_CALL(&node)));
-	}
-	else
-		return (EIO);	/*XXX*/
-}
-
-/*
- * sysctl helper routine for kern.arandom node. Picks a random number
- * for you.
- */
-static int
-sysctl_kern_arnd(SYSCTLFN_ARGS)
-{
-	int error;
-	void *v;
-	struct sysctlnode node = *rnode;
-
-	if (*oldlenp == 0)
-		return 0;
-	/*
-	 * This code used to allow sucking 8192 bytes at a time out
-	 * of the kernel arc4random generator.  Evidently there is some
-	 * very old OpenBSD application code that may try to do this.
-	 *
-	 * Note that this node is documented as type "INT" -- 4 or 8
-	 * bytes, not 8192.
-	 *
-	 * We continue to support this abuse of the "len" pointer here
-	 * but only 256 bytes at a time, as, anecdotally, the actual
-	 * application use here was to generate RC4 keys in userspace.
-	 *
-	 * Support for such large requests will probably be removed
-	 * entirely in the future.
-	 */
-	if (*oldlenp > 256)
-		return E2BIG;
-
-	v = kmem_alloc(*oldlenp, KM_SLEEP);
-	cprng_fast(v, *oldlenp);
-	node.sysctl_data = v;
-	node.sysctl_size = *oldlenp;
-	error = sysctl_lookup(SYSCTLFN_CALL(&node));
-	kmem_free(v, *oldlenp);
-	return error;
-}
 /*
  * sysctl helper routine to do kern.lwp.* work.
  */

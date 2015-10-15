@@ -1,4 +1,4 @@
-/*	$NetBSD: ixp425_if_npe.c,v 1.23 2012/07/22 14:32:50 matt Exp $ */
+/*	$NetBSD: ixp425_if_npe.c,v 1.29 2015/06/28 15:13:28 maxv Exp $ */
 
 /*-
  * Copyright (c) 2006 Sam Leffler.  All rights reserved.
@@ -28,7 +28,7 @@
 #if 0
 __FBSDID("$FreeBSD: src/sys/arm/xscale/ixp425/if_npe.c,v 1.1 2006/11/19 23:55:23 sam Exp $");
 #endif
-__KERNEL_RCSID(0, "$NetBSD: ixp425_if_npe.c,v 1.23 2012/07/22 14:32:50 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ixp425_if_npe.c,v 1.29 2015/06/28 15:13:28 maxv Exp $");
 
 /*
  * Intel XScale NPE Ethernet driver.
@@ -68,7 +68,7 @@ __KERNEL_RCSID(0, "$NetBSD: ixp425_if_npe.c,v 1.23 2012/07/22 14:32:50 matt Exp 
 
 #include <net/bpf.h>
 
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 
 #include <arm/xscale/ixp425reg.h>
 #include <arm/xscale/ixp425var.h>
@@ -334,7 +334,7 @@ npe_attach(device_t parent, device_t self, void *arg)
 	if_attach(ifp);
 	ether_ifattach(ifp, sc->sc_enaddr);
 	rnd_attach_source(&sc->rnd_source, device_xname(sc->sc_dev),
-	    RND_TYPE_NET, 0);
+	    RND_TYPE_NET, RND_FLAG_DEFAULT);
 
 	/* callback function to reset MAC */
 	isc->macresetcbfunc = npeinit_resetcb;
@@ -602,8 +602,9 @@ npe_activate(struct npe_softc *sc)
 		return error;
 	}
 
-	if (bus_dmamap_load(sc->sc_dt, sc->sc_stats_map, sc->sc_stats,
-	    sizeof(struct npestats), NULL, BUS_DMA_NOWAIT) != 0) {
+	error = bus_dmamap_load(sc->sc_dt, sc->sc_stats_map, sc->sc_stats,
+	    sizeof(struct npestats), NULL, BUS_DMA_NOWAIT);
+	if (error) {
 		aprint_error_dev(sc->sc_dev,
 		    "unable to %s for %s, error %u\n",
 		    "load map", "stats block", error);
@@ -1219,7 +1220,7 @@ npeinit(struct ifnet *ifp)
 /*
  * Defragment an mbuf chain, returning at most maxfrags separate
  * mbufs+clusters.  If this is not possible NULL is returned and
- * the original mbuf chain is left in it's present (potentially
+ * the original mbuf chain is left in its present (potentially
  * modified) state.  We use two techniques: collapsing consecutive
  * mbufs and replacing consecutive mbufs by a cluster.
  */

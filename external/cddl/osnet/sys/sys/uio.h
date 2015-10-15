@@ -1,4 +1,4 @@
-/*	$NetBSD: uio.h,v 1.5 2010/12/14 01:21:25 haad Exp $	*/
+/*	$NetBSD: uio.h,v 1.9 2015/09/26 03:32:17 christos Exp $	*/
 
 /*-
  * Copyright (c) 2009 The NetBSD Foundation, Inc.
@@ -87,12 +87,8 @@ struct xuio {
 	void *xuio_priv;
 };
 
-/* XXX HACK ? how xuio can be handled properly */
-#define uio_extflg	uio_offset
-#define UIO_XUIO 0x0004	/* Structure is xuio_t */
-
-#define XUIO_XUZC_PRIV(xuio)	((xuio)->xuio_priv);
-#define XUIO_XUZC_RW(xuio)	((xuio)->xuio_rw);
+#define XUIO_XUZC_PRIV(xuio)	((xuio)->xuio_priv)
+#define XUIO_XUZC_RW(xuio)	((xuio)->xuio_rw)
 
 typedef	struct uio	uio_t;
 typedef struct xuio	xuio_t;
@@ -109,7 +105,7 @@ zfs_uiomove(void *cp, size_t n, enum uio_rw dir, uio_t *uio)
 {
 
 	assert(uio->uio_rw == dir);
-	return (uiomove(cp, (int)n, uio));
+	return (uiomove(cp, n, uio));
 }
 
 static __inline int
@@ -120,7 +116,7 @@ zfs_uiocopy(void *cp, size_t n, enum uio_rw dir, uio_t *uio, size_t *cbytes)
 	
 	memcpy(&uio2, uio, sizeof(*uio));
 	assert(uio->uio_rw == dir);
-	if ((err = uiomove(cp, (int)n, &uio2)) != 0)
+	if ((err = uiomove(cp, n, &uio2)) != 0)
 		return err;
 
 	*cbytes = uio->uio_resid - uio2.uio_resid;
@@ -131,18 +127,18 @@ zfs_uiocopy(void *cp, size_t n, enum uio_rw dir, uio_t *uio, size_t *cbytes)
 static __inline void
 zfs_uioskip(uio_t *uiop, size_t n)
 {
-	if (n > uiop->uio_resid)
+	if (n > (size_t)uiop->uio_resid)
 		return;
 	while (n != 0) {
-		register iovec_t        *iovp = uiop->uio_iov;
-		register size_t         niovb = MIN(iovp->iov_len, n);
+		iovec_t        *iovp = uiop->uio_iov;
+		size_t         niovb = MIN(iovp->iov_len, n);
 
 		if (niovb == 0) {
 			uiop->uio_iov++;
 			uiop->uio_iovcnt--;
 			continue;
 		}
-		iovp->iov_base += niovb;
+		iovp->iov_base = (char *)iovp->iov_base + niovb;
 		uiop->uio_offset += niovb;
 		iovp->iov_len -= niovb;
 		uiop->uio_resid -= niovb;

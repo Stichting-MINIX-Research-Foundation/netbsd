@@ -1,4 +1,4 @@
-/*	$NetBSD: dwc2.c,v 1.21 2013/11/28 06:56:36 skrll Exp $	*/
+/*	$NetBSD: dwc2.c,v 1.37 2015/08/30 13:02:42 skrll Exp $	*/
 
 /*-
  * Copyright (c) 2013 The NetBSD Foundation, Inc.
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: dwc2.c,v 1.21 2013/11/28 06:56:36 skrll Exp $");
+__KERNEL_RCSID(0, "$NetBSD: dwc2.c,v 1.37 2015/08/30 13:02:42 skrll Exp $");
 
 #include "opt_usb.h"
 
@@ -240,15 +240,15 @@ dwc2_allocm(struct usbd_bus *bus, usb_dma_t *dma, uint32_t size)
 Static void
 dwc2_freem(struct usbd_bus *bus, usb_dma_t *dma)
 {
-        struct dwc2_softc *sc = DWC2_BUS2SC(bus);
+	struct dwc2_softc *sc = DWC2_BUS2SC(bus);
 
 	DPRINTFN(10, "\n");
 
-        if (dma->block->flags & USB_DMA_RESERVE) {
-                usb_reserve_freem(&sc->sc_dma_reserve, dma);
-                return;
-        }
-        usb_freemem(&sc->sc_bus, dma);
+	if (dma->block->flags & USB_DMA_RESERVE) {
+		usb_reserve_freem(&sc->sc_dma_reserve, dma);
+		return;
+	}
+	usb_freemem(&sc->sc_bus, dma);
 }
 
 usbd_xfer_handle
@@ -342,6 +342,10 @@ dwc2_softintr(void *v)
 
 	mutex_spin_enter(&hsotg->lock);
 	while ((dxfer = TAILQ_FIRST(&sc->sc_complete)) != NULL) {
+
+		KASSERTMSG(!callout_pending(&dxfer->xfer.timeout_handle),
+		    "xfer %p pipe %p\n", dxfer, dxfer->xfer.pipe);
+
 		/*
 		 * dwc2_abort_xfer will remove this transfer from the
 		 * sc_complete queue
@@ -353,8 +357,6 @@ dwc2_softintr(void *v)
 		}
 
 		TAILQ_REMOVE(&sc->sc_complete, dxfer, xnext);
-		/* XXXNH Already done - can I assert this? */
-		callout_stop(&dxfer->xfer.timeout_handle);
 
 		mutex_spin_exit(&hsotg->lock);
 		usb_transfer_complete(&dxfer->xfer);
@@ -665,6 +667,8 @@ Static const struct dwc2_config_desc dwc2_confd = {
 };
 
 #define	HSETW(ptr, val) ptr = { (uint8_t)(val), (uint8_t)((val) >> 8) }
+#if 0
+/* appears to be unused */
 Static const usb_hub_descriptor_t dwc2_hubd = {
 	.bDescLength = USB_HUB_DESCRIPTOR_SIZE,
 	.bDescriptorType = UDESC_HUB,
@@ -674,6 +678,7 @@ Static const usb_hub_descriptor_t dwc2_hubd = {
 	.bHubContrCurrent = 0,
 	.DeviceRemovable = {0},		/* port is removable */
 };
+#endif
 
 Static usbd_status
 dwc2_root_ctrl_transfer(usbd_xfer_handle xfer)
@@ -883,7 +888,7 @@ dwc2_root_intr_transfer(usbd_xfer_handle xfer)
 Static usbd_status
 dwc2_root_intr_start(usbd_xfer_handle xfer)
 {
-	struct dwc2_softc *sc = DWC2_PIPE2SC(xfer);
+	struct dwc2_softc *sc = DWC2_XFER2SC(xfer);
 
 	DPRINTF("\n");
 
@@ -902,17 +907,15 @@ dwc2_root_intr_start(usbd_xfer_handle xfer)
 Static void
 dwc2_root_intr_abort(usbd_xfer_handle xfer)
 {
-#ifdef DIAGNOSTIC
 	struct dwc2_softc *sc = DWC2_XFER2SC(xfer);
-#endif
+
 	DPRINTF("xfer=%p\n", xfer);
 
 	KASSERT(mutex_owned(&sc->sc_lock));
+	KASSERT(xfer->pipe->intrxfer == xfer);
 
-	if (xfer->pipe->intrxfer == xfer) {
-		DPRINTF("remove\n");
-		xfer->pipe->intrxfer = NULL;
-	}
+	sc->sc_intrxfer = NULL;
+
 	xfer->status = USBD_CANCELLED;
 	usb_transfer_complete(xfer);
 }
@@ -1067,7 +1070,7 @@ Static void
 dwc2_device_bulk_done(usbd_xfer_handle xfer)
 {
 
-    	DPRINTF("xfer=%p\n", xfer);
+	DPRINTF("xfer=%p\n", xfer);
 }
 
 /***********************************************************************/
@@ -1094,7 +1097,7 @@ dwc2_device_intr_transfer(usbd_xfer_handle xfer)
 Static usbd_status
 dwc2_device_intr_start(usbd_xfer_handle xfer)
 {
-	struct dwc2_pipe *dpipe = (struct dwc2_pipe *)xfer->pipe;
+	struct dwc2_pipe *dpipe = DWC2_XFER2DPIPE(xfer)
 	usbd_device_handle dev = dpipe->pipe.device;
 	struct dwc2_softc *sc = dev->bus->hci_private;
 	usbd_status err;
@@ -1122,12 +1125,10 @@ dwc2_device_intr_abort(usbd_xfer_handle xfer)
 #endif
 
 	KASSERT(mutex_owned(&sc->sc_lock));
+	KASSERT(xfer->pipe->intrxfer == xfer);
 
-	if (xfer->pipe->intrxfer == xfer) {
-		DPRINTF("remove\n");
-		xfer->pipe->intrxfer = NULL;
-	}
 	DPRINTF("xfer=%p\n", xfer);
+
 	dwc2_abort_xfer(xfer, USBD_CANCELLED);
 }
 
@@ -1176,7 +1177,7 @@ dwc2_device_isoc_transfer(usbd_xfer_handle xfer)
 usbd_status
 dwc2_device_isoc_start(usbd_xfer_handle xfer)
 {
-	struct dwc2_pipe *dpipe = (struct dwc2_pipe *)xfer->pipe;
+	struct dwc2_pipe *dpipe = DWC2_XFER2DPIPE(xfer);
 	usbd_device_handle dev = dpipe->pipe.device;
 	struct dwc2_softc *sc = dev->bus->hci_private;
 	usbd_status err;
@@ -1227,7 +1228,7 @@ dwc2_device_start(usbd_xfer_handle xfer)
 	struct dwc2_pipe *dpipe = DWC2_XFER2DPIPE(xfer);
 	struct dwc2_softc *sc = DWC2_XFER2SC(xfer);
 	struct dwc2_hsotg *hsotg = sc->sc_hsotg;
-        struct dwc2_hcd_urb *dwc2_urb;
+	struct dwc2_hcd_urb *dwc2_urb;
 
 	usbd_device_handle dev = xfer->pipe->device;
 	usb_endpoint_descriptor_t *ed = xfer->pipe->endpoint->edesc;
@@ -1240,7 +1241,7 @@ dwc2_device_start(usbd_xfer_handle xfer)
 
 	uint32_t flags = 0;
 	uint32_t off = 0;
-	int retval, err = USBD_IN_PROGRESS;
+	int retval, err;
 	int alloc_bandwidth = 0;
 	int i;
 
@@ -1298,6 +1299,7 @@ dwc2_device_start(usbd_xfer_handle xfer)
 	    sizeof(dwc2_urb->iso_descs[0]) * DWC2_MAXISOCPACKETS);
 
 	dwc2_urb->priv = xfer;
+
 	dwc2_hcd_urb_set_pipeinfo(hsotg, dwc2_urb, addr, epnum, xfertype, dir,
 				  mps);
 
@@ -1312,14 +1314,15 @@ dwc2_device_start(usbd_xfer_handle xfer)
 	}
 	flags |= URB_GIVEBACK_ASAP;
 
-	/* XXXNH this shouldn't be required */
-	if (xfertype == UE_CONTROL && len == 0) {
-		dwc2_urb->usbdma = &dpipe->req_dma;
-	} else {
+	/*
+	 * control transfers with no data phase don't touch usbdma, but
+	 * everything else does.
+	 */
+	if (!(xfertype == UE_CONTROL && len == 0)) {
 		dwc2_urb->usbdma = &xfer->dmabuf;
-	}
-	dwc2_urb->buf = KERNADDR(dwc2_urb->usbdma, 0);
-	dwc2_urb->dma = DMAADDR(dwc2_urb->usbdma, 0);
+		dwc2_urb->buf = KERNADDR(dwc2_urb->usbdma, 0);
+		dwc2_urb->dma = DMAADDR(dwc2_urb->usbdma, 0);
+ 	}
 	dwc2_urb->length = len;
  	dwc2_urb->flags = flags;
 	dwc2_urb->status = -EINPROGRESS;
@@ -1377,30 +1380,64 @@ dwc2_device_start(usbd_xfer_handle xfer)
 		off += xfer->frlengths[i];
 	}
 
+	struct dwc2_qh *qh = dpipe->priv;
+	struct dwc2_qtd *qtd;
+	bool qh_allocated = false;
+
+	/* Create QH for the endpoint if it doesn't exist */
+	if (!qh) {
+		qh = dwc2_hcd_qh_create(hsotg, dwc2_urb, GFP_ATOMIC);
+		if (!qh) {
+			retval = -ENOMEM;
+			goto fail;
+		}
+		dpipe->priv = qh;
+		qh_allocated = true;
+	}
+
+	qtd = pool_cache_get(sc->sc_qtdpool, PR_NOWAIT);
+	if (!qtd) {
+		retval = -ENOMEM;
+		goto fail1;
+	}
+	memset(qtd, 0, sizeof(*qtd));
+
 	/* might need to check cpu_intr_p */
-	retval = dwc2_hcd_urb_enqueue(hsotg, dwc2_urb, &dpipe->priv, 0);
-	if (retval)
-		goto fail;
+	mutex_spin_enter(&hsotg->lock);
 
 	if (xfer->timeout && !sc->sc_bus.use_polling) {
 		callout_reset(&xfer->timeout_handle, mstohz(xfer->timeout),
 		    dwc2_timeout, xfer);
 	}
+	retval = dwc2_hcd_urb_enqueue(hsotg, dwc2_urb, qh, qtd);
+	if (retval)
+		goto fail2;
 
 	if (alloc_bandwidth) {
-		mutex_spin_enter(&hsotg->lock);
 		dwc2_allocate_bus_bandwidth(hsotg,
 				dwc2_hcd_get_ep_bandwidth(hsotg, dpipe),
 				xfer);
-		mutex_spin_exit(&hsotg->lock);
 	}
 
-fail:
+	mutex_spin_exit(&hsotg->lock);
 // 	mutex_exit(&sc->sc_lock);
 
+	return USBD_IN_PROGRESS;
+
+fail2:
+	dwc2_urb->priv = NULL;
+	mutex_spin_exit(&hsotg->lock);
+	pool_cache_put(sc->sc_qtdpool, qtd);
+
+fail1:
+	if (qh_allocated) {
+		dpipe->priv = NULL;
+		dwc2_hcd_qh_free(hsotg, qh);
+	}
+fail:
+
 	switch (retval) {
-	case 0:
-		break;
+	case -EINVAL:
 	case -ENODEV:
 		err = USBD_INVAL;
 		break;
@@ -1415,6 +1452,7 @@ fail:
 
 }
 
+#if IS_ENABLED(CONFIG_USB_DWC2_HOST) || IS_ENABLED(CONFIG_USB_DWC2_DUAL_ROLE)
 void
 dwc2_worker(struct work *wk, void *priv)
 {
@@ -1451,6 +1489,7 @@ Debugger();
 	}
 	mutex_exit(&sc->sc_lock);
 }
+#endif
 
 int dwc2_intr(void *p)
 {
@@ -1596,15 +1635,66 @@ dwc2_init(struct dwc2_softc *sc)
 	sc->sc_hsotg->dev = sc->sc_dev;
 	sc->sc_hcdenabled = true;
 
-	err = dwc2_hcd_init(sc->sc_hsotg, sc->sc_params);
-	if (err) {
-		err = -err;
+	struct dwc2_hsotg *hsotg = sc->sc_hsotg;
+	struct dwc2_core_params defparams;
+	int retval;
+
+	if (sc->sc_params == NULL) {
+		/* Default all params to autodetect */
+		dwc2_set_all_params(&defparams, -1);
+		sc->sc_params = &defparams;
+
+		/*
+		 * Disable descriptor dma mode by default as the HW can support
+		 * it, but does not support it for SPLIT transactions.
+		 */
+		defparams.dma_desc_enable = 0;
+	}
+	hsotg->dr_mode = USB_DR_MODE_HOST;
+
+	/* Detect config values from hardware */
+	retval = dwc2_get_hwparams(hsotg);
+	if (retval) {
 		goto fail2;
 	}
+
+	hsotg->core_params = kmem_zalloc(sizeof(*hsotg->core_params), KM_SLEEP);
+	if (!hsotg->core_params) {
+		retval = -ENOMEM;
+		goto fail2;
+	}
+
+	dwc2_set_all_params(hsotg->core_params, -1);
+
+	/* Validate parameter values */
+	dwc2_set_parameters(hsotg, sc->sc_params);
+
+#if IS_ENABLED(CONFIG_USB_DWC2_PERIPHERAL) || \
+    IS_ENABLED(CONFIG_USB_DWC2_DUAL_ROLE)
+	if (hsotg->dr_mode != USB_DR_MODE_HOST) {
+		retval = dwc2_gadget_init(hsotg);
+		if (retval)
+			goto fail2;
+		hsotg->gadget_enabled = 1;
+	}
+#endif
+#if IS_ENABLED(CONFIG_USB_DWC2_HOST) || \
+    IS_ENABLED(CONFIG_USB_DWC2_DUAL_ROLE)
+	if (hsotg->dr_mode != USB_DR_MODE_PERIPHERAL) {
+		retval = dwc2_hcd_init(hsotg);
+		if (retval) {
+			if (hsotg->gadget_enabled)
+				s3c_hsotg_remove(hsotg);
+			goto fail2;
+		}
+	    hsotg->hcd_enabled = 1;
+        }
+#endif
 
 	return 0;
 
 fail2:
+	err = -retval;
 	kmem_free(sc->sc_hsotg, sizeof(struct dwc2_hsotg));
 fail1:
 	softint_disestablish(sc->sc_rhc_si);
@@ -1668,7 +1758,7 @@ int dwc2_host_get_speed(struct dwc2_hsotg *hsotg, void *context)
  * Must be called with interrupt disabled and spinlock held
  */
 void dwc2_host_complete(struct dwc2_hsotg *hsotg, struct dwc2_qtd *qtd,
-                        int status)
+    int status)
 {
 	usbd_xfer_handle xfer;
 	struct dwc2_xfer *dxfer;
@@ -1698,6 +1788,8 @@ void dwc2_host_complete(struct dwc2_hsotg *hsotg, struct dwc2_qtd *qtd,
 	xfertype = UE_GET_XFERTYPE(ed->bmAttributes);
 
 	xfer->actlen = dwc2_hcd_urb_get_actual_length(qtd->urb);
+
+	DPRINTFN(3, "xfer=%p actlen=%d\n", xfer, xfer->actlen);
 
 	if (xfertype == UE_ISOCHRONOUS && dbg_perio()) {
 		int i;
@@ -1748,6 +1840,20 @@ void dwc2_host_complete(struct dwc2_hsotg *hsotg, struct dwc2_qtd *qtd,
 		printf("%s: unknown error status %d\n", __func__, status);
 	}
 
+	if (xfer->status == USBD_NORMAL_COMPLETION) {
+		/*
+		 * control transfers with no data phase don't touch dmabuf, but
+		 * everything else does.
+		 */
+		if (!(xfertype == UE_CONTROL &&
+		    UGETW(xfer->request.wLength) == 0)) {
+			int rd = usbd_xfer_isread(xfer);
+
+			usb_syncmem(&xfer->dmabuf, 0, xfer->actlen,
+			    rd ? BUS_DMASYNC_POSTREAD : BUS_DMASYNC_POSTWRITE);
+		}
+	}
+
 	if (xfertype == UE_ISOCHRONOUS ||
 	    xfertype == UE_INTERRUPT) {
 		struct dwc2_pipe *dpipe = DWC2_XFER2DPIPE(xfer);
@@ -1777,12 +1883,7 @@ _dwc2_hcd_start(struct dwc2_hsotg *hsotg)
 
 	mutex_spin_enter(&hsotg->lock);
 
-	hsotg->op_state = OTG_STATE_A_HOST;
-
 	dwc2_hcd_reinit(hsotg);
-
-	/*XXXNH*/
-	delay(50);
 
 	mutex_spin_exit(&hsotg->lock);
 	return 0;

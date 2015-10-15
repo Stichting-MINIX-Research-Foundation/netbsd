@@ -1,4 +1,4 @@
-#	$NetBSD: list.ramdisk,v 1.24 2012/10/16 08:28:13 apb Exp $
+#	$NetBSD: list.ramdisk,v 1.26 2015/10/07 14:09:05 martin Exp $
 
 SRCDIRS	external/bsd/less/bin
 SRCDIRS	bin sbin usr.bin usr.sbin libexec
@@ -51,8 +51,8 @@ PROG	usr/bin/sed
 # PROG	usr/bin/less	usr/bin/more
 # PROG	usr/bin/more	usr/bin/less
 
-# sysinst doesn't use installboot
-# PROG	usr/sbin/installboot
+# sysinst doesn't use installboot (yet)
+PROG	usr/sbin/installboot
 
 PROG	usr/sbin/chroot
 
@@ -83,6 +83,7 @@ COPY	${DESTDIR}/usr/mdec/bootxx_lfsv2	usr/mdec/bootxx_lfsv2
 COPY	${DESTDIR}/usr/mdec/mbr			usr/mdec/mbr
 COPY	${DESTDIR}/usr/mdec/mbr_ext		usr/mdec/mbr_ext
 COPY	${DESTDIR}/usr/mdec/mbr_bootsel		usr/mdec/mbr_bootsel
+COPY	${DESTDIR}/usr/mdec/gptmbr.bin		usr/mdec/gptmbr.bin
 
 # and the boot script
 COPY	${CURDIR}/../common/dot.profile		.profile

@@ -1,4 +1,4 @@
-/*	$NetBSD: machdep.c,v 1.138 2012/10/27 17:18:10 chs Exp $	*/
+/*	$NetBSD: machdep.c,v 1.141 2015/06/26 22:55:06 matt Exp $	*/
 
 /*
  * Copyright (c) 2000 Soren S. Jorvang
@@ -34,7 +34,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.138 2012/10/27 17:18:10 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.141 2015/06/26 22:55:06 matt Exp $");
 
 #include "opt_ddb.h"
 #include "opt_kgdb.h"
@@ -50,10 +50,12 @@ __KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.138 2012/10/27 17:18:10 chs Exp $");
 #include <sys/kernel.h>
 #include <sys/proc.h>
 #include <sys/buf.h>
+#include <sys/bus.h>
 #include <sys/reboot.h>
 #include <sys/conf.h>
 #include <sys/file.h>
 #include <sys/malloc.h>
+#include <sys/intr.h>
 #include <sys/mbuf.h>
 #include <sys/msgbuf.h>
 #include <sys/device.h>
@@ -63,21 +65,19 @@ __KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.138 2012/10/27 17:18:10 chs Exp $");
 #include <sys/kcore.h>
 #include <sys/boot_flag.h>
 #include <sys/ksyms.h>
+#include <sys/cpu.h>
 
 #include <uvm/uvm_extern.h>
 
-#include <machine/cpu.h>
+#include <mips/locore.h>
+
 #include <machine/reg.h>
 #include <machine/psl.h>
-#include <machine/pte.h>
 #include <machine/autoconf.h>
 #include <machine/machtype.h>
 #include <machine/sysconf.h>
-#include <machine/intr.h>
 #include <machine/bootinfo.h>
-#include <sys/bus.h>
 
-#include <mips/locore.h>
 #include <mips/cache.h>
 #include <mips/cache_r5k.h>
 #ifdef ENABLE_MIPS4_CACHE_R10K
@@ -246,7 +246,6 @@ mach_init(int argc, int32_t argv32[], uintptr_t magic, int32_t bip32)
 	const char *cpufreq, *osload;
 	char *bootpath = NULL;
 	vaddr_t kernend;
-	int kernstartpfn, kernendpfn;
 	u_int i;
 	int rv;
 #if NKSYMS > 0 || defined(DDB) || defined(MODULAR)
@@ -286,7 +285,7 @@ mach_init(int argc, int32_t argv32[], uintptr_t magic, int32_t bip32)
 #endif
 	}
 
-	strcpy(cpu_model, arcbios_system_identifier);
+	cpu_setmodel("%s", arcbios_system_identifier);
 
 	uvm_setpagesize();
 
@@ -323,12 +322,6 @@ mach_init(int argc, int32_t argv32[], uintptr_t magic, int32_t bip32)
 	{
 		kernend = mips_round_page(end);
 	}
-
-	/* Leave 1 page before kernel untouched as that's where our initial
-	 * kernel stack is */
-	/* XXX We could free it in cpu_startup() though XXX */
-	kernstartpfn = atop(MIPS_KSEG0_TO_PHYS((vaddr_t) kernel_text)) - 1;
-	kernendpfn = atop(MIPS_KSEG0_TO_PHYS(kernend));
 
 	cpufreq = arcbios_GetEnvironmentVariable("cpufreq");
 
@@ -630,6 +623,9 @@ mach_init(int argc, int32_t argv32[], uintptr_t magic, int32_t bip32)
 	if (mem_cluster_cnt == 0)
 		panic("no free memory descriptors found");
 
+	/* Leave 1 page before kernel untouched as that's where our initial
+	 * kernel stack is */
+	/* XXX We could free it in cpu_startup() though XXX */
 	mips_page_physload((vaddr_t)kernel_text - PAGE_SIZE, (vaddr_t)kernend,
 	    mem_clusters, mem_cluster_cnt, NULL, 0);
 

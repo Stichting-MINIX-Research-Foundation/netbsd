@@ -1,6 +1,6 @@
 /* Target-dependent code for the Xtensa port of GDB, the GNU debugger.
 
-   Copyright (C) 2003-2013 Free Software Foundation, Inc.
+   Copyright (C) 2003-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -37,7 +37,6 @@
 #include "dwarf2.h"
 #include "dwarf2-frame.h"
 #include "dwarf2loc.h"
-#include "frame.h"
 #include "frame-base.h"
 #include "frame-unwind.h"
 
@@ -48,7 +47,6 @@
 
 #include "command.h"
 #include "gdbcmd.h"
-#include "gdb_assert.h"
 
 #include "xtensa-isa.h"
 #include "xtensa-tdep.h"
@@ -912,23 +910,18 @@ xtensa_gregset =
 };
 
 
-/* Return the appropriate register set for the core
-   section identified by SECT_NAME and SECT_SIZE.  */
+/* Iterate over supported core file register note sections. */
 
-static const struct regset *
-xtensa_regset_from_core_section (struct gdbarch *core_arch,
-				 const char *sect_name,
-				 size_t sect_size)
+static void
+xtensa_iterate_over_regset_sections (struct gdbarch *gdbarch,
+				     iterate_over_regset_sections_cb *cb,
+				     void *cb_data,
+				     const struct regcache *regcache)
 {
-  DEBUGTRACE ("xtensa_regset_from_core_section "
-	      "(..., sect_name==\"%s\", sect_size==%x)\n",
-	      sect_name, (unsigned int) sect_size);
+  DEBUGTRACE ("xtensa_iterate_over_regset_sections\n");
 
-  if (strcmp (sect_name, ".reg") == 0
-      && sect_size >= sizeof(xtensa_elf_gregset_t))
-    return &xtensa_gregset;
-
-  return NULL;
+  cb (".reg", sizeof (xtensa_elf_gregset_t), &xtensa_gregset,
+      NULL, cb_data);
 }
 
 
@@ -1154,7 +1147,7 @@ xtensa_scan_prologue (struct gdbarch *gdbarch, CORE_ADDR current_pc)
   CORE_ADDR start_addr;
   xtensa_isa isa;
   xtensa_insnbuf ins, slot;
-  char ibuf[XTENSA_ISA_BSZ];
+  gdb_byte ibuf[XTENSA_ISA_BSZ];
   CORE_ADDR ia, bt, ba;
   xtensa_format ifmt;
   int ilen, islots, is;
@@ -2032,7 +2025,7 @@ call0_ret (CORE_ADDR start_pc, CORE_ADDR finish_pc)
 #define RETURN_RET goto done
   xtensa_isa isa;
   xtensa_insnbuf ins, slot;
-  char ibuf[XTENSA_ISA_BSZ];
+  gdb_byte ibuf[XTENSA_ISA_BSZ];
   CORE_ADDR ia, bt, ba;
   xtensa_format ifmt;
   int ilen, islots, is;
@@ -2390,7 +2383,7 @@ call0_analyze_prologue (struct gdbarch *gdbarch,
   CORE_ADDR ia;		    /* Current insn address in prologue.  */
   CORE_ADDR ba = 0;	    /* Current address at base of insn buffer.  */
   CORE_ADDR bt;		    /* Current address at top+1 of insn buffer.  */
-  char ibuf[XTENSA_ISA_BSZ];/* Instruction buffer for decoding prologue.  */
+  gdb_byte ibuf[XTENSA_ISA_BSZ];/* Instruction buffer for decoding prologue.  */
   xtensa_isa isa;	    /* libisa ISA handle.  */
   xtensa_insnbuf ins, slot; /* libisa handle to decoded insn, slot.  */
   xtensa_format ifmt;	    /* libisa instruction format.  */
@@ -2805,7 +2798,7 @@ execute_code (struct gdbarch *gdbarch, CORE_ADDR current_pc, CORE_ADDR wb)
 {
   xtensa_isa isa;
   xtensa_insnbuf ins, slot;
-  char ibuf[XTENSA_ISA_BSZ];
+  gdb_byte ibuf[XTENSA_ISA_BSZ];
   CORE_ADDR ia, bt, ba;
   xtensa_format ifmt;
   int ilen, islots, is;
@@ -2814,7 +2807,7 @@ execute_code (struct gdbarch *gdbarch, CORE_ADDR current_pc, CORE_ADDR wb)
   int fail = 0;
   void (*func) (struct gdbarch *, int, int, int, CORE_ADDR);
 
-  int at, as, offset;
+  uint32_t at, as, offset;
 
   /* WindowUnderflow12 = true, when inside _WindowUnderflow12.  */ 
   int WindowUnderflow12 = (current_pc & 0x1ff) >= 0x140; 
@@ -3282,8 +3275,8 @@ xtensa_gdbarch_init (struct gdbarch_info info, struct gdbarch_list *arches)
   xtensa_add_reggroups (gdbarch);
   set_gdbarch_register_reggroup_p (gdbarch, xtensa_register_reggroup_p);
 
-  set_gdbarch_regset_from_core_section (gdbarch,
-					xtensa_regset_from_core_section);
+  set_gdbarch_iterate_over_regset_sections
+    (gdbarch, xtensa_iterate_over_regset_sections);
 
   set_solib_svr4_fetch_link_map_offsets
     (gdbarch, svr4_ilp32_fetch_link_map_offsets);

@@ -34,6 +34,8 @@ HEADERS	+= wpamsg.h \
 	wpagui.h \
 	eventhistory.h \
 	scanresults.h \
+	scanresultsitem.h \
+	signalbar.h \
 	userdatarequest.h \
 	networkconfig.h \
 	addinterface.h \
@@ -44,6 +46,8 @@ SOURCES	+= main.cpp \
 	wpagui.cpp \
 	eventhistory.cpp \
 	scanresults.cpp \
+	scanresultsitem.cpp \
+	signalbar.cpp \
 	userdatarequest.cpp \
 	networkconfig.cpp \
 	addinterface.cpp \

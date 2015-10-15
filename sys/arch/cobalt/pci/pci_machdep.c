@@ -1,4 +1,4 @@
-/*	$NetBSD: pci_machdep.c,v 1.33 2012/10/27 17:17:44 chs Exp $	*/
+/*	$NetBSD: pci_machdep.c,v 1.38 2015/10/02 05:22:50 msaitoh Exp $	*/
 
 /*
  * Copyright (c) 2000 Soren S. Jorvang.  All rights reserved.
@@ -26,14 +26,15 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: pci_machdep.c,v 1.33 2012/10/27 17:17:44 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: pci_machdep.c,v 1.38 2015/10/02 05:22:50 msaitoh Exp $");
 
-#define _COBALT_BUS_DMA_PRIVATE
+#define _MIPS_BUS_DMA_PRIVATE
 
 #include <sys/param.h>
 #include <sys/bus.h>
-#include <sys/errno.h>
+#include <sys/cpu.h>
 #include <sys/device.h>
+#include <sys/errno.h>
 #include <sys/extent.h>
 #include <sys/intr.h>
 #include <sys/systm.h>
@@ -51,20 +52,10 @@ __KERNEL_RCSID(0, "$NetBSD: pci_machdep.c,v 1.33 2012/10/27 17:17:44 chs Exp $")
  * PCI doesn't have any special needs; just use
  * the generic versions of these functions.
  */
-struct cobalt_bus_dma_tag pci_bus_dma_tag = {
-	_bus_dmamap_create,
-	_bus_dmamap_destroy,
-	_bus_dmamap_load,
-	_bus_dmamap_load_mbuf,
-	_bus_dmamap_load_uio,
-	_bus_dmamap_load_raw,
-	_bus_dmamap_unload,
-	_bus_dmamap_sync,
-	_bus_dmamem_alloc,
-	_bus_dmamem_free,
-	_bus_dmamem_map,
-	_bus_dmamem_unmap,
-	_bus_dmamem_mmap,
+struct mips_bus_dma_tag pci_bus_dma_tag = {
+	._dmamap_ops = _BUS_DMAMAP_OPS_INITIALIZER,
+	._dmamem_ops = _BUS_DMAMEM_OPS_INITIALIZER,
+	._dmatag_ops = _BUS_DMATAG_OPS_INITIALIZER,
 };
 
 void
@@ -109,6 +100,9 @@ pci_conf_read(pci_chipset_tag_t pc, pcitag_t tag, int reg)
 
 	KASSERT(pc != NULL);
 
+	if ((unsigned int)reg >= PCI_CONF_SIZE)
+		return (pcireg_t) -1;
+
 	pci_decompose_tag(pc, tag, &bus, &dev, &func);
 
 	/*
@@ -133,6 +127,9 @@ pci_conf_read(pci_chipset_tag_t pc, pcitag_t tag, int reg)
 void
 pci_conf_write(pci_chipset_tag_t pc, pcitag_t tag, int reg, pcireg_t data)
 {
+
+	if ((unsigned int)reg >= PCI_CONF_SIZE)
+		return;
 
 	bus_space_write_4(pc->pc_bst, pc->pc_bsh, GT_PCICFG_ADDR,
 	    PCICFG_ENABLE | tag | reg);
@@ -183,16 +180,14 @@ pci_intr_map(const struct pci_attach_args *pa, pci_intr_handle_t *ihp)
 }
 
 const char *
-pci_intr_string(pci_chipset_tag_t pc, pci_intr_handle_t ih)
+pci_intr_string(pci_chipset_tag_t pc, pci_intr_handle_t ih, char *buf, size_t len)
 {
-	static char irqstr[8];
-
 	if (ih >= NICU_INT)
-		sprintf(irqstr, "level %d", ih - NICU_INT);
+		snprintf(buf, len, "level %d", ih - NICU_INT);
 	else
-		sprintf(irqstr, "irq %d", ih);
+		snprintf(buf, len, "irq %d", ih);
 
-	return irqstr;
+	return buf;
 }
 
 const struct evcnt *

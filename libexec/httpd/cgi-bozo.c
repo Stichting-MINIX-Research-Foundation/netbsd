@@ -1,9 +1,9 @@
-/*	$NetBSD: cgi-bozo.c,v 1.23 2013/10/12 18:46:12 mbalmer Exp $	*/
+/*	$NetBSD: cgi-bozo.c,v 1.27 2015/05/02 11:35:48 mrg Exp $	*/
 
 /*	$eterna: cgi-bozo.c,v 1.40 2011/11/18 09:21:15 mrg Exp $	*/
 
 /*
- * Copyright (c) 1997-2013 Matthew R. Green
+ * Copyright (c) 1997-2015 Matthew R. Green
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -247,7 +247,8 @@ bozo_process_cgi(bozo_httpreq_t *request)
 	char	date[40];
 	bozoheaders_t *headp;
 	const char *type, *clen, *info, *cgihandler;
-	char	*query, *s, *t, *path, *env, *command, *file, *url;
+	char	*query, *s, *t, *path, *env, *file, *url;
+	char	command[MAXPATHLEN];
 	char	**envp, **curenvp, *argv[4];
 	char	*uri;
 	size_t	len;
@@ -259,7 +260,11 @@ bozo_process_cgi(bozo_httpreq_t *request)
 	if (!httpd->cgibin && !httpd->process_cgi)
 		return 0;
 
-	uri = request->hr_oldfile ? request->hr_oldfile : request->hr_file;
+	if (request->hr_oldfile && strcmp(request->hr_oldfile, "/") != 0)
+		uri = request->hr_oldfile;
+	else
+		uri = request->hr_file;
+
 	if (uri[0] == '/')
 		file = bozostrdup(httpd, uri);
 	else
@@ -280,7 +285,6 @@ bozo_process_cgi(bozo_httpreq_t *request)
 	path = NULL;
 	envp = NULL;
 	cgihandler = NULL;
-	command = NULL;
 	info = NULL;
 
 	len = strlen(url);
@@ -305,12 +309,13 @@ bozo_process_cgi(bozo_httpreq_t *request)
 
 	ix = 0;
 	if (cgihandler) {
-		command = file + 1;
+		snprintf(command, sizeof(command), "%s", file + 1);
 		path = bozostrdup(httpd, cgihandler);
 		argv[ix++] = path;
 			/* argv[] = [ path, command, query, NULL ] */
 	} else {
-		command = file + CGIBIN_PREFIX_LEN + 1;
+		snprintf(command, sizeof(command), "%s",
+		    file + CGIBIN_PREFIX_LEN + 1);
 		if ((s = strchr(command, '/')) != NULL) {
 			info = bozostrdup(httpd, s);
 			*s = '\0';
@@ -510,7 +515,6 @@ bozo_add_content_map_cgi(bozohttpd_t *httpd, const char *arg, const char *cgihan
 
 	map = bozo_get_content_map(httpd, arg);
 	map->name = arg;
-	map->namelen = strlen(map->name);
 	map->type = map->encoding = map->encoding11 = NULL;
 	map->cgihandler = cgihandler;
 }

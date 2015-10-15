@@ -1,4 +1,4 @@
-/*	$NetBSD: firewire.c,v 1.43 2013/10/12 16:49:00 christos Exp $	*/
+/*	$NetBSD: firewire.c,v 1.45 2014/10/18 08:33:28 snj Exp $	*/
 /*-
  * Copyright (c) 2003 Hidetoshi Shimokawa
  * Copyright (c) 1998-2002 Katsushi Kobayashi and Hidetoshi Shimokawa
@@ -37,7 +37,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: firewire.c,v 1.43 2013/10/12 16:49:00 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: firewire.c,v 1.45 2014/10/18 08:33:28 snj Exp $");
 
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -78,12 +78,6 @@ SYSCTL_SETUP(sysctl_ieee1394if, "sysctl ieee1394if(4) subtree setup")
 {
 	int rc, ieee1394if_node_num;
 	const struct sysctlnode *node;
-
-	if ((rc = sysctl_createv(clog, 0, NULL, NULL,
-	    CTLFLAG_PERMANENT, CTLTYPE_NODE, "hw", NULL,
-	    NULL, 0, NULL, 0, CTL_HW, CTL_EOL)) != 0) {
-		goto err;
-	}
 
 	if ((rc = sysctl_createv(clog, 0, NULL, &node,
 	    CTLFLAG_PERMANENT, CTLTYPE_NODE, "ieee1394if",
@@ -585,7 +579,7 @@ fw_busreset(struct firewire_comm *fc, uint32_t new_status)
 	 * A generation of 0 indicates a device
 	 * that is not 1394a-2000 compliant.
 	 * A generation of 1 indicates a device that
-	 * does not change it's Bus Info Block or
+	 * does not change its Bus Info Block or
 	 * Configuration ROM.
 	 */
 #define FW_MAX_GENERATION	0xF

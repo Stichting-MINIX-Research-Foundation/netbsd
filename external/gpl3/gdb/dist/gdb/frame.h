@@ -1,6 +1,6 @@
 /* Definitions for dealing with stack frames, for GDB, the GNU debugger.
 
-   Copyright (C) 1986-2013 Free Software Foundation, Inc.
+   Copyright (C) 1986-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -76,6 +76,23 @@ struct block;
 struct gdbarch;
 struct ui_file;
 
+/* Status of a given frame's stack.  */
+
+enum frame_id_stack_status
+{
+  /* Stack address is invalid.  E.g., this frame is the outermost
+     (i.e., _start), and the stack hasn't been setup yet.  */
+  FID_STACK_INVALID = 0,
+
+  /* Stack address is valid, and is found in the stack_addr field.  */
+  FID_STACK_VALID = 1,
+
+  /* Stack address is unavailable.  I.e., there's a valid stack, but
+     we don't know where it is (because memory or registers we'd
+     compute it from were not collected).  */
+  FID_STACK_UNAVAILABLE = -1
+};
+
 /* The frame object.  */
 
 struct frame_info;
@@ -97,8 +114,9 @@ struct frame_id
      function pointer register or stack pointer register.  They are
      wrong.
 
-     This field is valid only if stack_addr_p is true.  Otherwise, this
-     frame represents the null frame.  */
+     This field is valid only if frame_id.stack_status is
+     FID_STACK_VALID.  It will be 0 for other
+     FID_STACK_... statuses.  */
   CORE_ADDR stack_addr;
 
   /* The frame's code address.  This shall be constant through out the
@@ -129,7 +147,7 @@ struct frame_id
   CORE_ADDR special_addr;
 
   /* Flags to indicate the above fields have valid contents.  */
-  unsigned int stack_addr_p : 1;
+  ENUM_BITFIELD(frame_id_stack_status) stack_status : 2;
   unsigned int code_addr_p : 1;
   unsigned int special_addr_p : 1;
 
@@ -168,6 +186,20 @@ extern struct frame_id frame_id_build (CORE_ADDR stack_addr,
 extern struct frame_id frame_id_build_special (CORE_ADDR stack_addr,
 					       CORE_ADDR code_addr,
 					       CORE_ADDR special_addr);
+
+/* Construct a frame ID representing a frame where the stack address
+   exists, but is unavailable.  CODE_ADDR is the frame's constant code
+   address (typically the entry point).  The special identifier
+   address is set to indicate a wild card.  */
+extern struct frame_id frame_id_build_unavailable_stack (CORE_ADDR code_addr);
+
+/* Construct a frame ID representing a frame where the stack address
+   exists, but is unavailable.  CODE_ADDR is the frame's constant code
+   address (typically the entry point).  SPECIAL_ADDR is the special
+   identifier address.  */
+extern struct frame_id
+  frame_id_build_unavailable_stack_special (CORE_ADDR code_addr,
+					    CORE_ADDR special_addr);
 
 /* Construct a wild card frame ID.  The parameter is the frame's constant
    stack address (typically the outer-bound).  The code address as well
@@ -275,6 +307,13 @@ extern void select_frame (struct frame_info *);
 extern struct frame_info *get_prev_frame (struct frame_info *);
 extern struct frame_info *get_next_frame (struct frame_info *);
 
+/* Return a "struct frame_info" corresponding to the frame that called
+   THIS_FRAME.  Returns NULL if there is no such frame.
+
+   Unlike get_prev_frame, this function always tries to unwind the
+   frame.  */
+extern struct frame_info *get_prev_frame_always (struct frame_info *);
+
 /* Given a frame's ID, relocate the frame.  Returns NULL if the frame
    is not found.  */
 extern struct frame_info *frame_find_by_id (struct frame_id id);
@@ -356,10 +395,9 @@ extern void find_frame_sal (struct frame_info *frame,
 			    struct symtab_and_line *sal);
 
 /* Set the current source and line to the location given by frame
-   FRAME, if possible.  When CENTER is true, adjust so the relevant
-   line is in the center of the next 'list'.  */
+   FRAME, if possible.  */
 
-void set_current_sal_from_frame (struct frame_info *, int);
+void set_current_sal_from_frame (struct frame_info *);
 
 /* Return the frame base (what ever that is) (DEPRECATED).
 
@@ -463,9 +501,22 @@ enum unwind_stop_reason
 
 enum unwind_stop_reason get_frame_unwind_stop_reason (struct frame_info *);
 
-/* Translate a reason code to an informative string.  */
+/* Translate a reason code to an informative string.  This converts the
+   generic stop reason codes into a generic string describing the code.
+   For a possibly frame specific string explaining the stop reason, use
+   FRAME_STOP_REASON_STRING instead.  */
 
-const char *frame_stop_reason_string (enum unwind_stop_reason);
+const char *unwind_stop_reason_to_string (enum unwind_stop_reason);
+
+/* Return a possibly frame specific string explaining why the unwind
+   stopped here.  E.g., if unwinding tripped on a memory error, this
+   will return the error description string, which includes the address
+   that we failed to access.  If there's no specific reason stored for
+   a frame then a generic reason string will be returned.
+
+   Should only be called for frames that don't have a previous frame.  */
+
+const char *frame_stop_reason_string (struct frame_info *);
 
 /* Unwind the stack frame so that the value of REGNUM, in the previous
    (up, older) frame is returned.  If VALUEP is NULL, don't
@@ -548,14 +599,6 @@ extern void put_frame_register_bytes (struct frame_info *frame, int regnum,
 
 extern CORE_ADDR frame_unwind_caller_pc (struct frame_info *frame);
 
-/* Same as frame_unwind_caller_pc, but returns a boolean indication of
-   whether the caller PC is determinable (when the PC is unavailable,
-   it will not be), instead of possibly throwing an error trying to
-   read unavailable memory or registers.  */
-
-extern int frame_unwind_caller_pc_if_available (struct frame_info *this_frame,
-						CORE_ADDR *pc);
-
 /* Discard the specified frame.  Restoring the registers to the state
    of the caller.  */
 extern void frame_pop (struct frame_info *frame);
@@ -622,8 +665,8 @@ extern void *frame_obstack_zalloc (unsigned long size);
 /* Create a regcache, and copy the frame's registers into it.  */
 struct regcache *frame_save_as_regcache (struct frame_info *this_frame);
 
-extern struct block *get_frame_block (struct frame_info *,
-                                      CORE_ADDR *addr_in_block);
+extern const struct block *get_frame_block (struct frame_info *,
+					    CORE_ADDR *addr_in_block);
 
 /* Return the `struct block' that belongs to the selected thread's
    selected frame.  If the inferior has no state, return NULL.
@@ -651,7 +694,7 @@ extern struct block *get_frame_block (struct frame_info *,
    it occurs in the CLI code and makes it possible for commands to
    work, even when the inferior has no state.  */
 
-extern struct block *get_selected_block (CORE_ADDR *addr_in_block);
+extern const struct block *get_selected_block (CORE_ADDR *addr_in_block);
 
 extern struct symbol *get_frame_function (struct frame_info *);
 
@@ -659,14 +702,13 @@ extern CORE_ADDR get_pc_function_start (CORE_ADDR);
 
 extern struct frame_info *find_relative_frame (struct frame_info *, int *);
 
-extern void show_and_print_stack_frame (struct frame_info *fi, int print_level,
-					enum print_what print_what);
-
 extern void print_stack_frame (struct frame_info *, int print_level,
-			       enum print_what print_what);
+			       enum print_what print_what,
+			       int set_current_sal);
 
 extern void print_frame_info (struct frame_info *, int print_level,
-			      enum print_what print_what, int args);
+			      enum print_what print_what, int args,
+			      int set_current_sal);
 
 extern struct frame_info *block_innermost_frame (const struct block *);
 

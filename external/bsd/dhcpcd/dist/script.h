@@ -1,8 +1,8 @@
-/* $NetBSD: script.h,v 1.1.1.1 2013/06/21 19:33:08 roy Exp $ */
+/* $NetBSD: script.h,v 1.7 2015/03/26 10:26:37 roy Exp $ */
 
 /*
  * dhcpcd - DHCP client daemon
- * Copyright (c) 2006-2013 Roy Marples <roy@marples.name>
+ * Copyright (c) 2006-2015 Roy Marples <roy@marples.name>
  * All rights reserved
 
  * Redistribution and use in source and binary forms, with or without
@@ -30,10 +30,10 @@
 #ifndef SCRIPT_H
 #define SCRIPT_H
 
-#include "net.h"
+#include "control.h"
 
 void if_printoptions(void);
-int send_interface(int, const struct interface *);
+int send_interface(struct fd_list *, const struct interface *);
 int script_runreason(const struct interface *, const char *);
 
 #endif

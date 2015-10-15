@@ -1,4 +1,4 @@
-/*	$NetBSD: view.c,v 1.32 2010/04/13 11:31:11 tsutsui Exp $	*/
+/*	$NetBSD: view.c,v 1.35 2015/08/20 14:40:16 christos Exp $	*/
 
 /*
  * Copyright (c) 1994 Christian E. Hopps
@@ -38,7 +38,7 @@
  * a interface to graphics. */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: view.c,v 1.32 2010/04/13 11:31:11 tsutsui Exp $");
+__KERNEL_RCSID(0, "$NetBSD: view.c,v 1.35 2015/08/20 14:40:16 christos Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -53,7 +53,9 @@ __KERNEL_RCSID(0, "$NetBSD: view.c,v 1.32 2010/04/13 11:31:11 tsutsui Exp $");
 #include <atari/dev/grfabs_reg.h>
 #include <atari/dev/viewioctl.h>
 #include <atari/dev/viewvar.h>
+
 #include "view.h"
+#include "ioconf.h"
 
 static void view_display(struct view_softc *);
 static void view_remove(struct view_softc *);
@@ -76,15 +78,23 @@ dev_type_ioctl(viewioctl);
 dev_type_mmap(viewmmap);
 
 const struct cdevsw view_cdevsw = {
-	viewopen, viewclose, nullread, nullwrite, viewioctl,
-	nostop, notty, nopoll, viewmmap, nokqfilter,
+	.d_open = viewopen,
+	.d_close = viewclose,
+	.d_read = nullread,
+	.d_write = nullwrite,
+	.d_ioctl = viewioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = viewmmap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = 0
 };
 
 /* 
  *  functions for probeing.
  */
-void	viewattach(int);
-
 void
 viewattach(int cnt)
 {

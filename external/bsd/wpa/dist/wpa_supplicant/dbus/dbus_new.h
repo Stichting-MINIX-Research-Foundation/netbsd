@@ -3,14 +3,8 @@
  * Copyright (c) 2006, Dan Williams <dcbw@redhat.com> and Red Hat, Inc.
  * Copyright (c) 2009-2010, Witold Sowa <witold.sowa@gmail.com>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #ifndef CTRL_IFACE_DBUS_NEW_H
@@ -34,6 +28,7 @@ enum wpas_dbus_prop {
 	WPAS_DBUS_PROP_CURRENT_NETWORK,
 	WPAS_DBUS_PROP_CURRENT_AUTH_MODE,
 	WPAS_DBUS_PROP_BSSS,
+	WPAS_DBUS_PROP_DISCONNECT_REASON,
 };
 
 enum wpas_dbus_bss_prop {
@@ -44,7 +39,9 @@ enum wpas_dbus_bss_prop {
 	WPAS_DBUS_BSS_PROP_RATES,
 	WPAS_DBUS_BSS_PROP_WPA,
 	WPAS_DBUS_BSS_PROP_RSN,
+	WPAS_DBUS_BSS_PROP_WPS,
 	WPAS_DBUS_BSS_PROP_IES,
+	WPAS_DBUS_BSS_PROP_AGE,
 };
 
 #define WPAS_DBUS_OBJECT_PATH_MAX 150
@@ -83,11 +80,7 @@ enum wpas_dbus_bss_prop {
 #define WPAS_DBUS_NEW_P2P_PEERS_PART	"Peers"
 #define	WPAS_DBUS_NEW_IFACE_P2P_PEER WPAS_DBUS_NEW_INTERFACE ".Peer"
 
-#define WPAS_DBUS_NEW_P2P_GROUPMEMBERS_PART	"Members"
-#define	WPAS_DBUS_NEW_IFACE_P2P_GROUPMEMBER \
-	WPAS_DBUS_NEW_INTERFACE ".GroupMember"
-
-/* Errors */
+/* Top-level Errors */
 #define WPAS_DBUS_ERROR_UNKNOWN_ERROR \
 	WPAS_DBUS_NEW_INTERFACE ".UnknownError"
 #define WPAS_DBUS_ERROR_INVALID_ARGS \
@@ -95,6 +88,8 @@ enum wpas_dbus_bss_prop {
 
 #define WPAS_DBUS_ERROR_IFACE_EXISTS \
 	WPAS_DBUS_NEW_INTERFACE ".InterfaceExists"
+#define WPAS_DBUS_ERROR_IFACE_DISABLED            \
+	WPAS_DBUS_NEW_INTERFACE ".InterfaceDisabled"
 #define WPAS_DBUS_ERROR_IFACE_UNKNOWN \
 	WPAS_DBUS_NEW_INTERFACE ".InterfaceUnknown"
 
@@ -114,6 +109,20 @@ enum wpas_dbus_bss_prop {
 	WPAS_DBUS_NEW_INTERFACE ".BlobExists"
 #define WPAS_DBUS_ERROR_BLOB_UNKNOWN \
 	WPAS_DBUS_NEW_INTERFACE ".BlobUnknown"
+
+#define WPAS_DBUS_ERROR_SUBSCRIPTION_IN_USE \
+	WPAS_DBUS_NEW_INTERFACE ".SubscriptionInUse"
+#define WPAS_DBUS_ERROR_NO_SUBSCRIPTION \
+	WPAS_DBUS_NEW_INTERFACE ".NoSubscription"
+#define WPAS_DBUS_ERROR_SUBSCRIPTION_EPERM \
+	WPAS_DBUS_NEW_INTERFACE ".SubscriptionNotYou"
+
+/* Interface-level errors */
+#define WPAS_DBUS_ERROR_IFACE_SCAN_ERROR \
+	WPAS_DBUS_NEW_IFACE_INTERFACE ".ScanError"
+
+void wpas_dbus_subscribe_noc(struct wpas_dbus_priv *priv);
+void wpas_dbus_unsubscribe_noc(struct wpas_dbus_priv *priv);
 
 
 #ifdef CONFIG_CTRL_IFACE_DBUS_NEW
@@ -165,6 +174,8 @@ int wpas_dbus_unregister_peer(struct wpa_supplicant *wpa_s,
 				  const u8 *dev_addr);
 void wpas_dbus_signal_peer_device_lost(struct wpa_supplicant *wpa_s,
 					   const u8 *dev_addr);
+void wpas_dbus_signal_peer_groups_changed(struct wpa_supplicant *wpa_s,
+					  const u8 *dev_addr);
 void wpas_dbus_signal_p2p_group_removed(struct wpa_supplicant *wpa_s,
 					const char *role);
 void wpas_dbus_signal_p2p_provision_discovery(struct wpa_supplicant *wpa_s,
@@ -189,10 +200,6 @@ int wpas_dbus_unregister_persistent_group(struct wpa_supplicant *wpa_s,
 					  int nid);
 void wpas_dbus_signal_p2p_invitation_result(struct wpa_supplicant *wpa_s,
 					    int status, const u8 *bssid);
-void wpas_dbus_register_p2p_groupmember(struct wpa_supplicant *wpa_s,
-					const u8 *p2p_if_addr);
-void wpas_dbus_unregister_p2p_groupmember(struct wpa_supplicant *wpa_s,
-					  const u8 *p2p_if_addr);
 void wpas_dbus_signal_p2p_peer_disconnected(struct wpa_supplicant *wpa_s,
 					    const u8 *member);
 void wpas_dbus_signal_p2p_sd_request(struct wpa_supplicant *wpa_s,
@@ -208,8 +215,19 @@ void wpas_dbus_signal_p2p_wps_failed(struct wpa_supplicant *wpa_s,
 				     struct wps_event_fail *fail);
 void wpas_dbus_signal_certification(struct wpa_supplicant *wpa_s,
 				    int depth, const char *subject,
+				    const char *altsubject[],
+				    int num_altsubject,
 				    const char *cert_hash,
 				    const struct wpabuf *cert);
+void wpas_dbus_signal_preq(struct wpa_supplicant *wpa_s,
+			   const u8 *addr, const u8 *dst, const u8 *bssid,
+			   const u8 *ie, size_t ie_len, u32 ssi_signal);
+void wpas_dbus_signal_eap_status(struct wpa_supplicant *wpa_s,
+				 const char *status, const char *parameter);
+void wpas_dbus_signal_sta_authorized(struct wpa_supplicant *wpa_s,
+				     const u8 *sta);
+void wpas_dbus_signal_sta_deauthorized(struct wpa_supplicant *wpa_s,
+				       const u8 *sta);
 
 #else /* CONFIG_CTRL_IFACE_DBUS_NEW */
 
@@ -339,6 +357,12 @@ static inline int wpas_dbus_unregister_peer(struct wpa_supplicant *wpa_s,
 }
 
 static inline void
+wpas_dbus_signal_peer_groups_changed(struct wpa_supplicant *wpa_s,
+				     const u8 *dev_addr)
+{
+}
+
+static inline void
 wpas_dbus_signal_p2p_group_removed(struct wpa_supplicant *wpa_s,
 				   const char *role)
 {
@@ -462,8 +486,36 @@ wpas_dbus_signal_p2p_wps_failed(struct wpa_supplicant *wpa_s,
 static inline void wpas_dbus_signal_certification(struct wpa_supplicant *wpa_s,
 						  int depth,
 						  const char *subject,
+						  const char *altsubject[],
+						  int num_altsubject,
 						  const char *cert_hash,
 						  const struct wpabuf *cert)
+{
+}
+
+static inline void wpas_dbus_signal_preq(struct wpa_supplicant *wpa_s,
+					 const u8 *addr, const u8 *dst,
+					 const u8 *bssid,
+					 const u8 *ie, size_t ie_len,
+					 u32 ssi_signal)
+{
+}
+
+static inline void wpas_dbus_signal_eap_status(struct wpa_supplicant *wpa_s,
+					       const char *status,
+					       const char *parameter)
+{
+}
+
+static inline
+void wpas_dbus_signal_sta_authorized(struct wpa_supplicant *wpa_s,
+				     const u8 *sta)
+{
+}
+
+static inline
+void wpas_dbus_signal_sta_deauthorized(struct wpa_supplicant *wpa_s,
+				       const u8 *sta)
 {
 }
 

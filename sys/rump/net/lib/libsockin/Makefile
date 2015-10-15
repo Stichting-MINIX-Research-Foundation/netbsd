@@ -1,14 +1,14 @@
-#	$NetBSD: Makefile,v 1.6 2013/03/18 13:14:11 pooka Exp $
+#	$NetBSD: Makefile,v 1.8 2014/03/13 02:05:49 pooka Exp $
 #
 
 LIB=	rumpnet_sockin
 
 SRCS=	sockin.c
-SRCS+=	component.c
+SRCS+=	sockin_component.c
 
 CPPFLAGS+= -I${RUMPTOP}/librump/rumpkern
 
-RUMPCOMP_USER=	#defined
+RUMPCOMP_USER_SRCS=	sockin_user.c
 
 .include <bsd.lib.mk>
 .include <bsd.klinks.mk>

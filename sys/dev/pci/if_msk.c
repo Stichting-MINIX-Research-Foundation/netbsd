@@ -1,4 +1,4 @@
-/* $NetBSD: if_msk.c,v 1.43 2013/03/30 03:21:06 christos Exp $ */
+/* $NetBSD: if_msk.c,v 1.48 2015/04/13 16:33:25 riastradh Exp $ */
 /*	$OpenBSD: if_msk.c,v 1.42 2007/01/17 02:43:02 krw Exp $	*/
 
 /*
@@ -52,7 +52,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_msk.c,v 1.43 2013/03/30 03:21:06 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_msk.c,v 1.48 2015/04/13 16:33:25 riastradh Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -79,7 +79,7 @@ __KERNEL_RCSID(0, "$NetBSD: if_msk.c,v 1.43 2013/03/30 03:21:06 christos Exp $")
 #include <net/if_media.h>
 
 #include <net/bpf.h>
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 
 #include <dev/mii/mii.h>
 #include <dev/mii/miivar.h>
@@ -165,6 +165,7 @@ static const struct msk_product {
 	{ PCI_VENDOR_MARVELL,		PCI_PRODUCT_MARVELL_YUKON_8036 },
 	{ PCI_VENDOR_MARVELL,		PCI_PRODUCT_MARVELL_YUKON_8038 },
 	{ PCI_VENDOR_MARVELL,		PCI_PRODUCT_MARVELL_YUKON_8039 },
+	{ PCI_VENDOR_MARVELL,		PCI_PRODUCT_MARVELL_YUKON_8040 },
 	{ PCI_VENDOR_MARVELL,		PCI_PRODUCT_MARVELL_YUKON_8050 },
 	{ PCI_VENDOR_MARVELL,		PCI_PRODUCT_MARVELL_YUKON_8052 },
 	{ PCI_VENDOR_MARVELL,		PCI_PRODUCT_MARVELL_YUKON_8053 },
@@ -948,6 +949,7 @@ msk_probe(device_t parent, cfdata_t match, void *aux)
 	case SK_YUKON_EC_U:
 	case SK_YUKON_EC:
 	case SK_YUKON_FE:
+	case SK_YUKON_FE_P:
 		return (1);
 	}
 
@@ -1117,7 +1119,7 @@ msk_attach(device_t parent, device_t self, void *aux)
 		aprint_error_dev(self, "couldn't establish power handler\n");
 
 	rnd_attach_source(&sc->rnd_source, device_xname(sc->sk_dev),
-		RND_TYPE_NET, 0);
+		RND_TYPE_NET, RND_FLAG_DEFAULT);
 
 	DPRINTFN(2, ("msk_attach: end\n"));
 	return;
@@ -1167,6 +1169,7 @@ mskc_attach(device_t parent, device_t self, void *aux)
 	void *kva;
 	bus_dma_segment_t seg;
 	int rseg;
+	char intrbuf[PCI_INTRSTR_LEN];
 
 	DPRINTFN(2, ("begin mskc_attach\n"));
 
@@ -1241,7 +1244,7 @@ mskc_attach(device_t parent, device_t self, void *aux)
 		goto fail_1;
 	}
 
-	intrstr = pci_intr_string(pc, ih);
+	intrstr = pci_intr_string(pc, ih, intrbuf, sizeof(intrbuf));
 	sc->sk_intrhand = pci_intr_establish(pc, ih, IPL_NET, msk_intr, sc);
 	if (sc->sk_intrhand == NULL) {
 		aprint_error(": couldn't establish interrupt");
@@ -2411,12 +2414,6 @@ SYSCTL_SETUP(sysctl_msk, "sysctl msk subtree setup")
 {
 	int rc;
 	const struct sysctlnode *node;
-
-	if ((rc = sysctl_createv(clog, 0, NULL, NULL,
-	    0, CTLTYPE_NODE, "hw", NULL,
-	    NULL, 0, NULL, 0, CTL_HW, CTL_EOL)) != 0) {
-		goto err;
-	}
 
 	if ((rc = sysctl_createv(clog, 0, NULL, &node,
 	    0, CTLTYPE_NODE, "msk",

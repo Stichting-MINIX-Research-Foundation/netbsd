@@ -1,4 +1,4 @@
-/*	$NetBSD: fixup.c,v 1.6 2013/11/07 15:26:36 nisimura Exp $	*/
+/*	$NetBSD: fixup.c,v 1.10 2014/08/02 15:58:04 joerg Exp $	*/
 /*-
  * Copyright (c) 2010, 2011 The NetBSD Foundation, Inc.
  * All rights reserved.
@@ -36,13 +36,15 @@
 
 #include <sys/cdefs.h>
 
-__KERNEL_RCSID(0, "$NetBSD: fixup.c,v 1.6 2013/11/07 15:26:36 nisimura Exp $");
+__KERNEL_RCSID(0, "$NetBSD: fixup.c,v 1.10 2014/08/02 15:58:04 joerg Exp $");
 
 #include <sys/param.h>
 #include <sys/types.h>
 
 #include <powerpc/instr.h>
 #include <powerpc/spr.h>
+#include <powerpc/include/cpu.h>
+#include <powerpc/include/oea/spr.h>
 
 static inline void
 fixup_jump(uint32_t *insnp, const struct powerpc_jump_fixup_info *jfi)
@@ -71,7 +73,13 @@ powerpc_fixup_stubs(uint32_t *start, uint32_t *end,
 	extern uint32_t __stub_start[], __stub_end[];
 #ifdef DEBUG
 	size_t fixups_done = 0;
-	uint64_t cycles = mftb();
+	uint64_t cycles = 0;
+#ifdef PPC_OEA601
+	if ((mfpvr() >> 16) == MPC601)
+	    cycles = rtc_nanosecs() >> 7;
+	else
+#endif
+	    cycles = mftb();
 #endif
 
 	if (stub_start == NULL) {
@@ -113,10 +121,8 @@ powerpc_fixup_stubs(uint32_t *start, uint32_t *end,
 			switch (i.i_any.i_opcd) {
 			case OPC_integer_31: {
 				const u_int rs = i.i_x.i_rs;
-#ifdef DIAGNOSTIC
 				const u_int ra = i.i_x.i_ra;
 				const u_int rb = i.i_x.i_rb;
-#endif
 				switch (i.i_x.i_xo) {
 				case OPC31_MFSPR: {
 #ifdef DIAGNOSTIC
@@ -136,6 +142,15 @@ powerpc_fixup_stubs(uint32_t *start, uint32_t *end,
 					ctr = fixreg[rs];
 					break;
 				}
+				case OPC31_OR: {
+#ifdef DIAGNOSTIC
+					KASSERT(valid_mask & (1 << rs));
+					KASSERT(valid_mask & (1 << rb));
+#endif
+					fixreg[ra] = fixreg[rs] | fixreg[rb];
+					valid_mask |= 1 << ra;
+					break;
+				}
 				default:
 					panic("%s: %p: unexpected insn 0x%08x",
 					    __func__, stub, i.i_int);
@@ -146,7 +161,7 @@ powerpc_fixup_stubs(uint32_t *start, uint32_t *end,
 			case OPC_ADDIS: {
 				const u_int rs = i.i_d.i_rs;
 				const u_int ra = i.i_d.i_ra;
-				int d = i.i_d.i_d << ((i.i_d.i_opcd & 1) * 16);
+				register_t d = i.i_d.i_d << ((i.i_d.i_opcd & 1) * 16);
 				if (ra) {
 					KASSERT(valid_mask & (1 << ra));
 					d += fixreg[ra];
@@ -158,7 +173,7 @@ powerpc_fixup_stubs(uint32_t *start, uint32_t *end,
 			case OPC_LWZ: {
 				const u_int rs = i.i_d.i_rs;
 				const u_int ra = i.i_d.i_ra;
-				int addr = i.i_d.i_d;
+				register_t addr = i.i_d.i_d;
 				if (ra) {
 					KASSERT(valid_mask & (1 << ra));
 					addr += fixreg[ra];
@@ -168,7 +183,7 @@ powerpc_fixup_stubs(uint32_t *start, uint32_t *end,
 				break;
 			}
 			case OPC_STW: {
-				KASSERT(i.i_d.i_rs == r_lr && i.i_d.i_ra == 1);
+				KASSERT((i.i_d.i_rs == r_lr || i.i_d.i_rs == 31) && i.i_d.i_ra == 1);
 				break;
 			}
 			case OPC_STWU: {
@@ -185,6 +200,11 @@ powerpc_fixup_stubs(uint32_t *start, uint32_t *end,
 					    insnp + instr.i_i.i_li);
 				}
 				fixup.jfi_real = fixup_addr2offset(ctr);
+				break;
+			}
+			case OPC_RLWINM: {
+				// LLVM emits these for bool operands.
+				// Ignore them.
 				break;
 			}
 			default: {
@@ -209,7 +229,14 @@ powerpc_fixup_stubs(uint32_t *start, uint32_t *end,
 	}
 
 #ifdef DEBUG
+
+#ifdef PPC_OEA601
+	if ((mfpvr() >> 16) == MPC601)
+	    cycles = (rtc_nanosecs() >> 7) - cycles;
+	else
+#endif
 	cycles = mftb() - cycles;
+
 	printf("%s: %zu fixup%s done in %"PRIu64" cycles\n", __func__,
 	    fixups_done, fixups_done == 1 ? "" : "s",
 	    cycles);

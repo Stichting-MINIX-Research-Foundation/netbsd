@@ -1,4 +1,4 @@
-/*	$NetBSD: wsdisplay_glyphcache.c,v 1.5 2012/11/13 20:29:03 macallan Exp $	*/
+/*	$NetBSD: wsdisplay_glyphcache.c,v 1.7 2015/08/24 22:50:33 pooka Exp $	*/
 
 /*
  * Copyright (c) 2012 Michael Lorenz
@@ -31,13 +31,16 @@
  * the most commonly used glyphs ) but the API should at least not prevent
  * more sophisticated caching algorithms
  */
+
+#ifdef _KERNEL_OPT
+#include "opt_glyphcache.h"
+#endif
  
 #include <sys/systm.h>
 #include <sys/atomic.h>
 #include <sys/errno.h>
 #include <sys/kmem.h>
 #include <dev/wscons/wsdisplay_glyphcachevar.h>
-#include "opt_glyphcache.h"
 
 #ifdef GLYPHCACHE_DEBUG
 #define DPRINTF aprint_normal
@@ -67,6 +70,8 @@ glyphcache_init(glyphcache *gc, int first, int lines, int width,
 	gc->gc_cellheight = cellheight;
 	gc->gc_firstline = first;
 	gc->gc_cellsperline = width / cellwidth;
+	gc->gc_buckets = NULL;
+	gc->gc_numbuckets = 0;
 	if (lines < 0) lines = 0;
 	cache_lines = lines / cellheight;
 	gc->gc_numcells = cache_lines * gc->gc_cellsperline;
@@ -123,6 +128,9 @@ glyphcache_wipe(glyphcache *gc)
 {
 	gc_bucket *b;
 	int i, j, idx;
+
+	if ((gc->gc_buckets == NULL) || (gc->gc_numbuckets < 1))
+		return;
 
 	idx = gc->gc_buckets[0].gb_index;
 

@@ -1,6 +1,6 @@
 /* Target-dependent code for the HP PA-RISC architecture.
 
-   Copyright (C) 1986-2013 Free Software Foundation, Inc.
+   Copyright (C) 1986-2015 Free Software Foundation, Inc.
 
    Contributed by the Center for Software Science at the
    University of Utah (pa-gdb-bugs@cs.utah.edu).
@@ -26,7 +26,6 @@
 #include "regcache.h"
 #include "completer.h"
 #include "osabi.h"
-#include "gdb_assert.h"
 #include "arch-utils.h"
 /* For argument passing to the inferior.  */
 #include "symtab.h"
@@ -162,11 +161,11 @@ hppa_extract_17 (unsigned word)
 CORE_ADDR 
 hppa_symbol_address(const char *sym)
 {
-  struct minimal_symbol *minsym;
+  struct bound_minimal_symbol minsym;
 
   minsym = lookup_minimal_symbol (sym, NULL, NULL);
-  if (minsym)
-    return SYMBOL_VALUE_ADDRESS (minsym);
+  if (minsym.minsym)
+    return BMSYMBOL_VALUE_ADDRESS (minsym);
   else
     return (CORE_ADDR)-1;
 }
@@ -221,7 +220,7 @@ record_text_segment_lowaddr (bfd *abfd, asection *section, void *data)
 static void
 internalize_unwinds (struct objfile *objfile, struct unwind_table_entry *table,
 		     asection *section, unsigned int entries,
-		     unsigned int size, CORE_ADDR text_offset)
+		     size_t size, CORE_ADDR text_offset)
 {
   /* We will read the unwind entries into temporary memory, then
      fill in the actual unwind table.  */
@@ -320,7 +319,7 @@ static void
 read_unwind_info (struct objfile *objfile)
 {
   asection *unwind_sec, *stub_unwind_sec;
-  unsigned unwind_size, stub_unwind_size, total_size;
+  size_t unwind_size, stub_unwind_size, total_size;
   unsigned index, unwind_entries;
   unsigned stub_entries, total_entries;
   CORE_ADDR text_offset;
@@ -725,7 +724,7 @@ hppa32_push_dummy_call (struct gdbarch *gdbarch, struct value *function,
 	  struct type *type = check_typedef (value_type (arg));
 	  /* The corresponding parameter that is pushed onto the
 	     stack, and [possibly] passed in a register.  */
-	  char param_val[8];
+	  gdb_byte param_val[8];
 	  int param_len;
 	  memset (param_val, 0, sizeof param_val);
 	  if (TYPE_LENGTH (type) > 8)
@@ -928,7 +927,7 @@ hppa64_convert_code_addr_to_fptr (struct gdbarch *gdbarch, CORE_ADDR code)
 	   addr += 2 * 8)
 	{
 	  ULONGEST opdaddr;
-	  char tmp[8];
+	  gdb_byte tmp[8];
 
 	  if (target_read_memory (addr, tmp, sizeof (tmp)))
 	      break;
@@ -2417,7 +2416,7 @@ hppa_stub_unwind_sniffer (const struct frame_unwind *self,
 
   if (pc == 0
       || (tdep->in_solib_call_trampoline != NULL
-	  && tdep->in_solib_call_trampoline (gdbarch, pc, NULL))
+	  && tdep->in_solib_call_trampoline (gdbarch, pc))
       || gdbarch_in_solib_return_trampoline (gdbarch, pc, NULL))
     return 1;
   return 0;
@@ -2463,26 +2462,31 @@ hppa_unwind_pc (struct gdbarch *gdbarch, struct frame_info *next_frame)
 /* Return the minimal symbol whose name is NAME and stub type is STUB_TYPE.
    Return NULL if no such symbol was found.  */
 
-struct minimal_symbol *
+struct bound_minimal_symbol
 hppa_lookup_stub_minimal_symbol (const char *name,
                                  enum unwind_stub_types stub_type)
 {
   struct objfile *objfile;
   struct minimal_symbol *msym;
+  struct bound_minimal_symbol result = { NULL, NULL };
 
   ALL_MSYMBOLS (objfile, msym)
     {
-      if (strcmp (SYMBOL_LINKAGE_NAME (msym), name) == 0)
+      if (strcmp (MSYMBOL_LINKAGE_NAME (msym), name) == 0)
         {
           struct unwind_table_entry *u;
 
-          u = find_unwind_entry (SYMBOL_VALUE (msym));
+          u = find_unwind_entry (MSYMBOL_VALUE (msym));
           if (u != NULL && u->stub_unwind.stub_type == stub_type)
-            return msym;
+	    {
+	      result.objfile = objfile;
+	      result.minsym = msym;
+	      return result;
+	    }
         }
     }
 
-  return NULL;
+  return result;
 }
 
 static void
@@ -2775,18 +2779,6 @@ static struct insn_pattern hppa_plt_stub[] = {
   { 0, 0 }
 };
 
-static struct insn_pattern hppa_sigtramp[] = {
-  /* ldi 0, %r25 or ldi 1, %r25 */
-  { 0x34190000, 0xfffffffd },
-  /* ldi __NR_rt_sigreturn, %r20 */
-  { 0x3414015a, 0xffffffff },
-  /* be,l 0x100(%sr2, %r0), %sr0, %r31 */
-  { 0xe4008200, 0xffffffff },
-  /* nop */
-  { 0x08000240, 0xffffffff },
-  { 0, 0 }
-};
-
 /* Maximum number of instructions on the patterns above.  */
 #define HPPA_MAX_INSN_PATTERN_LEN	4
 
@@ -2855,13 +2847,12 @@ hppa_in_dyncall (CORE_ADDR pc)
 }
 
 int
-hppa_in_solib_call_trampoline (struct gdbarch *gdbarch,
-			       CORE_ADDR pc, char *name)
+hppa_in_solib_call_trampoline (struct gdbarch *gdbarch, CORE_ADDR pc)
 {
   unsigned int insn[HPPA_MAX_INSN_PATTERN_LEN];
   struct unwind_table_entry *u;
 
-  if (in_plt_section (pc, name) || hppa_in_dyncall (pc))
+  if (in_plt_section (pc) || hppa_in_dyncall (pc))
     return 1;
 
   /* The GNU toolchain produces linker stubs without unwind
@@ -2918,13 +2909,13 @@ hppa_skip_trampoline_code (struct frame_info *frame, CORE_ADDR pc)
       /* fallthrough */
     }
 
-  if (in_plt_section (pc, NULL))
+  if (in_plt_section (pc))
     {
       pc = read_memory_typed_address (pc, func_ptr_type);
 
       /* If the PLT slot has not yet been resolved, the target will be
          the PLT stub.  */
-      if (in_plt_section (pc, NULL))
+      if (in_plt_section (pc))
 	{
 	  /* Sanity check: are we pointing to the PLT stub?  */
   	  if (!hppa_match_insns (gdbarch, pc, hppa_plt_stub, insn))
@@ -2998,7 +2989,7 @@ hppa_gdbarch_init (struct gdbarch_info info, struct gdbarch_list *arches)
     return (arches->gdbarch);
 
   /* If none found, then allocate and initialize one.  */
-  tdep = XZALLOC (struct gdbarch_tdep);
+  tdep = XCNEW (struct gdbarch_tdep);
   gdbarch = gdbarch_alloc (&info, tdep);
 
   /* Determine from the bfd_arch_info structure if we are dealing with

@@ -1,4 +1,4 @@
-/*	$NetBSD: ip_fil_netbsd.c,v 1.7 2013/11/01 06:42:23 mrg Exp $	*/
+/*	$NetBSD: ip_fil_netbsd.c,v 1.11 2014/07/25 08:10:39 dholland Exp $	*/
 
 /*
  * Copyright (C) 2012 by Darren Reed.
@@ -8,7 +8,7 @@
 #if !defined(lint)
 #if defined(__NetBSD__)
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ip_fil_netbsd.c,v 1.7 2013/11/01 06:42:23 mrg Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ip_fil_netbsd.c,v 1.11 2014/07/25 08:10:39 dholland Exp $");
 #else
 static const char sccsid[] = "@(#)ip_fil.c	2.41 6/5/96 (C) 1993-2000 Darren Reed";
 static const char rcsid[] = "@(#)Id: ip_fil_netbsd.c,v 1.1.1.2 2012/07/22 13:45:17 darrenr Exp";
@@ -128,13 +128,23 @@ static  int     ipfpoll(dev_t, int events, PROC_T *);
 static	void	ipf_timer_func(void *ptr);
 
 const struct cdevsw ipl_cdevsw = {
-	ipfopen, ipfclose, ipfread, ipfwrite, ipfioctl,
-	nostop, notty, ipfpoll, nommap,
+	.d_open = ipfopen,
+	.d_close = ipfclose,
+	.d_read = ipfread,
+	.d_write = ipfwrite,
+	.d_ioctl = ipfioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = ipfpoll,
+	.d_mmap = nommap,
 #if  (__NetBSD_Version__ >= 200000000)
-	nokqfilter,
+	.d_kqfilter = nokqfilter,
 #endif
+	.d_discard = nodiscard,
 #ifdef D_OTHER
-	D_OTHER,
+	.d_flag = D_OTHER
+#else
+	.d_flag = 0
 #endif
 };
 
@@ -1200,7 +1210,9 @@ ipf_fastroute(mb_t *m0, mb_t **mpp, fr_info_t *fin, frdest_t *fdp)
 			ip->ip_sum = in_cksum(m, hlen);
 # endif /* M_CSUM_IPv4 */
 
+		KERNEL_LOCK(1, NULL);
 		error = (*ifp->if_output)(ifp, m, dst, rt);
+		KERNEL_UNLOCK_ONE(NULL);
 		goto done;
 	}
 
@@ -1287,7 +1299,9 @@ sendorfree:
 		m0 = m->m_act;
 		m->m_act = 0;
 		if (error == 0) {
+			KERNEL_LOCK(1, NULL);
 			error = (*ifp->if_output)(ifp, m, dst, rt);
+			KERNEL_UNLOCK_ONE(NULL);
 		} else {
 			FREE_MB_T(m);
 		}
@@ -1914,22 +1928,15 @@ ipf_inject(fr_info_t *fin, mb_t *m)
 	int error;
 
 	if (fin->fin_out == 0) {
-		struct ifqueue *ifq;
-
-		ifq = &ipintrq;
-
-		if (IF_QFULL(ifq)) {
-			IF_DROP(ifq);
+		if (__predict_false(!pktq_enqueue(ip_pktq, m, 0))) {
 			FREE_MB_T(m);
 			error = ENOBUFS;
 		} else {
-			IF_ENQUEUE(ifq, m);
 			error = 0;
 		}
 	} else {
 		error = ip_output(m, NULL, NULL, IP_FORWARDING, NULL);
 	}
-
 	return error;
 }
 

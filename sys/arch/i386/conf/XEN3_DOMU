@@ -1,4 +1,4 @@
-# $NetBSD: XEN3_DOMU,v 1.55 2013/06/30 21:38:57 rmind Exp $
+# $NetBSD: XEN3_DOMU,v 1.69 2015/08/12 07:53:57 maxv Exp $
 
 include 	"arch/xen/conf/std.xen"
 
@@ -49,11 +49,10 @@ options 	SYSCTL_INCLUDE_DESCR	# Include sysctl descriptions in kernel
 options 	BUFQ_PRIOCSCAN
 
 # Diagnostic/debugging support options
-options 	DIAGNOSTIC	# expensive kernel consistency checks
+options 	DIAGNOSTIC	# inexpensive kernel consistency checks
 #options 	DEBUG		# expensive debugging checks/support
-options 	KMEMSTATS	# kernel memory statistics (vmstat -m)
 options 	DDB		# in-kernel debugger
-options 	DDB_ONPANIC=1	# see also sysctl(8): `ddb.onpanic'
+options 	DDB_ONPANIC=1	# see also sysctl(7): `ddb.onpanic'
 options 	DDB_HISTORY_SIZE=512	# enable history editing in DDB
 #options 	KGDB		# remote debugger
 #options 	KGDB_DEVNAME="\"com\"",KGDB_DEVADDR=0x2f8,KGDB_DEVRATE=57600
@@ -61,21 +60,22 @@ options 	DDB_HISTORY_SIZE=512	# enable history editing in DDB
 options DDB_COMMANDONENTER="trace;show registers"
 
 # Compatibility options
-options 	COMPAT_NOMID	# NetBSD 0.8, 386BSD, and BSDI
-options 	COMPAT_09	# NetBSD 0.9
-options 	COMPAT_10	# NetBSD 1.0
-options 	COMPAT_11	# NetBSD 1.1
-options 	COMPAT_12	# NetBSD 1.2, 386BSD, and BSDI
-options 	COMPAT_13	# NetBSD 1.3, 386BSD, and BSDI
-options 	COMPAT_14	# NetBSD 1.4
-options 	COMPAT_15	# NetBSD 1.5
-options 	COMPAT_16	# NetBSD 1.6
-options 	COMPAT_20	# NetBSD 2.0
-options 	COMPAT_30	# NetBSD 3.0 compatibility.
-options 	COMPAT_40	# NetBSD 4.0
 options 	COMPAT_43	# 4.3BSD, 386BSD, and BSDI
-options 	COMPAT_50	# NetBSD 5.0
-options 	COMPAT_60	# NetBSD 6.0 compatibility.
+options 	COMPAT_NOMID	# NetBSD 0.8, 386BSD, and BSDI
+options 	COMPAT_09	# NetBSD 0.9,
+options 	COMPAT_10	# NetBSD 1.0,
+options 	COMPAT_11	# NetBSD 1.1,
+options 	COMPAT_12	# NetBSD 1.2 (and 386BSD and BSDI),
+options 	COMPAT_13	# NetBSD 1.3 (and 386BSD and BSDI),
+options 	COMPAT_14	# NetBSD 1.4,
+options 	COMPAT_15	# NetBSD 1.5,
+options 	COMPAT_16	# NetBSD 1.6,
+options 	COMPAT_20	# NetBSD 2.0,
+options 	COMPAT_30	# NetBSD 3.0,
+options 	COMPAT_40	# NetBSD 4.0,
+options 	COMPAT_50	# NetBSD 5.0,
+options 	COMPAT_60	# NetBSD 6.0, and
+options 	COMPAT_70	# NetBSD 7.0 binary compatibility.
 options 	COMPAT_386BSD_MBRPART # recognize old partition ID
 #options 	TCP_COMPAT_42	# 4.2BSD TCP/IP bug compat. Not recommended.
 
@@ -83,15 +83,15 @@ options 	COMPAT_OSSAUDIO	# OSS (Voxware) audio driver compatibility
 options 	COMPAT_SVR4	# binary compatibility with SVR4
 options 	COMPAT_IBCS2	# binary compatibility with SCO and ISC
 options 	COMPAT_LINUX	# binary compatibility with Linux
-options 	COMPAT_FREEBSD	# binary compatibility with FreeBSD
+#options 	COMPAT_FREEBSD	# binary compatibility with FreeBSD
 options 	COMPAT_BSDPTY	# /dev/[pt]ty?? ptys.
 
 # Wedge support
 options 	DKWEDGE_AUTODISCOVER	# Automatically add dk(4) instances
 options 	DKWEDGE_METHOD_GPT	# Supports GPT partitions as wedges
-# The following two options can break /etc/fstab, so handle with care
 #options 	DKWEDGE_METHOD_BSDLABEL	# Support disklabel entries as wedges
 #options 	DKWEDGE_METHOD_MBR	# Support MBR partitions as wedges
+options		DKWEDGE_METHOD_APPLE    # Support Apple partitions as wedges
 
 # File systems
 file-system 	FFS		# UFS
@@ -125,6 +125,7 @@ options 	WAPBL		# File system journaling support
 #options 	UFS_DIRHASH	# UFS Large Directory Hashing - Experimental
 options 	NFSSERVER	# Network File System server
 #options 	FFS_NO_SNAPSHOT	# No FFS snapshot support
+options 	UFS_EXTATTR	# Extended attribute support for UFS1
 #options 	EXT2FS_SYSTEM_FLAGS # makes ext2fs file flags (append and
 				# immutable) behave as system flags.
 #options 	V7FS_EI		# V7FS Endian Independent support
@@ -133,7 +134,7 @@ options 	NFSSERVER	# Network File System server
 #options 	GATEWAY		# packet forwarding
 options 	INET		# IP + ICMP + TCP + UDP
 options 	INET6		# IPv6
-#options 	IPSEC		# IP security
+options 	IPSEC		# IP security
 #options 	IPSEC_DEBUG	# debug for IP security
 #options 	MROUTING	# IP multicast routing
 #options 	PIM		# Protocol Independent Multicast
@@ -146,6 +147,12 @@ options 	IPFILTER_LOOKUP	# ippool(8) support
 options 	IPFILTER_COMPAT # Compat for IP-Filter
 #options 	IPFILTER_DEFAULT_BLOCK	# block all packets by default
 #options 	TCP_DEBUG	# Record last TCP_NDEBUG packets with SO_DEBUG
+
+# pseudo-device support for sysmon and its sub-components
+options 	SYSMON_POWER
+options 	SYSMON_ENVSYS
+options 	SYSMON_WDOG
+options 	SYSMON_TASKQ
 
 #options 	ALTQ		# Manipulate network interfaces' output queues
 #options 	ALTQ_BLUE	# Stochastic Fair Blue
@@ -180,8 +187,6 @@ mainbus0 at root
 hypervisor*	at mainbus?		# Xen hypervisor
 
 vcpu*		at hypervisor?		# Xen virtual CPUs
-
-npx0		at hypervisor?		# x86 math coprocessor
 
 xencons*	at hypervisor?		# Xen virtual console
 
@@ -260,6 +265,6 @@ options 	PAX_MPROTECT=0		# PaX mprotect(2) restrictions
 options 	PAX_ASLR=0		# PaX Address Space Layout Randomization
 
 # PCI pass-through support:
-xpci* at xenbus ?			#Xen3 PCI front end driver
-pci* at xpci ?
+#xpci* at xenbus ?			#Xen3 PCI front end driver
+#pci* at xpci ?
 # you then need to add your PCI devices drivers below.

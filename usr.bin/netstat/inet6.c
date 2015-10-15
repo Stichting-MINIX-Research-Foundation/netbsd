@@ -1,4 +1,4 @@
-/*	$NetBSD: inet6.c,v 1.66 2013/11/23 22:01:12 christos Exp $	*/
+/*	$NetBSD: inet6.c,v 1.68 2015/02/08 15:09:45 christos Exp $	*/
 /*	BSDI inet.c,v 2.3 1995/10/24 02:19:29 prb Exp	*/
 
 /*
@@ -64,7 +64,7 @@
 #if 0
 static char sccsid[] = "@(#)inet.c	8.4 (Berkeley) 4/20/94";
 #else
-__RCSID("$NetBSD: inet6.c,v 1.66 2013/11/23 22:01:12 christos Exp $");
+__RCSID("$NetBSD: inet6.c,v 1.68 2015/02/08 15:09:45 christos Exp $");
 #endif
 #endif /* not lint */
 
@@ -135,6 +135,7 @@ extern const char * const tcptimers[];
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <util.h>
 #include "netstat.h"
 #include "vtw.h"
 #include "prog_ops.h"
@@ -302,7 +303,7 @@ getpcblist_kmem(u_long off, const char *name, size_t *len) {
 	next = TAILQ_FIRST(head);
 	prev = TAILQ_END(head);
 
-	if ((pcblist = malloc(size)) == NULL)
+	if ((pcblist = malloc(size * sizeof(*pcblist))) == NULL)
 		err(1, "malloc");
 
 	i = 0;
@@ -337,7 +338,9 @@ getpcblist_kmem(u_long off, const char *name, size_t *len) {
 		memcpy(&pcblist[i].ki_d, &sin6, sizeof(sin6));
 		pcblist[i].ki_tstate = tcpcb.t_state;
 		if (i++ == size) {
-			struct kinfo_pcb *n = realloc(pcblist, size += 100);
+			size += 100;
+			struct kinfo_pcb *n = realloc(pcblist,
+			    size * sizeof(*pcblist));
 			if (n == NULL)
 				err(1, "realloc");
 			pcblist = n;
@@ -1468,10 +1471,14 @@ tcp6_dump(u_long off, const char *name, u_long pcbaddr)
 	printf("TCP Protocol Control Block at 0x%08lx:\n\n", pcbaddr);
 	printf("Timers:\n");
 	for (i = 0; i < TCP6T_NTIMERS; i++) {
+		char buf[128];
 		ci = (callout_impl_t *)&tcpcb.t_timer[i];
-		printf("\t%s: %d", tcptimers[i],
-		    (ci->c_flags & CALLOUT_PENDING) ?
-		    ci->c_time - hardticks : 0);
+		snprintb(buf, sizeof(buf), CALLOUT_FMT, ci->c_flags);
+		printf("\t%s\t%s", tcptimers[i], buf);
+		if (ci->c_flags & CALLOUT_PENDING)
+			printf("\t%d\n", ci->c_time - hardticks);
+		else
+			printf("\n");
 	}
 	printf("\n\n");
 

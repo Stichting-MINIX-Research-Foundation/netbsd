@@ -1,4 +1,4 @@
-.\"     $NetBSD: pci.9,v 1.36 2012/01/30 19:20:13 drochner Exp $
+.\"     $NetBSD: pci.9,v 1.43 2015/10/04 12:10:51 wiz Exp $
 .\"
 .\" Copyright (c) 2001, 2003 The NetBSD Foundation, Inc.
 .\" All rights reserved.
@@ -27,7 +27,7 @@
 .\" ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 .\" POSSIBILITY OF SUCH DAMAGE.
 .\"
-.Dd January 30, 2012
+.Dd October 2, 2015
 .Dt PCI 9
 .Os
 .Sh NAME
@@ -43,6 +43,8 @@
 .Nm pci_conf_restore ,
 .Nm pci_find_device ,
 .Nm pci_get_capability ,
+.Nm pci_get_ht_capability ,
+.Nm pci_get_ext_capability ,
 .Nm pci_mapreg_type ,
 .Nm pci_mapreg_map ,
 .Nm pci_mapreg_info ,
@@ -73,8 +75,7 @@
 "int maxdevs"
 .Ft int
 .Fn pci_activate "pci_chipset_tag_t pc" "pcitag_t tag" "device_t dev" \
-"int (*wakeup)(pci_chipset_tag_t pc, pcitag_t tag" \
-"\t\tdevice_t dev, pcireg_t reg)"
+"int (*wakeup)(pci_chipset_tag_t pc, pcitag_t tag, device_t dev, pcireg_t reg)"
 .Ft int
 .Fn pci_chipset_tag_create "pci_chipset_tag_t opc" "uint64_t present" \
 "const struct pci_overrides *ov" "void *ctx" "pci_chipset_tag_t *pcp"
@@ -99,6 +100,12 @@
 "int (*func)(const struct pci_attach_args *)"
 .Ft int
 .Fn pci_get_capability "pci_chipset_tag_t pc" "pcitag_t tag" \
+"int capid" "int *offsetp" "pcireg_t *valuep"
+.Ft int
+.Fn pci_get_ht_capability "pci_chipset_tag_t pc" "pcitag_t tag" \
+"int capid" "int *offsetp" "pcireg_t *valuep"
+.Ft int
+.Fn pci_get_ext_capability "pci_chipset_tag_t pc" "pcitag_t tag" \
 "int capid" "int *offsetp" "pcireg_t *valuep"
 .Ft pcireg_t
 .Fn pci_mapreg_type "pci_chipset_tag_t pc" "pcitag_t tag" "int reg"
@@ -447,11 +454,67 @@ capability
 .Fa capid .
 If
 .Fa offsetp
-is not NULL, the register offset in configuration space is returned in
+is not
+.Dv NULL ,
+the register offset in configuration space is returned in
 .Fa offsetp .
 If
 .Fa valuep
-is not NULL, the value of the capability is returned in
+is not
+.Dv NULL ,
+the value of the capability is returned in
+.Fa valuep .
+The argument
+.Fa tag
+is the PCI tag for the current device attached to PCI chipset
+.Fa pc .
+This function returns 1 if the capability was found.
+If the capability was not found, it returns zero, and
+.Fa offsetp
+and
+.Fa valuep
+remain unchanged.
+.It Fn pci_get_ht_capability "pc" "tag" "capid" "offsetp" "valuep"
+Parse the device capability list in HyperTransport configuration
+space looking for capability
+.Fa capid .
+If
+.Fa offsetp
+is not
+.Dv NULL ,
+the register offset in configuration space is returned in
+.Fa offsetp .
+If
+.Fa valuep
+is not
+.Dv NULL ,
+the value of the capability is returned in
+.Fa valuep .
+The argument
+.Fa tag
+is the PCI tag for the current device attached to PCI chipset
+.Fa pc .
+This function returns 1 if the capability was found.
+If the capability was not found, it returns zero, and
+.Fa offsetp
+and
+.Fa valuep
+remain unchanged.
+.It Fn pci_get_ext_capability "pc" "tag" "capid" "offsetp" "valuep"
+Parse the device capability list in extended configuration space looking for
+capability
+.Fa capid .
+If
+.Fa offsetp
+is not
+.Dv NULL ,
+the register offset in extended configuration space is returned in
+.Fa offsetp .
+If
+.Fa valuep
+is not
+.Dv NULL ,
+the value of the capability is returned in
 .Fa valuep .
 The argument
 .Fa tag
@@ -538,7 +601,9 @@ If any of
 .Fa basep ,
 or
 .Fa sizep
-are NULL then
+are
+.Dv NULL
+then
 .Fn pci_mapreg_map
 does not define their return value.
 This function returns zero on success and non-zero on error.

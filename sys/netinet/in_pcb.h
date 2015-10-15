@@ -1,4 +1,4 @@
-/*	$NetBSD: in_pcb.h,v 1.51 2013/06/27 19:38:16 christos Exp $	*/
+/*	$NetBSD: in_pcb.h,v 1.59 2015/05/24 15:43:45 rtr Exp $	*/
 
 /*
  * Copyright (C) 1995, 1996, 1997, and 1998 WIDE Project.
@@ -131,8 +131,8 @@ struct inpcb {
 #ifdef _KERNEL
 void	in_losing(struct inpcb *);
 int	in_pcballoc(struct socket *, void *);
-int	in_pcbbind(void *, struct mbuf *, struct lwp *);
-int	in_pcbconnect(void *, struct mbuf *, struct lwp *);
+int	in_pcbbind(void *, struct sockaddr_in *, struct lwp *);
+int	in_pcbconnect(void *, struct sockaddr_in *, struct lwp *);
 void	in_pcbdetach(void *);
 void	in_pcbdisconnect(void *);
 void	in_pcbinit(struct inpcbtable *, int, int);
@@ -152,14 +152,13 @@ void	in_pcbnotifyall(struct inpcbtable *, struct in_addr, int,
 	    void (*)(struct inpcb *, int));
 void	in_pcbpurgeif0(struct inpcbtable *, struct ifnet *);
 void	in_pcbpurgeif(struct inpcbtable *, struct ifnet *);
+void	in_purgeifmcast(struct ip_moptions *, struct ifnet *);
 void	in_pcbstate(struct inpcb *, int);
 void	in_rtchange(struct inpcb *, int);
-void	in_setpeeraddr(struct inpcb *, struct mbuf *);
-void	in_setsockaddr(struct inpcb *, struct mbuf *);
+void	in_setpeeraddr(struct inpcb *, struct sockaddr_in *);
+void	in_setsockaddr(struct inpcb *, struct sockaddr_in *);
 struct rtentry *
 	in_pcbrtentry(struct inpcb *);
-extern struct sockaddr_in *in_selectsrc(struct sockaddr_in *,
-	struct route *, int, struct ip_moptions *, int *);
 #endif
 
 #endif /* !_NETINET_IN_PCB_H_ */

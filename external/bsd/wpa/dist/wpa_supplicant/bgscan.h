@@ -2,14 +2,8 @@
  * WPA Supplicant - background scan and roaming interface
  * Copyright (c) 2009-2010, Jouni Malinen <j@w1.fi>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #ifndef BGSCAN_H
@@ -35,7 +29,8 @@ struct bgscan_ops {
 
 #ifdef CONFIG_BGSCAN
 
-int bgscan_init(struct wpa_supplicant *wpa_s, struct wpa_ssid *ssid);
+int bgscan_init(struct wpa_supplicant *wpa_s, struct wpa_ssid *ssid,
+		const char *name);
 void bgscan_deinit(struct wpa_supplicant *wpa_s);
 int bgscan_notify_scan(struct wpa_supplicant *wpa_s,
 		       struct wpa_scan_results *scan_res);
@@ -47,7 +42,7 @@ void bgscan_notify_signal_change(struct wpa_supplicant *wpa_s, int above,
 #else /* CONFIG_BGSCAN */
 
 static inline int bgscan_init(struct wpa_supplicant *wpa_s,
-			      struct wpa_ssid *ssid)
+			      struct wpa_ssid *ssid, const char name)
 {
 	return 0;
 }

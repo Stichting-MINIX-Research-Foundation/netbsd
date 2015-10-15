@@ -1,4 +1,4 @@
-/*	$NetBSD: ip6_var.h,v 1.59 2012/06/23 03:14:04 christos Exp $	*/
+/*	$NetBSD: ip6_var.h,v 1.64 2015/01/20 21:27:36 roy Exp $	*/
 /*	$KAME: ip6_var.h,v 1.33 2000/06/11 14:59:20 jinmei Exp $	*/
 
 /*
@@ -148,6 +148,11 @@ struct	ip6_pktopts {
 #define IP6PO_MINMTU_MCASTONLY	-1 /* default; send at min MTU for multicast*/
 #define IP6PO_MINMTU_DISABLE	 0 /* always perform pmtu disc */
 #define IP6PO_MINMTU_ALL	 1 /* always send at min MTU */
+	int	ip6po_prefer_tempaddr;	/* whether temporary addresses are
+					 * preferred as source address */
+#define IP6PO_TEMPADDR_SYSTEM	-1 /* follow the system default */
+#define IP6PO_TEMPADDR_NOTPREFER 0 /* not prefer temporary address */
+#define IP6PO_TEMPADDR_PREFER	 1 /* prefer temporary address */
 	int ip6po_flags;
 #if 0	/* parameters in this block is obsolete. do not reuse the values. */
 #define IP6PO_REACHCONF	0x01	/* upper-layer reachability confirmation. */
@@ -312,11 +317,12 @@ extern int	ip6_hashsize;		/* size of hash table */
 #endif
 
 struct in6pcb;
+extern const struct pr_usrreqs rip6_usrreqs;
 
 int	icmp6_ctloutput(int, struct socket *, struct sockopt *);
 
+struct mbuf;
 void	ip6_init(void);
-void	ip6intr(void);
 void	ip6_input(struct mbuf *);
 const struct ip6aux *ip6_getdstifaddr(struct mbuf *);
 void	ip6_freepcbopts(struct ip6_pktopts *);
@@ -329,7 +335,7 @@ int	ip6_lasthdr(struct mbuf *, int, int, int *);
 struct m_tag *ip6_addaux(struct mbuf *);
 struct m_tag *ip6_findaux(struct mbuf *);
 void	ip6_delaux(struct mbuf *);
-
+struct ip6_hdr;
 int	ip6_mforward(struct ip6_hdr *, struct ifnet *, struct mbuf *);
 int	ip6_hopopts_input(u_int32_t *, u_int32_t *, struct mbuf **, int *);
 void	ip6_savecontrol(struct in6pcb *, struct mbuf **, struct ip6_hdr *,
@@ -380,6 +386,7 @@ void	*rip6_ctlinput(int, const struct sockaddr *, void *);
 int	rip6_ctloutput(int, struct socket *, struct sockopt *);
 int	rip6_output(struct mbuf *, struct socket *, struct sockaddr_in6 *,
 			 struct mbuf *);
+int	rip6_attach(struct socket *, int);
 int	rip6_usrreq(struct socket *,
 	    int, struct mbuf *, struct mbuf *, struct mbuf *, struct lwp *);
 
@@ -394,6 +401,8 @@ struct 	in6_addr *in6_selectsrc(struct sockaddr_in6 *,
 int in6_selectroute(struct sockaddr_in6 *, struct ip6_pktopts *,
 	struct ip6_moptions *, struct route *, struct ifnet **,
 	struct rtentry **, int);
+int	ip6_get_membership(const struct sockopt *, struct ifnet **, void *,
+	size_t);
 
 u_int32_t ip6_randomid(void);
 u_int32_t ip6_randomflowlabel(void);

@@ -1,4 +1,4 @@
-/*	$NetBSD: svr4_32_exec_elf32.c,v 1.22 2012/02/03 20:11:54 matt Exp $	 */
+/*	$NetBSD: svr4_32_exec_elf32.c,v 1.24 2015/03/20 20:36:27 maxv Exp $	 */
 
 /*-
  * Copyright (c) 1994 The NetBSD Foundation, Inc.
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: svr4_32_exec_elf32.c,v 1.22 2012/02/03 20:11:54 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: svr4_32_exec_elf32.c,v 1.24 2015/03/20 20:36:27 maxv Exp $");
 
 #define	ELFSIZE		32				/* XXX should die */
 
@@ -80,6 +80,8 @@ svr4_32_copyargs(struct lwp *l, struct exec_package *pack, struct ps_strings *ar
 		return error;
 
 	a = ai;
+
+	memset(ai, 0, sizeof(ai));
 
 	/*
 	 * Push extra arguments on the stack needed by dynamically
@@ -200,6 +202,8 @@ svr4_32_copyargs(struct lwp *l, struct exec_package *pack, struct ps_strings *ar
 
 	a = ai;
 
+	memset(ai, 0, sizeof(ai));
+
 	/*
 	 * Push extra arguments on the stack needed by dynamically
 	 * linked binaries
@@ -244,7 +248,7 @@ svr4_32_copyargs(struct lwp *l, struct exec_package *pack, struct ps_strings *ar
 	a++;
 
 	len = (a - ai) * sizeof(AuxInfo);
-	if (copyout(ai, *stackp, len))
+	if ((error = copyout(ai, *stackp, len)) != 0)
 		return error;
 	*stackp += len;
 

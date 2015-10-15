@@ -1,4 +1,4 @@
-/*	$NetBSD: netbsd32_event.c,v 1.9 2011/05/23 21:34:47 joerg Exp $	*/
+/*	$NetBSD: netbsd32_event.c,v 1.12 2014/09/05 05:26:26 matt Exp $	*/
 
 /*
  *  Copyright (c) 2005 The NetBSD Foundation.
@@ -27,7 +27,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: netbsd32_event.c,v 1.9 2011/05/23 21:34:47 joerg Exp $");
+__KERNEL_RCSID(0, "$NetBSD: netbsd32_event.c,v 1.12 2014/09/05 05:26:26 matt Exp $");
 
 #include <sys/types.h>
 #include <sys/param.h>
@@ -61,12 +61,12 @@ netbsd32_kevent_fetch_timeout(const void *src, void *dest, size_t length)
 }
 
 static int
-netbsd32_kevent_fetch_changes(void *private, const struct kevent *changelist,
+netbsd32_kevent_fetch_changes(void *ctx, const struct kevent *changelist,
     struct kevent *changes, size_t index, int n)
 {
 	const struct netbsd32_kevent *src =
 	    (const struct netbsd32_kevent *)changelist;
-	struct netbsd32_kevent *kev32, *changes32 = private;
+	struct netbsd32_kevent *kev32, *changes32 = ctx;
 	int error, i;
 
 	error = copyin(src + index, changes32, n * sizeof(*changes32));
@@ -78,15 +78,15 @@ netbsd32_kevent_fetch_changes(void *private, const struct kevent *changelist,
 }
 
 static int
-netbsd32_kevent_put_events(void *private, struct kevent *events,
+netbsd32_kevent_put_events(void *ctx, struct kevent *events,
     struct kevent *eventlist, size_t index, int n)
 {
-	struct netbsd32_kevent *kev32, *events32 = private;
+	struct netbsd32_kevent *kev32, *events32 = ctx;
 	int i;
 
 	for (i = 0, kev32 = events32; i < n; i++, kev32++, events++)
 		netbsd32_from_kevent(events, kev32);
-	kev32 = (struct netbsd32_kevent *)eventlist;
+	kev32 = ((struct netbsd32_kevent *)eventlist) + index;
 	return  copyout(events32, kev32, n * sizeof(*events32));
 }
 
@@ -112,7 +112,8 @@ netbsd32___kevent50(struct lwp *l,
 
 	nchanges = SCARG(uap, nchanges);
 	nevents = SCARG(uap, nevents);
-	maxalloc = MIN(KQ_NEVENTS, MAX(nchanges, nevents));
+	maxalloc = KQ_NEVENTS;
+
 	netbsd32_kevent_ops.keo_private =
 	    kmem_alloc(maxalloc * sizeof(struct netbsd32_kevent), KM_SLEEP);
 

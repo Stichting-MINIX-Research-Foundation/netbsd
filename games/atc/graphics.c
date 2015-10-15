@@ -1,4 +1,4 @@
-/*	$NetBSD: graphics.c,v 1.16 2009/08/12 04:48:03 dholland Exp $	*/
+/*	$NetBSD: graphics.c,v 1.20 2015/06/25 05:33:02 dholland Exp $	*/
 
 /*-
  * Copyright (c) 1990, 1993
@@ -46,11 +46,20 @@
 #if 0
 static char sccsid[] = "@(#)graphics.c	8.1 (Berkeley) 5/31/93";
 #else
-__RCSID("$NetBSD: graphics.c,v 1.16 2009/08/12 04:48:03 dholland Exp $");
+__RCSID("$NetBSD: graphics.c,v 1.20 2015/06/25 05:33:02 dholland Exp $");
 #endif
 #endif /* not lint */
 
-#include "include.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <curses.h>
+#include <errno.h>
+#include <err.h>
+
+#include "def.h"
+#include "struct.h"
+#include "extern.h"
+#include "tunable.h"
 
 #define C_TOPBOTTOM		'-'
 #define C_LEFTRIGHT		'|'
@@ -127,9 +136,19 @@ init_gr(void)
 }
 
 void
+shutdown_gr(void)
+{
+	(void)clear();	/* move to top of screen */
+	(void)refresh();
+	(void)fflush(stdout);
+	(void)endwin();
+}
+
+void
 setup_screen(const C_SCREEN *scp)
 {
 	int	i, j;
+	unsigned iu;
 	char	str[3];
 	const char *airstr;
 
@@ -165,10 +184,10 @@ setup_screen(const C_SCREEN *scp)
 	 * through beacons and exit points.
 	 */
 	str[0] = C_LINE;
-	for (i = 0; i < scp->num_lines; i++) {
+	for (iu = 0; iu < scp->num_lines; iu++) {
 		str[1] = ' ';
-		draw_line(radar, scp->line[i].p1.x, scp->line[i].p1.y,
-			scp->line[i].p2.x, scp->line[i].p2.y, str);
+		draw_line(radar, scp->line[iu].p1.x, scp->line[iu].p1.y,
+			scp->line[iu].p2.x, scp->line[iu].p2.y, str);
 	}
 
 	str[0] = C_TOPBOTTOM;
@@ -193,22 +212,22 @@ setup_screen(const C_SCREEN *scp)
 	}
 
 	str[0] = C_BEACON;
-	for (i = 0; i < scp->num_beacons; i++) {
-		str[1] = '0' + i;
-		(void)wmove(radar, scp->beacon[i].y, scp->beacon[i].x * 2);
+	for (iu = 0; iu < scp->num_beacons; iu++) {
+		str[1] = '0' + iu;
+		(void)wmove(radar, scp->beacon[iu].y, scp->beacon[iu].x * 2);
 		(void)waddstr(radar, str);
 	}
 
-	for (i = 0; i < scp->num_exits; i++) {
-		(void)wmove(radar, scp->exit[i].y, scp->exit[i].x * 2);
-		(void)waddch(radar, '0' + i);
+	for (iu = 0; iu < scp->num_exits; iu++) {
+		(void)wmove(radar, scp->exit[iu].y, scp->exit[iu].x * 2);
+		(void)waddch(radar, '0' + iu);
 	}
 
 	airstr = "^?>?v?<?";
-	for (i = 0; i < scp->num_airports; i++) {
-		str[0] = airstr[scp->airport[i].dir];
-		str[1] = '0' + i;
-		(void)wmove(radar, scp->airport[i].y, scp->airport[i].x * 2);
+	for (iu = 0; iu < scp->num_airports; iu++) {
+		str[0] = airstr[scp->airport[iu].dir];
+		str[1] = '0' + iu;
+		(void)wmove(radar, scp->airport[iu].y, scp->airport[iu].x * 2);
 		(void)waddstr(radar, str);
 	}
 	
@@ -283,43 +302,25 @@ ioerror(int pos, int len, const char *str)
 	(void)fflush(stdout);
 }
 
-/* ARGSUSED */
-void
-quit(int dummy __unused)
-{
-	int			c, y, x;
-#ifdef BSD
-	struct itimerval	itv;
-#endif
+static int ioquit_x, ioquit_y;
 
-	getyx(input, y, x);
+void
+ioaskquit(void)
+{
+	getyx(input, ioquit_y, ioquit_x);
 	(void)wmove(input, 2, 0);
 	(void)waddstr(input, "Really quit? (y/n) ");
 	(void)wclrtobot(input);
 	(void)wrefresh(input);
 	(void)fflush(stdout);
+}
 
-	c = getchar();
-	if (c == EOF || c == 'y') {
-		/* disable timer */
-#ifdef BSD
-		itv.it_value.tv_sec = 0;
-		itv.it_value.tv_usec = 0;
-		(void)setitimer(ITIMER_REAL, &itv, NULL);
-#endif
-#ifdef SYSV
-		alarm(0);
-#endif
-		(void)fflush(stdout);
-		(void)clear();
-		(void)refresh();
-		(void)endwin();
-		(void)log_score(0);
-		exit(0);
-	}
+void
+ionoquit(void)
+{
 	(void)wmove(input, 2, 0);
 	(void)wclrtobot(input);
-	(void)wmove(input, y, x);
+	(void)wmove(input, ioquit_y, ioquit_x);
 	(void)wrefresh(input);
 	(void)fflush(stdout);
 }
@@ -368,42 +369,20 @@ planewin(void)
 }
 
 void
-loser(const PLANE *p, const char *s)
+losermsg(const PLANE *p, const char *msg)
 {
-	int			c;
-#ifdef BSD
-	struct itimerval	itv;
-#endif
-
-	/* disable timer */
-#ifdef BSD
-	itv.it_value.tv_sec = 0;
-	itv.it_value.tv_usec = 0;
-	(void)setitimer(ITIMER_REAL, &itv, NULL);
-#endif
-#ifdef SYSV
-	alarm(0);
-#endif
-
 	(void)wmove(input, 0, 0);
 	(void)wclrtobot(input);
 	/* p may be NULL if we ran out of memory */
 	if (p == NULL)
 		(void)wprintw(input, "%s\n\nHit space for top players list...",
-		    s);
+		    msg);
 	else {
-		(void)wprintw(input, "Plane '%c' %s\n\n", name(p), s);
+		(void)wprintw(input, "Plane '%c' %s\n\n", name(p), msg);
 		(void)wprintw(input, "Hit space for top players list...");
 	}
 	(void)wrefresh(input);
 	(void)fflush(stdout);
-	while ((c = getchar()) != EOF && c != ' ')
-		;
-	(void)clear();	/* move to top of screen */
-	(void)refresh();
-	(void)endwin();
-	(void)log_score(0);
-	exit(0);
 }
 
 void

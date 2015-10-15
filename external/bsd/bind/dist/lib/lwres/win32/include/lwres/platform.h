@@ -1,7 +1,7 @@
-/*	$NetBSD: platform.h,v 1.4 2012/06/05 00:43:10 christos Exp $	*/
+/*	$NetBSD: platform.h,v 1.6 2014/12/10 04:38:02 christos Exp $	*/
 
 /*
- * Copyright (C) 2004, 2007  Internet Systems Consortium, Inc. ("ISC")
+ * Copyright (C) 2004, 2007, 2014  Internet Systems Consortium, Inc. ("ISC")
  * Copyright (C) 2000, 2001  Internet Software Consortium.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
@@ -69,6 +69,9 @@
  */
 /*@LWRES_PLATFORM_NEEDSYSSELECTH@ */
 
+/* VS2005 does not provide strlcpy() */
+#define LWRES_PLATFORM_NEEDSTRLCPY
+
 /*
  * Define some Macros
  */
@@ -86,7 +89,7 @@
 do { \
 	int _on = 1; \
 	retval = ioctlsocket((SOCKET) sd, FIONBIO, &_on); \
-} while (/*CONSTCOND*/0)
+} while (0)
 
 /*
  * Need to define close here since lwres closes sockets and not files

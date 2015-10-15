@@ -1,4 +1,4 @@
-/*	$NetBSD: sys_sig.c,v 1.41 2013/03/08 09:32:59 apb Exp $	*/
+/*	$NetBSD: sys_sig.c,v 1.45 2015/10/02 16:54:15 christos Exp $	*/
 
 /*-
  * Copyright (c) 2006, 2007, 2008 The NetBSD Foundation, Inc.
@@ -66,7 +66,9 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: sys_sig.c,v 1.41 2013/03/08 09:32:59 apb Exp $");
+__KERNEL_RCSID(0, "$NetBSD: sys_sig.c,v 1.45 2015/10/02 16:54:15 christos Exp $");
+
+#include "opt_dtrace.h"
 
 #include <sys/param.h>
 #include <sys/kernel.h>
@@ -78,6 +80,12 @@ __KERNEL_RCSID(0, "$NetBSD: sys_sig.c,v 1.41 2013/03/08 09:32:59 apb Exp $");
 #include <sys/wait.h>
 #include <sys/kmem.h>
 #include <sys/module.h>
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DECLARE(proc);
+SDT_PROBE_DEFINE2(proc, kernel, , signal__clear,
+    "int", 		/* signal */
+    "ksiginfo_t *");	/* signal-info */
 
 int
 sys___sigaction_sigtramp(struct lwp *l,
@@ -211,8 +219,7 @@ sys___sigaltstack14(struct lwp *l, const struct sys___sigaltstack14_args *uap,
 	return 0;
 }
 
-
-static int
+int
 kill1(struct lwp *l, pid_t pid, ksiginfo_t *ksi, register_t *retval)
 {
 	int error;
@@ -357,7 +364,7 @@ sys_setcontext(struct lwp *l, const struct sys_setcontext_args *uap,
  * of sigwaitinfo() and sigwait().
  *
  * This only handles single LWP in signal wait. libpthread provides
- * it's own sigtimedwait() wrapper to DTRT WRT individual threads.
+ * its own sigtimedwait() wrapper to DTRT WRT individual threads.
  */
 int
 sys_____sigtimedwait50(struct lwp *l,
@@ -389,16 +396,18 @@ sigaction1(struct lwp *l, int signum, const struct sigaction *nsa,
 	 * Trampoline ABI version 0 is reserved for the legacy kernel
 	 * provided on-stack trampoline.  Conversely, if we are using a
 	 * non-0 ABI version, we must have a trampoline.  Only validate the
-	 * vers if a new sigaction was supplied. Emulations use legacy
-	 * kernel trampolines with version 0, alternatively check for that
-	 * too.
+	 * vers if a new sigaction was supplied and there was an actual
+	 * handler specified (not SIG_IGN or SIG_DFL), which don't require
+	 * a trampoline. Emulations use legacy kernel trampolines with
+	 * version 0, alternatively check for that too.
 	 *
 	 * If version < 2, we try to autoload the compat module.  Note
 	 * that we interlock with the unload check in compat_modcmd()
 	 * using kernconfig_lock.  If the autoload fails, we don't try it
 	 * again for this process.
 	 */
-	if (nsa != NULL) {
+	if (nsa != NULL && nsa->sa_handler != SIG_IGN
+	    && nsa->sa_handler != SIG_DFL) {
 		if (__predict_false(vers < 2)) {
 			if (p->p_flag & PK_32)
 				v0v1valid = true;
@@ -832,7 +841,10 @@ out:
 		error = (*storeinf)(&ksi.ksi_info, SCARG(uap, info),
 		    sizeof(ksi.ksi_info));
 	}
-	if (error == 0)
+	if (error == 0) {
 		*retval = ksi.ksi_info._signo;
+		SDT_PROBE(proc, kernel, , signal__clear, *retval,
+		    &ksi, 0, 0, 0);
+	}
 	return error;
 }

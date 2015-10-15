@@ -1,4 +1,4 @@
-/*	$NetBSD: accf_http.c,v 1.7 2009/09/02 14:56:57 tls Exp $	*/
+/*	$NetBSD: accf_http.c,v 1.9 2015/08/20 14:40:19 christos Exp $	*/
 
 /*-
  * Copyright (c) 2000 Paycounter, Inc.
@@ -28,7 +28,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: accf_http.c,v 1.7 2009/09/02 14:56:57 tls Exp $");
+__KERNEL_RCSID(0, "$NetBSD: accf_http.c,v 1.9 2015/08/20 14:40:19 christos Exp $");
 
 #define ACCEPT_FILTER_MOD
 
@@ -42,6 +42,8 @@ __KERNEL_RCSID(0, "$NetBSD: accf_http.c,v 1.7 2009/09/02 14:56:57 tls Exp $");
 #include <sys/socketvar.h>
 
 #include <netinet/accept_filter.h>
+
+#include "ioconf.h"
 
 MODULE(MODULE_CLASS_MISC, accf_httpready, NULL);
 
@@ -72,9 +74,6 @@ static struct accept_filter accf_http_filter = {
 
 static int parse_http_version = 1;
 
-/* XXX pseudo-device */
-void	accf_httpattach(int);
-
 void
 accf_httpattach(int junk)
 {
@@ -93,11 +92,6 @@ accf_httpready_modcmd(modcmd_t cmd, void *arg)
 		if (error != 0) {
 			return error;
 		}
-		sysctl_createv(&clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
-		       CTLTYPE_NODE, "net", NULL,
-		       NULL, 0, NULL, 0,
-		       CTL_NET, CTL_EOL);
 		sysctl_createv(&clog, 0, NULL, NULL,
 		       CTLFLAG_PERMANENT,
 		       CTLTYPE_NODE, "inet", NULL,

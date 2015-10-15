@@ -1,4 +1,4 @@
-/*	$NetBSD: lance.c,v 1.46 2012/02/02 19:43:03 tls Exp $	*/
+/*	$NetBSD: lance.c,v 1.48 2015/04/13 16:33:24 riastradh Exp $	*/
 
 /*-
  * Copyright (c) 1997, 1998 The NetBSD Foundation, Inc.
@@ -65,7 +65,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: lance.c,v 1.46 2012/02/02 19:43:03 tls Exp $");
+__KERNEL_RCSID(0, "$NetBSD: lance.c,v 1.48 2015/04/13 16:33:24 riastradh Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -76,7 +76,7 @@ __KERNEL_RCSID(0, "$NetBSD: lance.c,v 1.46 2012/02/02 19:43:03 tls Exp $");
 #include <sys/malloc.h>
 #include <sys/ioctl.h>
 #include <sys/errno.h>
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 
 #include <net/if.h>
 #include <net/if_dl.h>
@@ -255,7 +255,7 @@ lance_config(struct lance_softc *sc)
 					M_WAITOK);
 
 	rnd_attach_source(&sc->rnd_source, device_xname(sc->sc_dev),
-			  RND_TYPE_NET, 0);
+			  RND_TYPE_NET, RND_FLAG_DEFAULT);
 }
 
 void

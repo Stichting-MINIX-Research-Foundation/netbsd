@@ -1,5 +1,5 @@
-/*	$NetBSD: monitor_wrap.h,v 1.5 2011/09/07 17:49:19 christos Exp $	*/
-/* $OpenBSD: monitor_wrap.h,v 1.23 2011/06/17 21:44:31 djm Exp $ */
+/*	$NetBSD: monitor_wrap.h,v 1.9 2015/07/03 01:00:00 christos Exp $	*/
+/* $OpenBSD: monitor_wrap.h,v 1.27 2015/05/01 03:23:51 djm Exp $ */
 
 /*
  * Copyright 2002 Niels Provos <provos@citi.umich.edu>
@@ -41,13 +41,13 @@ struct Authctxt;
 void mm_log_handler(LogLevel, const char *, void *);
 int mm_is_monitor(void);
 DH *mm_choose_dh(int, int, int);
-int mm_key_sign(Key *, u_char **, u_int *, u_char *, u_int);
+int mm_key_sign(Key *, u_char **, u_int *, const u_char *, u_int);
 void mm_inform_authserv(char *, char *);
 struct passwd *mm_getpwnamallow(const char *);
 char *mm_auth2_read_banner(void);
 int mm_auth_password(struct Authctxt *, const char *);
-int mm_key_allowed(enum mm_keytype, char *, char *, Key *);
-int mm_user_key_allowed(struct passwd *, Key *);
+int mm_key_allowed(enum mm_keytype, char *, char *, Key *, int);
+int mm_user_key_allowed(struct passwd *, Key *, int);
 int mm_hostbased_key_allowed(struct passwd *, char *, char *, Key *);
 int mm_auth_rhosts_rsa_key_allowed(struct passwd *, char *, char *, Key *);
 int mm_key_verify(Key *, u_char *, u_int, u_char *, u_int);
@@ -82,7 +82,7 @@ void mm_ssh1_session_id(u_char *);
 int mm_ssh1_session_key(BIGNUM *);
 
 /* Key export functions */
-struct Newkeys *mm_newkeys_from_blob(u_char *, int);
+struct newkeys *mm_newkeys_from_blob(u_char *, int);
 int mm_newkeys_to_blob(int, u_char **, u_int *);
 
 void monitor_apply_keystate(struct monitor *);
@@ -97,25 +97,6 @@ int mm_bsdauth_respond(void *, u_int, char **);
 int mm_skey_query(void *, char **, char **, u_int *, char ***, u_int **);
 int mm_skey_respond(void *, u_int, char **);
 
-/* jpake */
-struct modp_group;
-void mm_auth2_jpake_get_pwdata(struct Authctxt *, BIGNUM **, char **, char **);
-void mm_jpake_step1(struct modp_group *, u_char **, u_int *,
-    BIGNUM **, BIGNUM **, BIGNUM **, BIGNUM **,
-    u_char **, u_int *, u_char **, u_int *);
-void mm_jpake_step2(struct modp_group *, BIGNUM *,
-    BIGNUM *, BIGNUM *, BIGNUM *, BIGNUM *,
-    const u_char *, u_int, const u_char *, u_int,
-    const u_char *, u_int, const u_char *, u_int,
-    BIGNUM **, u_char **, u_int *);
-void mm_jpake_key_confirm(struct modp_group *, BIGNUM *, BIGNUM *,
-    BIGNUM *, BIGNUM *, BIGNUM *, BIGNUM *, BIGNUM *,
-    const u_char *, u_int, const u_char *, u_int,
-    const u_char *, u_int, const u_char *, u_int,
-    BIGNUM **, u_char **, u_int *);
-int mm_jpake_check_confirm(const BIGNUM *,
-    const u_char *, u_int, const u_char *, u_int, const u_char *, u_int);
-
 /* auth_krb */
 #ifdef KRB4
 int mm_auth_krb4(struct Authctxt *, void *, char **, void *);
@@ -127,9 +108,6 @@ int mm_auth_krb5(void *authctxt, void *auth, char **client, void *reply);
 #endif
 
 /* zlib allocation hooks */
-
-void *mm_zalloc(struct mm_master *, u_int, u_int);
-void mm_zfree(struct mm_master *, void *);
 void mm_init_compression(struct mm_master *);
 
 #endif /* _MM_WRAP_H_ */

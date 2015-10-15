@@ -1,4 +1,4 @@
-/*	$NetBSD: pam_constants.h,v 1.3 2013/04/06 02:20:30 christos Exp $	*/
+/*	$NetBSD: pam_constants.h,v 1.5 2014/10/24 18:17:56 christos Exp $	*/
 
 /*-
  * Copyright (c) 2002-2003 Networks Associates Technology, Inc.
@@ -34,7 +34,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * Id: pam_constants.h 443 2011-10-22 01:01:39Z des 
+ * Id: pam_constants.h 648 2013-03-05 17:54:27Z des 
  */
 
 #ifndef SECURITY_PAM_CONSTANTS_H_INCLUDED

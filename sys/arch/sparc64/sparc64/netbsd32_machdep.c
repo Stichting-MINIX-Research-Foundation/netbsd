@@ -1,4 +1,4 @@
-/*	$NetBSD: netbsd32_machdep.c,v 1.100 2013/09/14 21:09:56 martin Exp $	*/
+/*	$NetBSD: netbsd32_machdep.c,v 1.103 2014/03/07 22:51:27 nakayama Exp $	*/
 
 /*
  * Copyright (c) 1998, 2001 Matthew R. Green
@@ -27,7 +27,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: netbsd32_machdep.c,v 1.100 2013/09/14 21:09:56 martin Exp $");
+__KERNEL_RCSID(0, "$NetBSD: netbsd32_machdep.c,v 1.103 2014/03/07 22:51:27 nakayama Exp $");
 
 #ifdef _KERNEL_OPT
 #include "opt_compat_netbsd.h"
@@ -641,7 +641,7 @@ netbsd32_process_write_regs(struct lwp *l, const struct reg32 *regs)
 #endif
 
 int
-netbsd32_process_read_fpregs(struct lwp *l, struct fpreg32 *regs)
+netbsd32_process_read_fpregs(struct lwp *l, struct fpreg32 *regs, size_t *sz)
 {
 	extern const struct fpstate64 initfpstate;
 	const struct fpstate64	*statep = &initfpstate;
@@ -679,7 +679,8 @@ netbsd32_process_write_fpregs(struct lwp *l, const struct fpreg32 *regs)
  * 32-bit version of cpu_coredump.
  */
 int
-cpu_coredump32(struct lwp *l, void *iocookie, struct core32 *chdr)
+cpu_coredump32(struct lwp *l, struct coredump_iostate *iocookie,
+    struct core32 *chdr)
 {
 	int i, error;
 	struct md_coredump32 md_core;
@@ -1321,7 +1322,7 @@ startlwp32(void *arg)
 {
 	ucontext32_t *uc = arg;
 	lwp_t *l = curlwp;
-	int error;
+	int error __diagused;
 
 	error = cpu_setmcontext32(l, &uc->uc_mcontext, uc->uc_flags);
 	KASSERT(error == 0);

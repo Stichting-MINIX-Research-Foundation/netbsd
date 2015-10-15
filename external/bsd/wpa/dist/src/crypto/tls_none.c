@@ -2,14 +2,8 @@
  * SSL/TLS interface functions for no TLS case
  * Copyright (c) 2004-2009, Jouni Malinen <j@w1.fi>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #include "includes.h"
@@ -197,4 +191,10 @@ int tls_connection_get_keyblock_size(void *tls_ctx,
 unsigned int tls_capabilities(void *tls_ctx)
 {
 	return 0;
+}
+
+
+int tls_get_library_version(char *buf, size_t buf_len)
+{
+	return os_snprintf(buf, buf_len, "none");
 }

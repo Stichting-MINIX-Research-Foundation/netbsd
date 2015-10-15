@@ -227,6 +227,8 @@ void format_date(struct wpabuf *buf)
 
 	t = time(NULL);
 	date = gmtime(&t);
+	if (date == NULL)
+		return;
 	wpabuf_printf(buf, "%s, %02d %s %d %02d:%02d:%02d GMT",
 		      &weekday_str[date->tm_wday * 4], date->tm_mday,
 		      &month_str[date->tm_mon * 4], date->tm_year + 1900,
@@ -249,13 +251,16 @@ void format_date(struct wpabuf *buf)
  * use for constructing UUIDs for subscriptions. Presumably any method from
  * rfc4122 is good enough; I've chosen random number method.
  */
-static void uuid_make(u8 uuid[UUID_LEN])
+static int uuid_make(u8 uuid[UUID_LEN])
 {
-	os_get_random(uuid, UUID_LEN);
+	if (os_get_random(uuid, UUID_LEN) < 0)
+		return -1;
 
 	/* Replace certain bits as specified in rfc4122 or X.667 */
 	uuid[6] &= 0x0f; uuid[6] |= (4 << 4);   /* version 4 == random gen */
 	uuid[8] &= 0x3f; uuid[8] |= 0x80;
+
+	return 0;
 }
 
 
@@ -305,15 +310,15 @@ static void subscr_addr_add_url(struct subscription *s, const char *url,
 	int alloc_len;
 	char *scratch_mem = NULL;
 	char *mem;
-	char *domain_and_port;
+	char *host;
 	char *delim;
 	char *path;
-	char *domain;
 	int port = 80;  /* port to send to (default is port 80) */
 	struct addrinfo hints;
 	struct addrinfo *result = NULL;
 	struct addrinfo *rp;
 	int rerr;
+	size_t host_len, path_len;
 
 	/* url MUST begin with http: */
 	if (url_len < 7 || os_strncasecmp(url, "http://", 7))
@@ -321,30 +326,22 @@ static void subscr_addr_add_url(struct subscription *s, const char *url,
 	url += 7;
 	url_len -= 7;
 
-	/* allocate memory for the extra stuff we need */
-	alloc_len = 2 * (url_len + 1);
-	scratch_mem = os_zalloc(alloc_len);
+	/* Make a copy of the string to allow modification during parsing */
+	scratch_mem = dup_binstr(url, url_len);
 	if (scratch_mem == NULL)
 		goto fail;
-	mem = scratch_mem;
-	os_strncpy(mem, url, url_len);
-	wpa_printf(MSG_DEBUG, "WPS UPnP: Adding URL '%s'", mem);
-	domain_and_port = mem;
-	mem += 1 + os_strlen(mem);
-	delim = os_strchr(domain_and_port, '/');
+	wpa_printf(MSG_DEBUG, "WPS UPnP: Adding URL '%s'", scratch_mem);
+	host = scratch_mem;
+	path = os_strchr(host, '/');
+	if (path)
+		*path++ = '\0'; /* null terminate host */
+
+	/* Process and remove optional port component */
+	delim = os_strchr(host, ':');
 	if (delim) {
-		*delim++ = 0;   /* null terminate domain and port */
-		path = delim;
-	} else {
-		path = domain_and_port + os_strlen(domain_and_port);
-	}
-	domain = mem;
-	strcpy(domain, domain_and_port);
-	delim = os_strchr(domain, ':');
-	if (delim) {
-		*delim++ = 0;   /* null terminate domain */
-		if (isdigit(*delim))
-			port = atol(delim);
+		*delim = '\0'; /* null terminate host name for now */
+		if (isdigit(delim[1]))
+			port = atol(delim + 1);
 	}
 
 	/*
@@ -367,13 +364,21 @@ static void subscr_addr_add_url(struct subscription *s, const char *url,
 	hints.ai_flags = 0;
 #endif
 	hints.ai_protocol = 0;          /* Any protocol? */
-	rerr = getaddrinfo(domain, NULL /* fill in port ourselves */,
+	rerr = getaddrinfo(host, NULL /* fill in port ourselves */,
 			   &hints, &result);
 	if (rerr) {
 		wpa_printf(MSG_INFO, "WPS UPnP: Resolve error %d (%s) on: %s",
-			   rerr, gai_strerror(rerr), domain);
+			   rerr, gai_strerror(rerr), host);
 		goto fail;
 	}
+
+	if (delim)
+		*delim = ':'; /* Restore port */
+
+	host_len = os_strlen(host);
+	path_len = path ? os_strlen(path) : 0;
+	alloc_len = host_len + 1 + 1 + path_len + 1;
+
 	for (rp = result; rp; rp = rp->ai_next) {
 		struct subscr_addr *a;
 
@@ -386,16 +391,16 @@ static void subscr_addr_add_url(struct subscription *s, const char *url,
 
 		a = os_zalloc(sizeof(*a) + alloc_len);
 		if (a == NULL)
-			continue;
-		mem = (void *) (a + 1);
+			break;
+		mem = (char *) (a + 1);
 		a->domain_and_port = mem;
-		strcpy(mem, domain_and_port);
-		mem += 1 + strlen(mem);
+		os_memcpy(mem, host, host_len);
+		mem += host_len + 1;
 		a->path = mem;
-		if (path[0] != '/')
+		if (path == NULL || path[0] != '/')
 			*mem++ = '/';
-		strcpy(mem, path);
-		mem += 1 + os_strlen(mem);
+		if (path)
+			os_memcpy(mem, path, path_len);
 		os_memcpy(&a->saddr, rp->ai_addr, sizeof(a->saddr));
 		a->saddr.sin_port = htons(port);
 
@@ -432,23 +437,6 @@ static void subscr_addr_list_create(struct subscription *s,
 }
 
 
-int send_wpabuf(int fd, struct wpabuf *buf)
-{
-	wpa_printf(MSG_DEBUG, "WPS UPnP: Send %lu byte message",
-		   (unsigned long) wpabuf_len(buf));
-	errno = 0;
-	if (write(fd, wpabuf_head(buf), wpabuf_len(buf)) !=
-	    (int) wpabuf_len(buf)) {
-		wpa_printf(MSG_ERROR, "WPS UPnP: Failed to send buffer: "
-			   "errno=%d (%s)",
-			   errno, strerror(errno));
-		return -1;
-	}
-
-	return 0;
-}
-
-
 static void wpabuf_put_property(struct wpabuf *buf, const char *name,
 				const char *value)
 {
@@ -480,14 +468,14 @@ static void upnp_wps_device_send_event(struct upnp_wps_device_sm *sm)
 		"<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
 		"<e:propertyset xmlns:e=\"urn:schemas-upnp-org:event-1-0\">\n";
 	const char *format_tail = "</e:propertyset>\n";
-	struct os_time now;
+	struct os_reltime now;
 
 	if (dl_list_empty(&sm->subscriptions)) {
 		/* optimize */
 		return;
 	}
 
-	if (os_get_time(&now) == 0) {
+	if (os_get_reltime(&now) == 0) {
 		if (now.sec != sm->last_event_sec) {
 			sm->last_event_sec = now.sec;
 			sm->num_events_in_sec = 1;
@@ -550,10 +538,13 @@ static void upnp_wps_device_send_event(struct upnp_wps_device_sm *sm)
  */
 void subscription_destroy(struct subscription *s)
 {
+	struct upnp_wps_device_interface *iface;
 	wpa_printf(MSG_DEBUG, "WPS UPnP: Destroy subscription %p", s);
 	subscr_addr_free_all(s);
 	event_delete_all(s);
-	upnp_er_remove_notification(s);
+	dl_list_for_each(iface, &s->sm->interfaces,
+			 struct upnp_wps_device_interface, list)
+		upnp_er_remove_notification(iface->wps->registrar, s);
 	os_free(s);
 }
 
@@ -608,7 +599,10 @@ static struct wpabuf * build_fake_wsc_ack(void)
 	wpabuf_put_be16(msg, ATTR_REGISTRAR_NONCE);
 	wpabuf_put_be16(msg, WPS_NONCE_LEN);
 	wpabuf_put(msg, WPS_NONCE_LEN);
-	wps_build_wfa_ext(msg, 0, NULL, 0);
+	if (wps_build_wfa_ext(msg, 0, NULL, 0)) {
+		wpabuf_free(msg);
+		return NULL;
+	}
 	return msg;
 }
 
@@ -709,10 +703,12 @@ struct subscription * subscription_start(struct upnp_wps_device_sm *sm,
 	if (dl_list_len(&sm->subscriptions) >= MAX_SUBSCRIPTIONS) {
 		s = dl_list_first(&sm->subscriptions, struct subscription,
 				  list);
-		wpa_printf(MSG_INFO, "WPS UPnP: Too many subscriptions, "
-			   "trashing oldest");
-		dl_list_del(&s->list);
-		subscription_destroy(s);
+		if (s) {
+			wpa_printf(MSG_INFO,
+				   "WPS UPnP: Too many subscriptions, trashing oldest");
+			dl_list_del(&s->list);
+			subscription_destroy(s);
+		}
 	}
 
 	s = os_zalloc(sizeof(*s));
@@ -723,7 +719,10 @@ struct subscription * subscription_start(struct upnp_wps_device_sm *sm,
 
 	s->sm = sm;
 	s->timeout_time = expire;
-	uuid_make(s->uuid);
+	if (uuid_make(s->uuid) < 0) {
+		subscription_destroy(s);
+		return NULL;
+	}
 	subscr_addr_list_create(s, callback_urls);
 	if (dl_list_empty(&s->addr_list)) {
 		wpa_printf(MSG_DEBUG, "WPS UPnP: No valid callback URLs in "
@@ -979,6 +978,7 @@ static void upnp_wps_device_stop(struct upnp_wps_device_sm *sm)
 
 	wpa_printf(MSG_DEBUG, "WPS UPnP: Stop device");
 	web_listener_stop(sm);
+	ssdp_listener_stop(sm);
 	upnp_wps_free_msearchreply(&sm->msearch_replies);
 	upnp_wps_free_subscriptions(&sm->subscriptions, NULL);
 
@@ -992,7 +992,6 @@ static void upnp_wps_device_stop(struct upnp_wps_device_sm *sm)
 	if (sm->multicast_sd >= 0)
 		close(sm->multicast_sd);
 	sm->multicast_sd = -1;
-	ssdp_listener_stop(sm);
 
 	sm->started = 0;
 }

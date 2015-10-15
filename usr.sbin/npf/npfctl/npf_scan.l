@@ -1,4 +1,4 @@
-/*	$NetBSD: npf_scan.l,v 1.16 2013/11/19 00:28:41 rmind Exp $	*/
+/*	$NetBSD: npf_scan.l,v 1.22 2014/12/26 22:44:54 christos Exp $	*/
 
 /*-
  * Copyright (c) 2011-2012 The NetBSD Foundation, Inc.
@@ -84,6 +84,7 @@ npfctl_parse_string(const char *str)
 ID	[a-zA-Z_][a-zA-Z_0-9]*
 DID	[a-zA-Z_][a-zA-Z_0-9-]*
 NUMBER	[0-9]+
+HEXDIG	[0-9a-fA-F]+
 
 %%
 alg			return ALG;
@@ -91,13 +92,17 @@ table			return TABLE;
 type			return TYPE;
 hash			return HASH;
 tree			return TREE;
+cdb			return CDB;
 static			return TSTATIC;
 dynamic			return TDYNAMIC;
 file			return TFILE;
 map			return MAP;
+set			return SET;
 "<->"			return ARROWBOTH;
 "<-"			return ARROWLEFT;
 "->"			return ARROWRIGHT;
+algo			return ALGO;
+npt66			return NPT66;
 "-"			return MINUS;
 procedure		return PROCEDURE;
 \\\n			yylineno++; yycolumn = 0;
@@ -115,13 +120,15 @@ block			return BLOCK;
 pass			return PASS;
 pcap-filter		return PCAP_FILTER;
 stateful		return STATEFUL;
+stateful-ends		return STATEFUL_ENDS;
 apply			return APPLY;
 final			return FINAL;
 quick			return FINAL;
 on			return ON;
+off			return OFF;
+bpf.jit			return BPFJIT;
 inet6			return INET6;
 inet4			return INET4;
-inet			return INET4;
 proto			return PROTO;
 family			return FAMILY;
 tcp			return TCP;
@@ -148,7 +155,7 @@ any			return ANY;
 ","			return COMMA;
 "="			return EQ;
 
-"0x"[0-9a-fA-F]+ {
+"0x"{HEXDIG} {
 			char *endp, *buf = ecalloc(1, yyleng + 1);
 			buf[yyleng] = 0;
 			yylval.num = strtoul(buf+2, &endp, 16);
@@ -163,7 +170,12 @@ any			return ANY;
 			return FPNUM;
 		}
 
-[0-9a-fA-F]+":"[0-9a-fA-F:]* {
+{HEXDIG}":"[0-9a-fA-F:]* {
+			yylval.str = estrndup(yytext, yyleng);
+			return IPV6ADDR;
+		}
+
+"::"{HEXDIG}[0-9a-fA-F:]* {
 			yylval.str = estrndup(yytext, yyleng);
 			return IPV6ADDR;
 		}

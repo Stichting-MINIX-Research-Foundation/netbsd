@@ -1,6 +1,6 @@
 /* Definitions for frame unwinder, for GDB, the GNU debugger.
 
-   Copyright (C) 2003-2013 Free Software Foundation, Inc.
+   Copyright (C) 2003-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -24,9 +24,8 @@
 #include "inline-frame.h"
 #include "value.h"
 #include "regcache.h"
-#include "exceptions.h"
-#include "gdb_assert.h"
 #include "gdb_obstack.h"
+#include "target.h"
 
 static struct gdbarch_data *frame_unwind_data;
 
@@ -88,6 +87,48 @@ frame_unwind_append_unwinder (struct gdbarch *gdbarch,
   (*ip)->unwinder = unwinder;
 }
 
+/* Call SNIFFER from UNWINDER.  If it succeeded set UNWINDER for
+   THIS_FRAME and return 1.  Otherwise the function keeps THIS_FRAME
+   unchanged and returns 0.  */
+
+static int
+frame_unwind_try_unwinder (struct frame_info *this_frame, void **this_cache,
+                          const struct frame_unwind *unwinder)
+{
+  struct cleanup *old_cleanup;
+  volatile struct gdb_exception ex;
+  int res = 0;
+
+  old_cleanup = frame_prepare_for_sniffer (this_frame, unwinder);
+
+  TRY_CATCH (ex, RETURN_MASK_ERROR)
+    {
+      res = unwinder->sniffer (unwinder, this_frame, this_cache);
+    }
+  if (ex.reason < 0 && ex.error == NOT_AVAILABLE_ERROR)
+    {
+      /* This usually means that not even the PC is available,
+        thus most unwinders aren't able to determine if they're
+        the best fit.  Keep trying.  Fallback prologue unwinders
+        should always accept the frame.  */
+      do_cleanups (old_cleanup);
+      return 0;
+    }
+  else if (ex.reason < 0)
+    throw_exception (ex);
+  else if (res)
+    {
+      discard_cleanups (old_cleanup);
+      return 1;
+    }
+  else
+    {
+      do_cleanups (old_cleanup);
+      return 0;
+    }
+  gdb_assert_not_reached ("frame_unwind_try_unwinder");
+}
+
 /* Iterate through sniffers for THIS_FRAME frame until one returns with an
    unwinder implementation.  THIS_FRAME->UNWIND must be NULL, it will get set
    by this function.  Possibly initialize THIS_CACHE.  */
@@ -98,37 +139,24 @@ frame_unwind_find_by_frame (struct frame_info *this_frame, void **this_cache)
   struct gdbarch *gdbarch = get_frame_arch (this_frame);
   struct frame_unwind_table *table = gdbarch_data (gdbarch, frame_unwind_data);
   struct frame_unwind_table_entry *entry;
+  const struct frame_unwind *unwinder_from_target;
+
+  unwinder_from_target = target_get_unwinder ();
+  if (unwinder_from_target != NULL
+      && frame_unwind_try_unwinder (this_frame, this_cache,
+                                   unwinder_from_target))
+    return;
+
+  unwinder_from_target = target_get_tailcall_unwinder ();
+  if (unwinder_from_target != NULL
+      && frame_unwind_try_unwinder (this_frame, this_cache,
+                                   unwinder_from_target))
+    return;
 
   for (entry = table->list; entry != NULL; entry = entry->next)
-    {
-      struct cleanup *old_cleanup;
-      volatile struct gdb_exception ex;
-      int res = 0;
+    if (frame_unwind_try_unwinder (this_frame, this_cache, entry->unwinder))
+      return;
 
-      old_cleanup = frame_prepare_for_sniffer (this_frame, entry->unwinder);
-
-      TRY_CATCH (ex, RETURN_MASK_ERROR)
-	{
-	  res = entry->unwinder->sniffer (entry->unwinder, this_frame,
-					  this_cache);
-	}
-      if (ex.reason < 0 && ex.error == NOT_AVAILABLE_ERROR)
-	{
-	  /* This usually means that not even the PC is available,
-	     thus most unwinders aren't able to determine if they're
-	     the best fit.  Keep trying.  Fallback prologue unwinders
-	     should always accept the frame.  */
-	}
-      else if (ex.reason < 0)
-	throw_exception (ex);
-      else if (res)
-        {
-          discard_cleanups (old_cleanup);
-          return;
-        }
-
-      do_cleanups (old_cleanup);
-    }
   internal_error (__FILE__, __LINE__, _("frame_unwind_find_by_frame failed"));
 }
 
@@ -143,14 +171,18 @@ default_frame_sniffer (const struct frame_unwind *self,
   return 1;
 }
 
-/* A default frame unwinder stop_reason callback that always claims
-   the frame is unwindable.  */
+/* The default frame unwinder stop_reason callback.  */
 
 enum unwind_stop_reason
 default_frame_unwind_stop_reason (struct frame_info *this_frame,
 				  void **this_cache)
 {
-  return UNWIND_NO_REASON;
+  struct frame_id this_id = get_frame_id (this_frame);
+
+  if (frame_id_eq (this_id, outer_frame_id))
+    return UNWIND_OUTERMOST;
+  else
+    return UNWIND_NO_REASON;
 }
 
 /* Helper functions for value-based register unwinding.  These return
@@ -162,11 +194,18 @@ struct value *
 frame_unwind_got_optimized (struct frame_info *frame, int regnum)
 {
   struct gdbarch *gdbarch = frame_unwind_arch (frame);
-  struct value *reg_val;
+  struct type *type = register_type (gdbarch, regnum);
+  struct value *val;
 
-  reg_val = value_zero (register_type (gdbarch, regnum), not_lval);
-  set_value_optimized_out (reg_val, 1);
-  return reg_val;
+  /* Return an lval_register value, so that we print it as
+     "<not saved>".  */
+  val = allocate_value_lazy (type);
+  set_value_lazy (val, 0);
+  mark_value_bytes_optimized_out (val, 0, TYPE_LENGTH (type));
+  VALUE_LVAL (val) = lval_register;
+  VALUE_REGNUM (val) = regnum;
+  VALUE_FRAME_ID (val) = get_frame_id (frame);
+  return val;
 }
 
 /* Return a value which indicates that FRAME copied REGNUM into

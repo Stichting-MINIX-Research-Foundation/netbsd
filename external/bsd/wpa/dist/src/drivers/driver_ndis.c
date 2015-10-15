@@ -2,14 +2,8 @@
  * WPA Supplicant - Windows/NDIS driver interface
  * Copyright (c) 2004-2007, Jouni Malinen <j@w1.fi>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #ifdef __CYGWIN__
@@ -731,14 +725,6 @@ static int wpa_driver_ndis_deauthenticate(void *priv, const u8 *addr,
 }
 
 
-static int wpa_driver_ndis_disassociate(void *priv, const u8 *addr,
-					int reason_code)
-{
-	struct wpa_driver_ndis_data *drv = priv;
-	return wpa_driver_ndis_disconnect(drv);
-}
-
-
 static void wpa_driver_ndis_scan_timeout(void *eloop_ctx, void *timeout_ctx)
 {
 	wpa_printf(MSG_DEBUG, "Scan timeout - try to get results");
@@ -864,7 +850,7 @@ static struct wpa_scan_results * wpa_driver_ndis_get_scan_results(void *priv)
 		os_free(b);
 		return NULL;
 	}
-	results->res = os_zalloc(count * sizeof(struct wpa_scan_res *));
+	results->res = os_calloc(count, sizeof(struct wpa_scan_res *));
 	if (results->res == NULL) {
 		os_free(results);
 		os_free(b);
@@ -1088,8 +1074,8 @@ wpa_driver_ndis_associate(void *priv,
 		/* Try to continue anyway */
 	}
 
-	if (params->key_mgmt_suite == KEY_MGMT_NONE ||
-	    params->key_mgmt_suite == KEY_MGMT_802_1X_NO_WPA) {
+	if (params->key_mgmt_suite == WPA_KEY_MGMT_NONE ||
+	    params->key_mgmt_suite == WPA_KEY_MGMT_IEEE8021X_NO_WPA) {
 		/* Re-set WEP keys if static WEP configuration is used. */
 		int i;
 		for (i = 0; i < 4; i++) {
@@ -1116,12 +1102,12 @@ wpa_driver_ndis_associate(void *priv,
 		priv_mode = Ndis802_11PrivFilterAcceptAll;
 	} else if (params->wpa_ie[0] == WLAN_EID_RSN) {
 		priv_mode = Ndis802_11PrivFilter8021xWEP;
-		if (params->key_mgmt_suite == KEY_MGMT_PSK)
+		if (params->key_mgmt_suite == WPA_KEY_MGMT_PSK)
 			auth_mode = Ndis802_11AuthModeWPA2PSK;
 		else
 			auth_mode = Ndis802_11AuthModeWPA2;
 #ifdef CONFIG_WPS
-	} else if (params->key_mgmt_suite == KEY_MGMT_WPS) {
+	} else if (params->key_mgmt_suite == WPA_KEY_MGMT_WPS) {
 		auth_mode = Ndis802_11AuthModeOpen;
 		priv_mode = Ndis802_11PrivFilterAcceptAll;
 		if (params->wps == WPS_MODE_PRIVACY) {
@@ -1143,35 +1129,35 @@ wpa_driver_ndis_associate(void *priv,
 #endif /* CONFIG_WPS */
 	} else {
 		priv_mode = Ndis802_11PrivFilter8021xWEP;
-		if (params->key_mgmt_suite == KEY_MGMT_WPA_NONE)
+		if (params->key_mgmt_suite == WPA_KEY_MGMT_WPA_NONE)
 			auth_mode = Ndis802_11AuthModeWPANone;
-		else if (params->key_mgmt_suite == KEY_MGMT_PSK)
+		else if (params->key_mgmt_suite == WPA_KEY_MGMT_PSK)
 			auth_mode = Ndis802_11AuthModeWPAPSK;
 		else
 			auth_mode = Ndis802_11AuthModeWPA;
 	}
 
 	switch (params->pairwise_suite) {
-	case CIPHER_CCMP:
+	case WPA_CIPHER_CCMP:
 		encr = Ndis802_11Encryption3Enabled;
 		break;
-	case CIPHER_TKIP:
+	case WPA_CIPHER_TKIP:
 		encr = Ndis802_11Encryption2Enabled;
 		break;
-	case CIPHER_WEP40:
-	case CIPHER_WEP104:
+	case WPA_CIPHER_WEP40:
+	case WPA_CIPHER_WEP104:
 		encr = Ndis802_11Encryption1Enabled;
 		break;
-	case CIPHER_NONE:
+	case WPA_CIPHER_NONE:
 #ifdef CONFIG_WPS
 		if (params->wps == WPS_MODE_PRIVACY) {
 			encr = Ndis802_11Encryption1Enabled;
 			break;
 		}
 #endif /* CONFIG_WPS */
-		if (params->group_suite == CIPHER_CCMP)
+		if (params->group_suite == WPA_CIPHER_CCMP)
 			encr = Ndis802_11Encryption3Enabled;
-		else if (params->group_suite == CIPHER_TKIP)
+		else if (params->group_suite == WPA_CIPHER_TKIP)
 			encr = Ndis802_11Encryption2Enabled;
 		else
 			encr = Ndis802_11EncryptionDisabled;
@@ -2124,14 +2110,8 @@ static int wpa_driver_ndis_get_names(struct wpa_driver_ndis_data *drv)
 		dlen = dpos - desc;
 	else
 		dlen = os_strlen(desc);
-	drv->adapter_desc = os_malloc(dlen + 1);
-	if (drv->adapter_desc) {
-		os_memcpy(drv->adapter_desc, desc, dlen);
-		drv->adapter_desc[dlen] = '\0';
-	}
-
+	drv->adapter_desc = dup_binstr(desc, dlen);
 	os_free(b);
-
 	if (drv->adapter_desc == NULL)
 		return -1;
 
@@ -2298,14 +2278,8 @@ static int wpa_driver_ndis_get_names(struct wpa_driver_ndis_data *drv)
 	} else {
 		dlen = os_strlen(desc[i]);
 	}
-	drv->adapter_desc = os_malloc(dlen + 1);
-	if (drv->adapter_desc) {
-		os_memcpy(drv->adapter_desc, desc[i], dlen);
-		drv->adapter_desc[dlen] = '\0';
-	}
-
+	drv->adapter_desc = dup_binstr(desc[i], dlen);
 	os_free(names);
-
 	if (drv->adapter_desc == NULL)
 		return -1;
 
@@ -3229,7 +3203,6 @@ void driver_ndis_init_ops(void)
 	wpa_driver_ndis_ops.init = wpa_driver_ndis_init;
 	wpa_driver_ndis_ops.deinit = wpa_driver_ndis_deinit;
 	wpa_driver_ndis_ops.deauthenticate = wpa_driver_ndis_deauthenticate;
-	wpa_driver_ndis_ops.disassociate = wpa_driver_ndis_disassociate;
 	wpa_driver_ndis_ops.associate = wpa_driver_ndis_associate;
 	wpa_driver_ndis_ops.add_pmkid = wpa_driver_ndis_add_pmkid;
 	wpa_driver_ndis_ops.remove_pmkid = wpa_driver_ndis_remove_pmkid;

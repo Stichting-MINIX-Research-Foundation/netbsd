@@ -1,0 +1,32 @@
+#	$NetBSD: CUBIETRUCK,v 1.8 2015/06/01 23:17:47 matt Exp $
+#
+#	CUBIETRUCK - Cubieboard3 (mostly cubieboard2 with 2GB)
+#
+
+include "arch/evbarm/conf/CUBIEBOARD"
+
+#
+# Relocate loaded kernel to second GB of memory.
+#
+no makeoptions	KERNEL_BASE_PHYS
+no makeoptions	KERNEL_BASE_VIRT
+no makeoptions	BOARDTYPE
+makeoptions	KERNEL_BASE_PHYS="0x80000000"
+makeoptions	KERNEL_BASE_VIRT="0x80000000"
+makeoptions	BOARDTYPE="cubietruck"
+
+#
+# Cubietruck is an A20
+#
+no options 	ALLWINNER_A10
+no makeoptions	CPUFLAGS
+makeoptions	CPUFLAGS="-mcpu=cortex-a7 -mfpu=neon"
+
+#
+# We need this too.
+#
+options 	PMAP_NEED_ALLOC_POOLPAGE
+
+cinclude	"arch/evbarm/conf/CUBIETRUCK.local"
+
+#options 	VERBOSE_INIT_ARM # verbose bootstraping messages

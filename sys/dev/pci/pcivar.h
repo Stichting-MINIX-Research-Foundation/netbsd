@@ -1,4 +1,4 @@
-/*	$NetBSD: pcivar.h,v 1.98 2012/01/29 11:31:38 drochner Exp $	*/
+/*	$NetBSD: pcivar.h,v 1.105 2015/10/02 05:22:53 msaitoh Exp $	*/
 
 /*
  * Copyright (c) 1996, 1997 Christopher G. Demetriou.  All rights reserved.
@@ -80,7 +80,7 @@ struct pci_overrides {
 	int (*ov_intr_map)(void *, const struct pci_attach_args *,
 	   pci_intr_handle_t *);
 	const char *(*ov_intr_string)(void *, pci_chipset_tag_t,
-	    pci_intr_handle_t);
+	    pci_intr_handle_t, char *, size_t);
 	const struct evcnt *(*ov_intr_evcnt)(void *, pci_chipset_tag_t,
 	    pci_intr_handle_t);
 	void *(*ov_intr_establish)(void *, pci_chipset_tag_t, pci_intr_handle_t,
@@ -269,16 +269,31 @@ int	pci_mapreg_info(pci_chipset_tag_t, pcitag_t, int, pcireg_t,
 int	pci_mapreg_map(const struct pci_attach_args *, int, pcireg_t, int,
 	    bus_space_tag_t *, bus_space_handle_t *, bus_addr_t *,
 	    bus_size_t *);
+int	pci_mapreg_submap(const struct pci_attach_args *, int, pcireg_t, int,
+	    bus_size_t, bus_size_t, bus_space_tag_t *, bus_space_handle_t *, 
+	    bus_addr_t *, bus_size_t *);
+
 
 int pci_find_rom(const struct pci_attach_args *, bus_space_tag_t,
-	    bus_space_handle_t,
+	    bus_space_handle_t, bus_size_t,
 	    int, bus_space_handle_t *, bus_size_t *);
 
-int pci_get_capability(pci_chipset_tag_t, pcitag_t, int, int *, pcireg_t *);
+int	pci_get_capability(pci_chipset_tag_t, pcitag_t, int, int *, pcireg_t *);
+int	pci_get_ht_capability(pci_chipset_tag_t, pcitag_t, int, int *,
+	    pcireg_t *);
+int	pci_get_ext_capability(pci_chipset_tag_t, pcitag_t, int, int *,
+	    pcireg_t *);
+
+int	pci_msi_count(pci_chipset_tag_t, pcitag_t);
+int	pci_msix_count(pci_chipset_tag_t, pcitag_t);
 
 /*
  * Helper functions for autoconfiguration.
  */
+#ifndef PCI_MACHDEP_ENUMERATE_BUS
+int	pci_enumerate_bus(struct pci_softc *, const int *,
+	    int (*)(const struct pci_attach_args *), struct pci_attach_args *);
+#endif
 int	pci_probe_device(struct pci_softc *, pcitag_t tag,
 	    int (*)(const struct pci_attach_args *),
 	    struct pci_attach_args *);
@@ -333,6 +348,8 @@ int	pci_chipset_tag_create(pci_chipset_tag_t, uint64_t,
 	                       void *, pci_chipset_tag_t *);
 void	pci_chipset_tag_destroy(pci_chipset_tag_t);
 int	pci_bus_devorder(pci_chipset_tag_t, int, uint8_t *, int);
+void	*pci_intr_establish_xname(pci_chipset_tag_t, pci_intr_handle_t,
+				  int, int (*)(void *), void *, const char *);
 
 /*
  * Device abstraction for inheritance by elanpci(4), for example.

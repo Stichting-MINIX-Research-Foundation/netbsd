@@ -1,4 +1,4 @@
-/*	$NetBSD: ucycom.c,v 1.37 2013/10/14 18:15:12 skrll Exp $	*/
+/*	$NetBSD: ucycom.c,v 1.42 2015/03/07 20:20:55 mrg Exp $	*/
 
 /*
  * Copyright (c) 2005 The NetBSD Foundation, Inc.
@@ -38,7 +38,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ucycom.c,v 1.37 2013/10/14 18:15:12 skrll Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ucycom.c,v 1.42 2015/03/07 20:20:55 mrg Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -74,13 +74,13 @@ int	ucycomdebug = 20;
 #endif
 
 
-#define UCYCOMUNIT_MASK		0x3ffff
-#define UCYCOMDIALOUT_MASK	0x80000
-#define UCYCOMCALLUNIT_MASK	0x40000
+#define	UCYCOMCALLUNIT_MASK	TTCALLUNIT_MASK
+#define	UCYCOMUNIT_MASK		TTUNIT_MASK
+#define	UCYCOMDIALOUT_MASK	TTDIALOUT_MASK
 
-#define UCYCOMUNIT(x)		(minor(x) & UCYCOMUNIT_MASK)
-#define UCYCOMDIALOUT(x)	(minor(x) & UCYCOMDIALOUT_MASK)
-#define UCYCOMCALLUNIT(x)	(minor(x) & UCYCOMCALLUNIT_MASK)
+#define	UCYCOMCALLUNIT(x)	TTCALLUNIT(x)
+#define	UCYCOMUNIT(x)		TTUNIT(x)
+#define	UCYCOMDIALOUT(x)	TTDIALOUT(x)
 
 /* Configuration Byte */
 #define UCYCOM_RESET		0x80
@@ -148,8 +148,18 @@ dev_type_tty(ucycomtty);
 dev_type_poll(ucycompoll);
 
 const struct cdevsw ucycom_cdevsw = {
-	ucycomopen, ucycomclose, ucycomread, ucycomwrite, ucycomioctl,
-	ucycomstop, ucycomtty, ucycompoll, nommap, ttykqfilter, D_TTY
+	.d_open = ucycomopen,
+	.d_close = ucycomclose,
+	.d_read = ucycomread,
+	.d_write = ucycomwrite,
+	.d_ioctl = ucycomioctl,
+	.d_stop = ucycomstop,
+	.d_tty = ucycomtty,
+	.d_poll = ucycompoll,
+	.d_mmap = nommap,
+	.d_kqfilter = ttykqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_TTY
 };
 
 Static int ucycomparam(struct tty *, struct termios *);
@@ -1114,9 +1124,14 @@ ucycom_get_cfg(struct ucycom_softc *sc)
 Static void
 ucycom_cleanup(struct ucycom_softc *sc)
 {
+	uint8_t	*obuf;
+
 	DPRINTF(("ucycom_cleanup: closing uhidev\n"));
 
-	if (sc->sc_obuf !=NULL)
-		free (sc->sc_obuf, M_USBDEV);
+	obuf = sc->sc_obuf;
+	sc->sc_obuf = NULL;
 	uhidev_close(&sc->sc_hdev);
+
+	if (obuf != NULL)
+		free (obuf, M_USBDEV);
 }

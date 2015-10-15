@@ -31,7 +31,7 @@
 
 #include <sys/cdefs.h>
 
-__KERNEL_RCSID(1, "$NetBSD: awin_ahcisata.c,v 1.8 2013/09/08 11:47:50 matt Exp $");
+__KERNEL_RCSID(1, "$NetBSD: awin_ahcisata.c,v 1.11 2014/02/24 16:40:29 matt Exp $");
 
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -86,38 +86,34 @@ awin_ahci_phy_init(struct awin_ahci_softc *asc)
 	 */
 	delay(5000);
 	bus_space_write_4(bst, bsh, AWIN_AHCI_RWCR_REG, 0);
-	delay(10);
 
 	awin_reg_set_clear(bst, bsh, AWIN_AHCI_PHYCS1R_REG, __BIT(19), 0);
-	delay(10);
+
 	awin_reg_set_clear(bst, bsh, AWIN_AHCI_PHYCS0R_REG,
 	    __BIT(26)|__BIT(24)|__BIT(23)|__BIT(18),
 	    __BIT(25));
-	delay(10);
+
 	awin_reg_set_clear(bst, bsh, AWIN_AHCI_PHYCS1R_REG,
 	    __BIT(17)|__BIT(10)|__BIT(9)|__BIT(7),
 	    __BIT(16)|__BIT(12)|__BIT(11)|__BIT(8)|__BIT(6));
-	delay(10);
+
 	awin_reg_set_clear(bst, bsh, AWIN_AHCI_PHYCS1R_REG,
 	    __BIT(28)|__BIT(15), 0);
-	delay(10);
+
 	awin_reg_set_clear(bst, bsh, AWIN_AHCI_PHYCS1R_REG, 0, __BIT(19));
-	delay(10);
 
 	awin_reg_set_clear(bst, bsh, AWIN_AHCI_PHYCS0R_REG,
 	    __BIT(21)|__BIT(20), __BIT(22));
-	delay(10);
+
 	awin_reg_set_clear(bst, bsh, AWIN_AHCI_PHYCS2R_REG,
 	    __BIT(9)|__BIT(8)|__BIT(5), __BIT(7)|__BIT(6));
-	delay(20);
 
-	delay(5000);
+	delay(10);
 	awin_reg_set_clear(bst, bsh, AWIN_AHCI_PHYCS0R_REG, __BIT(19), 0);
-	delay(20);
 
 	timeout = 1000;
 	do {
-		delay(10);
+		delay(1);
 		v = bus_space_read_4(bst, bsh, AWIN_AHCI_PHYCS0R_REG);
 	} while (--timeout && __SHIFTOUT(v, __BITS(30,28)) != 2);
 
@@ -141,7 +137,7 @@ awin_ahci_phy_init(struct awin_ahci_softc *asc)
 			    "SATA PHY calibration failed (%#x)\n", v);
 		}
 	}
-	delay(15000);
+	delay(10);
 	bus_space_write_4(bst, bsh, AWIN_AHCI_RWCR_REG, 7);
 }
 
@@ -167,6 +163,17 @@ awin_ahci_enable(bus_space_tag_t bst, bus_space_handle_t bsh)
 }
 
 static void
+awin_ahci_channel_start(struct ahci_softc *sc, struct ata_channel *chp)
+{
+	bus_size_t dma_reg = AHCI_P_AWIN_DMA(chp->ch_channel);
+
+	uint32_t dma = AHCI_READ(sc, dma_reg);
+	dma &= ~0xff00;
+	dma |= 0x4400;
+	AHCI_WRITE(sc, dma_reg, dma);
+}
+
+static void
 awin_ahci_attach(device_t parent, device_t self, void *aux)
 {
 	struct awin_ahci_softc * const asc = device_private(self);
@@ -181,6 +188,9 @@ awin_ahci_attach(device_t parent, device_t self, void *aux)
 	sc->sc_ahcit = aio->aio_core_bst;
 	sc->sc_ahcis = loc->loc_size;
 	sc->sc_ahci_ports = 1;
+	sc->sc_ahci_quirks = AHCI_QUIRK_BADPMP;
+	sc->sc_save_init_data = true;
+	sc->sc_channel_start = awin_ahci_channel_start;
 
 	bus_space_subregion(aio->aio_core_bst, aio->aio_core_bsh,
 	    loc->loc_offset, loc->loc_size, &sc->sc_ahcih);
@@ -210,15 +220,14 @@ awin_ahci_attach(device_t parent, device_t self, void *aux)
 	/*
 	 * Establish the interrupt
 	 */
-	asc->asc_ih = intr_establish(loc->loc_intr, IPL_VM, IST_LEVEL,
+	asc->asc_ih = intr_establish(loc->loc_intr, IPL_BIO, IST_LEVEL,
 	    ahci_intr, sc);
 	if (asc->asc_ih == NULL) {
 		aprint_error_dev(self, "failed to establish interrupt %d\n",
 		     loc->loc_intr);
 		goto fail;
 	}
-	aprint_normal_dev(self, "interrupting on irq %d\n",
-	     loc->loc_intr);
+	aprint_normal_dev(self, "interrupting on irq %d\n", loc->loc_intr);
 
 	ahci_attach(sc);
 

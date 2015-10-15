@@ -1,4 +1,4 @@
-/*      $NetBSD: sa11x0_com.c,v 1.50 2012/02/02 19:42:58 tls Exp $        */
+/*      $NetBSD: sa11x0_com.c,v 1.55 2015/04/13 21:18:41 riastradh Exp $        */
 
 /*-
  * Copyright (c) 1998, 1999, 2001 The NetBSD Foundation, Inc.
@@ -64,7 +64,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: sa11x0_com.c,v 1.50 2012/02/02 19:42:58 tls Exp $");
+__KERNEL_RCSID(0, "$NetBSD: sa11x0_com.c,v 1.55 2015/04/13 21:18:41 riastradh Exp $");
 
 #include "opt_com.h"
 #include "opt_ddb.h"
@@ -73,9 +73,8 @@ __KERNEL_RCSID(0, "$NetBSD: sa11x0_com.c,v 1.50 2012/02/02 19:42:58 tls Exp $");
 #include "opt_multiprocessor.h"
 #include "opt_lockdebug.h"
 
-#include "rnd.h"
 #ifdef RND_COM
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 #endif
 
 #include <sys/param.h>
@@ -117,8 +116,18 @@ dev_type_tty(sacomtty);
 dev_type_poll(sacompoll);
 
 const struct cdevsw sacom_cdevsw = {
-	sacomopen, sacomclose, sacomread, sacomwrite, sacomioctl,
-	sacomstop, sacomtty, sacompoll, nommap, ttykqfilter, D_TTY
+	.d_open = sacomopen,
+	.d_close = sacomclose,
+	.d_read = sacomread,
+	.d_write = sacomwrite,
+	.d_ioctl = sacomioctl,
+	.d_stop = sacomstop,
+	.d_tty = sacomtty,
+	.d_poll = sacompoll,
+	.d_mmap = nommap,
+	.d_kqfilter = ttykqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_TTY
 };
 
 static	int	sacom_match(device_t, cfdata_t, void *);
@@ -162,11 +171,10 @@ static inline void sacom_schedrx(struct sacom_softc *);
 static void	sacom_j720_init(device_t, device_t);
 #endif
 
-#define COMUNIT_MASK	0x7ffff
-#define COMDIALOUT_MASK	0x80000
+#define COMDIALOUT_MASK	TTDIALOUT_MASK
 
-#define COMUNIT(x)	(minor(x) & COMUNIT_MASK)
-#define COMDIALOUT(x)	(minor(x) & COMDIALOUT_MASK)
+#define COMUNIT(x)	TTUNIT(x)
+#define COMDIALOUT(x)	TTDIALOUT(x)
 
 #define COM_ISALIVE(sc)	((sc)->enabled != 0 && \
 			 device_is_active((sc)->sc_dev))
@@ -332,7 +340,8 @@ sacom_attach_subr(struct sacom_softc *sc)
 
 #ifdef RND_COM
 	rnd_attach_source(&sc->rnd_source, device_xname(sc->sc_dev),
-			  RND_TYPE_TTY, 0);
+			  RND_TYPE_TTY, RND_FLAG_COLLECT_TIME|
+					RND_FLAG_ESTIMATE_TIME);
 #endif
 
 	/* if there are no enable/disable functions, assume the device

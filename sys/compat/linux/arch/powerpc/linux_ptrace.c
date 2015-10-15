@@ -1,4 +1,4 @@
-/*	$NetBSD: linux_ptrace.c,v 1.23 2010/07/01 02:38:28 rmind Exp $ */
+/*	$NetBSD: linux_ptrace.c,v 1.28 2014/11/09 17:48:08 maxv Exp $ */
 
 /*-
  * Copyright (c) 1999, 2001 The NetBSD Foundation, Inc.
@@ -30,10 +30,9 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: linux_ptrace.c,v 1.23 2010/07/01 02:38:28 rmind Exp $");
+__KERNEL_RCSID(0, "$NetBSD: linux_ptrace.c,v 1.28 2014/11/09 17:48:08 maxv Exp $");
 
 #include <sys/param.h>
-#include <sys/malloc.h>
 #include <sys/mount.h>
 #include <sys/proc.h>
 #include <sys/ptrace.h>
@@ -159,7 +158,8 @@ linux_sys_ptrace_arch(struct lwp *l, const struct linux_sys_ptrace_args *uap,
 	mutex_enter(proc_lock);
 	if ((t = proc_find(SCARG(uap, pid))) == NULL) {
 		mutex_exit(proc_lock);
-		return ESRCH;
+		error = ESRCH;
+		goto out;
 	}
 	mutex_enter(t->p_lock);
 	mutex_exit(proc_lock);
@@ -237,7 +237,7 @@ linux_sys_ptrace_arch(struct lwp *l, const struct linux_sys_ptrace_args *uap,
 		break;
 
 	case LINUX_PTRACE_GETFPREGS:
-		error = process_read_fpregs(lt, fpregs);
+		error = process_read_fpregs(lt, fpregs, NULL);
 		mutex_exit(t->p_lock);
 		if (error) {
 			break;
@@ -256,7 +256,7 @@ linux_sys_ptrace_arch(struct lwp *l, const struct linux_sys_ptrace_args *uap,
 		memset(fpregs, '\0', sizeof(struct fpreg));
 		memcpy(fpregs, linux_fpreg,
 		    min(32 * sizeof(double), sizeof(struct fpreg)));
-		error = process_write_fpregs(lt, fpregs);
+		error = process_write_fpregs(lt, fpregs, sizeof fpregs);
 		mutex_exit(t->p_lock);
 		break;
 
@@ -294,8 +294,6 @@ linux_sys_ptrace_arch(struct lwp *l, const struct linux_sys_ptrace_args *uap,
 			*retval = regs->xer;
 		else if (addr == LUSR_REG_OFF(lccr))
 			*retval = regs->cr;
-		else if (addr == LUSR_OFF(signal))
-			error = 1;
 		else if (addr == LUSR_OFF(signal))
 			error = 1;
 		else if (addr == LUSR_OFF(magic))

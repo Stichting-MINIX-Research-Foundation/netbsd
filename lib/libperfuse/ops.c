@@ -1,4 +1,4 @@
-/*  $NetBSD: ops.c,v 1.62 2013/07/19 07:32:35 manu Exp $ */
+/*  $NetBSD: ops.c,v 1.84 2015/06/03 14:07:05 manu Exp $ */
 
 /*-
  *  Copyright (c) 2010-2011 Emmanuel Dreyfus. All rights reserved.
@@ -269,7 +269,7 @@ sticky_access(puffs_cookie_t opc, struct puffs_node *targ,
 	      const struct puffs_cred *pcr)
 {
 	uid_t uid;
-	int sticky, owner;
+	int sticky, owner, parent_owner;
 
 	/*
 	 * This covers the case where the kernel requests a DELETE
@@ -288,9 +288,10 @@ sticky_access(puffs_cookie_t opc, struct puffs_node *targ,
 
 	sticky = puffs_pn_getvap(opc)->va_mode & S_ISTXT;
 	owner = puffs_pn_getvap(targ)->va_uid == uid;
+	parent_owner = puffs_pn_getvap(opc)->va_uid == uid;
 
-	if (sticky && !owner)
-		return EACCES;
+	if (sticky && !owner && !parent_owner)
+		return EPERM;
 
 	return 0;
 }
@@ -320,7 +321,7 @@ fuse_attr_to_vap(struct perfuse_state *ps, struct vattr *vap,
 	vap->va_gen = 0; 
 	vap->va_flags = 0;
 	vap->va_rdev = fa->rdev;
-	vap->va_bytes = fa->size;
+	vap->va_bytes = fa->blocks * S_BLKSIZE;
 	vap->va_filerev = (u_quad_t)PUFFS_VNOVAL;
 	vap->va_vaflags = 0;
 
@@ -606,6 +607,7 @@ fuse_to_dirent(struct puffs_usermount *pu, puffs_cookie_t opc,
 	do {
 		char *ndp;
 		size_t reclen;
+		char name[MAXPATHLEN];
 
 		reclen = _DIRENT_RECLEN(dents, fd->namelen);
 
@@ -638,19 +640,40 @@ fuse_to_dirent(struct puffs_usermount *pu, puffs_cookie_t opc,
 			dents = (struct dirent *)(void *)ndp;
 		}
 		
+		strncpy(name, fd->name, fd->namelen);
+		name[fd->namelen] = '\0';
+
 		/*
 		 * Filesystem was mounted without -o use_ino
 		 * Perform a lookup to find it.
 		 */
 		if (fd->ino == PERFUSE_UNKNOWN_INO) {
 			struct puffs_node *pn;
+			struct perfuse_node_data *pnd = PERFUSE_NODE_DATA(opc);
 
-			if (node_lookup_common(pu, opc, NULL, fd->name,
-					       NULL, &pn) != 0) {
-				DWARNX("node_lookup_common failed");
+			if (strcmp(name, "..") == 0) {
+				/* 
+				 * Avoid breaking out of fs 
+				 * by lookup to .. on root
+				 */
+				if (pnd->pnd_nodeid == FUSE_ROOT_ID)
+					fd->ino = FUSE_ROOT_ID;
+				else
+					fd->ino = pnd->pnd_parent_nodeid;
+			} else if (strcmp(name, ".") == 0 ) {
+				fd->ino = pnd->pnd_nodeid;
 			} else {
-				fd->ino = pn->pn_va.va_fileid;
-				(void)perfuse_node_reclaim(pu, pn);
+				int error;
+
+				error = node_lookup_common(pu, opc, NULL, 
+							   name, NULL, &pn);
+				if (error != 0) {
+					DWARNX("node_lookup_common %s "
+					       "failed: %d", name, error);
+				} else {
+					fd->ino = pn->pn_va.va_fileid;
+					(void)perfuse_node_reclaim(pu, pn);
+				}
 			}
 		}
 
@@ -658,7 +681,7 @@ fuse_to_dirent(struct puffs_usermount *pu, puffs_cookie_t opc,
 		dents->d_reclen = (unsigned short)reclen;
 		dents->d_namlen = fd->namelen;
 		dents->d_type = fd->type;
-		strlcpy(dents->d_name, fd->name, fd->namelen + 1);
+		strlcpy(dents->d_name, name, fd->namelen + 1);
 
 #ifdef PERFUSE_DEBUG
 		if (perfuse_diagflags & PDF_READDIR)
@@ -709,7 +732,7 @@ fuse_to_dirent(struct puffs_usermount *pu, puffs_cookie_t opc,
 	 */
 	if (written != -1)
 		PERFUSE_NODE_DATA(opc)->pnd_dirent_len = written;
-	
+
 	return written;
 }
 
@@ -794,11 +817,6 @@ requeue_request(struct puffs_usermount *pu, puffs_cookie_t opc,
 {
 	struct perfuse_cc_queue pcq;
 	struct perfuse_node_data *pnd;
-#ifdef PERFUSE_DEBUG
-	struct perfuse_state *ps;
-
-	ps = perfuse_getspecific(pu);
-#endif
 
 	pnd = PERFUSE_NODE_DATA(opc);
 	pcq.pcq_type = type;
@@ -1295,7 +1313,7 @@ perfuse_node_mknod(struct puffs_usermount *pu, puffs_cookie_t opc,
 		break;
 	default:	/* VNON, VBLK, VCHR, VBAD */
 		if (!puffs_cred_isjuggernaut(pcn->pcn_cred)) {
-			error = EACCES;
+			error = EPERM;
 			goto out;
 		}
 		break;
@@ -1327,6 +1345,13 @@ out:
 int
 perfuse_node_open(struct puffs_usermount *pu, puffs_cookie_t opc, int mode,
 	const struct puffs_cred *pcr)
+{
+	return perfuse_node_open2(pu, opc, mode, pcr, NULL);
+}
+
+int
+perfuse_node_open2(struct puffs_usermount *pu, puffs_cookie_t opc, int mode,
+	const struct puffs_cred *pcr, int *oflags)
 {
 	struct perfuse_state *ps;
 	struct perfuse_node_data *pnd;
@@ -1428,6 +1453,12 @@ perfuse_node_open(struct puffs_usermount *pu, puffs_cookie_t opc, int mode,
 	 * so that we can reuse it later
 	 */
 	perfuse_new_fh(opc, foo->fh, mode);
+
+	/*
+	 * Set direct I/O if the filesystems forces it
+	 */
+	if ((foo->open_flags & FUSE_FOPEN_DIRECT_IO) && (oflags != NULL))
+		*oflags |= PUFFS_OPEN_IO_DIRECT;
 
 #ifdef PERFUSE_DEBUG
 	if (perfuse_diagflags & (PDF_FH|PDF_FILENAME))
@@ -1544,7 +1575,7 @@ perfuse_node_getattr_ttl(struct puffs_usermount *pu, puffs_cookie_t opc,
 	struct fuse_attr_out *fao;
 	int error = 0;
 	
-	if (pnd->pnd_flags & PND_REMOVED)
+	if ((pnd->pnd_flags & PND_REMOVED) && !(pnd->pnd_flags & PND_OPEN))
 		return ENOENT;
 
 	node_ref(opc);
@@ -1673,7 +1704,7 @@ perfuse_node_setattr_ttl(struct puffs_usermount *pu, puffs_cookie_t opc,
 	     (vap->va_mtime.tv_sec != (time_t)PUFFS_VNOVAL)) &&
 	    (puffs_access_times(old_va->va_uid, old_va->va_gid,
 				old_va->va_mode, 0, pcr) != 0))
-		return EACCES;
+		return EPERM;
 
 	/*
 	 * Check for permission to change owner and group
@@ -1682,7 +1713,15 @@ perfuse_node_setattr_ttl(struct puffs_usermount *pu, puffs_cookie_t opc,
 	     (vap->va_gid != (gid_t)PUFFS_VNOVAL)) &&
 	    (puffs_access_chown(old_va->va_uid, old_va->va_gid,
 				vap->va_uid, vap->va_gid, pcr)) != 0)
-		return EACCES;
+		return EPERM;
+
+	/*
+	 * Check for sticky bit on non-directory by non root user
+	 */
+	if ((vap->va_mode != (mode_t)PUFFS_VNOVAL) &&
+	    (vap->va_mode & S_ISTXT) && (old_va->va_type != VDIR) &&
+	    !puffs_cred_isjuggernaut(pcr))
+		return EFTYPE;
 
 	/*
 	 * Check for permission to change permissions
@@ -1690,7 +1729,7 @@ perfuse_node_setattr_ttl(struct puffs_usermount *pu, puffs_cookie_t opc,
 	if ((vap->va_mode != (mode_t)PUFFS_VNOVAL) &&
 	    (puffs_access_chmod(old_va->va_uid, old_va->va_gid,
 				old_va->va_type, vap->va_mode, pcr)) != 0)
-		return EACCES;
+		return EPERM;
 	
 	node_ref(opc);
 	
@@ -1750,30 +1789,27 @@ perfuse_node_setattr_ttl(struct puffs_usermount *pu, puffs_cookie_t opc,
 	}
 
 	/*
- 	 * Setting mtime without atime or vice versa leads to
-	 * dates being reset to Epoch on glusterfs. If one
-	 * is missing, use the old value.
+ 	 * When not sending a time field, still fill with
+	 * current value, as the filesystem may just reset
+	 * the field to Epoch even if fsi->valid bit is
+	 * not set (GlusterFS does that).
  	 */
-	if ((vap->va_mtime.tv_sec != (time_t)PUFFS_VNOVAL) || 
-	    (vap->va_atime.tv_sec != (time_t)PUFFS_VNOVAL)) {
-		
-		if (vap->va_atime.tv_sec != (time_t)PUFFS_VNOVAL) {
-			fsi->atime = vap->va_atime.tv_sec;
-			fsi->atimensec = (uint32_t)vap->va_atime.tv_nsec;
-		} else {
-			fsi->atime = old_va->va_atime.tv_sec;
-			fsi->atimensec = (uint32_t)old_va->va_atime.tv_nsec;
-		}
+	if (vap->va_atime.tv_sec != (time_t)PUFFS_VNOVAL) {
+		fsi->atime = vap->va_atime.tv_sec;
+		fsi->atimensec = (uint32_t)vap->va_atime.tv_nsec;
+		fsi->valid |= FUSE_FATTR_ATIME;
+	} else {
+		fsi->atime = old_va->va_atime.tv_sec;
+		fsi->atimensec = (uint32_t)old_va->va_atime.tv_nsec;
+	}
 
-		if (vap->va_mtime.tv_sec != (time_t)PUFFS_VNOVAL) {
-			fsi->mtime = vap->va_mtime.tv_sec;
-			fsi->mtimensec = (uint32_t)vap->va_mtime.tv_nsec;
-		} else {
-			fsi->mtime = old_va->va_mtime.tv_sec;
-			fsi->mtimensec = (uint32_t)old_va->va_mtime.tv_nsec;
-		}
-
-		fsi->valid |= (FUSE_FATTR_MTIME|FUSE_FATTR_ATIME);
+	if (vap->va_mtime.tv_sec != (time_t)PUFFS_VNOVAL) {
+		fsi->mtime = vap->va_mtime.tv_sec;
+		fsi->mtimensec = (uint32_t)vap->va_mtime.tv_nsec;
+		fsi->valid |= FUSE_FATTR_MTIME;
+	} else {
+		fsi->mtime = old_va->va_mtime.tv_sec;
+		fsi->mtimensec = (uint32_t)old_va->va_mtime.tv_nsec;
 	}
 
 	if (vap->va_mode != (mode_t)PUFFS_VNOVAL) {
@@ -1796,6 +1832,7 @@ perfuse_node_setattr_ttl(struct puffs_usermount *pu, puffs_cookie_t opc,
 		fsi->valid |= FUSE_FATTR_LOCKOWNER;
 	}
 
+#ifndef PUFFS_KFLAG_NOFLUSH_META
 	/*
 	 * ftruncate() sends only va_size, and metadata cache
 	 * flush adds va_atime and va_mtime. Some FUSE
@@ -1816,6 +1853,15 @@ perfuse_node_setattr_ttl(struct puffs_usermount *pu, puffs_cookie_t opc,
 		fsi->mtimensec = 0;
 		fsi->valid &= ~(FUSE_FATTR_ATIME|FUSE_FATTR_MTIME);
 	}
+
+	/*
+	 * If only atime is changed, discard the operation: it
+	 * happens after read, and in that case the filesystem 
+	 * already updaed atime. NB: utimes() also change mtime.
+	 */
+	if (fsi->valid == FUSE_FATTR_ATIME)
+		fsi->valid &= ~FUSE_FATTR_ATIME;
+#endif /* PUFFS_KFLAG_NOFLUSH_META */
 		    
 	/*
 	 * If nothing remain, discard the operation.
@@ -1937,17 +1983,6 @@ out:
 	return error;
 }
 
-/* ARGSUSED0 */
-int
-perfuse_node_mmap(struct puffs_usermount *pu, puffs_cookie_t opc, int flags,
-	const struct puffs_cred *pcr)
-{
-	/* 
-	 * Not implemented anymore in libfuse
-	 */
-	return ENOSYS;
-}
-
 /* ARGSUSED2 */
 int
 perfuse_node_fsync(struct puffs_usermount *pu, puffs_cookie_t opc,
@@ -2060,14 +2095,6 @@ out:
 
 	node_rele(opc);
 	return error;
-}
-
-/* ARGSUSED0 */
-int
-perfuse_node_seek(struct puffs_usermount *pu, puffs_cookie_t opc,
-	off_t oldoff, off_t newoff, const struct puffs_cred *pcr)
-{
-	return 0;
 }
 
 int
@@ -2338,6 +2365,12 @@ perfuse_node_rmdir(struct puffs_usermount *pu, puffs_cookie_t opc,
 	if ((pnd->pnd_flags & PND_REMOVED) ||
 	    (PERFUSE_NODE_DATA(targ)->pnd_flags & PND_REMOVED))
 		return ENOENT;
+
+	/*
+	 * Attempt to rmdir dir/.. shoud raise ENOTEMPTY
+	 */
+	if (PERFUSE_NODE_DATA(targ)->pnd_nodeid == pnd->pnd_parent_nodeid)
+		return ENOTEMPTY;
 
 	node_ref(opc);
 	node_ref(targ);
@@ -2629,12 +2662,16 @@ perfuse_node_readlink(struct puffs_usermount *pu, puffs_cookie_t opc,
 	if (len == 0)
 		DERRX(EX_PROTOCOL, "path len = %zd too short", len);
 		
+	(void)memcpy(linkname, _GET_OUTPAYLOAD(ps, pm, char *), len);
+
 	/*
 	 * FUSE filesystems return a NUL terminated string, we 
-	 * do not want to trailing \0
+	 * do not want the trailing \0
 	 */
-	*linklen = len - 1;
-	(void)memcpy(linkname, _GET_OUTPAYLOAD(ps, pm, char *), len);
+	while (len > 0 && linkname[len - 1] == '\0')
+		len--;
+
+	*linklen = len;
 
 	ps->ps_destroy_msg(pm);
 	error = 0;
@@ -2790,11 +2827,11 @@ perfuse_node_inactive(struct puffs_usermount *pu, puffs_cookie_t opc)
 	if (opc == 0)
 		return 0;
 
-	node_ref(opc);
 	pnd = PERFUSE_NODE_DATA(opc);
-
 	if (!(pnd->pnd_flags & (PND_OPEN|PND_REMOVED)))
-		goto out;
+		return 0;
+
+	node_ref(opc);
 
 	/*
 	 * Make sure all operation are finished
@@ -2869,13 +2906,68 @@ perfuse_node_print(struct puffs_usermount *pu, puffs_cookie_t opc)
 	return 0;
 }
 
-/* ARGSUSED0 */
 int
 perfuse_node_pathconf(struct puffs_usermount *pu, puffs_cookie_t opc,
-	int name, int *retval)
+	int name, register_t *retval)
 {
-	DERRX(EX_SOFTWARE, "%s: UNIMPLEMENTED (FATAL)", __func__);
-	return 0;
+	perfuse_msg_t *pm;
+	struct perfuse_state *ps;
+	struct fuse_statfs_out *fso;
+	int error = 0;
+
+	/*
+	 * Static values copied from UFS 
+	 * in src/sys/ufs/ufs/ufs_vnops.c
+	 */
+	switch (name) {
+	case _PC_LINK_MAX:
+		*retval = LINK_MAX;
+		break;
+	case _PC_PATH_MAX:
+		*retval = PATH_MAX;
+		break;
+	case _PC_PIPE_BUF:
+		*retval = PIPE_BUF;
+		break;
+	case _PC_CHOWN_RESTRICTED:
+		*retval = 1;
+		break;
+	case _PC_NO_TRUNC:
+		*retval = 1;
+		break;
+	case _PC_SYNC_IO:
+		*retval = 1;
+		break;
+	case _PC_FILESIZEBITS:
+		*retval = 42;
+		break;
+	case _PC_SYMLINK_MAX:
+		*retval = MAXPATHLEN;
+		break;
+	case _PC_2_SYMLINKS:
+		*retval = 1;
+		break;
+	case _PC_NAME_MAX:
+		ps = puffs_getspecific(pu);
+		pm = ps->ps_new_msg(pu, opc, FUSE_STATFS, 0, NULL);
+
+		error = xchg_msg(pu, opc, pm, sizeof(*fso), wait_reply);
+		if (error != 0)
+			return error;
+
+		fso = GET_OUTPAYLOAD(ps, pm, fuse_statfs_out);
+		*retval = fso->st.namelen;
+
+		ps->ps_destroy_msg(pm);
+	
+		break;
+	default:
+		DWARN("Unimplemented pathconf for name = %d", name);
+		error = ENOSYS;
+		break;
+	}
+
+	return error;
 }
 
 int
@@ -3021,11 +3113,6 @@ perfuse_node_read(struct puffs_usermount *pu, puffs_cookie_t opc, uint8_t *buf,
 	if (vap->va_type == VDIR)
 		return EISDIR;
 
-	if ((u_quad_t)offset + *resid > vap->va_size)
-		DWARNX("%s %p read %lld@%zu beyond EOF %" PRIu64 "\n",
-		       __func__, (void *)opc, (long long)offset,
-		       *resid, vap->va_size);
-
 	do {
 		size_t max_read;
 
@@ -3125,6 +3212,17 @@ perfuse_node_write2(struct puffs_usermount *pu, puffs_cookie_t opc,
 		requeue_request(pu, opc, PCQ_WRITE);
 	pnd->pnd_flags |= PND_INWRITE;
 
+	/*
+	 * append flag: re-read the file size so that 
+	 * we get the latest value.
+	 */
+	if (ioflag & PUFFS_IO_APPEND) {
+		if ((error = perfuse_node_getattr(pu, opc, vap, pcr)) != 0)
+			goto out;
+
+		offset = vap->va_size;
+	}
+
 	/* 
 	 * Serialize size access, see comment in perfuse_node_setattr().
 	 */
@@ -3133,19 +3231,6 @@ perfuse_node_write2(struct puffs_usermount *pu, puffs_cookie_t opc,
 			requeue_request(pu, opc, PCQ_RESIZE);
 		pnd->pnd_flags |= PND_INRESIZE;
 		inresize = 1;
-	}
-
-	/*
-	 * append flag: re-read the file size so that 
-	 * we get the latest value.
-	 */
-	if (ioflag & PUFFS_IO_APPEND) {
-		DWARNX("%s: PUFFS_IO_APPEND set, untested code", __func__);
-
-		if ((error = perfuse_node_getattr(pu, opc, vap, pcr)) != 0)
-			goto out;
-
-		offset = vap->va_size;
 	}
 
 #ifdef PERFUSE_DEBUG
@@ -3220,6 +3305,7 @@ perfuse_node_write2(struct puffs_usermount *pu, puffs_cookie_t opc,
 	if (*resid != 0)
 		error = EFBIG;
 
+out:
 #ifdef PERFUSE_DEBUG
 	if (perfuse_diagflags & PDF_RESIZE) {
 		if (offset > (off_t)vap->va_size)
@@ -3235,16 +3321,6 @@ perfuse_node_write2(struct puffs_usermount *pu, puffs_cookie_t opc,
 	 */
 	if (offset > (off_t)vap->va_size) 
 		vap->va_size = offset;
-
-	if (inresize) {
-#ifdef PERFUSE_DEBUG
-		if (!(pnd->pnd_flags & PND_INRESIZE))
-			DERRX(EX_SOFTWARE, "file write grow without resize");
-#endif
-		pnd->pnd_flags &= ~PND_INRESIZE;
-		(void)dequeue_requests(opc, PCQ_RESIZE, DEQUEUE_ALL);
-	}
-
 
 	/*
 	 * Statistics
@@ -3265,7 +3341,15 @@ perfuse_node_write2(struct puffs_usermount *pu, puffs_cookie_t opc,
 			__func__, (void*)opc, perfuse_node_path(ps, opc));
 #endif
 
-out:
+	if (inresize) {
+#ifdef PERFUSE_DEBUG
+		if (!(pnd->pnd_flags & PND_INRESIZE))
+			DERRX(EX_SOFTWARE, "file write grow without resize");
+#endif
+		pnd->pnd_flags &= ~PND_INRESIZE;
+		(void)dequeue_requests(opc, PCQ_RESIZE, DEQUEUE_ALL);
+	}
+
 	/*
 	 * VOP_PUTPAGE causes FAF write where kernel does not 
 	 * check operation result. At least warn if it failed.
@@ -3313,6 +3397,10 @@ perfuse_node_getextattr(struct puffs_usermount *pu, puffs_cookie_t opc,
 	char *np;
 	int error;
 
+	/* system namespace attrs are not accessible to non root users */
+	if (attrns == EXTATTR_NAMESPACE_SYSTEM && !puffs_cred_isjuggernaut(pcr))
+		return EPERM;
+
 	node_ref(opc);
 	ps = puffs_getspecific(pu);
 	attrname = perfuse_native_ns(attrns, attrname, fuse_attrname);
@@ -3349,9 +3437,18 @@ perfuse_node_getextattr(struct puffs_usermount *pu, puffs_cookie_t opc,
 	 */
 	foh = GET_OUTHDR(ps, pm);
 	np = (char *)(void *)(foh + 1);
+	len = foh->len - sizeof(*foh);
+
+	if (attrsize != NULL)
+		*attrsize = len;
 
 	if (resid != NULL) {
-		len = MAX(foh->len - sizeof(*foh), *resid);
+		if (*resid < len) {
+			error = ERANGE;
+			ps->ps_destroy_msg(pm);
+			goto out;
+		}
+
 		(void)memcpy(attr, np, len);
 		*resid -= len;
 	}
@@ -3374,31 +3471,40 @@ perfuse_node_setextattr(struct puffs_usermount *pu, puffs_cookie_t opc,
 	perfuse_msg_t *pm;
 	struct fuse_setxattr_in *fsi;
 	size_t attrnamelen;
+	size_t datalen;
 	size_t len;
 	char *np;
 	int error;
 	
+	/* system namespace attrs are not accessible to non root users */
+	if (attrns == EXTATTR_NAMESPACE_SYSTEM && !puffs_cred_isjuggernaut(pcr))
+		return EPERM;
+
 	node_ref(opc);
 	ps = puffs_getspecific(pu);
 	attrname = perfuse_native_ns(attrns, attrname, fuse_attrname);
 	attrnamelen = strlen(attrname) + 1;
-	len = sizeof(*fsi) + attrnamelen + *resid;
+
+	datalen = (resid != NULL) ? *resid : 0;
+	len = sizeof(*fsi) + attrnamelen + datalen;
 
 	pm = ps->ps_new_msg(pu, opc, FUSE_SETXATTR, len, pcr);
 	fsi = GET_INPAYLOAD(ps, pm, fuse_setxattr_in);
-	fsi->size = (unsigned int)*resid;
+	fsi->size = (unsigned int)datalen;
 	fsi->flags = 0;
 	np = (char *)(void *)(fsi + 1);
 	(void)strlcpy(np, attrname, attrnamelen);
 	np += attrnamelen;
-	(void)memcpy(np, (char *)attr, *resid);
+	if (datalen)
+		(void)memcpy(np, (char *)attr, datalen);
 
 	if ((error = xchg_msg(pu, opc, pm, 
 			      NO_PAYLOAD_REPLY_LEN, wait_reply)) != 0)
 		goto out;
 
 	ps->ps_destroy_msg(pm);
-	*resid = 0;
+	if (resid)
+		*resid = 0;
 	error = 0;
 
 out:
@@ -3418,9 +3524,13 @@ perfuse_node_listextattr(struct puffs_usermount *pu, puffs_cookie_t opc,
 	struct fuse_getxattr_out *fgo;
 	struct fuse_out_header *foh;
 	char *np;
-	size_t len, puffs_len;
+	size_t len, puffs_len, i, attrlen, outlen;
 	int error;
 	
+	/* system namespace attrs are not accessible to non root users */
+	if (attrns == EXTATTR_NAMESPACE_SYSTEM && !puffs_cred_isjuggernaut(pcr))
+		return EPERM;
+
 	node_ref(opc);
 
 	ps = puffs_getspecific(pu);
@@ -3460,28 +3570,44 @@ perfuse_node_listextattr(struct puffs_usermount *pu, puffs_cookie_t opc,
 	np = (char *)(void *)(foh + 1);
 	puffs_len = foh->len - sizeof(*foh);
 
-	if (attrs != NULL) {
-#ifdef PUFFS_EXTATTR_LIST_LENPREFIX
-		/* 
-		 * Convert the FUSE reply to length prefixed strings
-		 * if this is what the kernel wants.
-		 */
-		if (flag & PUFFS_EXTATTR_LIST_LENPREFIX) {
-			size_t i, attrlen;
-
-			for (i = 0; i < puffs_len; i += attrlen + 1) {
-				attrlen = strlen(np + i);
-				(void)memmove(np + i + 1, np + i, attrlen);
-				*(np + i) = (uint8_t)attrlen;
-			}	
-		}
-#endif /* PUFFS_EXTATTR_LIST_LENPREFIX */
-		(void)memcpy(attrs, np, puffs_len);
-		*resid -= puffs_len;
-	}
-
-	if (attrsize != NULL) 
+	if (attrsize != NULL)
 		*attrsize = puffs_len;
+
+	if (attrs != NULL) {
+		if (*resid < puffs_len) {
+			error = ERANGE;
+			ps->ps_destroy_msg(pm);
+			goto out;
+		}
+
+		outlen = 0;
+	
+		for (i = 0; i < puffs_len; i += attrlen + 1) {
+			attrlen = strlen(np + i);
+
+			/*
+			 * Filter attributes per namespace
+			 */
+			if (!perfuse_ns_match(attrns, np + i))
+				continue;
+
+#ifdef PUFFS_EXTATTR_LIST_LENPREFIX
+			/* 
+			 * Convert the FUSE reply to length prefixed strings
+			 * if this is what the kernel wants.
+			 */
+			if (flag & PUFFS_EXTATTR_LIST_LENPREFIX) {
+				(void)memcpy(attrs + outlen + 1,
+					     np + i, attrlen);
+				*(attrs + outlen) = (uint8_t)attrlen;
+			} else 
+#endif /* PUFFS_EXTATTR_LIST_LENPREFIX */
+			(void)memcpy(attrs + outlen, np + i, attrlen + 1);
+			outlen += attrlen + 1;
+		}	
+
+		*resid -= outlen;
+	}
 
 	ps->ps_destroy_msg(pm);
 	error = 0;
@@ -3502,6 +3628,10 @@ perfuse_node_deleteextattr(struct puffs_usermount *pu, puffs_cookie_t opc,
 	char *np;
 	int error;
 	
+	/* system namespace attrs are not accessible to non root users */
+	if (attrns == EXTATTR_NAMESPACE_SYSTEM && !puffs_cred_isjuggernaut(pcr))
+		return EPERM;
+
 	node_ref(opc);
 
 	ps = puffs_getspecific(pu);
@@ -3513,9 +3643,50 @@ perfuse_node_deleteextattr(struct puffs_usermount *pu, puffs_cookie_t opc,
 	(void)strlcpy(np, attrname, attrnamelen);
 	
 	error = xchg_msg(pu, opc, pm, NO_PAYLOAD_REPLY_LEN, wait_reply);
-	
+	if (error != 0)
+		goto out;
+		
 	ps->ps_destroy_msg(pm);
 
+out:
+	node_rele(opc);
+	return error;
+}
+
+int
+perfuse_node_fallocate(struct puffs_usermount *pu, puffs_cookie_t opc,
+	off_t off, off_t len)
+{
+	struct perfuse_state *ps;
+	perfuse_msg_t *pm;
+	struct fuse_fallocate_in *fai;
+	int error;
+	
+	ps = puffs_getspecific(pu);
+	if (ps->ps_flags & PS_NO_FALLOCATE)
+		return EOPNOTSUPP;
+
+	node_ref(opc);
+
+	pm = ps->ps_new_msg(pu, opc, FUSE_FALLOCATE, sizeof(*fai), NULL);
+
+	fai = GET_INPAYLOAD(ps, pm, fuse_fallocate_in);
+	fai->fh = perfuse_get_fh(opc, FWRITE);
+	fai->offset = off;
+	fai->length = len;
+	fai->mode = 0;
+		
+	error = xchg_msg(pu, opc, pm, NO_PAYLOAD_REPLY_LEN, wait_reply);
+	if (error == EOPNOTSUPP || error == ENOSYS) {
+		ps->ps_flags |= PS_NO_FALLOCATE;
+		error = EOPNOTSUPP;
+	}
+	if (error != 0)
+		goto out;
+		
+	ps->ps_destroy_msg(pm);
+
+out:
 	node_rele(opc);
 	return error;
 }

@@ -1,4 +1,4 @@
-/*	$NetBSD: if_el.c,v 1.89 2012/10/27 17:18:24 chs Exp $	*/
+/*	$NetBSD: if_el.c,v 1.91 2015/04/13 16:33:24 riastradh Exp $	*/
 
 /*
  * Copyright (c) 1994, Matthew E. Kimmel.  Permission is hereby granted
@@ -19,7 +19,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_el.c,v 1.89 2012/10/27 17:18:24 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_el.c,v 1.91 2015/04/13 16:33:24 riastradh Exp $");
 
 #include "opt_inet.h"
 
@@ -31,7 +31,7 @@ __KERNEL_RCSID(0, "$NetBSD: if_el.c,v 1.89 2012/10/27 17:18:24 chs Exp $");
 #include <sys/socket.h>
 #include <sys/syslog.h>
 #include <sys/device.h>
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 
 #include <net/if.h>
 #include <net/if_dl.h>
@@ -255,7 +255,7 @@ elattach(device_t parent, device_t self, void *aux)
 
 	DPRINTF(("Attaching to random...\n"));
 	rnd_attach_source(&sc->rnd_source, device_xname(sc->sc_dev),
-			  RND_TYPE_NET, 0);
+			  RND_TYPE_NET, RND_FLAG_DEFAULT);
 
 	DPRINTF(("elattach() finished.\n"));
 }

@@ -1,4 +1,4 @@
-/* $NetBSD: athflash.c,v 1.6 2012/10/27 17:18:02 chs Exp $ */
+/* $NetBSD: athflash.c,v 1.9 2015/06/09 22:50:50 matt Exp $ */
 
 /*
  * Copyright (c) 2006 Urbana-Champaign Independent Media Center.
@@ -82,7 +82,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: athflash.c,v 1.6 2012/10/27 17:18:02 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: athflash.c,v 1.9 2015/06/09 22:50:50 matt Exp $");
 
 #include <sys/param.h>
 #include <sys/conf.h>
@@ -134,8 +134,18 @@ dev_type_read(flashread);
 dev_type_write(flashwrite);
 
 const struct cdevsw athflash_cdevsw = {
-	flashopen, flashclose, flashread, flashwrite, noioctl,
-	nostop, notty, nopoll, nommap, nokqfilter,
+	.d_open = flashopen,
+	.d_close = flashclose,
+	.d_read = flashread,
+	.d_write = flashwrite,
+	.d_ioctl = noioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = 0
 };
 
 static struct {
@@ -308,8 +318,6 @@ int
 flashwrite(dev_t dev, struct uio *uio, int flag)
 {
 	struct flash_softc	*sc;
-	bus_space_tag_t		iot;
-	bus_space_handle_t	ioh;
 	bus_size_t		off;
 	int			stat;
 	int			error;
@@ -323,9 +331,6 @@ flashwrite(dev_t dev, struct uio *uio, int flag)
 	if (uio->uio_resid % sc->sc_sector_size)
 		return EINVAL;
 
-	iot = sc->sc_iot;
-	ioh = sc->sc_ioh;
-	
 	for (off = uio->uio_offset;
 	     uio->uio_resid > 0;
 	     off += sc->sc_sector_size) {

@@ -1,4 +1,4 @@
-/*	$NetBSD: ip_nat.c,v 1.10 2013/09/14 11:51:47 martin Exp $	*/
+/*	$NetBSD: ip_nat.c,v 1.15 2015/10/06 10:21:08 prlw1 Exp $	*/
 
 /*
  * Copyright (C) 2012 by Darren Reed.
@@ -113,7 +113,7 @@ extern struct ifnet vpnif;
 #if !defined(lint)
 #if defined(__NetBSD__)
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ip_nat.c,v 1.10 2013/09/14 11:51:47 martin Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ip_nat.c,v 1.15 2015/10/06 10:21:08 prlw1 Exp $");
 #else
 static const char sccsid[] = "@(#)ip_nat.c	1.11 6/5/96 (C) 1995 Darren Reed";
 static const char rcsid[] = "@(#)Id: ip_nat.c,v 1.1.1.2 2012/07/22 13:45:27 darrenr Exp";
@@ -1227,11 +1227,11 @@ ipf_nat_ioctl(ipf_main_softc_t *softc, void *data, ioctlcmd_t cmd, int mode,
 			switch (nl.nl_v)
 			{
 			case 4 :
-				ptr = ipf_nat_lookupredir(&nl);
+				ptr = ipf_nat_lookupredir(softc, &nl);
 				break;
 #ifdef USE_INET6
 			case 6 :
-				ptr = ipf_nat6_lookupredir(&nl);
+				ptr = ipf_nat6_lookupredir(softc, &nl);
 				break;
 #endif
 			default:
@@ -2894,10 +2894,11 @@ ipf_nat_newrdr(fr_info_t *fin, nat_t *nat, natinfo_t *ni)
 	 */
 	if (np->in_flags & IPN_SPLIT) {
 		in.s_addr = np->in_dnip;
+		inb.s_addr = htonl(in.s_addr);
 
 		if ((np->in_flags & (IPN_ROUNDR|IPN_STICKY)) == IPN_STICKY) {
 			hm = ipf_nat_hostmap(softn, NULL, fin->fin_src,
-					     fin->fin_dst, in, (u_32_t)dport);
+					     fin->fin_dst, inb, (u_32_t)dport);
 			if (hm != NULL) {
 				in.s_addr = hm->hm_ndstip.s_addr;
 				move = 0;
@@ -3004,7 +3005,7 @@ ipf_nat_newrdr(fr_info_t *fin, nat_t *nat, natinfo_t *ni)
 	nat->nat_osrcip = fin->fin_src;
 	if ((nat->nat_hm == NULL) && ((np->in_flags & IPN_STICKY) != 0))
 		nat->nat_hm = ipf_nat_hostmap(softn, np, fin->fin_src,
-					      fin->fin_dst, in, (u_32_t)dport);
+					      fin->fin_dst, inb, (u_32_t)dport);
 
 	if (flags & IPN_TCPUDP) {
 		nat->nat_odport = dport;
@@ -3442,7 +3443,7 @@ ipf_nat_insert(ipf_main_softc_t *softc, ipf_nat_softc_t *softn, nat_t *nat)
 	}
 
 	ret = ipf_nat_hashtab_add(softc, softn, nat);
-	if (ret == -1)
+	if (ret != 0)
 		MUTEX_DESTROY(&nat->nat_lock);
 	return ret;
 }
@@ -4080,7 +4081,7 @@ ipf_nat_inlookup(fr_info_t *fin, u_int flags, u_int p, struct in_addr src,
 					continue;
 
 			} else if (p == IPPROTO_ICMP) {
-				if (nat->nat_osport != dport) {
+				if (nat->nat_oicmpid != dport) {
 					continue;
 				}
 			}
@@ -4105,7 +4106,7 @@ ipf_nat_inlookup(fr_info_t *fin, u_int flags, u_int p, struct in_addr src,
 					continue;
 
 			} else if (p == IPPROTO_ICMP) {
-				if (nat->nat_osport != dport) {
+				if (nat->nat_nicmpid != dport) {
 					continue;
 				}
 			}
@@ -4407,7 +4408,7 @@ ipf_nat_outlookup(fr_info_t *fin, u_int flags, u_int p, struct in_addr src,
 					continue;
 
 			} else if (p == IPPROTO_ICMP) {
-				if (nat->nat_osport != dport) {
+				if (nat->nat_nicmpid != dport) {
 					continue;
 				}
 			}
@@ -4427,7 +4428,7 @@ ipf_nat_outlookup(fr_info_t *fin, u_int flags, u_int p, struct in_addr src,
 					continue;
 
 			} else if (p == IPPROTO_ICMP) {
-				if (nat->nat_osport != dport) {
+				if (nat->nat_oicmpid != dport) {
 					continue;
 				}
 			}
@@ -4557,8 +4558,9 @@ find_out_wild_ports:
 /* Function:    ipf_nat_lookupredir                                         */
 /* Returns:     nat_t* - NULL == no match,                                  */
 /*                       else pointer to matching NAT entry                 */
-/* Parameters:  np(I) - pointer to description of packet to find NAT table  */
-/*                      entry for.                                          */
+/* Parameters:  softc(I) - pointer to soft context main structure           */
+/*              np(I)    - pointer to description of packet to find NAT     */
+/*                         table entry for.                                 */
 /*                                                                          */
 /* Lookup the NAT tables to search for a matching redirect                  */
 /* The contents of natlookup_t should imitate those found in a packet that  */
@@ -4573,12 +4575,13 @@ find_out_wild_ports:
 /*     nl_out* = destination information (translated)                       */
 /* ------------------------------------------------------------------------ */
 nat_t *
-ipf_nat_lookupredir(natlookup_t *np)
+ipf_nat_lookupredir(ipf_main_softc_t *softc, natlookup_t *np)
 {
 	fr_info_t fi;
 	nat_t *nat;
 
 	bzero((char *)&fi, sizeof(fi));
+	fi.fin_main_soft = softc;
 	if (np->nl_flags & IPN_IN) {
 		fi.fin_data[0] = ntohs(np->nl_realport);
 		fi.fin_data[1] = ntohs(np->nl_outport);
@@ -4817,7 +4820,6 @@ ipf_nat_checkout(fr_info_t *fin, u_32_t *passp)
 			nflags = IPN_UDP;
 			break;
 		case IPPROTO_ICMP :
-
 			/*
 			 * This is an incoming packet, so the destination is
 			 * the icmp_id and the source port equals 0
@@ -5184,9 +5186,18 @@ ipf_nat_out(fr_info_t *fin, nat_t *nat, int natadd, u_32_t nflags)
 			}
 		}
 
-		if ((nat->nat_nsport != 0) && (nflags & IPN_ICMPQUERY)) {
+		if ((nat->nat_oicmpid != 0) && (nflags & IPN_ICMPQUERY)) {
 			icmp = fin->fin_dp;
-			icmp->icmp_id = nat->nat_nicmpid;
+
+			switch (nat->nat_dir)
+			{
+			case NAT_OUTBOUND :
+				icmp->icmp_id = nat->nat_nicmpid;
+				break;
+			case NAT_INBOUND :
+				icmp->icmp_id = nat->nat_oicmpid;
+				break;
+			}
 		}
 
 		csump = ipf_nat_proto(fin, nat, nflags);
@@ -5652,10 +5663,18 @@ ipf_nat_in(fr_info_t *fin, nat_t *nat, int natadd, u_32_t nflags)
 		}
 
 
-		if ((nat->nat_odport != 0) && (nflags & IPN_ICMPQUERY)) {
+		if ((nat->nat_oicmpid != 0) && (nflags & IPN_ICMPQUERY)) {
 			icmp = fin->fin_dp;
 
-			icmp->icmp_id = nat->nat_nicmpid;
+			switch (nat->nat_dir)
+			{
+			case NAT_INBOUND :
+				icmp->icmp_id = nat->nat_nicmpid;
+				break;
+			case NAT_OUTBOUND :
+				icmp->icmp_id = nat->nat_oicmpid;
+				break;
+			}
 		}
 
 		csump = ipf_nat_proto(fin, nat, nflags);
@@ -7904,13 +7923,13 @@ ipf_nat_rehash(ipf_main_softc_t *softc, ipftuneable_t *t, ipftuneval_t *p)
 	 * the outbound lookup table and the hash chain length for each.
 	 */
 	KMALLOCS(newtab[0], nat_t **, newsize * sizeof(nat_t *));
-	if (newtab == NULL) {
+	if (newtab[0] == NULL) {
 		error = 60063;
 		goto badrehash;
 	}
 
 	KMALLOCS(newtab[1], nat_t **, newsize * sizeof(nat_t *));
-	if (newtab == NULL) {
+	if (newtab[1] == NULL) {
 		error = 60064;
 		goto badrehash;
 	}

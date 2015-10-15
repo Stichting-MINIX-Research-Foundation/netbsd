@@ -1,4 +1,4 @@
-/*	$NetBSD: uvm_page.c,v 1.183 2013/10/25 20:26:22 martin Exp $	*/
+/*	$NetBSD: uvm_page.c,v 1.187 2015/04/11 19:24:13 joerg Exp $	*/
 
 /*
  * Copyright (c) 1997 Charles D. Cranor and Washington University.
@@ -66,9 +66,10 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: uvm_page.c,v 1.183 2013/10/25 20:26:22 martin Exp $");
+__KERNEL_RCSID(0, "$NetBSD: uvm_page.c,v 1.187 2015/04/11 19:24:13 joerg Exp $");
 
 #include "opt_ddb.h"
+#include "opt_uvm.h"
 #include "opt_uvmhist.h"
 #include "opt_readahead.h"
 
@@ -107,7 +108,10 @@ bool vm_page_zero_enable = false;
 /*
  * number of pages per-CPU to reserve for the kernel.
  */
-int vm_page_reserve_kernel = 5;
+#ifndef	UVM_RESERVED_PAGES_PER_CPU
+#define	UVM_RESERVED_PAGES_PER_CPU	5
+#endif
+int vm_page_reserve_kernel = UVM_RESERVED_PAGES_PER_CPU;
 
 /*
  * physical memory size;
@@ -886,7 +890,7 @@ static inline int
 vm_physseg_find_bsearch(struct vm_physseg *segs, int nsegs, paddr_t pframe, int *offp)
 {
 	/* binary search for it */
-	u_int	start, len, try;
+	u_int	start, len, guess;
 
 	/*
 	 * if try is too large (thus target is less than try) we reduce
@@ -902,17 +906,17 @@ vm_physseg_find_bsearch(struct vm_physseg *segs, int nsegs, paddr_t pframe, int 
 	 */
 
 	for (start = 0, len = nsegs ; len != 0 ; len = len / 2) {
-		try = start + (len / 2);	/* try in the middle */
+		guess = start + (len / 2);	/* try in the middle */
 
 		/* start past our try? */
-		if (pframe >= segs[try].start) {
+		if (pframe >= segs[guess].start) {
 			/* was try correct? */
-			if (pframe < segs[try].end) {
+			if (pframe < segs[guess].end) {
 				if (offp)
-					*offp = pframe - segs[try].start;
-				return(try);            /* got it */
+					*offp = pframe - segs[guess].start;
+				return guess;            /* got it */
 			}
-			start = try + 1;	/* next time, start here */
+			start = guess + 1;	/* next time, start here */
 			len--;			/* "adjust" */
 		} else {
 			/*
@@ -1100,7 +1104,9 @@ attachrnd:
 	 * Attach RNG source for this CPU's VM events
 	 */
         rnd_attach_source(&uvm.cpus[cpu_index(ci)]->rs,
-			  ci->ci_data.cpu_name, RND_TYPE_VM, 0);
+			  ci->ci_data.cpu_name, RND_TYPE_VM,
+			  RND_FLAG_COLLECT_TIME|RND_FLAG_COLLECT_VALUE|
+			  RND_FLAG_ESTIMATE_VALUE);
 
 }
 
@@ -1684,15 +1690,10 @@ uvm_page_unbusy(struct vm_page **pgs, int npgs)
 void
 uvm_page_own(struct vm_page *pg, const char *tag)
 {
-	struct uvm_object *uobj;
-	struct vm_anon *anon;
 
 	KASSERT((pg->flags & (PG_PAGEOUT|PG_RELEASED)) == 0);
-
-	uobj = pg->uobject;
-	anon = pg->uanon;
-	KASSERT(uvm_page_locked_p(pg));
 	KASSERT((pg->flags & PG_WANTED) == 0);
+	KASSERT(uvm_page_locked_p(pg));
 
 	/* gain ownership? */
 	if (tag) {
@@ -1703,8 +1704,8 @@ uvm_page_own(struct vm_page *pg, const char *tag)
 			    pg->owner, pg->owner_tag);
 			panic("uvm_page_own");
 		}
-		pg->owner = (curproc) ? curproc->p_pid :  (pid_t) -1;
-		pg->lowner = (curlwp) ? curlwp->l_lid :  (lwpid_t) -1;
+		pg->owner = curproc->p_pid;
+		pg->lowner = curlwp->l_lid;
 		pg->owner_tag = tag;
 		return;
 	}

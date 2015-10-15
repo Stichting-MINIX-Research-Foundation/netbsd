@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.4 2010/12/05 16:27:42 pooka Exp $
+#	$NetBSD: Makefile,v 1.6 2014/08/25 18:44:02 pooka Exp $
 #
 
 .include "${.CURDIR}/../Makefile.rumpkerncomp"

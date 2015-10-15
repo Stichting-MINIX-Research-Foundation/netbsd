@@ -1,4 +1,4 @@
-/*	$NetBSD: openpam.h,v 1.5 2013/04/06 02:20:30 christos Exp $	*/
+/*	$NetBSD: openpam.h,v 1.7 2014/10/24 18:17:56 christos Exp $	*/
 
 /*-
  * Copyright (c) 2002-2003 Networks Associates Technology, Inc.
@@ -34,7 +34,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * Id: openpam.h 605 2012-04-20 11:05:10Z des 
+ * Id: openpam.h 648 2013-03-05 17:54:27Z des 
  */
 
 #ifndef SECURITY_OPENPAM_H_INCLUDED

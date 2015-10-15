@@ -1,6 +1,6 @@
 /* Generate a core file for the inferior process.
 
-   Copyright (C) 2001-2013 Free Software Foundation, Inc.
+   Copyright (C) 2001-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -29,11 +29,11 @@
 #include "completer.h"
 #include "gcore.h"
 #include "cli/cli-decode.h"
-#include "gdb_assert.h"
 #include <fcntl.h>
 #include "regcache.h"
 #include "regset.h"
 #include "gdb_bfd.h"
+#include "readline/tilde.h"
 
 /* The largest amount of memory to read from the target at once.  We
    must throttle it to limit the amount of memory used by GDB during
@@ -49,7 +49,7 @@ static int gcore_memory_sections (bfd *);
    Open a new bfd core file for output, and return the handle.  */
 
 bfd *
-create_gcore_bfd (char *filename)
+create_gcore_bfd (const char *filename)
 {
   bfd *obfd = gdb_bfd_openw (filename, default_gcore_target ());
 
@@ -60,13 +60,12 @@ create_gcore_bfd (char *filename)
   return obfd;
 }
 
-/* write_gcore_file -- helper for gcore_command (exported).
-   Compose and write the corefile data to the core file.  */
+/* write_gcore_file_1 -- do the actual work of write_gcore_file.  */
 
-
-void
-write_gcore_file (bfd *obfd)
+static void
+write_gcore_file_1 (bfd *obfd)
 {
+  struct cleanup *cleanup;
   void *note_data = NULL;
   int note_size = 0;
   asection *note_sec = NULL;
@@ -79,6 +78,8 @@ write_gcore_file (bfd *obfd)
     note_data = target_make_corefile_notes (obfd, &note_size);
   else
     note_data = gdbarch_make_corefile_notes (target_gdbarch (), obfd, &note_size);
+
+  cleanup = make_cleanup (xfree, note_data);
 
   if (note_data == NULL || note_size == 0)
     error (_("Target does not support core file generation."));
@@ -103,6 +104,27 @@ write_gcore_file (bfd *obfd)
   /* Write out the contents of the note section.  */
   if (!bfd_set_section_contents (obfd, note_sec, note_data, 0, note_size))
     warning (_("writing note section (%s)"), bfd_errmsg (bfd_get_error ()));
+
+  do_cleanups (cleanup);
+}
+
+/* write_gcore_file -- helper for gcore_command (exported).
+   Compose and write the corefile data to the core file.  */
+
+void
+write_gcore_file (bfd *obfd)
+{
+  volatile struct gdb_exception except;
+
+  target_prepare_to_generate_core ();
+
+  TRY_CATCH (except, RETURN_MASK_ALL)
+    write_gcore_file_1 (obfd);
+
+  target_done_generating_core ();
+
+  if (except.reason < 0)
+    throw_exception (except);
 }
 
 static void
@@ -121,8 +143,9 @@ do_bfd_delete_cleanup (void *arg)
 static void
 gcore_command (char *args, int from_tty)
 {
-  struct cleanup *old_chain;
-  char *corefilename, corefilename_buffer[40];
+  struct cleanup *filename_chain;
+  struct cleanup *bfd_chain;
+  char *corefilename;
   bfd *obfd;
 
   /* No use generating a corefile without a target process.  */
@@ -130,14 +153,13 @@ gcore_command (char *args, int from_tty)
     noprocess ();
 
   if (args && *args)
-    corefilename = args;
+    corefilename = tilde_expand (args);
   else
     {
       /* Default corefile name is "core.PID".  */
-      xsnprintf (corefilename_buffer, sizeof (corefilename_buffer),
-		 "core.%d", PIDGET (inferior_ptid));
-      corefilename = corefilename_buffer;
+      corefilename = xstrprintf ("core.%d", ptid_get_pid (inferior_ptid));
     }
+  filename_chain = make_cleanup (xfree, corefilename);
 
   if (info_verbose)
     fprintf_filtered (gdb_stdout,
@@ -147,16 +169,17 @@ gcore_command (char *args, int from_tty)
   obfd = create_gcore_bfd (corefilename);
 
   /* Need a cleanup that will close and delete the file.  */
-  old_chain = make_cleanup (do_bfd_delete_cleanup, obfd);
+  bfd_chain = make_cleanup (do_bfd_delete_cleanup, obfd);
 
   /* Call worker function.  */
   write_gcore_file (obfd);
 
   /* Succeeded.  */
-  fprintf_filtered (gdb_stdout, "Saved corefile %s\n", corefilename);
-
-  discard_cleanups (old_chain);
+  discard_cleanups (bfd_chain);
   gdb_bfd_unref (obfd);
+
+  fprintf_filtered (gdb_stdout, "Saved corefile %s\n", corefilename);
+  do_cleanups (filename_chain);
 }
 
 static unsigned long
@@ -266,13 +289,13 @@ call_target_sbrk (int sbrk_arg)
   struct value *sbrk_fn, *ret;
   bfd_vma tmp;
 
-  if (lookup_minimal_symbol ("sbrk", NULL, NULL) != NULL)
+  if (lookup_minimal_symbol ("sbrk", NULL, NULL).minsym != NULL)
     {
       sbrk_fn = find_function_in_inferior ("sbrk", &sbrk_objf);
       if (sbrk_fn == NULL)
 	return (bfd_vma) 0;
     }
-  else if (lookup_minimal_symbol ("_sbrk", NULL, NULL) != NULL)
+  else if (lookup_minimal_symbol ("_sbrk", NULL, NULL).minsym != NULL)
     {
       sbrk_fn = find_function_in_inferior ("_sbrk", &sbrk_objf);
       if (sbrk_fn == NULL)
@@ -428,8 +451,9 @@ gcore_create_callback (CORE_ADDR vaddr, unsigned long size, int read,
 
 	     This BFD was synthesized from reading target memory,
 	     we don't want to omit that.  */
-	  if (((vaddr >= start && vaddr + size <= end)
-	       || (start >= vaddr && end <= vaddr + size))
+	  if (objfile->separate_debug_objfile_backlink == NULL
+	      && ((vaddr >= start && vaddr + size <= end)
+	          || (start >= vaddr && end <= vaddr + size))
 	      && !(bfd_get_file_flags (abfd) & BFD_IN_MEMORY))
 	    {
 	      flags &= ~(SEC_LOAD | SEC_HAS_CONTENTS);
@@ -468,8 +492,9 @@ gcore_create_callback (CORE_ADDR vaddr, unsigned long size, int read,
   return 0;
 }
 
-static int
-objfile_find_memory_regions (find_memory_region_ftype func, void *obfd)
+int
+objfile_find_memory_regions (struct target_ops *self,
+			     find_memory_region_ftype func, void *obfd)
 {
   /* Use objfile data to create memory sections.  */
   struct objfile *objfile;
@@ -604,5 +629,4 @@ Save a core file with the current state of the debugged process.\n\
 Argument is optional filename.  Default filename is 'core.<process_id>'."));
 
   add_com_alias ("gcore", "generate-core-file", class_files, 1);
-  exec_set_find_memory_regions (objfile_find_memory_regions);
 }

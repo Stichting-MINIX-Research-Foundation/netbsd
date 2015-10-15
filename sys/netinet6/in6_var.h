@@ -1,4 +1,4 @@
-/*	$NetBSD: in6_var.h,v 1.66 2012/10/11 20:05:50 christos Exp $	*/
+/*	$NetBSD: in6_var.h,v 1.74 2015/09/06 06:01:01 dholland Exp $	*/
 /*	$KAME: in6_var.h,v 1.81 2002/06/08 11:16:51 itojun Exp $	*/
 
 /*
@@ -65,6 +65,7 @@
 #define _NETINET6_IN6_VAR_H_
 
 #include <sys/callout.h>
+#include <sys/ioccom.h>
 
 /*
  * Interface address, Internet version.  One of these structures
@@ -98,6 +99,7 @@ struct in6_ifextra {
 	int ndefrouters;
 };
 
+LIST_HEAD(in6_multihead, in6_multi);
 struct	in6_ifaddr {
 	struct	ifaddr ia_ifa;		/* protocol-independent info */
 #define	ia_ifp		ia_ifa.ifa_ifp
@@ -108,7 +110,7 @@ struct	in6_ifaddr {
 	struct	sockaddr_in6 ia_prefixmask; /* prefix mask */
 	u_int32_t ia_plen;		/* prefix length */
 	struct	in6_ifaddr *ia_next;	/* next in6 list of IP6 addresses */
-	LIST_HEAD(in6_multihead, in6_multi) ia6_multiaddrs;
+	struct	in6_multihead ia6_multiaddrs;
 					/* list of multicast addresses */
 	int	ia6_flags;
 
@@ -479,6 +481,11 @@ struct	in6_rrenumreq {
 #endif
 
 #ifdef _KERNEL
+
+#include <net/pktqueue.h>
+
+extern pktqueue_t *ip6_pktq;
+
 MALLOC_DECLARE(M_IP6OPT);
 
 extern struct in6_ifaddr *in6_ifaddr;
@@ -489,10 +496,10 @@ do {								\
 		((struct in6_ifextra *)((ifp)->if_afdata[AF_INET6]))->in6_ifstat->tag++; \
 } while (/*CONSTCOND*/ 0)
 
-extern struct ifqueue ip6intrq;		/* IP6 packet input queue */
 extern const struct in6_addr zeroin6_addr;
 extern const u_char inet6ctlerrmap[];
 extern unsigned long in6_maxmtu;
+extern bool in6_present;
 
 /*
  * Macro for finding the internet address structure (in6_ifaddr) corresponding
@@ -675,12 +682,10 @@ struct in6_multi_mship *in6_joingroup(struct ifnet *, struct in6_addr *,
 	int *, int);
 int	in6_leavegroup(struct in6_multi_mship *);
 int	in6_mask2len(struct in6_addr *, u_char *);
-int	in6_control(struct socket *, u_long, void *, struct ifnet *,
-	struct lwp *);
+int	in6_control(struct socket *, u_long, void *, struct ifnet *);
 int	in6_update_ifa(struct ifnet *, struct in6_aliasreq *,
 	struct in6_ifaddr *, int);
 void	in6_purgeaddr(struct ifaddr *);
-int	in6if_do_dad(struct ifnet *);
 void	in6_purgeif(struct ifnet *);
 void	in6_savemkludge(struct in6_ifaddr *);
 void	in6_setmaxmtu  (void);
@@ -688,13 +693,11 @@ int	in6_if2idlen  (struct ifnet *);
 void	*in6_domifattach(struct ifnet *);
 void	in6_domifdetach(struct ifnet *, void *);
 void	in6_restoremkludge(struct in6_ifaddr *, struct ifnet *);
-void	in6_ifremloop(struct ifaddr *);
-void	in6_ifaddloop(struct ifaddr *);
+void	in6_ifremlocal(struct ifaddr *);
+void	in6_ifaddlocal(struct ifaddr *);
 void	in6_createmkludge(struct ifnet *);
 void	in6_purgemkludge(struct ifnet *);
 struct in6_ifaddr *in6ifa_ifpforlinklocal(const struct ifnet *, int);
-struct in6_ifaddr *in6ifa_ifplocaladdr(const struct ifnet *,
-    const struct in6_addr *);
 struct in6_ifaddr *in6ifa_ifpwithaddr(const struct ifnet *,
     const struct in6_addr *);
 char	*ip6_sprintf(const struct in6_addr *);

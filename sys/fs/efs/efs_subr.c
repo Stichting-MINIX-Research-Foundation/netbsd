@@ -1,4 +1,4 @@
-/*	$NetBSD: efs_subr.c,v 1.10 2013/10/30 08:27:01 mrg Exp $	*/
+/*	$NetBSD: efs_subr.c,v 1.12 2015/09/26 12:16:28 maxv Exp $	*/
 
 /*
  * Copyright (c) 2006 Stephen M. Rumble <rumble@ephemeral.org>
@@ -17,7 +17,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: efs_subr.c,v 1.10 2013/10/30 08:27:01 mrg Exp $");
+__KERNEL_RCSID(0, "$NetBSD: efs_subr.c,v 1.12 2015/09/26 12:16:28 maxv Exp $");
 
 #include <sys/param.h>
 #include <sys/kauth.h>
@@ -136,7 +136,7 @@ efs_locate_inode(ino_t ino, struct efs_sb *sbp, uint32_t *bboff, int *index)
 
 	cgisize = be16toh(sbp->sb_cgisize);
 	cgfsize = be32toh(sbp->sb_cgfsize);
-	firstcg = be32toh(sbp->sb_firstcg),
+	firstcg = be32toh(sbp->sb_firstcg);
 
 	*bboff = firstcg + ((ino / (cgisize * EFS_DINODES_PER_BB)) * cgfsize) +
 	    ((ino % (cgisize * EFS_DINODES_PER_BB)) / EFS_DINODES_PER_BB);
@@ -188,7 +188,7 @@ efs_bread(struct efs_mount *emp, uint32_t bboff, struct lwp *l, struct buf **bp)
 	KASSERT(bboff < EFS_SIZE_MAX);
 
 	return (bread(emp->em_devvp, (daddr_t)bboff * (EFS_BB_SIZE / DEV_BSIZE),
-	    EFS_BB_SIZE, (l == NULL) ? NOCRED : l->l_cred, 0, bp));
+	    EFS_BB_SIZE, 0, bp));
 }
 
 /*

@@ -1,4 +1,4 @@
-/*	$NetBSD: h_tp_basic_c.c,v 1.1.1.1 2011/09/11 17:20:55 christos Exp $	*/
+/*	$NetBSD: h_tp_basic_c.c,v 1.1.1.3 2014/12/10 03:34:49 christos Exp $	*/
 
 /*
  * Automated Testing Framework (atf)

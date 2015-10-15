@@ -1,5 +1,5 @@
 /*	$OpenBSD: via.c,v 1.8 2006/11/17 07:47:56 tom Exp $	*/
-/*	$NetBSD: via_padlock.c,v 1.21 2012/02/02 19:43:01 tls Exp $ */
+/*	$NetBSD: via_padlock.c,v 1.24 2015/04/13 16:03:51 riastradh Exp $ */
 
 /*-
  * Copyright (c) 2003 Jason Wright
@@ -20,7 +20,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: via_padlock.c,v 1.21 2012/02/02 19:43:01 tls Exp $");
+__KERNEL_RCSID(0, "$NetBSD: via_padlock.c,v 1.24 2015/04/13 16:03:51 riastradh Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -28,12 +28,10 @@ __KERNEL_RCSID(0, "$NetBSD: via_padlock.c,v 1.21 2012/02/02 19:43:01 tls Exp $")
 #include <sys/kernel.h>
 #include <sys/device.h>
 #include <sys/module.h>
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 #include <sys/malloc.h>
 #include <sys/mbuf.h>
 #include <sys/cpu.h>
-#include <sys/rnd.h>
-#include <sys/cprng.h>
 
 #include <x86/specialreg.h>
 
@@ -124,9 +122,8 @@ via_c3_rnd_init(struct via_padlock_softc *sc)
 	} else {
 	    sc->sc_rnd_hz = 10;
 	}
-	/* See hifn7751.c re use of RND_FLAG_NO_ESTIMATE */
 	rnd_attach_source(&sc->sc_rnd_source, device_xname(sc->sc_dev),
-			  RND_TYPE_RNG, RND_FLAG_NO_ESTIMATE);
+			  RND_TYPE_RNG, RND_FLAG_COLLECT_VALUE);
 	callout_init(&sc->sc_rnd_co, 0);
 	/* Call once to prime the pool early and set callout. */
 	via_c3_rnd(sc);
@@ -627,7 +624,7 @@ via_padlock_detach(device_t self, int flags)
 	struct via_padlock_softc *sc = device_private(self);
 
 	if (sc->sc_rnd_attached) {
-		callout_stop(&sc->sc_rnd_co);
+		callout_halt(&sc->sc_rnd_co, NULL);
 		callout_destroy(&sc->sc_rnd_co);
 		rnd_detach_source(&sc->sc_rnd_source);
 		sc->sc_rnd_attached = false;

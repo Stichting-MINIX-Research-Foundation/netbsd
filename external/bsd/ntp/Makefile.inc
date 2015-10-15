@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile.inc,v 1.12 2013/09/21 22:28:12 joerg Exp $
+#	$NetBSD: Makefile.inc,v 1.15 2014/12/23 19:11:14 christos Exp $
 
 .if !defined(NTP_MAKEFILE_INC)
 NTP_MAKEFILE_INC=yes
@@ -7,7 +7,6 @@ USE_FORT?= yes	# network client/server
 
 CWARNFLAGS+=	-Wno-missing-noreturn
 CWARNFLAGS.clang+=	-Wno-unneeded-internal-declaration \
-			-Wno-format-security \
 			-Wno-parentheses -Wno-constant-logical-operand \
 			-Wno-error=unused-const-variable
 
@@ -18,7 +17,7 @@ WARNS?=	4
 
 IDIST=		${NETBSDSRCDIR}/external/bsd/ntp/dist
 NTP_SRCDIR=	${NETBSDSRCDIR}/external/bsd/ntp
-NTP_HTMLDIR=	/usr/share/doc/html/ntp
+NTP_HTMLDIR=	/usr/share/doc/reference/ref8
 
 SYSCONFDIR=/etc
 LOCALSTATEDIR=/var
@@ -39,12 +38,12 @@ LIBPARSE!=	cd ${.CURDIR}/../../lib/libparse && ${PRINTOBJDIR}
 LDADD+=		-L${LIBNTP} -lntp -L${LIBOPTS} -lopts
 DPADD+=		${LIBNTP}/libntp.a ${LIBOPTS}/libopts.a
 
-.if (${MKCRYPTO} != "no")
+.if ${MKCRYPTO:Uno} != "no"
 LDADD+=		-lcrypto -lcrypt
 DPADD+=		${LIBCRYPTO} ${LIBCRYPT}
 .endif
 
-.if ("${MKMDNS}" != "no")
+.if ${MKMDNS:Uno} != "no"
 CPPFLAGS+=-DHAVE_DNSREGISTRATION=1
 LDADD+=-ldns_sd
 .endif
@@ -58,11 +57,11 @@ version.c: ${LIBNTP}/libntp.a ${.CURDIR}/../../scripts/mkver ${.CURDIR}/../../im
 
 .endif # defined(PROG)
 
-.if (${MKCRYPTO} != "no")
+.if ${MKCRYPTO:Uno} != "no"
 CPPFLAGS+=-DOPENSSL
 .endif
 
-.if ("${MKINET6}" != "no")
+.if ${MKINET6:Uno} != "no"
 CPPFLAGS+=-DWANT_IPV6
 .else
 CPPFLAGS+=-DISC_PLATFORM_NEEDIN6ADDRANY

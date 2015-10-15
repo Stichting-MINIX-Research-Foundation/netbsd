@@ -1,4 +1,4 @@
-/*	$NetBSD: rump.h,v 1.57 2013/07/16 20:17:06 pooka Exp $	*/
+/*	$NetBSD: rump.h,v 1.63 2014/06/13 15:45:02 pooka Exp $	*/
 
 /*
  * Copyright (c) 2007-2011 Antti Kantee.  All Rights Reserved.
@@ -57,7 +57,7 @@ typedef struct prop_dictionary *prop_dictionary_t;
 #endif
 #endif /* __NetBSD__ */
 
-#if defined(__sun__) && !defined(RUMP_REGISTER_T)
+#if (!defined(_KERNEL)) && (defined(__sun__) || defined(__ANDROID__)) && !defined(RUMP_REGISTER_T)
 #define RUMP_REGISTER_T long
 typedef RUMP_REGISTER_T register_t;
 #endif
@@ -71,7 +71,7 @@ enum rump_uiorw { RUMPUIO_READ, RUMPUIO_WRITE };
 enum rump_sigmodel {
 	RUMP_SIGMODEL_PANIC,
 	RUMP_SIGMODEL_IGNORE,
-	RUMP_SIGMODEL_HOST,
+	RUMP_SIGMODEL__HOST_NOTANYMORE,
 	RUMP_SIGMODEL_RAISE,
 	RUMP_SIGMODEL_RECORD
 };
@@ -100,9 +100,27 @@ enum rump_etfs_type {
 _BEGIN_DECLS
 #endif
 
+int	rump_getversion(void);
+int	rump_pub_getversion(void); /* compat */
+int	rump_nativeabi_p(void);
+
 int	rump_boot_gethowto(void);
 void	rump_boot_sethowto(int);
 void	rump_boot_setsigmodel(enum rump_sigmodel);
+
+struct rump_boot_etfs {
+	/* client initializes */
+	const char *eb_key;
+	const char *eb_hostpath;
+	enum rump_etfs_type eb_type;
+	uint64_t eb_begin;
+	uint64_t eb_size;
+
+	/* rump kernel initializes */
+	struct rump_boot_etfs *_eb_next;
+	int eb_status;
+};
+void	rump_boot_etfs_register(struct rump_boot_etfs *);
 
 void	rump_schedule(void);
 void	rump_unschedule(void);

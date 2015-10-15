@@ -1,4 +1,4 @@
-/*	$NetBSD: netsnmp_daemonize.c,v 1.1.1.2 2012/01/31 21:27:04 kardel Exp $	*/
+/*	$NetBSD: netsnmp_daemonize.c,v 1.4 2015/07/10 14:20:33 christos Exp $	*/
 
 /*
  * system.c
@@ -42,6 +42,7 @@ SOFTWARE.
 #undef PACKAGE_NAME
 #undef PACKAGE_STRING
 #undef PACKAGE_TARNAME
+#undef PACKAGE_URL
 #undef PACKAGE_VERSION
 #include <config.h>
 
@@ -193,8 +194,10 @@ int
 netsnmp_daemonize(int quit_immediately, int stderr_log)
 {
     int i = 0;
+    int saved_errno;
+
     DEBUGMSGT(("daemonize","deamonizing...\n"));
-#if HAVE_WORKING_FORK
+#ifdef HAVE_WORKING_FORK
     /*
      * Fork to return control to the invoking process and to
      * guarantee that we aren't a process group leader.
@@ -202,10 +205,11 @@ netsnmp_daemonize(int quit_immediately, int stderr_log)
     i = fork();
     if (i != 0) {
         /* Parent. */
+	saved_errno = errno;
         DEBUGMSGT(("daemonize","first fork returned %d.\n", i));
         if(i == -1) {
             snmp_log(LOG_ERR,"first fork failed (errno %d) in "
-                     "netsnmp_daemonize()\n", errno);
+                     "netsnmp_daemonize()\n", saved_errno);
             return -1;
         }
         if (quit_immediately) {
@@ -222,10 +226,11 @@ netsnmp_daemonize(int quit_immediately, int stderr_log)
          * Fork to let the process/session group leader exit.
          */
         if ((i = fork()) != 0) {
+	    saved_errno = errno;
             DEBUGMSGT(("daemonize","second fork returned %d.\n", i));
             if(i == -1) {
                 snmp_log(LOG_ERR,"second fork failed (errno %d) in "
-                         "netsnmp_daemonize()\n", errno);
+                         "netsnmp_daemonize()\n", saved_errno);
             }
             /* Parent. */
             exit(0);

@@ -1,4 +1,4 @@
-/*	$NetBSD: mmemcard.c,v 1.20 2010/10/17 14:17:49 tsutsui Exp $	*/
+/*	$NetBSD: mmemcard.c,v 1.26 2015/04/26 15:15:19 mlelstv Exp $	*/
 
 /*-
  * Copyright (c) 2002 The NetBSD Foundation, Inc.
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: mmemcard.c,v 1.20 2010/10/17 14:17:49 tsutsui Exp $");
+__KERNEL_RCSID(0, "$NetBSD: mmemcard.c,v 1.26 2015/04/26 15:15:19 mlelstv Exp $");
 
 #include <sys/param.h>
 #include <sys/buf.h>
@@ -189,19 +189,37 @@ dev_type_ioctl(mmemioctl);
 dev_type_strategy(mmemstrategy);
 
 const struct bdevsw mmem_bdevsw = {
-	mmemopen, mmemclose, mmemstrategy, mmemioctl, nodump,
-	nosize, D_DISK
+	.d_open = mmemopen,
+	.d_close = mmemclose,
+	.d_strategy = mmemstrategy,
+	.d_ioctl = mmemioctl,
+	.d_dump = nodump,
+	.d_psize = nosize,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
 const struct cdevsw mmem_cdevsw = {
-	mmemopen, mmemclose, mmemread, mmemwrite, mmemioctl,
-	nostop, notty, nopoll, nommap, nokqfilter, D_DISK
+	.d_open = mmemopen,
+	.d_close = mmemclose,
+	.d_read = mmemread,
+	.d_write = mmemwrite,
+	.d_ioctl = mmemioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
 CFATTACH_DECL_NEW(mmem, sizeof(struct mmem_softc),
     mmemmatch, mmemattach, mmemdetach, NULL);
 
-struct dkdriver mmemdkdriver = { mmemstrategy };
+struct dkdriver mmemdkdriver = {
+	.d_strategy = mmemstrategy
+};
 
 static int
 mmemmatch(device_t parent, cfdata_t cf, void *aux)
@@ -284,7 +302,8 @@ mmemattach(device_t parent, device_t self, void *aux)
 	    M_WAITOK|M_ZERO);
 
 	for (i = 0; i < sc->sc_npt; i++) {
-		sprintf(sc->sc_pt[i].pt_name, "%s.%d", device_xname(self), i);
+		snprintf(sc->sc_pt[i].pt_name, sizeof(sc->sc_pt[i].pt_name),
+		    "%s.%d", device_xname(self), i);
 	}
 
 	maple_set_callback(parent, sc->sc_unit, MAPLE_FN_MEMCARD,
@@ -364,7 +383,7 @@ mmem_defaultlabel(struct mmem_softc *sc, struct mmem_pt *pt,
 	memset(d, 0, sizeof *d);
 
 #if 0
-	d->d_type = DTYPE_FLOPPY;		/* XXX? */
+	d->d_type = DKTYPE_FLOPPY;		/* XXX? */
 #endif
 	strncpy(d->d_typename, sc->sc_devinfo->di_product_name,
 	    sizeof d->d_typename);

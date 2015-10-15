@@ -1,4 +1,3 @@
-
 /******************************************************************************
  *
  * Module Name: exoparg3 - AML execution - opcodes with 3 arguments
@@ -6,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -41,8 +40,6 @@
  * IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGES.
  */
-
-#define __EXOPARG3_C__
 
 #include "acpi.h"
 #include "accommon.h"
@@ -128,8 +125,18 @@ AcpiExOpcode_3A_0T_0R (
         /* Might return while OS is shutting down, just continue */
 
         ACPI_FREE (Fatal);
-        break;
+        goto Cleanup;
 
+    case AML_EXTERNAL_OP:
+        /*
+         * If the interpreter sees this opcode, just ignore it. The External
+         * op is intended for use by disassemblers in order to properly
+         * disassemble control method invocations. The opcode or group of
+         * opcodes should be surrounded by an "if (0)" clause to ensure that
+         * AML interpreters never see the opcode.
+         */
+        Status = AE_OK;
+        goto Cleanup;
 
     default:
 
@@ -177,9 +184,8 @@ AcpiExOpcode_3A_1T_1R (
     switch (WalkState->Opcode)
     {
     case AML_MID_OP:    /* Mid (Source[0], Index[1], Length[2], Result[3]) */
-
         /*
-         * Create the return object.  The Source operand is guaranteed to be
+         * Create the return object. The Source operand is guaranteed to be
          * either a String or a Buffer, so just use its type.
          */
         ReturnDesc = AcpiUtCreateInternalObject (
@@ -255,7 +261,7 @@ AcpiExOpcode_3A_1T_1R (
         {
             /* We have a buffer, copy the portion requested */
 
-            ACPI_MEMCPY (Buffer, Operand[0]->String.Pointer + Index,
+            memcpy (Buffer, Operand[0]->String.Pointer + Index,
                          Length);
         }
 
@@ -268,7 +274,6 @@ AcpiExOpcode_3A_1T_1R (
 
         ReturnDesc->Buffer.Flags |= AOPOBJ_DATA_VALID;
         break;
-
 
     default:
 
@@ -300,5 +305,3 @@ Cleanup:
     }
     return_ACPI_STATUS (Status);
 }
-
-

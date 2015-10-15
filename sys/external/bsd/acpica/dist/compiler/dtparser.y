@@ -6,7 +6,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -48,6 +48,13 @@
 #define _COMPONENT          DT_COMPILER
         ACPI_MODULE_NAME    ("dtparser")
 
+void *                      AslLocalAllocate (unsigned int Size);
+
+/* Bison/yacc configuration */
+
+#undef alloca
+#define alloca              AslLocalAllocate
+
 int                         DtParserlex (void);
 int                         DtParserparse (void);
 void                        DtParsererror (char const *msg);
@@ -58,11 +65,17 @@ UINT64                      DtParserResult; /* Expression return value */
 
 /* Bison/yacc configuration */
 
+#ifndef yytname
 #define yytname             DtParsername
+#endif
 #define YYDEBUG             1               /* Enable debug output */
 #define YYERROR_VERBOSE     1               /* Verbose error messages */
 #define YYFLAG              -32768
 
+/* Define YYMALLOC/YYFREE to prevent redefinition errors  */
+
+#define YYMALLOC            malloc
+#define YYFREE              free
 %}
 
 %union
@@ -158,15 +171,15 @@ Expression
 
       /* Default base for a non-prefixed integer is 16 */
 
-    | EXPOP_NUMBER                                  { UtStrtoul64 (DtParsertext, 16, &$$);}
+    | EXPOP_NUMBER                                  { stroul64 (DtParsertext, 16, &$$);}
 
       /* Standard hex number (0x1234) */
 
-    | EXPOP_HEX_NUMBER                              { UtStrtoul64 (DtParsertext, 16, &$$);}
+    | EXPOP_HEX_NUMBER                              { stroul64 (DtParsertext, 16, &$$);}
 
-      /* TBD: Decimal number with prefix (0d1234) - Not supported by UtStrtoul64 at this time */
+      /* TBD: Decimal number with prefix (0d1234) - Not supported by stroul64 at this time */
 
-    | EXPOP_DECIMAL_NUMBER                          { UtStrtoul64 (DtParsertext, 10, &$$);}
+    | EXPOP_DECIMAL_NUMBER                          { stroul64 (DtParsertext, 10, &$$);}
     ;
 %%
 

@@ -1,4 +1,4 @@
-/*  $NetBSD: perfuse.c,v 1.31 2012/09/10 13:56:18 manu Exp $ */
+/*  $NetBSD: perfuse.c,v 1.37 2015/06/19 17:33:20 christos Exp $ */
 
 /*-
  *  Copyright (c) 2010-2011 Emmanuel Dreyfus. All rights reserved.
@@ -391,6 +391,27 @@ perfuse_next_unique(struct puffs_usermount *pu)
 	return ps->ps_unique++;
 } 
 
+static void
+updatelimit(const char *func, int lim, const char *name)
+{
+	struct rlimit rl;
+
+	/* Try infinity but that will fail unless we are root */
+	rl.rlim_cur = RLIM_INFINITY;
+	rl.rlim_max = RLIM_INFINITY;
+	if (setrlimit(lim, &rl) != -1)
+		return;
+
+	/* Get and set to the maximum allowed */
+	if (getrlimit(lim, &rl) == -1)
+		DERR(EX_OSERR, "%s: getrlimit %s failed", func, name);
+
+	rl.rlim_cur = rl.rlim_max;
+	if (setrlimit(lim, &rl) == -1)
+		DERR(EX_OSERR, "%s: setrlimit %s to %ju failed", func,
+		    name, (uintmax_t)rl.rlim_cur);
+}
+
 struct puffs_usermount *
 perfuse_init(struct perfuse_callbacks *pc, struct perfuse_mount_info *pmi)
 {
@@ -402,23 +423,12 @@ perfuse_init(struct perfuse_callbacks *pc, struct perfuse_mount_info *pmi)
 	unsigned int puffs_flags;
 	struct puffs_node *pn_root;
 	struct puffs_pathobj *po_root;
-	struct rlimit rl;
 
 	/*
 	 * perfused can grow quite large, let assume there's enough ram ...
 	 */
-	rl.rlim_cur = RLIM_INFINITY;
-	rl.rlim_max = RLIM_INFINITY;
-
-	if (setrlimit(RLIMIT_DATA, &rl) < 0) {
-		DERR(EX_OSERR, "%s: setrlimit failed: %s", __func__,
-		    strerror(errno));
-	}
-
-	if (setrlimit(RLIMIT_AS, &rl) < 0) {
-		DERR(EX_OSERR, "%s: setrlimit failed: %s", __func__,
-		    strerror(errno));
-	}
+	updatelimit(__func__, RLIMIT_DATA, "RLIMIT_DATA");
+	updatelimit(__func__, RLIMIT_AS, "RLIMIT_AS");
 
 	ps = init_state();
 	ps->ps_owner_uid = pmi->pmi_uid;
@@ -471,11 +481,7 @@ perfuse_init(struct perfuse_callbacks *pc, struct perfuse_mount_info *pmi)
 	PUFFSOP_SET(pops, perfuse, node, getattr);
 	PUFFSOP_SET(pops, perfuse, node, setattr);
 	PUFFSOP_SET(pops, perfuse, node, poll);
-#if 0 
-	PUFFSOP_SET(pops, perfuse, node, mmap);
-#endif
 	PUFFSOP_SET(pops, perfuse, node, fsync);
-	PUFFSOP_SET(pops, perfuse, node, seek);
 	PUFFSOP_SET(pops, perfuse, node, remove);
 	PUFFSOP_SET(pops, perfuse, node, link);
 	PUFFSOP_SET(pops, perfuse, node, rename);
@@ -487,6 +493,7 @@ perfuse_init(struct perfuse_callbacks *pc, struct perfuse_mount_info *pmi)
 	PUFFSOP_SET(pops, perfuse, node, reclaim);
 	PUFFSOP_SET(pops, perfuse, node, inactive);
 	PUFFSOP_SET(pops, perfuse, node, print);
+	PUFFSOP_SET(pops, perfuse, node, pathconf);
 	PUFFSOP_SET(pops, perfuse, node, advlock);
 	PUFFSOP_SET(pops, perfuse, node, read);
 	PUFFSOP_SET(pops, perfuse, node, write);
@@ -503,6 +510,12 @@ perfuse_init(struct perfuse_callbacks *pc, struct perfuse_mount_info *pmi)
 #ifdef PUFFS_SETATTR_FAF
 	PUFFSOP_SET(pops, perfuse, node, write2);
 #endif /* PUFFS_SETATTR_FAF */
+#ifdef PUFFS_OPEN_IO_DIRECT 
+	PUFFSOP_SET(pops, perfuse, node, open2);
+#endif /* PUFFS_OPEN_IO_DIRECT */
+#ifdef PUFFS_HAVE_FALLOCATE
+	PUFFSOP_SET(pops, perfuse, node, fallocate);
+#endif /* PUFFS_HAVE_FALLOCATE */
 
 	/*
 	 * PUFFS_KFLAG_NOCACHE_NAME is required so that we can see changes
@@ -534,6 +547,15 @@ perfuse_init(struct perfuse_callbacks *pc, struct perfuse_mount_info *pmi)
 	 */
 #ifdef notyet
 	puffs_flags |= PUFFS_FLAG_IAONDEMAND;
+#endif
+
+	/*
+	 * FUSE filesystem do not expect [amc]time and size
+	 * updates to be sent by the kernel, they do the
+	 * updates on their own after other operations.
+	 */
+#ifdef PUFFS_KFLAG_NOFLUSH_META
+	puffs_flags |= PUFFS_KFLAG_NOFLUSH_META;
 #endif
 
 	if (perfuse_diagflags & PDF_PUFFS)

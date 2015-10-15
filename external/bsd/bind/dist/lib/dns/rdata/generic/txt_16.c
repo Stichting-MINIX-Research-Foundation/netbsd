@@ -1,7 +1,7 @@
-/*	$NetBSD: txt_16.c,v 1.4 2013/07/27 19:23:12 christos Exp $	*/
+/*	$NetBSD: txt_16.c,v 1.7 2015/07/08 17:28:59 christos Exp $	*/
 
 /*
- * Copyright (C) 2004, 2007-2009, 2012  Internet Systems Consortium, Inc. ("ISC")
+ * Copyright (C) 2004, 2007-2009, 2012, 2014  Internet Systems Consortium, Inc. ("ISC")
  * Copyright (C) 1998-2002  Internet Software Consortium.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
@@ -73,7 +73,7 @@ totext_txt(ARGS_TOTEXT) {
 	dns_rdata_toregion(rdata, &region);
 
 	while (region.length > 0) {
-		RETERR(txt_totext(&region, target));
+		RETERR(txt_totext(&region, ISC_TRUE, target));
 		if (region.length > 0)
 			RETERR(str_totext(" ", target));
 	}
@@ -112,7 +112,7 @@ towire_txt(ARGS_TOWIRE) {
 	if (region.length < rdata->length)
 		return (ISC_R_NOSPACE);
 
-	memcpy(region.base, rdata->data, rdata->length);
+	memmove(region.base, rdata->data, rdata->length);
 	isc_buffer_add(target, rdata->length);
 	return (ISC_R_SUCCESS);
 }
@@ -249,4 +249,59 @@ casecompare_txt(ARGS_COMPARE) {
 	return (compare_txt(rdata1, rdata2));
 }
 
+isc_result_t
+dns_rdata_txt_first(dns_rdata_txt_t *txt) {
+
+	REQUIRE(txt != NULL);
+	REQUIRE(txt->common.rdtype == 16);
+	REQUIRE(txt->txt != NULL || txt->txt_len == 0);
+
+	if (txt->txt_len == 0)
+		return (ISC_R_NOMORE);
+
+	txt->offset = 0;
+	return (ISC_R_SUCCESS);
+}
+
+isc_result_t
+dns_rdata_txt_next(dns_rdata_txt_t *txt) {
+	isc_region_t r;
+	isc_uint8_t length;
+
+	REQUIRE(txt != NULL);
+	REQUIRE(txt->common.rdtype == 16);
+	REQUIRE(txt->txt != NULL && txt->txt_len != 0);
+
+	INSIST(txt->offset + 1 <= txt->txt_len);
+	r.base = txt->txt + txt->offset;
+	r.length = txt->txt_len - txt->offset;
+	length = uint8_fromregion(&r);
+	INSIST(txt->offset + 1 + length <= txt->txt_len);
+	txt->offset = txt->offset + 1 + length;
+	if (txt->offset == txt->txt_len)
+		return (ISC_R_NOMORE);
+	return (ISC_R_SUCCESS);
+}
+
+isc_result_t
+dns_rdata_txt_current(dns_rdata_txt_t *txt, dns_rdata_txt_string_t *string) {
+	isc_region_t r;
+
+	REQUIRE(txt != NULL);
+	REQUIRE(string != NULL);
+	REQUIRE(txt->common.rdtype == 16);
+	REQUIRE(txt->txt != NULL);
+	REQUIRE(txt->offset < txt->txt_len);
+
+	INSIST(txt->offset + 1 <= txt->txt_len);
+	r.base = txt->txt + txt->offset;
+	r.length = txt->txt_len - txt->offset;
+
+	string->length = uint8_fromregion(&r);
+	isc_region_consume(&r, 1);
+	string->data = r.base;
+	INSIST(txt->offset + 1 + string->length <= txt->txt_len);
+
+	return (ISC_R_SUCCESS);
+}
 #endif	/* RDATA_GENERIC_TXT_16_C */

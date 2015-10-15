@@ -1,7 +1,7 @@
-/*	$NetBSD: openssldsa_link.c,v 1.6 2013/07/27 19:23:12 christos Exp $	*/
+/*	$NetBSD: openssldsa_link.c,v 1.10 2015/09/03 07:33:34 christos Exp $	*/
 
 /*
- * Portions Copyright (C) 2004-2009, 2011, 2012  Internet Systems Consortium, Inc. ("ISC")
+ * Portions Copyright (C) 2004-2009, 2011-2014  Internet Systems Consortium, Inc. ("ISC")
  * Portions Copyright (C) 1999-2002  Internet Software Consortium.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
@@ -30,8 +30,6 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
  * IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
-
-/* Id */
 
 #ifdef OPENSSL
 #ifndef USE_EVP
@@ -139,6 +137,7 @@ openssldsa_sign(dst_context_t *dctx, isc_buffer_t *sig) {
 	DSA *dsa = key->keydata.dsa;
 	isc_region_t r;
 	DSA_SIG *dsasig;
+	unsigned int klen;
 #if USE_EVP
 	EVP_MD_CTX *evp_md_ctx = dctx->ctxdata.evp_md_ctx;
 	EVP_PKEY *pkey;
@@ -190,6 +189,7 @@ openssldsa_sign(dst_context_t *dctx, isc_buffer_t *sig) {
 					       ISC_R_FAILURE));
 	}
 	free(sigbuf);
+
 #elif 0
 	/* Only use EVP for the Digest */
 	if (!EVP_DigestFinal_ex(evp_md_ctx, digest, &siglen)) {
@@ -211,11 +211,17 @@ openssldsa_sign(dst_context_t *dctx, isc_buffer_t *sig) {
 					       "DSA_do_sign",
 					       DST_R_SIGNFAILURE));
 #endif
-	*r.base++ = (key->key_size - 512)/64;
+
+	klen = (key->key_size - 512)/64;
+	if (klen > 255)
+		return (ISC_R_FAILURE);
+	*r.base = klen;
+	isc_region_consume(&r, 1);
+
 	BN_bn2bin_fixed(dsasig->r, r.base, ISC_SHA1_DIGESTLENGTH);
-	r.base += ISC_SHA1_DIGESTLENGTH;
+	isc_region_consume(&r, ISC_SHA1_DIGESTLENGTH);
 	BN_bn2bin_fixed(dsasig->s, r.base, ISC_SHA1_DIGESTLENGTH);
-	r.base += ISC_SHA1_DIGESTLENGTH;
+	isc_region_consume(&r, ISC_SHA1_DIGESTLENGTH);
 	DSA_SIG_free(dsasig);
 	isc_buffer_add(sig, ISC_SHA1_DIGESTLENGTH * 2 + 1);
 
@@ -448,15 +454,16 @@ openssldsa_todns(const dst_key_t *key, isc_buffer_t *data) {
 	if (r.length < (unsigned int) dnslen)
 		return (ISC_R_NOSPACE);
 
-	*r.base++ = t;
+	*r.base = t;
+	isc_region_consume(&r, 1);
 	BN_bn2bin_fixed(dsa->q, r.base, ISC_SHA1_DIGESTLENGTH);
-	r.base += ISC_SHA1_DIGESTLENGTH;
+	isc_region_consume(&r, ISC_SHA1_DIGESTLENGTH);
 	BN_bn2bin_fixed(dsa->p, r.base, key->key_size/8);
-	r.base += p_bytes;
+	isc_region_consume(&r, p_bytes);
 	BN_bn2bin_fixed(dsa->g, r.base, key->key_size/8);
-	r.base += p_bytes;
+	isc_region_consume(&r, p_bytes);
 	BN_bn2bin_fixed(dsa->pub_key, r.base, key->key_size/8);
-	r.base += p_bytes;
+	isc_region_consume(&r, p_bytes);
 
 	isc_buffer_add(data, dnslen);
 
@@ -481,29 +488,30 @@ openssldsa_fromdns(dst_key_t *key, isc_buffer_t *data) {
 		return (ISC_R_NOMEMORY);
 	dsa->flags &= ~DSA_FLAG_CACHE_MONT_P;
 
-	t = (unsigned int) *r.base++;
+	t = (unsigned int) *r.base;
+	isc_region_consume(&r, 1);
 	if (t > 8) {
 		DSA_free(dsa);
 		return (DST_R_INVALIDPUBLICKEY);
 	}
 	p_bytes = 64 + 8 * t;
 
-	if (r.length < 1 + ISC_SHA1_DIGESTLENGTH + 3 * p_bytes) {
+	if (r.length < ISC_SHA1_DIGESTLENGTH + 3 * p_bytes) {
 		DSA_free(dsa);
 		return (DST_R_INVALIDPUBLICKEY);
 	}
 
 	dsa->q = BN_bin2bn(r.base, ISC_SHA1_DIGESTLENGTH, NULL);
-	r.base += ISC_SHA1_DIGESTLENGTH;
+	isc_region_consume(&r, ISC_SHA1_DIGESTLENGTH);
 
 	dsa->p = BN_bin2bn(r.base, p_bytes, NULL);
-	r.base += p_bytes;
+	isc_region_consume(&r, p_bytes);
 
 	dsa->g = BN_bin2bn(r.base, p_bytes, NULL);
-	r.base += p_bytes;
+	isc_region_consume(&r, p_bytes);
 
 	dsa->pub_key = BN_bin2bn(r.base, p_bytes, NULL);
-	r.base += p_bytes;
+	isc_region_consume(&r, p_bytes);
 
 	key->key_size = p_bytes * 8;
 
@@ -524,6 +532,11 @@ openssldsa_tofile(const dst_key_t *key, const char *directory) {
 
 	if (key->keydata.dsa == NULL)
 		return (DST_R_NULLKEY);
+
+	if (key->external) {
+		priv.nelements = 0;
+		return (dst__privstruct_writefile(key, &priv, directory));
+	}
 
 	dsa = key->keydata.dsa;
 
@@ -570,11 +583,23 @@ openssldsa_parse(dst_key_t *key, isc_lex_t *lexer, dst_key_t *pub) {
 	isc_mem_t *mctx = key->mctx;
 #define DST_RET(a) {ret = a; goto err;}
 
-	UNUSED(pub);
 	/* read private key file */
 	ret = dst__privstruct_parse(key, DST_ALG_DSA, lexer, mctx, &priv);
 	if (ret != ISC_R_SUCCESS)
 		return (ret);
+
+	if (key->external) {
+		if (priv.nelements != 0)
+			DST_RET(DST_R_INVALIDPRIVATEKEY);
+		if (pub == NULL)
+			DST_RET(DST_R_INVALIDPRIVATEKEY);
+		key->keydata.pkey = pub->keydata.pkey;
+		pub->keydata.pkey = NULL;
+		key->key_size = pub->key_size;
+		dst__privstruct_free(&priv, mctx);
+		memset(&priv, 0, sizeof(priv));
+		return (ISC_R_SUCCESS);
+	}
 
 	dsa = DSA_new();
 	if (dsa == NULL)
@@ -582,7 +607,7 @@ openssldsa_parse(dst_key_t *key, isc_lex_t *lexer, dst_key_t *pub) {
 	dsa->flags &= ~DSA_FLAG_CACHE_MONT_P;
 	key->keydata.dsa = dsa;
 
-	for (i=0; i < priv.nelements; i++) {
+	for (i = 0; i < priv.nelements; i++) {
 		BIGNUM *bn;
 		bn = BN_bin2bn(priv.elements[i].data,
 			       priv.elements[i].length, NULL);
@@ -608,9 +633,8 @@ openssldsa_parse(dst_key_t *key, isc_lex_t *lexer, dst_key_t *pub) {
 		}
 	}
 	dst__privstruct_free(&priv, mctx);
-
+	memset(&priv, 0, sizeof(priv));
 	key->key_size = BN_num_bits(dsa->p);
-
 	return (ISC_R_SUCCESS);
 
  err:
@@ -622,6 +646,7 @@ openssldsa_parse(dst_key_t *key, isc_lex_t *lexer, dst_key_t *pub) {
 
 static dst_func_t openssldsa_functions = {
 	openssldsa_createctx,
+	NULL, /*%< createctx2 */
 	openssldsa_destroyctx,
 	openssldsa_adddata,
 	openssldsa_sign,

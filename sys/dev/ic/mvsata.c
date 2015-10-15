@@ -1,4 +1,4 @@
-/*	$NetBSD: mvsata.c,v 1.32 2013/09/01 11:14:46 kiyohara Exp $	*/
+/*	$NetBSD: mvsata.c,v 1.34 2015/01/02 19:42:07 christos Exp $	*/
 /*
  * Copyright (c) 2008 KIYOHARA Takashi
  * All rights reserved.
@@ -26,7 +26,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: mvsata.c,v 1.32 2013/09/01 11:14:46 kiyohara Exp $");
+__KERNEL_RCSID(0, "$NetBSD: mvsata.c,v 1.34 2015/01/02 19:42:07 christos Exp $");
 
 #include "opt_mvsata.h"
 
@@ -1223,7 +1223,7 @@ do_pio:
 		else
 			wdccommand(chp, 0, cmd, cyl,
 			    head, sect, nblks,
-			    (ata_bio->lp->d_type == DTYPE_ST506) ?
+			    (ata_bio->lp->d_type == DKTYPE_ST506) ?
 			    ata_bio->lp->d_precompcyl / 4 : 0);
 
 		/* start timeout machinery */
@@ -1519,7 +1519,7 @@ geometry:
 		goto multimode;
 	wdccommand(chp, 0, WDCC_IDP, ata_bio->lp->d_ncylinders,
 	    ata_bio->lp->d_ntracks - 1, 0, ata_bio->lp->d_nsectors,
-	    (ata_bio->lp->d_type == DTYPE_ST506) ?
+	    (ata_bio->lp->d_type == DKTYPE_ST506) ?
 	    ata_bio->lp->d_precompcyl / 4 : 0);
 	errstring = "geometry";
 	if (wdcwait(chp, WDCS_DRDY, WDCS_DRDY, ATA_DELAY, flags))
@@ -1694,7 +1694,7 @@ again:
 		ata_c->flags |= AT_TIMEOU;
 		goto out;
 	}
-	delay(10);	/* XXXXX: Delay more times. */
+	delay(20);	/* XXXXX: Delay more times. */
 	if (ata_c->flags & AT_READ) {
 		if ((chp->ch_status & WDCS_DRQ) == 0) {
 			ata_c->flags |= AT_TIMEOU;

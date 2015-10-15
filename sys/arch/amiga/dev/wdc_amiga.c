@@ -1,4 +1,4 @@
-/*	$NetBSD: wdc_amiga.c,v 1.36 2012/07/31 15:50:31 bouyer Exp $ */
+/*	$NetBSD: wdc_amiga.c,v 1.38 2015/04/18 14:21:41 mlelstv Exp $ */
 
 /*-
  * Copyright (c) 2000, 2003 The NetBSD Foundation, Inc.
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: wdc_amiga.c,v 1.36 2012/07/31 15:50:31 bouyer Exp $");
+__KERNEL_RCSID(0, "$NetBSD: wdc_amiga.c,v 1.38 2015/04/18 14:21:41 mlelstv Exp $");
 
 #include <sys/types.h>
 #include <sys/param.h>
@@ -59,10 +59,9 @@ struct wdc_amiga_softc {
 	struct	ata_queue sc_chqueue;
 	struct wdc_regs sc_wdc_regs;
 	struct isr sc_isr;
-	volatile u_char *sc_intreg;
 	struct bus_space_tag cmd_iot;
 	struct bus_space_tag ctl_iot;
-	char	sc_a1200;
+	bool gayle_intr;
 };
 
 int	wdc_amiga_probe(device_t, cfdata_t, void *);
@@ -93,16 +92,16 @@ wdc_amiga_attach(device_t parent, device_t self, void *aux)
 	sc->sc_wdcdev.sc_atac.atac_dev = self;
 	sc->sc_wdcdev.regs = wdr = &sc->sc_wdc_regs;
 
+	gayle_init();
+
 	if (is_a4000()) {
-		sc->cmd_iot.base = (u_long)ztwomap(0xdd2020 + 2);
-		sc->sc_intreg = (volatile u_char *)ztwomap(0xdd2020 + 0x1000);
-		sc->sc_a1200 = 0;
+		sc->cmd_iot.base = (bus_addr_t) ztwomap(GAYLE_IDE_BASE_A4000 + 2);
+		sc->gayle_intr = false;
 	} else {
-		sc->cmd_iot.base = (u_long) ztwomap(0xda0000 + 2);
-		gayle_init();
-		sc->sc_intreg = &gayle.intreq;
-		sc->sc_a1200 = 1;
+		sc->cmd_iot.base = (bus_addr_t) ztwomap(GAYLE_IDE_BASE + 2);
+		sc->gayle_intr = true;
 	}
+
 	sc->cmd_iot.absm = sc->ctl_iot.absm = &amiga_bus_stride_4swap;
 	wdr->cmd_iot = &sc->cmd_iot;
 	wdr->ctl_iot = &sc->ctl_iot;
@@ -146,8 +145,8 @@ wdc_amiga_attach(device_t parent, device_t self, void *aux)
 	sc->sc_isr.isr_ipl = 2;
 	add_isr (&sc->sc_isr);
 
-	if (sc->sc_a1200)
-		gayle.intena |= GAYLE_INT_IDE;
+	if (sc->gayle_intr)
+		gayle_intr_enable_set(GAYLE_INT_IDE);
 
 	wdcattach(&sc->sc_channel);
 }
@@ -155,15 +154,20 @@ wdc_amiga_attach(device_t parent, device_t self, void *aux)
 int
 wdc_amiga_intr(void *arg)
 {
-	struct wdc_amiga_softc *sc = (struct wdc_amiga_softc *)arg;
-	u_char intreq = *sc->sc_intreg;
-	int ret = 0;
+	struct wdc_amiga_softc *sc;
+	uint8_t intreq;
+	int ret;
+
+	sc = (struct wdc_amiga_softc *)arg;
+	ret = 0;
+	intreq = gayle_intr_status();
 
 	if (intreq & GAYLE_INT_IDE) {
-		if (sc->sc_a1200)
-			gayle.intreq = 0x7c | (intreq & 0x03);
+		if (sc->gayle_intr)
+			gayle_intr_ack(0x7C | (intreq & GAYLE_INT_IDEACK));
 		ret = wdcintr(&sc->sc_channel);
 	}
 
 	return ret;
 }
+

@@ -1,4 +1,4 @@
-/*	$NetBSD: kern_exit.c,v 1.243 2013/06/09 01:13:47 riz Exp $	*/
+/*	$NetBSD: kern_exit.c,v 1.245 2015/10/02 16:54:15 christos Exp $	*/
 
 /*-
  * Copyright (c) 1998, 1999, 2006, 2007, 2008 The NetBSD Foundation, Inc.
@@ -67,9 +67,10 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: kern_exit.c,v 1.243 2013/06/09 01:13:47 riz Exp $");
+__KERNEL_RCSID(0, "$NetBSD: kern_exit.c,v 1.245 2015/10/02 16:54:15 christos Exp $");
 
 #include "opt_ktrace.h"
+#include "opt_dtrace.h"
 #include "opt_perfctrs.h"
 #include "opt_sysv.h"
 
@@ -123,10 +124,9 @@ static void proc_free(struct proc *, struct rusage *);
 /*
  * DTrace SDT provider definitions
  */
-SDT_PROBE_DEFINE(proc,,,exit,exit,
-	    "int", NULL, 		/* reason */
-	    NULL, NULL, NULL, NULL,
-	    NULL, NULL, NULL, NULL);
+SDT_PROVIDER_DECLARE(proc);
+SDT_PROBE_DEFINE1(proc, kernel, , exit, "int");
+
 /*
  * Fill in the appropriate signal information, and signal the parent.
  */
@@ -414,7 +414,7 @@ exit1(struct lwp *l, int rv)
 	 */
 	KNOTE(&p->p_klist, NOTE_EXIT);
 
-	SDT_PROBE(proc,,,exit,
+	SDT_PROBE(proc, kernel, , exit,
 		(WCOREDUMP(rv) ? CLD_DUMPED :
 		 (WIFSIGNALED(rv) ? CLD_KILLED : CLD_EXITED)),
 		0,0,0,0);
@@ -541,12 +541,10 @@ exit1(struct lwp *l, int rv)
 	 */
 	pcu_discard_all(l);
 
-	/*
-	 * Remaining lwp resources will be freed in lwp_exit2() once we've
-	 * switch to idle context; at that point, we will be marked as a
-	 * full blown zombie.
-	 */
 	mutex_enter(p->p_lock);
+	/* Free the linux lwp id */
+	if ((l->l_pflag & LP_PIDLID) != 0 && l->l_lid != p->p_pid)
+		proc_free_pid(l->l_lid);
 	lwp_drainrefs(l);
 	lwp_lock(l);
 	l->l_prflag &= ~LPR_DETACHED;

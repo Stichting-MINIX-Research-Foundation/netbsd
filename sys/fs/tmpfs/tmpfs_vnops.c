@@ -1,4 +1,4 @@
-/*	$NetBSD: tmpfs_vnops.c,v 1.109 2013/11/24 17:16:29 rmind Exp $	*/
+/*	$NetBSD: tmpfs_vnops.c,v 1.123 2015/07/06 10:07:12 hannken Exp $	*/
 
 /*
  * Copyright (c) 2005, 2006, 2007 The NetBSD Foundation, Inc.
@@ -35,7 +35,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: tmpfs_vnops.c,v 1.109 2013/11/24 17:16:29 rmind Exp $");
+__KERNEL_RCSID(0, "$NetBSD: tmpfs_vnops.c,v 1.123 2015/07/06 10:07:12 hannken Exp $");
 
 #include <sys/param.h>
 #include <sys/dirent.h>
@@ -49,6 +49,7 @@ __KERNEL_RCSID(0, "$NetBSD: tmpfs_vnops.c,v 1.109 2013/11/24 17:16:29 rmind Exp 
 #include <sys/vnode.h>
 #include <sys/lockf.h>
 #include <sys/kauth.h>
+#include <sys/atomic.h>
 
 #include <uvm/uvm.h>
 
@@ -73,6 +74,8 @@ const struct vnodeopv_entry_desc tmpfs_vnodeop_entries[] = {
 	{ &vop_setattr_desc,		tmpfs_setattr },
 	{ &vop_read_desc,		tmpfs_read },
 	{ &vop_write_desc,		tmpfs_write },
+	{ &vop_fallocate_desc,		genfs_eopnotsupp },
+	{ &vop_fdiscard_desc,		genfs_eopnotsupp },
 	{ &vop_ioctl_desc,		tmpfs_ioctl },
 	{ &vop_fcntl_desc,		tmpfs_fcntl },
 	{ &vop_poll_desc,		tmpfs_poll },
@@ -123,7 +126,7 @@ const struct vnodeopv_desc tmpfs_vnodeop_opv_desc = {
 int
 tmpfs_lookup(void *v)
 {
-	struct vop_lookup_args /* {
+	struct vop_lookup_v2_args /* {
 		struct vnode *a_dvp;
 		struct vnode **a_vpp;
 		struct componentname *a_cnp;
@@ -176,6 +179,15 @@ tmpfs_lookup(void *v)
 		goto out;
 	}
 
+	/*
+	 * Treat an unlinked directory as empty (no "." or "..")
+	 */
+	if (dnode->tn_links == 0) {
+		KASSERT(dnode->tn_size == 0);
+		error = ENOENT;
+		goto out;
+	}
+
 	if (cnp->cn_flags & ISDOTDOT) {
 		tmpfs_node_t *pnode;
 
@@ -193,21 +205,8 @@ tmpfs_lookup(void *v)
 			goto out;
 		}
 
-		/*
-		 * Lock the parent tn_vlock before releasing the vnode lock,
-		 * and thus prevent parent from disappearing.
-		 */
-		mutex_enter(&pnode->tn_vlock);
-		VOP_UNLOCK(dvp);
-
-		/*
-		 * Get a vnode of the '..' entry and re-acquire the lock.
-		 * Release the tn_vlock.
-		 */
-		error = tmpfs_vnode_get(dvp->v_mount, pnode, vpp);
-		vn_lock(dvp, LK_EXCLUSIVE | LK_RETRY);
+		error = vcache_get(dvp->v_mount, &pnode, sizeof(pnode), vpp);
 		goto out;
-
 	} else if (cnp->cn_namelen == 1 && cnp->cn_nameptr[0] == '.') {
 		/*
 		 * Lookup of "." case.
@@ -280,8 +279,7 @@ tmpfs_lookup(void *v)
 	}
 
 	/* Get a vnode for the matching entry. */
-	mutex_enter(&tnode->tn_vlock);
-	error = tmpfs_vnode_get(dvp->v_mount, tnode, vpp);
+	error = vcache_get(dvp->v_mount, &tnode, sizeof(tnode), vpp);
 done:
 	/*
 	 * Cache the result, unless request was for creation (as it does
@@ -292,7 +290,6 @@ done:
 			    cnp->cn_flags);
 	}
 out:
-	KASSERT((*vpp && VOP_ISLOCKED(*vpp)) || error);
 	KASSERT(VOP_ISLOCKED(dvp));
 
 	return error;
@@ -301,7 +298,7 @@ out:
 int
 tmpfs_create(void *v)
 {
-	struct vop_create_args /* {
+	struct vop_create_v3_args /* {
 		struct vnode		*a_dvp;
 		struct vnode		**a_vpp;
 		struct componentname	*a_cnp;
@@ -319,7 +316,7 @@ tmpfs_create(void *v)
 int
 tmpfs_mknod(void *v)
 {
-	struct vop_mknod_args /* {
+	struct vop_mknod_v3_args /* {
 		struct vnode		*a_dvp;
 		struct vnode		**a_vpp;
 		struct componentname	*a_cnp;
@@ -331,7 +328,7 @@ tmpfs_mknod(void *v)
 	enum vtype vt = vap->va_type;
 
 	if (vt != VBLK && vt != VCHR && vt != VFIFO) {
-		vput(dvp);
+		*vpp = NULL;
 		return EINVAL;
 	}
 	return tmpfs_construct_node(dvp, vpp, vap, cnp, NULL);
@@ -352,14 +349,6 @@ tmpfs_open(void *v)
 	KASSERT(VOP_ISLOCKED(vp));
 
 	node = VP_TO_TMPFS_NODE(vp);
-	if (node->tn_links < 1) {
-		/*
-		 * The file is still active, but all its names have been
-		 * removed (e.g. by a "rmdir $(pwd)").  It cannot be opened
-		 * any more, as it is about to be destroyed.
-		 */
-		return ENOENT;
-	}
 
 	/* If the file is marked append-only, deny write requests. */
 	if ((node->tn_flags & APPEND) != 0 &&
@@ -530,10 +519,10 @@ tmpfs_read(void *v)
 
 	KASSERT(VOP_ISLOCKED(vp));
 
-	if (vp->v_type != VREG) {
+	if (vp->v_type == VDIR) {
 		return EISDIR;
 	}
-	if (uio->uio_offset < 0) {
+	if (uio->uio_offset < 0 || vp->v_type != VREG) {
 		return EINVAL;
 	}
 
@@ -738,7 +727,7 @@ out:
 int
 tmpfs_link(void *v)
 {
-	struct vop_link_args /* {
+	struct vop_link_v2_args /* {
 		struct vnode *a_dvp;
 		struct vnode *a_vp;
 		struct componentname *a_cnp;
@@ -795,14 +784,13 @@ tmpfs_link(void *v)
 	error = 0;
 out:
 	VOP_UNLOCK(vp);
-	vput(dvp);
 	return error;
 }
 
 int
 tmpfs_mkdir(void *v)
 {
-	struct vop_mkdir_args /* {
+	struct vop_mkdir_v3_args /* {
 		struct vnode		*a_dvp;
 		struct vnode		**a_vpp;
 		struct componentname	*a_cnp;
@@ -835,7 +823,6 @@ tmpfs_rmdir(void *v)
 
 	KASSERT(VOP_ISLOCKED(dvp));
 	KASSERT(VOP_ISLOCKED(vp));
-	KASSERT(node->tn_spec.tn_dir.tn_parent == dnode);
 
 	/*
 	 * Directories with more than two entries ('.' and '..') cannot be
@@ -858,6 +845,8 @@ tmpfs_rmdir(void *v)
 		}
 		KASSERT(error == 0);
 	}
+
+	KASSERT(node->tn_spec.tn_dir.tn_parent == dnode);
 
 	/* Lookup the directory entry (check the cached hint first). */
 	de = tmpfs_dir_cached(node);
@@ -913,7 +902,7 @@ out:
 int
 tmpfs_symlink(void *v)
 {
-	struct vop_symlink_args /* {
+	struct vop_symlink_v3_args /* {
 		struct vnode		*a_dvp;
 		struct vnode		**a_vpp;
 		struct componentname	*a_cnp;
@@ -1029,7 +1018,7 @@ tmpfs_readlink(void *v)
 	/* Note: readlink(2) returns the path without NUL terminator. */
 	if (node->tn_size > 0) {
 		error = uiomove(node->tn_spec.tn_lnk.tn_link,
-		    MIN(node->tn_size - 1, uio->uio_resid), uio);
+		    MIN(node->tn_size, uio->uio_resid), uio);
 	} else {
 		error = 0;
 	}
@@ -1051,7 +1040,15 @@ tmpfs_inactive(void *v)
 	KASSERT(VOP_ISLOCKED(vp));
 
 	node = VP_TO_TMPFS_NODE(vp);
-	*ap->a_recycle = (node->tn_links == 0);
+	if (node->tn_links == 0) {
+		/*
+		 * Mark node as dead by setting its generation to zero.
+		 */
+		atomic_and_32(&node->tn_gen, ~TMPFS_NODE_GEN_MASK);
+		*ap->a_recycle = true;
+	} else {
+		*ap->a_recycle = false;
+	}
 	VOP_UNLOCK(vp);
 
 	return 0;
@@ -1066,24 +1063,15 @@ tmpfs_reclaim(void *v)
 	vnode_t *vp = ap->a_vp;
 	tmpfs_mount_t *tmp = VFS_TO_TMPFS(vp->v_mount);
 	tmpfs_node_t *node = VP_TO_TMPFS_NODE(vp);
-	bool recycle;
-
-	mutex_enter(&node->tn_vlock);
-	VOP_LOCK(vp, LK_EXCLUSIVE);
 
 	/* Disassociate inode from vnode. */
 	node->tn_vnode = NULL;
+	vcache_remove(vp->v_mount, &node, sizeof(node));
 	vp->v_data = NULL;
 
 	/* If inode is not referenced, i.e. no links, then destroy it. */
-	recycle = node->tn_links == 0 && TMPFS_NODE_RECLAIMING(node) == 0;
-
-	VOP_UNLOCK(vp);
-	mutex_exit(&node->tn_vlock);
-
-	if (recycle) {
+	if (node->tn_links == 0)
 		tmpfs_free_node(tmp, node);
-	}
 	return 0;
 }
 

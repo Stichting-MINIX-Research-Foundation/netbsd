@@ -44,51 +44,13 @@
 #include <sys/rwlock.h>
 #include <sys/callout.h>
 
+#include <linux/completion.h>
+
 /*
  * Copy from/to user API
  */
 #define copy_from_user(to, from, n)	copyin((from), (to), (n))
 #define copy_to_user(to, from, n)	copyout((from), (to), (n))
-
-/*
- * Bit API
- */
-
-static __inline int
-test_and_set_bit(int nr, volatile void *addr)
-{
-	volatile uint32_t *val;
-	uint32_t mask, old;
-
-	val = (volatile uint32_t *)addr;
-	mask = 1 << nr;
-
-	do {
-		old = *val;
-		if ((old & mask) != 0)
-			break;
-	} while (atomic_cas_uint(val, old, old | mask) != old);
-
-	return old & mask;
-}
-
-static __inline__ int
-test_and_clear_bit(int nr, volatile void *addr)
-{
-	volatile uint32_t *val;
-	uint32_t mask, old;
-
-	val = (volatile uint32_t *)addr;
-	mask = 1 << nr;
-
-	do {
-		old = *val;
-		if ((old & mask) == 0)
-			break;
-	} while (atomic_cas_uint(val, old, old & ~mask) != old);
-
-	return old & mask;
-}
 
 /*
  * Atomic API
@@ -121,7 +83,7 @@ typedef kmutex_t spinlock_t;
  */
 #define DEFINE_SPINLOCK(name)	kmutex_t name
 
-#define spin_lock_init(lock)	mutex_init(lock, MUTEX_DEFAULT, IPL_VM)
+#define spin_lock_init(lock)	mutex_init(lock, MUTEX_DEFAULT, IPL_SCHED)
 #define spin_lock_destroy(lock)	mutex_destroy(lock)
 #define spin_lock(lock)		mutex_spin_enter(lock)
 #define spin_unlock(lock)	mutex_spin_exit(lock)
@@ -146,7 +108,7 @@ typedef kmutex_t rwlock_t;
 
 #define DEFINE_RWLOCK(name)	kmutex_t name
 
-#define rwlock_init(rwlock)	mutex_init(rwlock, MUTEX_DEFAULT, IPL_VM)
+#define rwlock_init(rwlock)	mutex_init(rwlock, MUTEX_DEFAULT, IPL_SCHED)
 #define read_lock(rwlock)	mutex_spin_enter(rwlock)
 #define read_unlock(rwlock)	mutex_spin_exit(rwlock)
 
@@ -176,28 +138,6 @@ void mod_timer(struct timer_list *t, unsigned long expires);
 void add_timer(struct timer_list *t);
 int del_timer(struct timer_list *t);
 int del_timer_sync(struct timer_list *t);
-
-/*
- * Completion API
- */
-struct completion {
-	kcondvar_t cv;
-	kmutex_t lock;
-	int done;
-};
-
-void init_completion(struct completion *c);
-void destroy_completion(struct completion *c);
-int try_wait_for_completion(struct completion *);
-int wait_for_completion_interruptible(struct completion *);
-int wait_for_completion_interruptible_timeout(struct completion *, unsigned long ticks);
-int wait_for_completion_killable(struct completion *);
-void wait_for_completion(struct completion *c);
-int wait_for_completion_timeout(struct completion *c, unsigned long timeout);
-void complete(struct completion *c);
-void complete_all(struct completion *c);
-
-#define	INIT_COMPLETION(x)	do {(x).done = 0;} while(0)
 
 /*
  * Semaphore API
@@ -315,7 +255,8 @@ MALLOC_DECLARE(M_VCHI);
  */
 #if 1
 /* emulate jiffies */
-static inline unsigned long _jiffies(void)
+static inline unsigned long
+_jiffies(void)
 {
 	struct timeval tv;
 
@@ -323,7 +264,8 @@ static inline unsigned long _jiffies(void)
 	return tvtohz(&tv);
 }
 
-static inline unsigned long msecs_to_jiffies(unsigned long msecs)
+static inline unsigned long
+msecs_to_jiffies(unsigned long msecs)
 {
 	struct timeval tv;
 
@@ -388,6 +330,10 @@ typedef	off_t	loff_t;
 #define rmb	membar_consumer
 #define wmb	membar_producer
 #define dsb	membar_producer
+
+#define smp_mb	membar_producer
+#define smp_rmb	membar_consumer
+#define smp_wmb	membar_producer
 
 #define device_print_prettyname(dev)	device_printf((dev), "")
 

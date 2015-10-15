@@ -1,4 +1,4 @@
-/*	$NetBSD: linux32_socket.c,v 1.17 2013/01/11 19:01:36 christos Exp $ */
+/*	$NetBSD: linux32_socket.c,v 1.20 2015/07/24 13:02:52 maxv Exp $ */
 
 /*-
  * Copyright (c) 2006 Emmanuel Dreyfus, all rights reserved.
@@ -33,7 +33,7 @@
 
 #include <sys/cdefs.h>
 
-__KERNEL_RCSID(0, "$NetBSD: linux32_socket.c,v 1.17 2013/01/11 19:01:36 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: linux32_socket.c,v 1.20 2015/07/24 13:02:52 maxv Exp $");
 
 #include <sys/types.h>
 #include <sys/param.h>
@@ -398,10 +398,7 @@ linux32_getifname(struct lwp *l, register_t *retval, void *data)
 	if (error)
 		return error;
 
-	if (ifr.ifr_ifru.ifru_ifindex >= if_indexlim)
-		return ENODEV;
-	
-	ifp = ifindex2ifnet[ifr.ifr_ifru.ifru_ifindex];
+	ifp = if_byindex(ifr.ifr_ifru.ifru_ifindex);
 	if (ifp == NULL)
 		return ENODEV;
 
@@ -413,24 +410,25 @@ linux32_getifname(struct lwp *l, register_t *retval, void *data)
 int
 linux32_getifconf(struct lwp *l, register_t *retval, void *data)
 {
-	struct linux32_ifreq ifr, *ifrp;
+	struct linux32_ifreq ifr, *ifrp = NULL;
 	struct linux32_ifconf ifc;
 	struct ifnet *ifp;
 	struct ifaddr *ifa;
 	struct sockaddr *sa;
 	struct osockaddr *osa;
-	int space, error = 0;
+	int space = 0, error;
 	const int sz = (int)sizeof(ifr);
+	bool docopy;
 
 	error = copyin(data, &ifc, sizeof(ifc));
 	if (error)
 		return error;
 
-	ifrp = NETBSD32PTR64(ifc.ifc_req);
-	if (ifrp == NULL)
-		space = 0;
-	else
+	docopy = NETBSD32PTR64(ifc.ifc_req) != NULL;
+	if (docopy) {
 		space = ifc.ifc_len;
+		ifrp = NETBSD32PTR64(ifc.ifc_req);
+	}
 
 	IFNET_FOREACH(ifp) {
 		(void)strncpy(ifr.ifr_name, ifp->if_xname,
@@ -457,7 +455,7 @@ linux32_getifconf(struct lwp *l, register_t *retval, void *data)
 		}
 	}
 
-	if (ifrp != NULL)
+	if (docopy)
 		ifc.ifc_len -= space;
 	else
 		ifc.ifc_len = -space;

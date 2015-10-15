@@ -1,4 +1,4 @@
-/*	$NetBSD: in_proto.c,v 1.106 2013/06/05 19:01:26 christos Exp $	*/
+/*	$NetBSD: in_proto.c,v 1.114 2015/08/31 08:05:20 ozaki-r Exp $	*/
 
 /*
  * Copyright (C) 1995, 1996, 1997, and 1998 WIDE Project.
@@ -61,13 +61,17 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: in_proto.c,v 1.106 2013/06/05 19:01:26 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: in_proto.c,v 1.114 2015/08/31 08:05:20 ozaki-r Exp $");
 
+#ifdef _KERNEL_OPT
 #include "opt_mrouting.h"
 #include "opt_inet.h"
 #include "opt_ipsec.h"
 #include "opt_pim.h"
 #include "opt_gateway.h"
+#include "opt_dccp.h"
+#include "opt_compat_netbsd.h"
+#endif
 
 #include <sys/param.h>
 #include <sys/socket.h>
@@ -81,6 +85,7 @@ __KERNEL_RCSID(0, "$NetBSD: in_proto.c,v 1.106 2013/06/05 19:01:26 christos Exp 
 
 #include <netinet/in.h>
 #include <netinet/in_systm.h>
+#include <netinet/in_var.h>
 #include <netinet/ip.h>
 #include <netinet/ip_var.h>
 #include <netinet/ip_icmp.h>
@@ -109,6 +114,11 @@ __KERNEL_RCSID(0, "$NetBSD: in_proto.c,v 1.106 2013/06/05 19:01:26 christos Exp 
 #include <netinet/udp.h>
 #include <netinet/udp_var.h>
 #include <netinet/ip_encap.h>
+
+#ifdef DCCP
+#include <netinet/dccp.h>
+#include <netinet/dccp_var.h>
+#endif
 
 /*
  * TCP/IP protocol family: IP, ICMP, UDP, TCP.
@@ -139,14 +149,6 @@ DOMAIN_DEFINE(inetdomain);	/* forward declare and add to link set */
 
 /* Wrappers to acquire kernel_lock. */
 
-PR_WRAP_USRREQ(rip_usrreq)
-PR_WRAP_USRREQ(udp_usrreq)
-PR_WRAP_USRREQ(tcp_usrreq)
-
-#define	rip_usrreq 	rip_usrreq_wrapper
-#define	udp_usrreq 	udp_usrreq_wrapper
-#define	tcp_usrreq 	tcp_usrreq_wrapper
-
 PR_WRAP_CTLINPUT(rip_ctlinput)
 PR_WRAP_CTLINPUT(udp_ctlinput)
 PR_WRAP_CTLINPUT(tcp_ctlinput)
@@ -162,6 +164,14 @@ PR_WRAP_CTLOUTPUT(tcp_ctloutput)
 #define	rip_ctloutput	rip_ctloutput_wrapper
 #define	udp_ctloutput	udp_ctloutput_wrapper
 #define	tcp_ctloutput	tcp_ctloutput_wrapper
+
+#ifdef DCCP
+PR_WRAP_CTLINPUT(dccp_ctlinput)
+PR_WRAP_CTLOUTPUT(dccp_ctloutput)
+
+#define dccp_ctlinput	dccp_ctlinput_wrapper
+#define dccp_ctloutput	dccp_ctloutput_wrapper
+#endif
 
 #if defined(IPSEC)
 PR_WRAP_CTLINPUT(ah4_ctlinput)
@@ -187,7 +197,7 @@ const struct protosw inetsw[] = {
 	.pr_input = udp_input,
 	.pr_ctlinput = udp_ctlinput,
 	.pr_ctloutput = udp_ctloutput,
-	.pr_usrreq = udp_usrreq,
+	.pr_usrreqs = &udp_usrreqs,
 	.pr_init = udp_init,
 },
 {	.pr_type = SOCK_STREAM,
@@ -197,12 +207,23 @@ const struct protosw inetsw[] = {
 	.pr_input = tcp_input,
 	.pr_ctlinput = tcp_ctlinput,
 	.pr_ctloutput = tcp_ctloutput,
-	.pr_usrreq = tcp_usrreq,
+	.pr_usrreqs = &tcp_usrreqs,
 	.pr_init = tcp_init,
 	.pr_fasttimo = tcp_fasttimo,
-	.pr_slowtimo = tcp_slowtimo,
 	.pr_drain = tcp_drainstub,
 },
+#ifdef DCCP
+{	.pr_type = SOCK_CONN_DGRAM,
+	.pr_domain = &inetdomain,
+	.pr_protocol = IPPROTO_DCCP,
+	.pr_flags = PR_CONNREQUIRED|PR_WANTRCVD|PR_ATOMIC|PR_LISTEN|PR_ABRTACPTDIS,
+	.pr_input = dccp_input,
+	.pr_ctlinput = dccp_ctlinput,
+	.pr_ctloutput = dccp_ctloutput,
+	.pr_usrreqs = &dccp_usrreqs,
+	.pr_init = dccp_init,
+},
+#endif
 {	.pr_type = SOCK_RAW,
 	.pr_domain = &inetdomain,
 	.pr_protocol = IPPROTO_RAW,
@@ -211,7 +232,7 @@ const struct protosw inetsw[] = {
 	.pr_output = rip_output,
 	.pr_ctlinput = rip_ctlinput,
 	.pr_ctloutput = rip_ctloutput,
-	.pr_usrreq = rip_usrreq,
+	.pr_usrreqs = &rip_usrreqs,
 },
 {	.pr_type = SOCK_RAW,
 	.pr_domain = &inetdomain,
@@ -221,7 +242,7 @@ const struct protosw inetsw[] = {
 	.pr_output = rip_output,
 	.pr_ctlinput = rip_ctlinput,
 	.pr_ctloutput = rip_ctloutput,
-	.pr_usrreq = rip_usrreq,
+	.pr_usrreqs = &rip_usrreqs,
 	.pr_init = icmp_init,
 },
 #ifdef GATEWAY
@@ -261,7 +282,7 @@ const struct protosw inetsw[] = {
 	.pr_output = rip_output,
 	.pr_ctlinput = rip_ctlinput,
 	.pr_ctloutput = rip_ctloutput,
-	.pr_usrreq = rip_usrreq,
+	.pr_usrreqs = &rip_usrreqs,
 	.pr_init = encap_init,
 },
 #ifdef INET6
@@ -273,7 +294,7 @@ const struct protosw inetsw[] = {
 	.pr_output = rip_output,
 	.pr_ctlinput = rip_ctlinput,
 	.pr_ctloutput = rip_ctloutput,
-	.pr_usrreq = rip_usrreq,
+	.pr_usrreqs = &rip_usrreqs,
 	.pr_init = encap_init,
 },
 #endif /* INET6 */
@@ -286,7 +307,7 @@ const struct protosw inetsw[] = {
 	.pr_output = rip_output,
 	.pr_ctlinput = rip_ctlinput,
 	.pr_ctloutput = rip_ctloutput,
-	.pr_usrreq = rip_usrreq,
+	.pr_usrreqs = &rip_usrreqs,
 },
 #endif /* NETHERIP > 0 */
 #if NCARP > 0
@@ -297,7 +318,7 @@ const struct protosw inetsw[] = {
 	.pr_input = carp_proto_input,
 	.pr_output = rip_output,
 	.pr_ctloutput = rip_ctloutput,
-	.pr_usrreq = rip_usrreq,
+	.pr_usrreqs = &rip_usrreqs,
 	.pr_init = carp_init,
 },
 #endif /* NCARP > 0 */
@@ -309,7 +330,7 @@ const struct protosw inetsw[] = {
 	.pr_input	 = pfsync_input,
 	.pr_output	 = rip_output,
 	.pr_ctloutput = rip_ctloutput,
-	.pr_usrreq	 = rip_usrreq,
+	.pr_usrreqs	 = &rip_usrreqs,
 },
 #endif /* NPFSYNC > 0 */
 {	.pr_type = SOCK_RAW,
@@ -320,7 +341,7 @@ const struct protosw inetsw[] = {
 	.pr_output = rip_output,
 	.pr_ctloutput = rip_ctloutput,
 	.pr_ctlinput = rip_ctlinput,
-	.pr_usrreq = rip_usrreq,
+	.pr_usrreqs = &rip_usrreqs,
 	.pr_fasttimo = igmp_fasttimo,
 	.pr_slowtimo = igmp_slowtimo,
 	.pr_init = igmp_init,
@@ -334,7 +355,7 @@ const struct protosw inetsw[] = {
 	.pr_output = rip_output,
 	.pr_ctloutput = rip_ctloutput,
 	.pr_ctlinput = rip_ctlinput,
-	.pr_usrreq = rip_usrreq,
+	.pr_usrreqs = &rip_usrreqs,
 },
 #endif /* PIM */
 /* raw wildcard */
@@ -345,12 +366,10 @@ const struct protosw inetsw[] = {
 	.pr_output = rip_output,
 	.pr_ctloutput = rip_ctloutput,
 	.pr_ctlinput = rip_ctlinput,
-	.pr_usrreq = rip_usrreq,
+	.pr_usrreqs = &rip_usrreqs,
 	.pr_init = rip_init,
 },
 };
-
-extern struct ifqueue ipintrq;
 
 const struct sockaddr_in in_any = {
 	  .sin_len = sizeof(struct sockaddr_in)
@@ -367,14 +386,12 @@ struct domain inetdomain = {
 	.dom_rtattach = rt_inithead,
 	.dom_rtoffset = 32,
 	.dom_maxrtkey = sizeof(struct ip_pack4),
-#ifdef IPSELSRC
+	.dom_if_up = in_if_up,
+	.dom_if_down = in_if_down,
 	.dom_ifattach = in_domifattach,
 	.dom_ifdetach = in_domifdetach,
-#else
-	.dom_ifattach = NULL,
-	.dom_ifdetach = NULL,
-#endif
-	.dom_ifqueues = { &ipintrq, NULL },
+	.dom_if_link_state_change = in_if_link_state_change,
+	.dom_ifqueues = { NULL, NULL },
 	.dom_link = { NULL },
 	.dom_mowner = MOWNER_INIT("",""),
 	.dom_sa_cmpofs = offsetof(struct sockaddr_in, sin_addr),

@@ -1,4 +1,4 @@
-/*	$NetBSD: fd.c,v 1.52 2012/10/27 17:17:23 chs Exp $	*/
+/*	$NetBSD: fd.c,v 1.58 2015/04/26 15:15:19 mlelstv Exp $	*/
 
 /*-
  * Copyright (c) 1998 The NetBSD Foundation, Inc.
@@ -82,7 +82,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: fd.c,v 1.52 2012/10/27 17:17:23 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: fd.c,v 1.58 2015/04/26 15:15:19 mlelstv Exp $");
 
 #include "opt_ddb.h"
 
@@ -113,7 +113,6 @@ __KERNEL_RCSID(0, "$NetBSD: fd.c,v 1.52 2012/10/27 17:17:23 chs Exp $");
 #include <machine/cpu.h>
 #include <machine/intr.h>
 #include <machine/io.h>
-#include <arm/arm32/katelib.h>
 
 #include <arm/iomd/iomdreg.h>
 #include <arm/iomd/iomdvar.h>
@@ -268,19 +267,38 @@ dev_type_ioctl(fdioctl);
 dev_type_strategy(fdstrategy);
 
 const struct bdevsw fd_bdevsw = {
-	fdopen, fdclose, fdstrategy, fdioctl, nodump, nosize, D_DISK
+	.d_open = fdopen,
+	.d_close = fdclose,
+	.d_strategy = fdstrategy,
+	.d_ioctl = fdioctl,
+	.d_dump = nodump,
+	.d_psize = nosize,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
 const struct cdevsw fd_cdevsw = {
-	fdopen, fdclose, fdread, fdwrite, fdioctl,
-	nostop, notty, nopoll, nommap, nokqfilter, D_DISK
+	.d_open = fdopen,
+	.d_close = fdclose,
+	.d_read = fdread,
+	.d_write = fdwrite,
+	.d_ioctl = fdioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
 void fdgetdisklabel(struct fd_softc *);
 int fd_get_parms(struct fd_softc *);
 void fdstart(struct fd_softc *);
 
-struct dkdriver fddkdriver = { fdstrategy };
+struct dkdriver fddkdriver = {
+	.d_strategy = fdstrategy
+};
 
 struct fd_type *fd_nvtotype(const char *, int, int);
 void fd_set_motor(struct fdc_softc *fdc, int reset);
@@ -1269,7 +1287,7 @@ fdioctl(dev_t dev, u_long cmd, void *addr, int flag, struct lwp *l)
 		memset(&buffer, 0, sizeof(buffer));
 
 		buffer.d_secpercyl = fd->sc_type->seccyl;
-		buffer.d_type = DTYPE_FLOPPY;
+		buffer.d_type = DKTYPE_FLOPPY;
 		buffer.d_secsize = FDC_BSIZE;
 
 		if (readdisklabel(dev, fdstrategy, &buffer, NULL) != NULL)

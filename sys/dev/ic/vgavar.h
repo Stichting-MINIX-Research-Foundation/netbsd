@@ -1,4 +1,4 @@
-/* $NetBSD: vgavar.h,v 1.30 2013/01/21 19:49:15 mlelstv Exp $ */
+/* $NetBSD: vgavar.h,v 1.33 2015/01/14 17:45:27 chs Exp $ */
 
 /*
  * Copyright (c) 1995, 1996 Carnegie-Mellon University.
@@ -29,7 +29,9 @@
 
 #include <sys/callout.h>
 
+#ifdef _KERNEL_OPT
 #include "opt_vga.h"
+#endif
 
 struct vga_handle {
 	struct pcdisplay_handle vh_ph;
@@ -54,10 +56,6 @@ struct vga_config {
 	LIST_HEAD(, vgascreen) screens;
 	struct vgascreen *active; /* current display */
 	const struct wsscreen_descr *currenttype;
-
-	int vc_biosmapped;
-	bus_space_tag_t vc_biostag;
-	bus_space_handle_t vc_bioshdl;
 
 	struct vgascreen *wantedscreen;
 	void (*switchcb)(void *, int, int);

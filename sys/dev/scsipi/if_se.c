@@ -1,4 +1,4 @@
-/*	$NetBSD: if_se.c,v 1.85 2012/10/27 17:18:38 chs Exp $	*/
+/*	$NetBSD: if_se.c,v 1.88 2015/08/24 23:13:15 pooka Exp $	*/
 
 /*
  * Copyright (c) 1997 Ian W. Dall <ian.dall@dsto.defence.gov.au>
@@ -59,10 +59,12 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_se.c,v 1.85 2012/10/27 17:18:38 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_se.c,v 1.88 2015/08/24 23:13:15 pooka Exp $");
 
+#ifdef _KERNEL_OPT
 #include "opt_inet.h"
 #include "opt_atalk.h"
+#endif
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -237,8 +239,18 @@ dev_type_close(seclose);
 dev_type_ioctl(seioctl);
 
 const struct cdevsw se_cdevsw = {
-	seopen, seclose, noread, nowrite, seioctl,
-	nostop, notty, nopoll, nommap, nokqfilter, D_OTHER
+	.d_open = seopen,
+	.d_close = seclose,
+	.d_read = noread,
+	.d_write = nowrite,
+	.d_ioctl = seioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_OTHER
 };
 
 const struct scsipi_periphsw se_switch = {

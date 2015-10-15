@@ -1,7 +1,7 @@
 /* *INDENT-OFF* */ /* ATTRIBUTE_PRINTF confuses indent, avoid running it
 		      for now.  */
 /* I/O, string, cleanup, and other random utilities for GDB.
-   Copyright (C) 1986-2013 Free Software Foundation, Inc.
+   Copyright (C) 1986-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -21,7 +21,6 @@
 #ifndef UTILS_H
 #define UTILS_H
 
-#include "cleanups.h"
 #include "exceptions.h"
 
 extern void initialize_utils (void);
@@ -29,8 +28,6 @@ extern void initialize_utils (void);
 /* String utilities.  */
 
 extern int sevenbit_strings;
-
-extern char *savestring (const char *, size_t);
 
 extern int strcmp_iw (const char *, const char *);
 
@@ -54,12 +51,17 @@ extern char *safe_strerror (int);
    bfd_check_format_matches, and will be freed.  */
 
 extern const char *gdb_bfd_errmsg (bfd_error_type error_tag, char **matching);
+
+/* Reset the prompt_for_continue clock.  */
+void reset_prompt_for_continue_wait_time (void);
+/* Return the time spent in prompt_for_continue.  */
+struct timeval get_prompt_for_continue_wait_time (void);
 
 /* Parsing utilites.  */
 
-extern int parse_pid_to_attach (char *args);
+extern int parse_pid_to_attach (const char *args);
 
-extern int parse_escape (struct gdbarch *, char **);
+extern int parse_escape (struct gdbarch *, const char **);
 
 char **gdb_buildargv (const char *);
 
@@ -109,9 +111,11 @@ extern struct cleanup *make_cleanup_restore_current_language (void);
 
 extern struct cleanup *make_cleanup_htab_delete (htab_t htab);
 
-extern void free_current_contents (void *);
+struct parser_state;
+extern struct cleanup *make_cleanup_clear_parser_state
+  (struct parser_state **p);
 
-extern struct cleanup *make_command_stats_cleanup (int);
+extern void free_current_contents (void *);
 
 extern void init_page_info (void);
 
@@ -125,6 +129,10 @@ extern struct cleanup *make_bpstat_clear_actions_cleanup (void);
 
 extern char *gdb_realpath (const char *);
 
+extern char *gdb_realpath_keepfile (const char *);
+
+extern char *gdb_abspath (const char *);
+
 extern int gdb_filename_fnmatch (const char *pattern, const char *string,
 				 int flags);
 
@@ -137,10 +145,6 @@ char *ldirname (const char *filename);
 
 struct ui_file;
 
-extern void set_display_time (int);
-
-extern void set_display_space (int);
-
 extern int query (const char *, ...) ATTRIBUTE_PRINTF (1, 2);
 extern int nquery (const char *, ...) ATTRIBUTE_PRINTF (1, 2);
 extern int yquery (const char *, ...) ATTRIBUTE_PRINTF (1, 2);
@@ -150,6 +154,8 @@ extern void begin_line (void);
 extern void wrap_here (char *);
 
 extern void reinitialize_more_filter (void);
+
+extern int pagination_enabled;
 
 /* Global ui_file streams.  These are all defined in main.c.  */
 /* Normal results */
@@ -237,10 +243,11 @@ extern void fputstrn_filtered (const char *str, int n, int quotr,
 extern void fputstrn_unfiltered (const char *str, int n, int quotr,
 				 struct ui_file * stream);
 
+/* Return nonzero if filtered printing is initialized.  */
+extern int filtered_printing_initialized (void);
+
 /* Display the host ADDR on STREAM formatted as ``0x%x''.  */
 extern void gdb_print_host_address (const void *addr, struct ui_file *stream);
-
-extern const char *host_address_to_string (const void *addr);
 
 /* Convert CORE_ADDR to string in platform-specific manner.
    This is usually formatted similar to 0x%lx.  */
@@ -256,33 +263,15 @@ extern const char *print_core_address (struct gdbarch *gdbarch,
 extern hashval_t core_addr_hash (const void *ap);
 extern int core_addr_eq (const void *ap, const void *bp);
 
-/* %d for LONGEST */
-extern char *plongest (LONGEST l);
-/* %u for ULONGEST */
-extern char *pulongest (ULONGEST l);
-
-extern char *phex (ULONGEST l, int sizeof_l);
-extern char *phex_nz (ULONGEST l, int sizeof_l);
-extern char *int_string (LONGEST, int, int, int, int);
-
-/* Convert a CORE_ADDR into a HEX string with leading zeros.
-   The output from core_addr_to_string() can be passed direct to
-   string_to_core_addr().  */
-extern const char *core_addr_to_string (const CORE_ADDR addr);
-extern const char *core_addr_to_string_nz (const CORE_ADDR addr);
 extern CORE_ADDR string_to_core_addr (const char *my_string);
-
-/* Return a string that contains a number formatted as a hex
-   string.  */
-extern char *hex_string (LONGEST);
-extern char *hex_string_custom (LONGEST, int);
 
 extern void fprintf_symbol_filtered (struct ui_file *, const char *,
 				     enum language, int);
 
 extern void throw_perror_with_name (enum errors errcode, const char *string)
   ATTRIBUTE_NORETURN;
-extern void perror_with_name (const char *) ATTRIBUTE_NORETURN;
+
+extern void perror_warning_with_name (const char *string);
 
 extern void print_sys_errmsg (const char *, int);
 
@@ -290,46 +279,19 @@ extern void print_sys_errmsg (const char *, int);
 
 extern void (*deprecated_error_begin_hook) (void);
 
-/* Message to be printed before the error message, when an error occurs.  */
-
-extern char *error_pre_print;
-
-/* Message to be printed before the error message, when an error occurs.  */
-
-extern char *quit_pre_print;
-
 /* Message to be printed before the warning message, when a warning occurs.  */
 
 extern char *warning_pre_print;
 
-extern void verror (const char *fmt, va_list ap)
-     ATTRIBUTE_NORETURN ATTRIBUTE_PRINTF (1, 0);
-
-extern void error (const char *fmt, ...)
-     ATTRIBUTE_NORETURN ATTRIBUTE_PRINTF (1, 2);
-
 extern void error_stream (struct ui_file *) ATTRIBUTE_NORETURN;
 
-extern void vfatal (const char *fmt, va_list ap)
-     ATTRIBUTE_NORETURN ATTRIBUTE_PRINTF (1, 0);
-
-extern void fatal (const char *fmt, ...)
-     ATTRIBUTE_NORETURN ATTRIBUTE_PRINTF (1, 2);
-
-extern void internal_verror (const char *file, int line, const char *,
-			     va_list ap)
-     ATTRIBUTE_NORETURN ATTRIBUTE_PRINTF (3, 0);
-
-extern void internal_vwarning (const char *file, int line,
+extern void demangler_vwarning (const char *file, int line,
 			       const char *, va_list ap)
      ATTRIBUTE_PRINTF (3, 0);
 
-extern void internal_warning (const char *file, int line,
+extern void demangler_warning (const char *file, int line,
 			      const char *, ...) ATTRIBUTE_PRINTF (3, 4);
 
-extern void warning (const char *, ...) ATTRIBUTE_PRINTF (1, 2);
-
-extern void vwarning (const char *, va_list args) ATTRIBUTE_PRINTF (1, 0);
 
 /* Misc. utilities.  */
 
@@ -377,5 +339,34 @@ extern int myread (int, char *, int);
 
 extern ULONGEST align_up (ULONGEST v, int n);
 extern ULONGEST align_down (ULONGEST v, int n);
+
+/* Resource limits used by getrlimit and setrlimit.  */
+
+enum resource_limit_kind
+  {
+    LIMIT_CUR,
+    LIMIT_MAX
+  };
+
+/* Check whether GDB will be able to dump core using the dump_core
+   function.  Returns zero if GDB cannot or should not dump core.
+   If LIMIT_KIND is LIMIT_CUR the user's soft limit will be respected.
+   If LIMIT_KIND is LIMIT_MAX only the hard limit will be respected.  */
+
+extern int can_dump_core (enum resource_limit_kind limit_kind);
+
+/* Print a warning that we cannot dump core.  */
+
+extern void warn_cant_dump_core (const char *reason);
+
+/* Dump core trying to increase the core soft limit to hard limit
+   first.  */
+
+extern void dump_core (void);
+
+/* Return the hex string form of LENGTH bytes of DATA.
+   Space for the result is malloc'd, caller must free.  */
+
+extern char *make_hex_string (const gdb_byte *data, size_t length);
 
 #endif /* UTILS_H */

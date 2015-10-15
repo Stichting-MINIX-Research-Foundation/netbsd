@@ -1,4 +1,4 @@
-/* $NetBSD: arckbd.c,v 1.22 2012/02/02 19:42:57 tls Exp $ */
+/* $NetBSD: arckbd.c,v 1.24 2015/04/13 21:18:40 riastradh Exp $ */
 /*-
  * Copyright (c) 1998, 1999, 2000 Ben Harris
  * All rights reserved.
@@ -41,7 +41,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: arckbd.c,v 1.22 2012/02/02 19:42:57 tls Exp $");
+__KERNEL_RCSID(0, "$NetBSD: arckbd.c,v 1.24 2015/04/13 21:18:40 riastradh Exp $");
 
 #include <sys/param.h>
 #include <sys/device.h>
@@ -70,8 +70,7 @@ __KERNEL_RCSID(0, "$NetBSD: arckbd.c,v 1.22 2012/02/02 19:42:57 tls Exp $");
 #include "wskbd.h"
 #include "wsmouse.h"
 
-
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 
 /* #define ARCKBD_DEBUG */
 
@@ -219,8 +218,10 @@ arckbd_attach(device_t parent, device_t self, void *aux)
 
 	aprint_normal("\n");
 
+	/* XXX We do not ESTIMATE_VALUE because we are feeding two
+	   data streams (mouse, kbd) into the same source. XXX */
 	rnd_attach_source(&sc->sc_rnd_source, device_xname(self),
-	    RND_TYPE_TTY, 0);
+	    RND_TYPE_TTY, RND_FLAG_DEFAULT);
 
 	wskbdargs.console = 1; /* XXX FIXME */
 	wskbdargs.keymap = &sc->sc_mapdata;

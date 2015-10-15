@@ -1,4 +1,4 @@
-/*	$NetBSD: bmd.c,v 1.18 2011/10/16 03:10:17 isaki Exp $	*/
+/*	$NetBSD: bmd.c,v 1.24 2015/04/26 15:15:19 mlelstv Exp $	*/
 
 /*
  * Copyright (c) 2002 Tetsuya Isaki. All rights reserved.
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: bmd.c,v 1.18 2011/10/16 03:10:17 isaki Exp $");
+__KERNEL_RCSID(0, "$NetBSD: bmd.c,v 1.24 2015/04/26 15:15:19 mlelstv Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -106,15 +106,34 @@ dev_type_dump(bmddump);
 dev_type_size(bmdsize);
 
 const struct bdevsw bmd_bdevsw = {
-	bmdopen, bmdclose, bmdstrategy, bmdioctl, bmddump, bmdsize, D_DISK
+	.d_open = bmdopen,
+	.d_close = bmdclose,
+	.d_strategy = bmdstrategy,
+	.d_ioctl = bmdioctl,
+	.d_dump = bmddump,
+	.d_psize = bmdsize,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
 const struct cdevsw bmd_cdevsw = {
-	bmdopen, bmdclose, bmdread, bmdwrite, bmdioctl,
-	nostop, notty, nopoll, nommap, nokqfilter, D_DISK
+	.d_open = bmdopen,
+	.d_close = bmdclose,
+	.d_read = bmdread,
+	.d_write = bmdwrite,
+	.d_ioctl = bmdioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
-struct dkdriver bmddkdriver = { bmdstrategy };
+struct dkdriver bmddkdriver = {
+	.d_strategy = bmdstrategy
+};
 
 static int
 bmd_match(device_t parent, cfdata_t cf, void *aux)
@@ -333,14 +352,15 @@ bmdioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 	DPRINTF(("%s%d %ld\n", __func__, BMD_UNIT(dev), cmd));
 
 	sc = device_lookup_private(&bmd_cd, BMD_UNIT(dev));
+
 	if (sc == NULL)
 		return ENXIO;
 
-	switch (cmd) {
-	case DIOCGDINFO:
-		*(struct disklabel *)data = *(sc->sc_dkdev.dk_label);
-		break;
+	error = disk_ioctl(&sc->sc_dkdev, dev, cmd, data, flag, l); 
+	if (error != EPASSTHROUGH)
+		return error;
 
+	switch (cmd) {
 	case DIOCWDINFO:
 		if ((flag & FWRITE) == 0)
 			return EBADF;
@@ -408,7 +428,7 @@ bmd_getdisklabel(struct bmd_softc *sc, dev_t dev)
 	lp->d_secpercyl   = lp->d_nsectors * lp->d_ntracks;
 	lp->d_secperunit  = lp->d_secpercyl * lp->d_ncylinders;
 
-	lp->d_type        = DTYPE_LD;
+	lp->d_type        = DKTYPE_LD;
 	lp->d_rpm         = 300;	/* dummy */
 	lp->d_interleave  = 1;	/* dummy? */
 

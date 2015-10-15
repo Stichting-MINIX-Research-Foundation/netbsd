@@ -1,4 +1,4 @@
-/*	$NetBSD: oea_machdep.c,v 1.68 2013/11/03 22:27:27 mrg Exp $	*/
+/*	$NetBSD: oea_machdep.c,v 1.72 2015/07/06 05:20:50 matt Exp $	*/
 
 /*
  * Copyright (C) 2002 Matt Thomas
@@ -33,7 +33,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: oea_machdep.c,v 1.68 2013/11/03 22:27:27 mrg Exp $");
+__KERNEL_RCSID(0, "$NetBSD: oea_machdep.c,v 1.72 2015/07/06 05:20:50 matt Exp $");
 
 #include "opt_ppcarch.h"
 #include "opt_compat_netbsd.h"
@@ -56,6 +56,7 @@ __KERNEL_RCSID(0, "$NetBSD: oea_machdep.c,v 1.68 2013/11/03 22:27:27 mrg Exp $")
 #include <sys/syscallargs.h>
 #include <sys/syslog.h>
 #include <sys/systm.h>
+#include <sys/cpu.h>
 
 #include <uvm/uvm_extern.h>
 
@@ -439,18 +440,15 @@ oea_init(void (*handler)(void))
 
         /*
 	 * Configure a PSL user mask matching this processor.
+	 * Don't allow to set PSL_FP/PSL_VEC, since that will affect PCU.
  	 */
 	cpu_psluserset = PSL_EE | PSL_PR | PSL_ME | PSL_IR | PSL_DR | PSL_RI;
-	cpu_pslusermod = PSL_FP | PSL_FE0 | PSL_FE1 | PSL_LE | PSL_SE | PSL_BE;
+	cpu_pslusermod = PSL_FE0 | PSL_FE1 | PSL_LE | PSL_SE | PSL_BE;
 #ifdef PPC_OEA601
 	if (cpuvers == MPC601) {
 		cpu_psluserset &= PSL_601_MASK;
 		cpu_pslusermod &= PSL_601_MASK;
 	}
-#endif
-#ifdef ALTIVEC
-	if (cpu_altivec)
-		cpu_pslusermod |= PSL_VEC;
 #endif
 #ifdef PPC_HIGH_VEC
 	cpu_psluserset |= PSL_IP;	/* XXX ok? */
@@ -496,9 +494,16 @@ mpc601_ioseg_add(paddr_t pa, register_t len)
 	 * in pmap_bootstrap().
 	 */
 	iosrtable[i] = SR601(SR601_Ks, SR601_BUID_MEMFORCED, 0, i);
+
+	/*
+	 * XXX Setting segment register 0xf on my powermac 7200
+	 * wedges machine so set later in pmap.c
+	 */
+	/*
 	__asm volatile ("mtsrin %0,%1"
 	    ::	"r"(iosrtable[i]),
 		"r"(pa));
+	*/
 }
 #endif /* PPC_OEA601 */
 
@@ -915,7 +920,7 @@ oea_install_extint(void (*handler)(void))
 		}
 	}
 #endif
-	__syncicache((void *)exc_exi_base, (int)extsize);
+	__syncicache((void *)exc_exi_base, (size_t)extsize);
 
 	__asm volatile ("mtmsr %0" :: "r"(omsr));
 }
@@ -929,7 +934,7 @@ oea_startup(const char *model)
 	uintptr_t sz;
 	void *v;
 	vaddr_t minaddr, maxaddr;
-	char pbuf[9];
+	char pbuf[9], mstr[128];
 
 	KASSERT(curcpu() != NULL);
 	KASSERT(lwp0.l_cpu != NULL);
@@ -966,7 +971,8 @@ oea_startup(const char *model)
 	printf("%s%s", copyright, version);
 	if (model != NULL)
 		printf("Model: %s\n", model);
-	cpu_identify(NULL, 0);
+	cpu_identify(mstr, sizeof(mstr));
+	cpu_setmodel("%s", mstr);
 
 	format_bytes(pbuf, sizeof(pbuf), ctob((u_int)physmem));
 	printf("total memory = %s\n", pbuf);

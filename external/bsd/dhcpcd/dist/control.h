@@ -1,8 +1,8 @@
-/* $NetBSD: control.h,v 1.1.1.3 2013/06/21 19:33:08 roy Exp $ */
+/* $NetBSD: control.h,v 1.7 2015/01/30 09:47:05 roy Exp $ */
 
 /*
  * dhcpcd - DHCP client daemon
- * Copyright (c) 2006-2012 Roy Marples <roy@marples.name>
+ * Copyright (c) 2006-2015 Roy Marples <roy@marples.name>
  * All rights reserved
 
  * Redistribution and use in source and binary forms, with or without
@@ -32,16 +32,35 @@
 
 #include "dhcpcd.h"
 
-struct fd_list {
-	int fd;
-	int listener;
-	struct fd_list *next;
-};
-extern struct fd_list *control_fds;
+/* Limit queue size per fd */
+#define CONTROL_QUEUE_MAX	100
 
-int control_start(void);
-int control_stop(void);
-int control_open(void);
-int control_send(int, char * const *);
+struct fd_data {
+	TAILQ_ENTRY(fd_data) next;
+	char *data;
+	size_t data_len;
+	uint8_t freeit;
+};
+TAILQ_HEAD(fd_data_head, fd_data);
+
+struct fd_list {
+	TAILQ_ENTRY(fd_list) next;
+	struct dhcpcd_ctx *ctx;
+	int fd;
+	unsigned int flags;
+	struct fd_data_head queue;
+	struct fd_data_head free_queue;
+};
+TAILQ_HEAD(fd_list_head, fd_list);
+
+#define FD_LISTEN	(1<<0)
+#define FD_UNPRIV	(1<<1)
+
+int control_start(struct dhcpcd_ctx *, const char *);
+int control_stop(struct dhcpcd_ctx *);
+int control_open(struct dhcpcd_ctx *, const char *);
+ssize_t control_send(struct dhcpcd_ctx *, int, char * const *);
+int control_queue(struct fd_list *fd, char *data, size_t data_len, uint8_t fit);
+void control_close(struct dhcpcd_ctx *ctx);
 
 #endif

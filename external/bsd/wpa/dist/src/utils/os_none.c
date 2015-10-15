@@ -2,14 +2,8 @@
  * wpa_supplicant/hostapd / Empty OS specific functions
  * Copyright (c) 2005-2006, Jouni Malinen <j@w1.fi>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  *
  * This file can be used as a starting point when adding a new OS target. The
  * functions here do not really work as-is since they are just empty or only
@@ -27,6 +21,12 @@ void os_sleep(os_time_t sec, os_time_t usec)
 
 
 int os_get_time(struct os_time *t)
+{
+	return -1;
+}
+
+
+int os_get_reltime(struct os_reltime *t)
 {
 	return -1;
 }
@@ -218,6 +218,11 @@ size_t os_strlcpy(char *dest, const char *src, size_t size)
 }
 
 
+int os_memcmp_const(const void *a, const void *b, size_t len)
+{
+	return 0;
+}
+
 char * os_strstr(const char *haystack, const char *needle)
 {
 	return NULL;
@@ -229,3 +234,9 @@ int os_snprintf(char *str, size_t size, const char *format, ...)
 	return 0;
 }
 #endif /* OS_NO_C_LIB_DEFINES */
+
+
+int os_exec(const char *program, const char *arg, int wait_completion)
+{
+	return -1;
+}

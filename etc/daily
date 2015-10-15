@@ -1,6 +1,6 @@
 #!/bin/sh -
 #
-#	$NetBSD: daily,v 1.90 2013/09/08 08:19:40 prlw1 Exp $
+#	$NetBSD: daily,v 1.92 2014/12/13 02:53:08 uebayasi Exp $
 #	@(#)daily	8.2 (Berkeley) 1/25/94
 #
 
@@ -37,9 +37,9 @@ if [ -z "$MAILTO" -o "$USER" != "root" ]; then
 fi
 
 if [ -n "${pkgdb_dir}" ]; then
-    echo "WARNING: Setting pkgdb_dir in daily.conf(5) is deprecated"
-    echo "WARNING: Please define PKG_DBDIR in pkg_install.conf(5) instead"
-    _compat_K_flag="-K ${pkgdb_dir}"
+	echo "WARNING: Setting pkgdb_dir in daily.conf(5) is deprecated"
+	echo "WARNING: Please define PKG_DBDIR in pkg_install.conf(5) instead"
+	_compat_K_flag="-K ${pkgdb_dir}"
 fi
 
 echo ""
@@ -248,7 +248,7 @@ fi
 
 if checkyesno run_fsck; then
 	echo ""
-	echo "Checking filesystems:"
+	echo "Checking file systems:"
 	fsck -n -f ${run_fsck_flags} | grep -v '^\*\* Phase'
 fi
 

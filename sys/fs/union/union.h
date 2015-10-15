@@ -1,4 +1,4 @@
-/*	$NetBSD: union.h,v 1.24 2012/11/05 17:24:11 dholland Exp $	*/
+/*	$NetBSD: union.h,v 1.28 2015/02/16 10:22:00 hannken Exp $	*/
 
 /*
  * Copyright (c) 1994 The Regents of the University of California.
@@ -120,6 +120,8 @@ struct union_mount {
 struct union_node {
 	kmutex_t		un_lock;
 	LIST_ENTRY(union_node)	un_cache;	/* c: Hash chain */
+	int			un_refs;	/* c: Reference counter */
+	struct mount		*un_mount;	/* c: union mount */
 	struct vnode		*un_vnode;	/* :: Back pointer */
 	struct vnode	        *un_uppervp;	/* m: overlaying object */
 	struct vnode	        *un_lowervp;	/* v: underlying object */
@@ -127,14 +129,12 @@ struct union_node {
 	struct vnode		*un_pvp;	/* v: Parent vnode */
 	char			*un_path;	/* v: saved component name */
 	int			un_openl;	/* v: # of opens on lowervp */
-	unsigned int		un_flags;	/* v: node flags */
 	unsigned int		un_cflags;	/* c: cache flags */
 	struct vnode		**un_dircache;	/* v: cached union stack */
 	off_t			un_uppersz;	/* l: size of upper object */
 	off_t			un_lowersz;	/* l: size of lower object */
 };
 
-#define UN_KLOCK	0x08		/* Keep upper node locked on vput */
 #define UN_CACHED	0x10		/* In union cache */
 
 extern int union_allocvp(struct vnode **, struct mount *,
@@ -162,6 +162,8 @@ extern void union_newlower(struct union_node *, struct vnode *);
 extern void union_newupper(struct union_node *, struct vnode *);
 extern void union_newsize(struct vnode *, off_t, off_t);
 int union_readdirhook(struct vnode **, struct file *, struct lwp *);
+
+VFS_PROTOS(union);
 
 #define	MOUNTTOUNIONMOUNT(mp) ((struct union_mount *)((mp)->mnt_data))
 #define	VTOUNION(vp) ((struct union_node *)(vp)->v_data)

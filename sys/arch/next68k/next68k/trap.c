@@ -1,4 +1,4 @@
-/*	$NetBSD: trap.c,v 1.85 2012/02/19 21:06:22 rmind Exp $	*/
+/*	$NetBSD: trap.c,v 1.88 2015/03/04 20:30:00 martin Exp $	*/
 
 /*
  * This file was taken from mvme68k/mvme68k/trap.c
@@ -46,7 +46,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: trap.c,v 1.85 2012/02/19 21:06:22 rmind Exp $");
+__KERNEL_RCSID(0, "$NetBSD: trap.c,v 1.88 2015/03/04 20:30:00 martin Exp $");
 
 #include "opt_ddb.h"
 #include "opt_execfmt.h"
@@ -270,7 +270,7 @@ trap(struct frame *fp, int type, unsigned code, unsigned v)
 	int s;
 	int rv;
 	u_quad_t sticks = 0 /* XXX initialiser works around compiler bug */;
-	static int panicking = 0;
+	static int panicking __diagused;
 
 	curcpu()->ci_data.cpu_ntrap++;
 	l = curlwp;
@@ -620,14 +620,26 @@ trap(struct frame *fp, int type, unsigned code, unsigned v)
 			goto dopanic;
 		}
 		ksi.ksi_addr = (void *)v;
-		if (rv == ENOMEM) {
+		switch (rv) {
+		case ENOMEM:
 			printf("UVM: pid %d (%s), uid %d killed: out of swap\n",
 			       p->p_pid, p->p_comm,
 			       l->l_cred ?
 			       kauth_cred_geteuid(l->l_cred) : -1);
 			ksi.ksi_signo = SIGKILL;
-		} else {
+			break;
+		case EINVAL:
+			ksi.ksi_signo = SIGBUS;
+			ksi.ksi_code = BUS_ADRERR;
+			break;
+		case EACCES:
 			ksi.ksi_signo = SIGSEGV;
+			ksi.ksi_code = SEGV_ACCERR;
+			break;
+		default:
+			ksi.ksi_signo = SIGSEGV;
+			ksi.ksi_code = SEGV_MAPERR;
+			break;
 		}
 		break;
 	    }

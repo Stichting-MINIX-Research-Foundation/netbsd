@@ -1,6 +1,6 @@
 /* Python interface to lazy strings.
 
-   Copyright (C) 2010-2013 Free Software Foundation, Inc.
+   Copyright (C) 2010-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -21,10 +21,8 @@
 #include "python-internal.h"
 #include "charset.h"
 #include "value.h"
-#include "exceptions.h"
 #include "valprint.h"
 #include "language.h"
-#include "gdb_assert.h"
 
 typedef struct {
   PyObject_HEAD
@@ -47,7 +45,8 @@ typedef struct {
   struct type *type;
 } lazy_string_object;
 
-static PyTypeObject lazy_string_object_type;
+static PyTypeObject lazy_string_object_type
+    CPYCHECKER_TYPE_OBJECT_FOR_TYPEDEF ("lazy_string_object");
 
 static PyObject *
 stpy_get_address (PyObject *self, void *closure)
@@ -159,13 +158,14 @@ gdbpy_create_lazy_string_object (CORE_ADDR address, long length,
   return (PyObject *) str_obj;
 }
 
-void
+int
 gdbpy_initialize_lazy_string (void)
 {
   if (PyType_Ready (&lazy_string_object_type) < 0)
-    return;
+    return -1;
 
   Py_INCREF (&lazy_string_object_type);
+  return 0;
 }
 
 /* Determine whether the printer object pointed to by OBJ is a

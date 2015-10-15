@@ -1,4 +1,4 @@
-/*	$NetBSD: plcomvar.h,v 1.14 2013/05/01 07:33:24 mlelstv Exp $	*/
+/*	$NetBSD: plcomvar.h,v 1.16 2015/04/13 21:18:41 riastradh Exp $	*/
 
 /*
  * Copyright (c) 1996 Christopher G. Demetriou.  All rights reserved.
@@ -30,19 +30,17 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "rnd.h"
 #include "opt_multiprocessor.h"
 #include "opt_lockdebug.h"
 #include "opt_plcom.h"
 #include "opt_kgdb.h"
 
 #ifdef RND_COM
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 #endif
 
 #include <sys/callout.h>
 #include <sys/timepps.h>
-#include <sys/simplelock.h>
 
 struct plcom_instance;
 

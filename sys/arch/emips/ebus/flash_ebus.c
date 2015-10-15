@@ -1,4 +1,4 @@
-/*	$NetBSD: flash_ebus.c,v 1.7 2013/10/13 06:55:34 riz Exp $	*/
+/*	$NetBSD: flash_ebus.c,v 1.17 2015/04/26 15:15:19 mlelstv Exp $	*/
 
 /*-
  * Copyright (c) 2010 The NetBSD Foundation, Inc.
@@ -31,7 +31,7 @@
  */
 
 #include <sys/cdefs.h>			/* RCS ID & Copyright macro defns */
-__KERNEL_RCSID(0, "$NetBSD: flash_ebus.c,v 1.7 2013/10/13 06:55:34 riz Exp $");
+__KERNEL_RCSID(0, "$NetBSD: flash_ebus.c,v 1.17 2015/04/26 15:15:19 mlelstv Exp $");
 
 /* Driver for the Intel 28F320/640/128 (J3A150) StrataFlash memory device
  * Extended to include the Intel JS28F256P30T95.
@@ -61,7 +61,7 @@ __KERNEL_RCSID(0, "$NetBSD: flash_ebus.c,v 1.7 2013/10/13 06:55:34 riz Exp $");
 #include <sys/lock.h>
 #include <sys/queue.h>
 
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 
 #include "locators.h"
 #include <prop/proplib.h>
@@ -1302,8 +1302,6 @@ static int eflash_write_at (struct eflash_softc *sc,
 /* Rest of code lifted with mods from the dev\ata\wd.c driver
  */
 
-/*	$NetBSD: flash_ebus.c,v 1.7 2013/10/13 06:55:34 riz Exp $ */
-
 /*
  * Copyright (c) 1998, 2001 Manuel Bouyer.  All rights reserved.
  *
@@ -1396,12 +1394,29 @@ dev_type_dump(eflashdump);
 dev_type_size(eflashsize);
 
 const struct bdevsw eflash_bdevsw = {
-	eflashopen, eflashclose, eflashstrategy, eflashioctl, eflashdump, eflashsize, D_DISK
+	.d_open = eflashopen,
+	.d_close = eflashclose,
+	.d_strategy = eflashstrategy,
+	.d_ioctl = eflashioctl,
+	.d_dump = eflashdump,
+	.d_psize = eflashsize,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
 const struct cdevsw eflash_cdevsw = {
-	eflashopen, eflashclose, eflashread, eflashwrite, eflashioctl,
-	nostop, notty, nopoll, nommap, nokqfilter, D_DISK
+	.d_open = eflashopen,
+	.d_close = eflashclose,
+	.d_read = eflashread,
+	.d_write = eflashwrite,
+	.d_ioctl = eflashioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
 void  eflashgetdefaultlabel(struct eflash_softc *, struct disklabel *);
@@ -1416,7 +1431,10 @@ int   eflashactivate(device_t, enum devact);
 void  eflashdone(struct eflash_softc *);
 static void eflash_set_geometry(struct eflash_softc *sc);
 
-struct dkdriver eflashdkdriver = { eflashstrategy, minphys };
+struct dkdriver eflashdkdriver = {
+	.d_strategy = eflashstrategy,
+	.d_minphys = minphys
+};
 
 #ifdef HAS_BAD144_HANDLING
 static void bad144intern(struct eflash_softc *);
@@ -1455,7 +1473,7 @@ eflashattach(struct eflash_softc *sc)
 	disk_attach(&sc->sc_dk);
 
 	rnd_attach_source(&sc->rnd_source, device_xname(sc->sc_dev),
-			  RND_TYPE_DISK, 0);
+			  RND_TYPE_DISK, RND_FLAG_DEFAULT);
 
 }
 
@@ -1977,7 +1995,7 @@ eflashgetdefaultlabel(struct eflash_softc *sc, struct disklabel *lp)
 	lp->d_ncylinders = 1;
 	lp->d_secpercyl = lp->d_ntracks * lp->d_nsectors;
 
-    lp->d_type = DTYPE_ST506; /* ?!? */
+	lp->d_type = DKTYPE_ST506; /* ?!? */
 
 	strncpy(lp->d_typename, ST506, 16);
 	strncpy(lp->d_packname, "fictitious", 16);
@@ -2074,7 +2092,7 @@ eflashioctl(dev_t dev, u_long xfer, void *addr, int flag, struct lwp *l)
 	if ((sc->sc_flags & EFLASHF_LOADED) == 0)
 		return EIO;
 
-	error = disk_ioctl(&sc->sc_dk, xfer, addr, flag, l);
+	error = disk_ioctl(&sc->sc_dk, dev, xfer, addr, flag, l);
 	if (error != EPASSTHROUGH)
 		return (error);
 
@@ -2088,15 +2106,6 @@ eflashioctl(dev_t dev, u_long xfer, void *addr, int flag, struct lwp *l)
 		bad144intern(sc);
 		return 0;
 #endif
-	case DIOCGDINFO:
-		*(struct disklabel *)addr = *(sc->sc_dk.dk_label);
-		return 0;
-
-	case DIOCGPART:
-		((struct partinfo *)addr)->disklab = sc->sc_dk.dk_label;
-		((struct partinfo *)addr)->part =
-		    &sc->sc_dk.dk_label->d_partitions[EFLASHPART(dev)];
-		return 0;
 
 	case DIOCWDINFO:
 	case DIOCSDINFO:
@@ -2148,37 +2157,6 @@ eflashioctl(dev_t dev, u_long xfer, void *addr, int flag, struct lwp *l)
 
 	case DIOCCACHESYNC:
 		return 0;
-
-	case DIOCAWEDGE:
-	    {
-	    	struct dkwedge_info *dkw = (void *) addr;
-
-		if ((flag & FWRITE) == 0)
-			return (EBADF);
-
-		/* If the ioctl happens here, the parent is us. */
-		strcpy(dkw->dkw_parent, device_xname(sc->sc_dev));
-		return (dkwedge_add(dkw));
-	    }
-
-	case DIOCDWEDGE:
-	    {
-	    	struct dkwedge_info *dkw = (void *) addr;
-
-		if ((flag & FWRITE) == 0)
-			return (EBADF);
-
-		/* If the ioctl happens here, the parent is us. */
-		strcpy(dkw->dkw_parent, device_xname(sc->sc_dev));
-		return (dkwedge_del(dkw));
-	    }
-
-	case DIOCLWEDGES:
-	    {
-	    	struct dkwedge_list *dkwl = (void *) addr;
-
-		return (dkwedge_list(&sc->sc_dk, dkwl, l));
-	    }
 
 	case DIOCGSTRATEGY:
 	    {

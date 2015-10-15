@@ -897,7 +897,7 @@ static int
 unionfs_link(void *v)
 {
 #if 0
-	struct vop_link_args *ap = v;
+	struct vop_link_v2_args *ap = v;
 	int		error;
 	int		needrelookup;
 	struct unionfs_node *dunp;
@@ -1820,6 +1820,8 @@ const struct vnodeopv_entry_desc unionfs_vnodeop_entries[] = {
 	{ &vop_setattr_desc, unionfs_setattr },		/* setattr */
 	{ &vop_read_desc, unionfs_read },		/* read */
 	{ &vop_write_desc, unionfs_write },		/* write */
+	{ &vop_fallocate_desc, genfs_eopnotsupp },	/* fallocate */
+	{ &vop_fdiscard_desc, genfs_eopnotsupp },	/* fdiscard */
 	{ &vop_ioctl_desc, unionfs_ioctl },		/* ioctl */
 	{ &vop_poll_desc, unionfs_poll },		/* select */
 	{ &vop_revoke_desc, unionfs_revoke },		/* revoke */

@@ -1,4 +1,4 @@
-/*	$NetBSD: numtohost.c,v 1.1.1.1 2009/12/13 16:55:04 kardel Exp $	*/
+/*	$NetBSD: numtohost.c,v 1.3 2015/07/10 14:20:32 christos Exp $	*/
 
 /*
  * numtohost - convert network number to host name.
@@ -39,8 +39,7 @@ numtohost(
 	    return numtoa(netnum);
 	
 	LIB_GETBUF(bp);
-	
-	bp[LIB_BUFLENGTH-1] = '\0';
-	(void) strncpy(bp, hp->h_name, LIB_BUFLENGTH-1);
+	strlcpy(bp, hp->h_name, LIB_BUFLENGTH);
+
 	return bp;
 }

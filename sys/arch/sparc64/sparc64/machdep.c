@@ -1,4 +1,4 @@
-/*	$NetBSD: machdep.c,v 1.273 2013/11/14 12:11:13 martin Exp $ */
+/*	$NetBSD: machdep.c,v 1.282 2015/06/11 21:00:05 palle Exp $ */
 
 /*-
  * Copyright (c) 1996, 1997, 1998 The NetBSD Foundation, Inc.
@@ -71,7 +71,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.273 2013/11/14 12:11:13 martin Exp $");
+__KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.282 2015/06/11 21:00:05 palle Exp $");
 
 #include "opt_ddb.h"
 #include "opt_multiprocessor.h"
@@ -154,10 +154,7 @@ extern vaddr_t avail_end;
 #ifdef MODULAR
 vaddr_t module_start, module_end;
 static struct vm_map module_map_store;
-extern struct vm_map *module_map;
 #endif
-
-extern	void *msgbufaddr;
 
 /*
  * Maximum number of DMA segments we'll allow in dmamem_load()
@@ -298,59 +295,6 @@ setregs(struct lwp *l, struct exec_package *pack, vaddr_t stack)
 #endif
 }
 
-static char *parse_bootfile(char *);
-static char *parse_bootargs(char *);
-
-static char *
-parse_bootfile(char *args)
-{
-	char *cp;
-
-	/*
-	 * bootargs is of the form: [kernelname] [args...]
-	 * It can be the empty string if we booted from the default
-	 * kernel name.
-	 */
-	cp = args;
-	for (cp = args; *cp != 0 && *cp != ' ' && *cp != '\t'; cp++) {
-		if (*cp == '-') {
-			int c;
-			/*
-			 * If this `-' is most likely the start of boot
-			 * options, we're done.
-			 */
-			if (cp == args)
-				break;
-			if ((c = *(cp-1)) == ' ' || c == '\t')
-				break;
-		}
-	}
-	/* Now we've separated out the kernel name from the args */
-	*cp = '\0';
-	return (args);
-}
-
-static char *
-parse_bootargs(char *args)
-{
-	char *cp;
-
-	for (cp = args; *cp != '\0'; cp++) {
-		if (*cp == '-') {
-			int c;
-			/*
-			 * Looks like options start here, but check this
-			 * `-' is not part of the kernel name.
-			 */
-			if (cp == args)
-				break;
-			if ((c = *(cp-1)) == ' ' || c == '\t')
-				break;
-		}
-	}
-	return (cp);
-}
-
 /*
  * machine dependent system variables.
  */
@@ -358,31 +302,28 @@ static int
 sysctl_machdep_boot(SYSCTLFN_ARGS)
 {
 	struct sysctlnode node = *rnode;
-	u_int chosen;
-	char bootargs[256];
-	const char *cp;
-
-	if ((chosen = OF_finddevice("/chosen")) == -1)
-		return (ENOENT);
-	if (node.sysctl_num == CPU_BOOTED_DEVICE)
-		cp = "bootpath";
-	else
-		cp = "bootargs";
-	if (OF_getprop(chosen, cp, bootargs, sizeof bootargs) < 0)
-		return (ENOENT);
+	char bootpath[256];
+	const char *cp = NULL;
+	extern char ofbootpath[], *ofbootpartition, *ofbootfile, *ofbootflags;
 
 	switch (node.sysctl_num) {
 	case CPU_BOOTED_KERNEL:
-		cp = parse_bootfile(bootargs);
-                if (cp != NULL && cp[0] == '\0')
+		cp = ofbootfile;
+                if (cp == NULL || cp[0] == '\0')
                         /* Unknown to firmware, return default name */
                         cp = "netbsd";
 		break;
 	case CPU_BOOT_ARGS:
-		cp = parse_bootargs(bootargs);
+		cp = ofbootflags;
 		break;
 	case CPU_BOOTED_DEVICE:
-		cp = bootargs;
+		if (ofbootpartition) {
+			snprintf(bootpath, sizeof(bootpath), "%s:%s",
+			    ofbootpath, ofbootpartition);
+			cp = bootpath;
+		} else {
+			cp = ofbootpath;
+		}
 		break;
 	}
 
@@ -404,19 +345,29 @@ get_vis(void)
 {
 	int vis = 0;
 
-	if (GETVER_CPU_MANUF() == MANUF_FUJITSU) {
-		/* as far as I can tell SPARC64-III and up have VIS 1.0 */
-		if (GETVER_CPU_IMPL() >= IMPL_SPARC64_III) {
-			vis = 1;
+	if ( CPU_ISSUN4V ) {
+		/*
+		 * UA2005 and UA2007 supports VIS 1 and VIS 2.
+		 * Oracle SPARC Architecture 2011 supports VIS 3.
+		 *
+		 * XXX Settle with VIS 2 until we can determite the
+		 *     actual sun4v implementation.
+		 */
+		vis = 2;
+	} else {
+		if (GETVER_CPU_MANUF() == MANUF_FUJITSU) {
+			/* as far as I can tell SPARC64-III and up have VIS 1.0 */
+			if (GETVER_CPU_IMPL() >= IMPL_SPARC64_III) {
+				vis = 1;
+			}
+			/* XXX - which, if any, SPARC64 support VIS 2.0? */
+		} else { 
+			/* this better be Sun */
+			vis = 1;	/* all UltraSPARCs support at least VIS 1.0 */
+			if (CPU_IS_USIII_UP()) {
+				vis = 2;
+			}
 		}
-		/* XXX - which, if any, SPARC64 support VIS 2.0? */
-	} else { 
-		/* this better be Sun */
-		vis = 1;	/* all UltraSPARCs support at least VIS 1.0 */
-		if (CPU_IS_USIII_UP()) {
-			vis = 2;
-		}
-		/* UltraSPARC T4 supports VIS 3.0 */
 	}
 	return vis;
 }
@@ -451,10 +402,11 @@ SYSCTL_SETUP(sysctl_machdep_setup, "sysctl machdep subtree setup")
 		       NULL, 9, NULL, 0,
 		       CTL_MACHDEP, CPU_ARCH, CTL_EOL);
 	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT|CTLFLAG_IMMEDIATE,
-		       CTLTYPE_INT, "vis", NULL,
-		       NULL, get_vis(), NULL, 0,
-		       CTL_MACHDEP, CPU_VIS, CTL_EOL);
+	               CTLFLAG_PERMANENT|CTLFLAG_IMMEDIATE,
+	               CTLTYPE_INT, "vis",
+	               SYSCTL_DESCR("supported version of VIS instruction set"),
+	               NULL, get_vis(), NULL, 0,
+	               CTL_MACHDEP, CPU_VIS, CTL_EOL);
 }
 
 void *
@@ -591,12 +543,13 @@ cpu_reboot(int howto, char *user_boot_string)
 	 */
 	maybe_dump(howto);
 
-	if ((howto & RB_NOSYNC) == 0 && !syncdone) {
-		extern struct lwp lwp0;
-
+	/*
+	 * If we've panic'd, don't make the situation potentially
+	 * worse by syncing or unmounting the file systems.
+	 */
+	if ((howto & RB_NOSYNC) == 0 && panicstr == NULL) {
 		if (!syncdone) {
-		syncdone = true;
-		vfs_shutdown();
+			syncdone = true;
 			/* XXX used to force unmount as well, here */
 			vfs_sync_all(l);
 			/*
@@ -624,6 +577,7 @@ cpu_reboot(int howto, char *user_boot_string)
 	splhigh();
 
 haltsys:
+	doshutdownhooks();
 
 #ifdef MULTIPROCESSOR
 	/* Stop all secondary cpus */
@@ -1431,8 +1385,10 @@ _bus_dmamem_alloc(bus_dma_tag_t t, bus_size_t size, bus_size_t alignment,
 	 */
 	error = uvm_pglistalloc(size, low, high,
 	    alignment, boundary, pglist, nsegs, (flags & BUS_DMA_NOWAIT) == 0);
-	if (error)
+	if (error) {
+		free(pglist, M_DEVBUF);
 		return (error);
+	}
 
 	/*
 	 * Compute the location, size, and number of segments actually
@@ -1604,27 +1560,6 @@ static int	sparc_bus_alloc(bus_space_tag_t, bus_addr_t, bus_addr_t, bus_size_t,
 static void	sparc_bus_free(bus_space_tag_t, bus_space_handle_t, bus_size_t);
 
 struct extent *io_space = NULL;
-
-void
-bus_space_barrier(bus_space_tag_t t, bus_space_handle_t h,
-	bus_size_t o, bus_size_t s, int f)
-{
-	/*
-	 * We have a bit of a problem with the bus_space_barrier()
-	 * interface.  It defines a read barrier and a write barrier
-	 * which really don't map to the 7 different types of memory
-	 * barriers in the SPARC v9 instruction set.
-	 */
-	if (f == BUS_SPACE_BARRIER_READ)
-		/* A load followed by a load to the same location? */
-		__asm volatile("membar #Lookaside");
-	else if (f == BUS_SPACE_BARRIER_WRITE)
-		/* A store followed by a store? */
-		__asm volatile("membar #StoreStore");
-	else 
-		/* A store followed by a load? */
-		__asm volatile("membar #StoreLoad|#MemIssue|#Lookaside");
-}
 
 int
 bus_space_alloc(bus_space_tag_t t, bus_addr_t rs, bus_addr_t re, bus_size_t s,
@@ -2338,15 +2273,17 @@ sparc_bus_map(bus_space_tag_t t, bus_addr_t addr, bus_size_t size,
 	}
 
 #ifdef _LP64
-	/* If it's not LINEAR don't bother to map it.  Use phys accesses. */
-	if ((flags & BUS_SPACE_MAP_LINEAR) == 0) {
-		hp->_ptr = addr;
-		if (map_little)
-			hp->_asi = ASI_PHYS_NON_CACHED_LITTLE;
-		else
-			hp->_asi = ASI_PHYS_NON_CACHED;
-		hp->_sasi = ASI_PHYS_NON_CACHED;
-		return (0);
+	if (!CPU_ISSUN4V) {
+		/* If it's not LINEAR don't bother to map it.  Use phys accesses. */
+		if ((flags & BUS_SPACE_MAP_LINEAR) == 0) {
+			hp->_ptr = addr;
+			if (map_little)
+				hp->_asi = ASI_PHYS_NON_CACHED_LITTLE;
+			else
+				hp->_asi = ASI_PHYS_NON_CACHED;
+			hp->_sasi = ASI_PHYS_NON_CACHED;
+			return (0);
+		}
 	}
 #endif
 
@@ -2759,7 +2696,7 @@ sparc64_elf_mcmodel_check(struct exec_package *epp, const char *model,
 	if (epp->ep_flags & EXEC_32)
 		return;
 
-#ifdef __USING_TOPDOWN_VM
+#ifdef __USE_TOPDOWN_VM
 	/*
 	 * we allow TOPDOWN_VM for all processes where the binary is compiled
 	 * with the medany or medmid code model.

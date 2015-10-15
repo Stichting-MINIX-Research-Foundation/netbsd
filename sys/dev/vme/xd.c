@@ -1,4 +1,4 @@
-/*	$NetBSD: xd.c,v 1.90 2013/10/19 21:00:32 mrg Exp $	*/
+/*	$NetBSD: xd.c,v 1.95 2015/04/26 15:15:20 mlelstv Exp $	*/
 
 /*
  * Copyright (c) 1995 Charles D. Cranor
@@ -45,7 +45,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: xd.c,v 1.90 2013/10/19 21:00:32 mrg Exp $");
+__KERNEL_RCSID(0, "$NetBSD: xd.c,v 1.95 2015/04/26 15:15:20 mlelstv Exp $");
 
 #undef XDC_DEBUG		/* full debug */
 #define XDC_DIAG		/* extra sanity checks */
@@ -292,12 +292,29 @@ dev_type_dump(xddump);
 dev_type_size(xdsize);
 
 const struct bdevsw xd_bdevsw = {
-	xdopen, xdclose, xdstrategy, xdioctl, xddump, xdsize, D_DISK
+	.d_open = xdopen,
+	.d_close = xdclose,
+	.d_strategy = xdstrategy,
+	.d_ioctl = xdioctl,
+	.d_dump = xddump,
+	.d_psize = xdsize,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
 const struct cdevsw xd_cdevsw = {
-	xdopen, xdclose, xdread, xdwrite, xdioctl,
-	nostop, notty, nopoll, nommap, nokqfilter, D_DISK
+	.d_open = xdopen,
+	.d_close = xdclose,
+	.d_read = xdread,
+	.d_write = xdwrite,
+	.d_ioctl = xdioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
 struct xdc_attach_args {	/* this is the "aux" args to xdattach */
@@ -310,7 +327,9 @@ struct xdc_attach_args {	/* this is the "aux" args to xdattach */
  * dkdriver
  */
 
-struct dkdriver xddkdriver = {xdstrategy};
+struct dkdriver xddkdriver = {
+	.d_strategy = xdstrategy
+};
 
 /*
  * start: disk label fix code (XXX)
@@ -1017,6 +1036,10 @@ xdioctl(dev_t dev, u_long command, void *addr, int flag, struct lwp *l)
 	if ((xd = device_lookup_private(&xd_cd, unit)) == NULL)
 		return (ENXIO);
 
+	error = disk_ioctl(&xd->sc_dk, dev, command, addr, flag, l);
+	if (error != EPASSTHROUGH)
+		return error;
+
 	/* switch on ioctl type */
 
 	switch (command) {
@@ -1026,24 +1049,6 @@ xdioctl(dev_t dev, u_long command, void *addr, int flag, struct lwp *l)
 		s = splbio();
 		memcpy(&xd->dkb, addr, sizeof(xd->dkb));
 		splx(s);
-		return 0;
-
-	case DIOCGDINFO:	/* get disk label */
-		memcpy(addr, xd->sc_dk.dk_label, sizeof(struct disklabel));
-		return 0;
-#ifdef __HAVE_OLD_DISKLABEL
-	case ODIOCGDINFO:
-		newlabel = *(xd->sc_dk.dk_label);
-		if (newlabel.d_npartitions > OLDMAXPARTITIONS)
-			return ENOTTY;
-		memcpy(addr, &newlabel, sizeof (struct olddisklabel));
-		return 0;
-#endif
-
-	case DIOCGPART:	/* get partition info */
-		((struct partinfo *) addr)->disklab = xd->sc_dk.dk_label;
-		((struct partinfo *) addr)->part =
-		    &xd->sc_dk.dk_label->d_partitions[DISKPART(dev)];
 		return 0;
 
 	case DIOCSDINFO:	/* set disk label */

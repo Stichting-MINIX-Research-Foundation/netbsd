@@ -1,4 +1,4 @@
-/* $NetBSD: sbscn.c,v 1.37 2012/02/02 19:43:00 tls Exp $ */
+/* $NetBSD: sbscn.c,v 1.41 2015/04/13 21:18:42 riastradh Exp $ */
 
 /*
  * Copyright 2000, 2001
@@ -109,16 +109,15 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: sbscn.c,v 1.37 2012/02/02 19:43:00 tls Exp $");
+__KERNEL_RCSID(0, "$NetBSD: sbscn.c,v 1.41 2015/04/13 21:18:42 riastradh Exp $");
 
 #define	SBSCN_DEBUG
 
 #include "opt_ddb.h"
 #include "ioconf.h"
 
-#include "rnd.h"
 #ifdef RND_SBSCN
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 #endif
 
 #include <sys/param.h>
@@ -186,8 +185,18 @@ dev_type_tty(sbscntty);
 dev_type_poll(sbscnpoll);
 
 const struct cdevsw sbscn_cdevsw = {
-	sbscnopen, sbscnclose, sbscnread, sbscnwrite, sbscnioctl,
-	sbscnstop, sbscntty, sbscnpoll, nommap, ttykqfilter, D_TTY
+	.d_open = sbscnopen,
+	.d_close = sbscnclose,
+	.d_read = sbscnread,
+	.d_write = sbscnwrite,
+	.d_ioctl = sbscnioctl,
+	.d_stop = sbscnstop,
+	.d_tty = sbscntty,
+	.d_poll = sbscnpoll,
+	.d_mmap = nommap,
+	.d_kqfilter = ttykqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_TTY
 };
 
 #define	integrate	static inline
@@ -384,7 +393,8 @@ sbscn_attach_channel(struct sbscn_softc *sc, int chan, int intr)
 
 #ifdef RND_SBSCN
 	rnd_attach_source(&ch->ch_rnd_source, device_xname(sc->sc_dev),
-			  RND_TYPE_TTY, 0);
+			  RND_TYPE_TTY, RND_FLAG_COLLECT_TIME|
+					RND_FLAG_ESTIMATE_TIME);
 #endif
 
 	sbscn_config(ch);

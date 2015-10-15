@@ -1,4 +1,4 @@
-/*	$NetBSD: genfb.c,v 1.51 2013/10/09 17:20:54 macallan Exp $ */
+/*	$NetBSD: genfb.c,v 1.58 2015/06/01 20:47:59 nat Exp $ */
 
 /*-
  * Copyright (c) 2007 Michael Lorenz
@@ -27,7 +27,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: genfb.c,v 1.51 2013/10/09 17:20:54 macallan Exp $");
+__KERNEL_RCSID(0, "$NetBSD: genfb.c,v 1.58 2015/06/01 20:47:59 nat Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -55,8 +55,10 @@ __KERNEL_RCSID(0, "$NetBSD: genfb.c,v 1.51 2013/10/09 17:20:54 macallan Exp $");
 		AB_VERBOSE | AB_DEBUG) )
 #endif
 
+#ifdef _KERNEL_OPT
 #include "opt_genfb.h"
 #include "opt_wsfb.h"
+#endif
 
 #ifdef GENFB_DEBUG
 #define GPRINTF panic
@@ -68,6 +70,8 @@ __KERNEL_RCSID(0, "$NetBSD: genfb.c,v 1.51 2013/10/09 17:20:54 macallan Exp $");
 
 static int	genfb_ioctl(void *, void *, u_long, void *, int, struct lwp *);
 static paddr_t	genfb_mmap(void *, void *, off_t, int);
+static void	genfb_pollc(void *, int);
+
 static void	genfb_init_screen(void *, struct vcons_screen *, int, long *);
 
 static int	genfb_putcmap(struct genfb_softc *, struct wsdisplay_cmap *);
@@ -96,7 +100,7 @@ genfb_init(struct genfb_softc *sc)
 
 	dict = device_properties(sc->sc_dev);
 #ifdef GENFB_DEBUG
-	printf(prop_dictionary_externalize(dict));
+	printf("%s", prop_dictionary_externalize(dict));
 #endif
 	prop_dictionary_get_bool(dict, "is_console", &console);
 
@@ -234,6 +238,7 @@ genfb_attach(struct genfb_softc *sc, struct genfb_ops *ops)
 
 	sc->sc_accessops.ioctl = genfb_ioctl;
 	sc->sc_accessops.mmap = genfb_mmap;
+	sc->sc_accessops.pollc = genfb_pollc;
 
 #ifdef GENFB_SHADOWFB
 	sc->sc_shadowfb = kmem_alloc(sc->sc_fbsize, KM_SLEEP);
@@ -300,7 +305,7 @@ genfb_attach(struct genfb_softc *sc, struct genfb_ops *ops)
 	genfb_restore_palette(sc);
 
 	sc->sc_splash.si_depth = sc->sc_depth;
-	sc->sc_splash.si_bits = sc->sc_console_screen.scr_ri.ri_bits;
+	sc->sc_splash.si_bits = sc->sc_console_screen.scr_ri.ri_origbits;
 	sc->sc_splash.si_hwbits = sc->sc_fbaddr;
 	sc->sc_splash.si_width = sc->sc_width;
 	sc->sc_splash.si_height = sc->sc_height;
@@ -317,7 +322,8 @@ genfb_attach(struct genfb_softc *sc, struct genfb_ops *ops)
 	}
 #else
 	genfb_init_palette(sc);
-	vcons_replay_msgbuf(&sc->sc_console_screen);
+	if (console)
+		vcons_replay_msgbuf(&sc->sc_console_screen);
 #endif
 
 	if (genfb_softc == NULL)
@@ -333,7 +339,8 @@ genfb_attach(struct genfb_softc *sc, struct genfb_ops *ops)
 		SCREEN_DISABLE_DRAWING(&sc->sc_console_screen);
 #endif
 
-	config_found(sc->sc_dev, &aa, wsemuldisplaydevprint);
+	config_found_ia(sc->sc_dev, "wsemuldisplaydev", &aa,
+	    wsemuldisplaydevprint);
 
 	return 0;
 }
@@ -347,7 +354,7 @@ genfb_ioctl(void *v, void *vs, u_long cmd, void *data, int flag,
 	struct wsdisplay_fbinfo *wdf;
 	struct vcons_screen *ms = vd->active;
 	struct wsdisplay_param *param;
-	int new_mode, error, val;
+	int new_mode, error, val, ret;
 
 	switch (cmd) {
 		case WSDISPLAYIO_GINFO:
@@ -452,9 +459,22 @@ genfb_ioctl(void *v, void *vs, u_long cmd, void *data, int flag,
 				return sc->sc_backlight->gpc_set_parameter(
 				    sc->sc_backlight->gpc_cookie, val);
 			}
-			return EPASSTHROUGH;
-		
+			return EPASSTHROUGH;		
+	}
+	ret = EPASSTHROUGH;
+	if (sc->sc_ops.genfb_ioctl)
+		ret = sc->sc_ops.genfb_ioctl(sc, vs, cmd, data, flag, l);
+	if (ret != EPASSTHROUGH)
+		return ret;
+	/*
+	 * XXX
+	 * handle these only if there either is no ioctl() handler or it didn't
+	 * know how to deal with them. This allows bus frontends to override
+	 * them but still provides fallback implementations
+	 */
+	switch (cmd) {
 		case WSDISPLAYIO_GET_EDID: {
+			
 			struct wsdisplayio_edid_info *d = data;
 			return wsdisplayio_get_edid(sc->sc_dev, d);
 		}
@@ -463,11 +483,6 @@ genfb_ioctl(void *v, void *vs, u_long cmd, void *data, int flag,
 			struct wsdisplayio_fbinfo *fbi = data;
 			return wsdisplayio_get_fbinfo(&ms->scr_ri, fbi);
 		}
-		
-		default:
-			if (sc->sc_ops.genfb_ioctl)
-				return sc->sc_ops.genfb_ioctl(sc, vs, cmd,
-				    data, flag, l);
 	}
 	return EPASSTHROUGH;
 }
@@ -482,6 +497,21 @@ genfb_mmap(void *v, void *vs, off_t offset, int prot)
 		return sc->sc_ops.genfb_mmap(sc, vs, offset, prot);
 
 	return -1;
+}
+
+static void
+genfb_pollc(void *v, int on)
+{
+	struct vcons_data *vd = v;
+	struct genfb_softc *sc = vd->cookie;
+
+	if (sc == NULL)
+		return;
+
+	if (on)
+		genfb_enable_polling(sc->sc_dev);
+	else
+		genfb_disable_polling(sc->sc_dev);
 }
 
 static void
@@ -515,10 +545,12 @@ genfb_init_screen(void *cookie, struct vcons_screen *scr,
 		ri->ri_flg |= RI_CLEAR;
 	}
 
-	if (ri->ri_depth == 32) {
+	if (ri->ri_depth == 32 || ri->ri_depth == 24) {
 		bool is_bgr = false;
 
-		ri->ri_flg |= RI_ENABLE_ALPHA;
+		if (ri->ri_depth == 32) {
+			ri->ri_flg |= RI_ENABLE_ALPHA;
+		}
 		prop_dictionary_get_bool(device_properties(sc->sc_dev),
 		    "is_bgr", &is_bgr);
 		if (is_bgr) {
@@ -538,7 +570,7 @@ genfb_init_screen(void *cookie, struct vcons_screen *scr,
 			ri->ri_gpos = 8;
 			ri->ri_bpos = 0;
 		}
-	}	
+	}
 
 	if (ri->ri_depth == 8 && sc->sc_cmcb != NULL)
 		ri->ri_flg |= RI_ENABLE_ALPHA | RI_8BIT_IS_RGB;
@@ -757,6 +789,8 @@ genfb_enable_polling(device_t dev)
 		SCREEN_ENABLE_DRAWING(&sc->sc_console_screen);
 		vcons_hard_switch(&sc->sc_console_screen);
 		vcons_enable_polling(&sc->vd);
+		if (sc->sc_ops.genfb_enable_polling)
+			(*sc->sc_ops.genfb_enable_polling)(sc);
 	}
 }
 
@@ -766,6 +800,8 @@ genfb_disable_polling(device_t dev)
 	struct genfb_softc *sc = device_private(dev);
 
 	if (sc->sc_console_screen.scr_vd) {
+		if (sc->sc_ops.genfb_disable_polling)
+			(*sc->sc_ops.genfb_disable_polling)(sc);
 		vcons_disable_polling(&sc->vd);
 	}
 }

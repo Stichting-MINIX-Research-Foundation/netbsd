@@ -1,4 +1,4 @@
-/* $NetBSD: segwrite.h,v 1.4 2013/06/06 00:52:50 dholland Exp $ */
+/* $NetBSD: segwrite.h,v 1.7 2015/09/01 06:15:02 dholland Exp $ */
 /*-
  * Copyright (c) 2003 The NetBSD Foundation, Inc.
  * All rights reserved.
@@ -32,8 +32,8 @@
  * to go on to a new segment.
  */
 #define	LFS_PARTIAL_FITS(fs) \
-	((fs)->lfs_fsbpseg - ((fs)->lfs_offset - (fs)->lfs_curseg) > \
-	(fs)->lfs_frag)
+	(lfs_sb_getfsbpseg(fs) - (lfs_sb_getoffset(fs) - lfs_sb_getcurseg(fs)) > \
+	lfs_sb_getfrag(fs))
 
 /* op values to lfs_writevnodes */
 #define	VN_REG		0
@@ -45,19 +45,16 @@ int lfs_writeinode(struct lfs *, struct segment *, struct inode *);
 int lfs_gatherblock(struct segment *, struct ubuf *);
 int lfs_gather(struct lfs *, struct segment *, struct uvnode *,
 	   int (*match) (struct lfs *, struct ubuf *));
-void lfs_update_single(struct lfs *, struct segment *, daddr_t, int32_t, int);
 void lfs_updatemeta(struct segment *);
 int lfs_initseg(struct lfs *);
 void lfs_newseg(struct lfs *);
 int lfs_writeseg(struct lfs *, struct segment *);
-void lfs_writesuper(struct lfs *, ulfs_daddr_t);
+void lfs_writesuper(struct lfs *, daddr_t);
 
 int lfs_match_data(struct lfs *, struct ubuf *);
 int lfs_match_indir(struct lfs *, struct ubuf *);
 int lfs_match_dindir(struct lfs *, struct ubuf *);
 int lfs_match_tindir(struct lfs *, struct ubuf *);
-
-void lfs_shellsort(struct ubuf **, int32_t *, int, int);
 
 int ulfs_getlbns(struct lfs *, struct uvnode *, daddr_t, struct indir *, int *);
 int ulfs_bmaparray(struct lfs *, struct uvnode *, daddr_t, daddr_t *, struct indir *, int *);
@@ -66,4 +63,3 @@ int lfs_seglock(struct lfs *, unsigned long);
 void lfs_segunlock(struct lfs *);
 int lfs_writevnodes(struct lfs *, struct segment *, int);
 
-void lfs_writesuper(struct lfs *, ulfs_daddr_t);

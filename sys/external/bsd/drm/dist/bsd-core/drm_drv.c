@@ -304,17 +304,18 @@ devclass_t drm_devclass;
 struct drm_device *drm_units[DRM_MAXUNITS];
 
 struct cdevsw drm_cdevsw = {
-	drm_open,
-	drm_close,
-	drm_read,
-	nowrite,
-	drm_ioctl,
-	nostop,
-	notty,
-	drm_poll,
-	drm_mmap,
-	nokqfilter,
-	D_TTY | D_NEGOFFSAFE
+	.d_open = drm_open,
+	.d_close = drm_close,
+	.d_read = drm_read,
+	.d_write = nowrite,
+	.d_ioctl = drm_ioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = drm_poll,
+	.d_mmap = drm_mmap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_TTY | D_NEGOFFSAFE
 };
 
 int drm_refcnt = 0;
@@ -1123,7 +1124,7 @@ drm_linux_ioctl(DRM_STRUCTPROC *p, struct linux_ioctl_args* args)
 #if defined(__NetBSD__)
 /* Module support */
 
-MODULE(MODULE_CLASS_MISC, drm, "pci");
+MODULE(MODULE_CLASS_DRIVER, drm, "pci");
 
 static int
 drm_modcmd(modcmd_t cmd, void *arg)

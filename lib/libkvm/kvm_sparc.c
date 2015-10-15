@@ -1,4 +1,4 @@
-/*	$NetBSD: kvm_sparc.c,v 1.32 2010/09/20 23:23:16 jym Exp $	*/
+/*	$NetBSD: kvm_sparc.c,v 1.34 2015/10/07 11:56:41 martin Exp $	*/
 
 /*-
  * Copyright (c) 1992, 1993
@@ -38,7 +38,7 @@
 #if 0
 static char sccsid[] = "@(#)kvm_sparc.c	8.1 (Berkeley) 6/4/93";
 #else
-__RCSID("$NetBSD: kvm_sparc.c,v 1.32 2010/09/20 23:23:16 jym Exp $");
+__RCSID("$NetBSD: kvm_sparc.c,v 1.34 2015/10/07 11:56:41 martin Exp $");
 #endif
 #endif /* LIBC_SCCS and not lint */
 
@@ -49,7 +49,6 @@ __RCSID("$NetBSD: kvm_sparc.c,v 1.32 2010/09/20 23:23:16 jym Exp $");
 
 #include <sys/param.h>
 #include <sys/exec.h>
-#include <sys/user.h>
 #include <sys/proc.h>
 #include <sys/stat.h>
 #include <sys/core.h>
@@ -326,8 +325,8 @@ _kvm_kvatop4u(kvm_t *kd, vaddr_t va, paddr_t *pa)
 	 *	segmap[cpup->nsegmap];
 	 */
 	segmaps = (int64_t **)((long)kd->cpu_data + cpup->segmapoffset);
-	ptes = (int64_t *)(int)_kvm_pa2off(kd,
-	    (paddr_t)segmaps[sparc64_va_to_seg(va)]);
+	ptes = (int64_t *)(intptr_t)_kvm_pa2off(kd,
+	    (paddr_t)(intptr_t)segmaps[sparc64_va_to_seg(va)]);
 	pte = ptes[sparc64_va_to_pte(va)];
 	if ((pte & SPARC64_TLB_V) != 0)
 		return ((pte & SPARC64_TLB_PA_MASK) | (va & (kd->nbpg - 1)));
@@ -364,7 +363,7 @@ _kvm_pa2off(kvm_t *kd, paddr_t pa)
 		off += mp->size;
 	}
 	if (nmem < 0) {
-		_kvm_err(kd, 0, "invalid address (%lx)", pa);
+		_kvm_err(kd, 0, "invalid address (%lx)", (unsigned long)pa);
 		return (-1);
 	}
 

@@ -1,4 +1,4 @@
-/*	$NetBSD: getaddrinfo.c,v 1.1 2013/09/30 06:19:22 riastradh Exp $	*/
+/*	$NetBSD: getaddrinfo.c,v 1.4 2014/04/22 02:23:03 ginsbach Exp $	*/
 
 /*-
  * Copyright (c) 2013 The NetBSD Foundation, Inc.
@@ -30,7 +30,10 @@
  */
 
 #include <sys/cdefs.h>
-__RCSID("$NetBSD: getaddrinfo.c,v 1.1 2013/09/30 06:19:22 riastradh Exp $");
+__RCSID("$NetBSD: getaddrinfo.c,v 1.4 2014/04/22 02:23:03 ginsbach Exp $");
+
+#include <sys/types.h>
+#include <sys/socket.h>
 
 #include <assert.h>
 #include <err.h>
@@ -40,6 +43,7 @@ __RCSID("$NetBSD: getaddrinfo.c,v 1.1 2013/09/30 06:19:22 riastradh Exp $");
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 #include <util.h>
@@ -101,6 +105,7 @@ main(int argc, char **argv)
 				warnx("invalid protocol: %s", optarg);
 				usage();
 			}
+			break;
 
 		case 'P':
 			hints.ai_flags |= AI_PASSIVE;
@@ -126,6 +131,24 @@ main(int argc, char **argv)
 		usage();
 	if (argc == 1)
 		hostname = argv[0];
+
+	if (service != NULL) {
+		char *p;
+
+		if ((p = strchr(service, '/')) != NULL) {
+			if (hints.ai_protocol != 0) {
+				warnx("protocol already specified");
+				usage();
+			}
+			*p = '\0';
+			p++;
+			
+			if (!parse_protocol(p, &hints.ai_protocol)) {
+				warnx("invalid protocol: %s", p);
+				usage();
+			}
+		}
+	}
 
 	error = getaddrinfo(hostname, service, &hints, &addrinfo);
 	if (error)

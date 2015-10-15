@@ -1,4 +1,4 @@
-/*	$NetBSD: sysvbfs_vnops.c,v 1.48 2013/05/15 16:44:03 pooka Exp $	*/
+/*	$NetBSD: sysvbfs_vnops.c,v 1.58 2015/04/04 13:28:36 riastradh Exp $	*/
 
 /*-
  * Copyright (c) 2004 The NetBSD Foundation, Inc.
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: sysvbfs_vnops.c,v 1.48 2013/05/15 16:44:03 pooka Exp $");
+__KERNEL_RCSID(0, "$NetBSD: sysvbfs_vnops.c,v 1.58 2015/04/04 13:28:36 riastradh Exp $");
 
 #include <sys/param.h>
 #include <sys/kernel.h>
@@ -65,7 +65,7 @@ static void sysvbfs_file_setsize(struct vnode *, size_t);
 int
 sysvbfs_lookup(void *arg)
 {
-	struct vop_lookup_args /* {
+	struct vop_lookup_v2_args /* {
 		struct vnode *a_dvp;
 		struct vnode **a_vpp;
 		struct componentname *a_cnp;
@@ -118,6 +118,7 @@ sysvbfs_lookup(void *arg)
 			DPRINTF("%s: can't get vnode.\n", __func__);
 			return error;
 		}
+		VOP_UNLOCK(vpp);
 		*a->a_vpp = vpp;
 	}
 
@@ -127,7 +128,7 @@ sysvbfs_lookup(void *arg)
 int
 sysvbfs_create(void *arg)
 {
-	struct vop_create_args /* {
+	struct vop_create_v3_args /* {
 		struct vnode *a_dvp;
 		struct vnode **a_vpp;
 		struct componentname *a_cnp;
@@ -152,7 +153,7 @@ sysvbfs_create(void *arg)
 	if ((err = bfs_file_create(bfs, a->a_cnp->cn_nameptr, 0, 0, &attr))
 	    != 0) {
 		DPRINTF("%s: bfs_file_create failed.\n", __func__);
-		goto unlock_exit;
+		return err;
 	}
 
 	if (!bfs_dirent_lookup_by_name(bfs, a->a_cnp->cn_nameptr, &dirent))
@@ -160,16 +161,13 @@ sysvbfs_create(void *arg)
 
 	if ((err = sysvbfs_vget(mp, dirent->inode, a->a_vpp)) != 0) {
 		DPRINTF("%s: sysvbfs_vget failed.\n", __func__);
-		goto unlock_exit;
+		return err;
 	}
 	bnode = (*a->a_vpp)->v_data;
 	bnode->update_ctime = true;
 	bnode->update_mtime = true;
 	bnode->update_atime = true;
-
- unlock_exit:
-	/* unlock parent directory */
-	vput(a->a_dvp);	/* locked at sysvbfs_lookup(); */
+	VOP_UNLOCK(*a->a_vpp);
 
 	return err;
 }
@@ -185,14 +183,10 @@ sysvbfs_open(void *arg)
 	struct vnode *v = a->a_vp;
 	struct sysvbfs_node *bnode = v->v_data;
 	struct bfs_inode *inode = bnode->inode;
-	struct bfs *bfs = bnode->bmp->bfs;
-	struct bfs_dirent *dirent;
 
 	DPRINTF("%s:\n", __func__);
 	KDASSERT(v->v_type == VREG || v->v_type == VDIR);
 
-	if (!bfs_dirent_lookup_by_inode(bfs, inode->number, &dirent))
-		return ENOENT;
 	bnode->update_atime = true;
 	if ((a->a_mode & FWRITE) && !(a->a_mode & O_APPEND)) {
 		bnode->size = 0;
@@ -432,7 +426,7 @@ sysvbfs_read(void *arg)
 	struct sysvbfs_node *bnode = v->v_data;
 	struct bfs_inode *inode = bnode->inode;
 	vsize_t sz, filesz = bfs_file_size(inode);
-	int err;
+	int err, uerr;
 	const int advice = IO_ADV_DECODE(a->a_ioflag);
 
 	DPRINTF("%s: type=%d\n", __func__, v->v_type);
@@ -445,6 +439,7 @@ sysvbfs_read(void *arg)
 		return EINVAL;
 	}
 
+	err = 0;
 	while (uio->uio_resid > 0) {
 		if ((sz = MIN(filesz - uio->uio_offset, uio->uio_resid)) == 0)
 			break;
@@ -456,7 +451,11 @@ sysvbfs_read(void *arg)
 		DPRINTF("%s: read %ldbyte\n", __func__, sz);
 	}
 
-	return  sysvbfs_update(v, NULL, NULL, UPDATE_WAIT);
+	uerr = sysvbfs_update(v, NULL, NULL, UPDATE_WAIT);
+	if (err == 0)
+		err = uerr;
+
+	return err;
 }
 
 int
@@ -527,7 +526,7 @@ sysvbfs_remove(void *arg)
 	if (vp->v_type == VDIR)
 		return EPERM;
 
-	if ((err = bfs_file_delete(bfs, ap->a_cnp->cn_nameptr)) != 0)
+	if ((err = bfs_file_delete(bfs, ap->a_cnp->cn_nameptr, true)) != 0)
 		DPRINTF("%s: bfs_file_delete failed.\n", __func__);
 
 	VN_KNOTE(ap->a_vp, NOTE_DELETE);
@@ -587,21 +586,23 @@ sysvbfs_rename(void *arg)
 		goto out;
 	}
 
+	/*
+	 * Remove the target if it exists.
+	 */
+	if (tvp != NULL) {
+		error = bfs_file_delete(bfs, to_name, true);
+		if (error)
+			goto out;
+	}
 	error = bfs_file_rename(bfs, from_name, to_name);
  out:
-	if (tvp) {
-		if (error == 0) {
-			struct sysvbfs_node *tbnode = tvp->v_data;
-			tbnode->removed = 1;
-		}
-		vput(tvp);
-	}
-
 	/* tdvp == tvp probably can't happen with this fs, but safety first */
 	if (tdvp == tvp)
 		vrele(tdvp);
 	else
 		vput(tdvp);
+	if (tvp)
+		vput(tvp);
 
 	vrele(fdvp);
 	vrele(fvp);
@@ -698,11 +699,16 @@ sysvbfs_reclaim(void *v)
 	} */ *ap = v;
 	struct vnode *vp = ap->a_vp;
 	struct sysvbfs_node *bnode = vp->v_data;
+	struct bfs *bfs = bnode->bmp->bfs;
 
 	DPRINTF("%s:\n", __func__);
-	mutex_enter(&mntvnode_lock);
-	LIST_REMOVE(bnode, link);
-	mutex_exit(&mntvnode_lock);
+
+	vcache_remove(vp->v_mount,
+	    &bnode->inode->number, sizeof(bnode->inode->number));
+	if (bnode->removed) {
+		if (bfs_inode_delete(bfs, bnode->inode->number) != 0)
+			DPRINTF("%s: delete inode failed\n", __func__);
+	}
 	genfs_node_destroy(vp);
 	pool_put(&sysvbfs_node_pool, bnode);
 	vp->v_data = NULL;

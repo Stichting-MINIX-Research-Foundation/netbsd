@@ -1,4 +1,4 @@
-/* $NetBSD: adw_pci.c,v 1.26 2012/10/27 17:18:28 chs Exp $	 */
+/* $NetBSD: adw_pci.c,v 1.28 2014/10/18 08:33:28 snj Exp $	 */
 
 /*
  * Copyright (c) 1998, 1999, 2000 The NetBSD Foundation, Inc.
@@ -41,7 +41,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: adw_pci.c,v 1.26 2012/10/27 17:18:28 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: adw_pci.c,v 1.28 2014/10/18 08:33:28 snj Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -72,7 +72,7 @@ __KERNEL_RCSID(0, "$NetBSD: adw_pci.c,v 1.26 2012/10/27 17:18:28 chs Exp $");
 /******************************************************************************/
 /*
  * Check the slots looking for a board we recognise
- * If we find one, note it's address (slot) and call
+ * If we find one, note its address (slot) and call
  * the actual probe routine to check it out.
  */
 static int
@@ -103,6 +103,7 @@ adw_pci_attach(device_t parent, device_t self, void *aux)
 	pci_chipset_tag_t pc = pa->pa_pc;
 	u_int32_t       command;
 	const char     *intrstr;
+	char intrbuf[PCI_INTRSTR_LEN];
 
 	sc->sc_dev = self;
 
@@ -172,7 +173,7 @@ adw_pci_attach(device_t parent, device_t self, void *aux)
 		aprint_error_dev(self, "couldn't map interrupt\n");
 		return;
 	}
-	intrstr = pci_intr_string(pc, ih);
+	intrstr = pci_intr_string(pc, ih, intrbuf, sizeof(intrbuf));
 
 	/*
 	 * Establish Interrupt handler

@@ -1,4 +1,4 @@
-/*	$NetBSD: mvsoc_intr.h,v 1.3 2013/11/20 12:16:47 kiyohara Exp $	*/
+/*	$NetBSD: mvsoc_intr.h,v 1.6 2015/06/03 03:04:21 hsuenaga Exp $	*/
 /*
  * Copyright (c) 2010 KIYOHARA Takashi
  * All rights reserved.
@@ -28,10 +28,14 @@
 #ifndef _MVSOC_INTR_H_
 #define _MVSOC_INTR_H_
 
+#ifdef _INTR_PRIVATE
 #include "opt_mvsoc.h"
 
 #if defined(ARMADAXP)
 #define __HAVE_PIC_SET_PRIORITY
+#define __HAVE_PIC_PENDING_INTRS
+#define PIC_MAXMAXSOURCES 256
+#endif
 #endif
 
 #define ARM_IRQ_HANDLER	_C_LABEL(mvsoc_irq_handler)

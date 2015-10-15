@@ -1,7 +1,7 @@
-/*	$NetBSD: host.c,v 1.6 2013/07/27 19:23:09 christos Exp $	*/
+/*	$NetBSD: host.c,v 1.11 2015/07/08 17:28:54 christos Exp $	*/
 
 /*
- * Copyright (C) 2004-2007, 2009-2012  Internet Systems Consortium, Inc. ("ISC")
+ * Copyright (C) 2004-2007, 2009-2015  Internet Systems Consortium, Inc. ("ISC")
  * Copyright (C) 2000-2003  Internet Software Consortium.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
@@ -16,8 +16,6 @@
  * OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
  * PERFORMANCE OF THIS SOFTWARE.
  */
-
-/* Id: host.c,v 1.127 2011/03/11 06:11:20 marka Exp  */
 
 /*! \file */
 
@@ -169,7 +167,8 @@ show_usage(void) {
 "       -W specifies how long to wait for a reply\n"
 "       -4 use IPv4 query transport only\n"
 "       -6 use IPv6 query transport only\n"
-"       -m set memory debugging flag (trace|record|usage)\n", stderr);
+"       -m set memory debugging flag (trace|record|usage)\n"
+"       -V print version number and exit\n", stderr);
 	exit(1);
 }
 
@@ -259,7 +258,7 @@ printsection(dns_message_t *msg, dns_section_t sectionid,
 	isc_result_t result, loopresult;
 	isc_region_t r;
 	dns_name_t empty_name;
-	char t[4096];
+	char tbuf[4096];
 	isc_boolean_t first;
 	isc_boolean_t no_rdata;
 
@@ -283,7 +282,7 @@ printsection(dns_message_t *msg, dns_section_t sectionid,
 		name = NULL;
 		dns_message_currentname(msg, sectionid, &name);
 
-		isc_buffer_init(&target, t, sizeof(t));
+		isc_buffer_init(&target, tbuf, sizeof(tbuf));
 		first = ISC_TRUE;
 		print_name = name;
 
@@ -374,13 +373,13 @@ printrdata(dns_message_t *msg, dns_rdataset_t *rdataset, dns_name_t *owner,
 	isc_buffer_t target;
 	isc_result_t result;
 	isc_region_t r;
-	char t[4096];
+	char tbuf[4096];
 
 	UNUSED(msg);
 	if (headers)
 		printf(";; %s SECTION:\n", set_name);
 
-	isc_buffer_init(&target, t, sizeof(t));
+	isc_buffer_init(&target, tbuf, sizeof(tbuf));
 
 	result = dns_rdataset_totext(rdataset, owner, ISC_FALSE, ISC_FALSE,
 				     &target);
@@ -606,7 +605,13 @@ printmessage(dig_query_t *query, dns_message_t *msg, isc_boolean_t headers) {
 	return (result);
 }
 
-static const char * optstring = "46ac:dilnm:rst:vwCDN:R:TW:";
+static const char * optstring = "46ac:dilnm:rst:vVwCDN:R:TW:";
+
+/*% version */
+static void
+version(void) {
+	fputs("host " VERSION "\n", stderr);
+}
 
 static void
 pre_parse_args(int argc, char **argv) {
@@ -638,9 +643,15 @@ pre_parse_args(int argc, char **argv) {
 		case 's': break;
 		case 't': break;
 		case 'v': break;
+		case 'V':
+			  version();
+			  exit(0);
+			  break;
 		case 'w': break;
 		case 'C': break;
 		case 'D':
+			if (debugging)
+				debugtiming = ISC_TRUE;
 			debugging = ISC_TRUE;
 			break;
 		case 'N': break;
@@ -757,6 +768,9 @@ parse_args(isc_boolean_t is_batchfile, int argc, char **argv) {
 			if (!lookup->rdtypeset ||
 			    lookup->rdtype != dns_rdatatype_axfr)
 				lookup->rdtype = dns_rdatatype_any;
+#ifdef WITH_IDN
+			idnoptions = 0;
+#endif
 			list_type = dns_rdatatype_any;
 			list_addresses = ISC_FALSE;
 			lookup->rdtypeset = ISC_TRUE;
@@ -868,10 +882,6 @@ main(int argc, char **argv) {
 
 	tries = 2;
 
-	isc__mem_register();
-	isc__task_register();
-	isc__timer_register();
-	isc__socket_register();
 	ISC_LIST_INIT(lookup_list);
 	ISC_LIST_INIT(server_list);
 	ISC_LIST_INIT(search_list);

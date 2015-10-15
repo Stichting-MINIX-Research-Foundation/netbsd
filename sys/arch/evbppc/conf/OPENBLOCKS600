@@ -1,4 +1,4 @@
-#	$NetBSD: OPENBLOCKS600,v 1.16 2013/11/21 14:03:02 kiyohara Exp $
+#	$NetBSD: OPENBLOCKS600,v 1.21 2015/08/07 14:12:04 maxv Exp $
 #
 #	GENERIC -- everything that's currently supported
 #
@@ -7,7 +7,7 @@ include		"arch/evbppc/conf/std.obs600"
 
 #options 	INCLUDE_CONFIG_FILE	# embed config file in kernel binary
 
-#ident 		"OPENBLOCKS600-$Revision: 1.16 $"
+#ident 		"OPENBLOCKS600-$Revision: 1.21 $"
 
 maxusers	32
 
@@ -38,11 +38,10 @@ options 	SYSVSHM			# System V shared memory
 
 #options 	DIAGNOSTIC		# cheap kernel consistency checks
 options 	DEBUG			# expensive debugging checks/support
-#options	KMEMSTATS		# kernel memory statistics (vmstat -m)
 options 	DDB			# in-kernel debugger
 options 	DDB_HISTORY_SIZE=512	# enable history editing in DDB
 options 	TRAP_PANICWAIT
-options 	SYMTAB_SPACE=430000	# size for embedded symbol table
+makeoptions	COPY_SYMTAB=1	# size for embedded symbol table
 
 makeoptions	DEBUG="-g"		# compile full symbol table
 
@@ -62,9 +61,10 @@ options 	COMPAT_16		# NetBSD 1.6,
 options 	COMPAT_20		# NetBSD 2.0,
 options 	COMPAT_30		# NetBSD 3.0,
 options 	COMPAT_40		# NetBSD 4.0,
-options 	COMPAT_50		# NetBSD 5.0 compatibility.
-options 	COMPAT_60		# NetBSD 6.0 compatibility.
-options 	COMPAT_43		# and 4.3BSD
+options 	COMPAT_50		# NetBSD 5.0,
+options 	COMPAT_60		# NetBSD 6.0, and
+options 	COMPAT_70		# NetBSD 7.0 binary compatibility.
+options 	COMPAT_43		# 4.3BSD binary compatibility.
 #options 	COMPAT_386BSD_MBRPART	# recognize old partition ID
 options		COMPAT_BSDPTY		# /dev/[pt]ty?? ptys.
 
@@ -148,7 +148,7 @@ config		netbsd	root on ? type ?
 plb0 at root				# Processor Local Bus
 cpu0	at plb?				# CPU
 ecc0	at plb? irq 17			# On-chip ECC controller
-dwctwo	at plb? addr 0xef6c0000 irq 94	# On-chip USB controller
+dwctwo0	at plb? addr 0xef6c0000 irq 94	# On-chip USB controller
 
 # On-chip Peripheral Bus support
 opb*	at plb?				# On-chip Peripheral Bus

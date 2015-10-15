@@ -1,6 +1,8 @@
-#	$NetBSD: Makefile.booters,v 1.18 2013/08/21 07:13:51 matt Exp $
+#	$NetBSD: Makefile.booters,v 1.21 2014/01/31 19:38:48 tsutsui Exp $
 
-.include <bsd.sys.mk>		# for HOST_SH
+NOMAN=		# defined
+
+.include <bsd.own.mk>
 
 S=	${.CURDIR}/../../../..
 MIPS=	${S}/arch/mips
@@ -8,11 +10,11 @@ MIPSCO=	${S}/arch/mipsco
 
 .PATH:	${.CURDIR}/../common
 
-NOMAN=		# defined
 BINMODE?= 444
 
 # XXX SHOULD NOT NEED TO DEFINE THESE!
 LIBCRT0=
+LIBCRTI=
 LIBC=
 LIBCRTBEGIN=
 LIBCRTEND=

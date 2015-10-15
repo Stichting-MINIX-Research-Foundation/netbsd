@@ -1,4 +1,4 @@
-/*	$NetBSD: in6_pcb.c,v 1.124 2013/11/23 14:20:22 christos Exp $	*/
+/*	$NetBSD: in6_pcb.c,v 1.143 2015/08/24 22:21:27 pooka Exp $	*/
 /*	$KAME: in6_pcb.c,v 1.84 2001/02/08 18:02:08 itojun Exp $	*/
 
 /*
@@ -62,14 +62,15 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: in6_pcb.c,v 1.124 2013/11/23 14:20:22 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: in6_pcb.c,v 1.143 2015/08/24 22:21:27 pooka Exp $");
 
+#ifdef _KERNEL_OPT
 #include "opt_inet.h"
 #include "opt_ipsec.h"
+#endif
 
 #include <sys/param.h>
 #include <sys/systm.h>
-#include <sys/malloc.h>
 #include <sys/mbuf.h>
 #include <sys/protosw.h>
 #include <sys/socket.h>
@@ -157,9 +158,6 @@ in6_pcballoc(struct socket *so, void *v)
 	struct inpcbtable *table = v;
 	struct in6pcb *in6p;
 	int s;
-#if defined(IPSEC)
-	int error;
-#endif
 
 	s = splnet();
 	in6p = pool_get(&in6pcb_pool, PR_NOWAIT);
@@ -175,12 +173,14 @@ in6_pcballoc(struct socket *so, void *v)
 	in6p->in6p_portalgo = PORTALGO_DEFAULT;
 	in6p->in6p_bindportonsend = false;
 #if defined(IPSEC)
-	error = ipsec_init_pcbpolicy(so, &in6p->in6p_sp);
-	if (error != 0) {
-		s = splnet();
-		pool_put(&in6pcb_pool, in6p);
-		splx(s);
-		return error;
+	if (ipsec_enabled) {
+		int error = ipsec_init_pcbpolicy(so, &in6p->in6p_sp);
+		if (error != 0) {
+			s = splnet();
+			pool_put(&in6pcb_pool, in6p);
+			splx(s);
+			return error;
+		}
 	}
 #endif /* IPSEC */
 	s = splnet();
@@ -230,14 +230,17 @@ in6_pcbbind_addr(struct in6pcb *in6p, struct sockaddr_in6 *sin6, struct lwp *l)
 			sin.sin_family = AF_INET;
 			bcopy(&sin6->sin6_addr.s6_addr32[3],
 			    &sin.sin_addr, sizeof(sin.sin_addr));
-			if (ifa_ifwithaddr((struct sockaddr *)&sin) == 0)
+			if (!IN_MULTICAST(sin.sin_addr.s_addr) &&
+			    ifa_ifwithaddr((struct sockaddr *)&sin) == NULL)
 				return EADDRNOTAVAIL;
 		}
+	} else if (IN6_IS_ADDR_MULTICAST(&sin6->sin6_addr)) {
+		// succeed
 	} else if (!IN6_IS_ADDR_UNSPECIFIED(&sin6->sin6_addr)) {
 		struct ifaddr *ia = NULL;
 
 		if ((in6p->in6p_flags & IN6P_FAITH) == 0 &&
-		    (ia = ifa_ifwithaddr((struct sockaddr *)sin6)) == 0)
+		    (ia = ifa_ifwithaddr((struct sockaddr *)sin6)) == NULL)
 			return (EADDRNOTAVAIL);
 
 		/*
@@ -306,7 +309,7 @@ in6_pcbbind_port(struct in6pcb *in6p, struct sockaddr_in6 *sin6, struct lwp *l)
 		 * and a multicast address is bound on both
 		 * new and duplicated sockets.
 		 */
-		if (so->so_options & SO_REUSEADDR)
+		if (so->so_options & (SO_REUSEADDR | SO_REUSEPORT))
 			reuseport = SO_REUSEADDR|SO_REUSEPORT;
 	}
 
@@ -363,11 +366,10 @@ in6_pcbbind_port(struct in6pcb *in6p, struct sockaddr_in6 *sin6, struct lwp *l)
 }
 
 int
-in6_pcbbind(void *v, struct mbuf *nam, struct lwp *l)
+in6_pcbbind(void *v, struct sockaddr_in6 *sin6, struct lwp *l)
 {
 	struct in6pcb *in6p = v;
 	struct sockaddr_in6 lsin6;
-	struct sockaddr_in6 *sin6 = NULL;
 	int error;
 
 	if (in6p->in6p_af != AF_INET6)
@@ -382,10 +384,9 @@ in6_pcbbind(void *v, struct mbuf *nam, struct lwp *l)
 	      in6p->in6p_laddr.s6_addr32[3] == 0)))
 		return (EINVAL);
 
-	if (nam != NULL) {
+	if (NULL != sin6) {
 		/* We were provided a sockaddr_in6 to use. */
-		sin6 = mtod(nam, struct sockaddr_in6 *);
-		if (nam->m_len != sizeof(*sin6))
+		if (sin6->sin6_len != sizeof(*sin6))
 			return (EINVAL);
 	} else {
 		/* We always bind to *something*, even if it's "anything". */
@@ -425,12 +426,10 @@ in6_pcbbind(void *v, struct mbuf *nam, struct lwp *l)
  * then pick one.
  */
 int
-in6_pcbconnect(void *v, struct mbuf *nam, struct lwp *l)
+in6_pcbconnect(void *v, struct sockaddr_in6 *sin6, struct lwp *l)
 {
-	struct rtentry *rt;
 	struct in6pcb *in6p = v;
 	struct in6_addr *in6a = NULL;
-	struct sockaddr_in6 *sin6 = mtod(nam, struct sockaddr_in6 *);
 	struct ifnet *ifp = NULL;	/* outgoing interface */
 	int error = 0;
 	int scope_ambiguous = 0;
@@ -445,7 +444,7 @@ in6_pcbconnect(void *v, struct mbuf *nam, struct lwp *l)
 	if (in6p->in6p_af != AF_INET6)
 		return (EINVAL);
 
-	if (nam->m_len != sizeof(*sin6))
+	if (sin6->sin6_len != sizeof(*sin6))
 		return (EINVAL);
 	if (sin6->sin6_family != AF_INET6)
 		return (EAFNOSUPPORT);
@@ -492,7 +491,7 @@ in6_pcbconnect(void *v, struct mbuf *nam, struct lwp *l)
 			sizeof(sin.sin_addr));
 		sinp = in_selectsrc(&sin, &in6p->in6p_route,
 			in6p->in6p_socket->so_options, NULL, &error);
-		if (sinp == 0) {
+		if (sinp == NULL) {
 			if (error == 0)
 				error = EADDRNOTAVAIL;
 			return (error);
@@ -519,16 +518,17 @@ in6_pcbconnect(void *v, struct mbuf *nam, struct lwp *l)
 			return(error);
 		}
 
-		if (in6a == 0) {
+		if (in6a == NULL) {
 			if (error == 0)
 				error = EADDRNOTAVAIL;
 			return (error);
 		}
 	}
-	if (ifp == NULL && (rt = rtcache_validate(&in6p->in6p_route)) != NULL)
-		ifp = rt->rt_ifp;
 
-	in6p->in6p_ip6.ip6_hlim = (u_int8_t)in6_selecthlim(in6p, ifp);
+	if (ifp != NULL)
+		in6p->in6p_ip6.ip6_hlim = (u_int8_t)in6_selecthlim(in6p, ifp);
+	else
+		in6p->in6p_ip6.ip6_hlim = (u_int8_t)in6_selecthlim_rt(in6p);
 
 	if (in6_pcblookup_connect(in6p->in6p_table, &sin6->sin6_addr,
 	    sin6->sin6_port,
@@ -567,7 +567,7 @@ in6_pcbconnect(void *v, struct mbuf *nam, struct lwp *l)
 		in6p->in6p_flowinfo |=
 		    (htonl(ip6_randomflowlabel()) & IPV6_FLOWLABEL_MASK);
 #if defined(IPSEC)
-	if (in6p->in6p_socket->so_type == SOCK_STREAM)
+	if (ipsec_enabled && in6p->in6p_socket->so_type == SOCK_STREAM)
 		ipsec_pcbconn(in6p->in6p_sp);
 #endif
 	return (0);
@@ -581,7 +581,8 @@ in6_pcbdisconnect(struct in6pcb *in6p)
 	in6_pcbstate(in6p, IN6P_BOUND);
 	in6p->in6p_flowinfo &= ~IPV6_FLOWLABEL_MASK;
 #if defined(IPSEC)
-	ipsec_pcbdisconn(in6p->in6p_sp);
+	if (ipsec_enabled)
+		ipsec_pcbdisconn(in6p->in6p_sp);
 #endif
 	if (in6p->in6p_socket->so_state & SS_NOFDREF)
 		in6_pcbdetach(in6p);
@@ -597,52 +598,52 @@ in6_pcbdetach(struct in6pcb *in6p)
 		return;
 
 #if defined(IPSEC)
-	ipsec6_delete_pcbpolicy(in6p);
-#endif /* IPSEC */
-	so->so_pcb = 0;
-	if (in6p->in6p_options)
+	if (ipsec_enabled)
+		ipsec6_delete_pcbpolicy(in6p);
+#endif
+	so->so_pcb = NULL;
+
+	s = splnet();
+	in6_pcbstate(in6p, IN6P_ATTACHED);
+	LIST_REMOVE(&in6p->in6p_head, inph_lhash);
+	TAILQ_REMOVE(&in6p->in6p_table->inpt_queue, &in6p->in6p_head,
+	    inph_queue);
+	splx(s);
+
+	if (in6p->in6p_options) {
 		m_freem(in6p->in6p_options);
+	}
 	if (in6p->in6p_outputopts != NULL) {
 		ip6_clearpktopts(in6p->in6p_outputopts, -1);
 		free(in6p->in6p_outputopts, M_IP6OPT);
 	}
 	rtcache_free(&in6p->in6p_route);
 	ip6_freemoptions(in6p->in6p_moptions);
-	s = splnet();
-	in6_pcbstate(in6p, IN6P_ATTACHED);
-	LIST_REMOVE(&in6p->in6p_head, inph_lhash);
-	TAILQ_REMOVE(&in6p->in6p_table->inpt_queue, &in6p->in6p_head,
-	    inph_queue);
-	pool_put(&in6pcb_pool, in6p);
-	splx(s);
+	ip_freemoptions(in6p->in6p_v4moptions);
 	sofree(so);				/* drops the socket's lock */
+
+	pool_put(&in6pcb_pool, in6p);
 	mutex_enter(softnet_lock);		/* reacquire it */
 }
 
 void
-in6_setsockaddr(struct in6pcb *in6p, struct mbuf *nam)
+in6_setsockaddr(struct in6pcb *in6p, struct sockaddr_in6 *sin6)
 {
-	struct sockaddr_in6 *sin6;
 
 	if (in6p->in6p_af != AF_INET6)
 		return;
 
-	nam->m_len = sizeof(*sin6);
-	sin6 = mtod(nam, struct sockaddr_in6 *);
 	sockaddr_in6_init(sin6, &in6p->in6p_laddr, in6p->in6p_lport, 0, 0);
 	(void)sa6_recoverscope(sin6); /* XXX: should catch errors */
 }
 
 void
-in6_setpeeraddr(struct in6pcb *in6p, struct mbuf *nam)
+in6_setpeeraddr(struct in6pcb *in6p, struct sockaddr_in6 *sin6)
 {
-	struct sockaddr_in6 *sin6;
 
 	if (in6p->in6p_af != AF_INET6)
 		return;
 
-	nam->m_len = sizeof(*sin6);
-	sin6 = mtod(nam, struct sockaddr_in6 *);
 	sockaddr_in6_init(sin6, &in6p->in6p_faddr, in6p->in6p_fport, 0, 0);
 	(void)sa6_recoverscope(sin6); /* XXX: should catch errors */
 }
@@ -788,7 +789,7 @@ in6_pcbnotify(struct inpcbtable *table, const struct sockaddr *dst,
 			goto do_notify;
 		else if (!IN6_ARE_ADDR_EQUAL(&in6p->in6p_faddr,
 					     &sa6_dst->sin6_addr) ||
-		    in6p->in6p_socket == 0 ||
+		    in6p->in6p_socket == NULL ||
 		    (lport && in6p->in6p_lport != lport) ||
 		    (!IN6_IS_ADDR_UNSPECIFIED(&sa6_src.sin6_addr) &&
 		     !IN6_ARE_ADDR_EQUAL(&in6p->in6p_laddr,
@@ -840,6 +841,7 @@ in6_pcbpurgeif0(struct inpcbtable *table, struct ifnet *ifp)
 				}
 			}
 		}
+		in_purgeifmcast(in6p->in6p_v4moptions, ifp);
 	}
 }
 
@@ -916,7 +918,7 @@ in6_pcblookup_port(struct inpcbtable *table, struct in6_addr *laddr6,
 {
 	struct inpcbhead *head;
 	struct inpcb_hdr *inph;
-	struct in6pcb *in6p, *match = 0;
+	struct in6pcb *in6p, *match = NULL;
 	int matchwild = 3, wildcard;
 	u_int16_t lport = lport_arg;
 
@@ -1097,7 +1099,8 @@ in6_pcbrtentry(struct in6pcb *in6p)
 		addr.s_addr = in6p->in6p_faddr.s6_addr32[3];
 
 		sockaddr_in_init(&u.dst4, &addr, 0);
-		rtcache_setdst(ro, &u.dst);
+		if (rtcache_setdst(ro, &u.dst) != 0)
+			return NULL;
 
 		rt = rtcache_init(ro);
 	} else
@@ -1109,7 +1112,8 @@ in6_pcbrtentry(struct in6pcb *in6p)
 		} u;
 
 		sockaddr_in6_init(&u.dst6, &in6p->in6p_faddr, 0, 0, 0);
-		rtcache_setdst(ro, &u.dst);
+		if (rtcache_setdst(ro, &u.dst) != 0)
+			return NULL;
 
 		rt = rtcache_init(ro);
 	}
@@ -1158,7 +1162,7 @@ in6_pcblookup_connect(struct inpcbtable *table, const struct in6_addr *faddr6,
 	if (vp && table->vestige) {
 		if ((*table->vestige->lookup6)(faddr6, fport_arg,
 					       laddr6, lport_arg, vp))
-			return 0;
+			return NULL;
 	}
 
 	return NULL;

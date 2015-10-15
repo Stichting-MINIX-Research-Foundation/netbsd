@@ -1,4 +1,4 @@
-/*	$NetBSD: aed.c,v 1.31 2013/10/19 16:21:57 martin Exp $	*/
+/*	$NetBSD: aed.c,v 1.33 2014/07/25 08:10:33 dholland Exp $	*/
 
 /*
  * Copyright (C) 1994	Bradley A. Grantham
@@ -26,7 +26,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: aed.c,v 1.31 2013/10/19 16:21:57 martin Exp $");
+__KERNEL_RCSID(0, "$NetBSD: aed.c,v 1.33 2014/07/25 08:10:33 dholland Exp $");
 
 #include "opt_adb.h"
 
@@ -80,8 +80,18 @@ dev_type_poll(aedpoll);
 dev_type_kqfilter(aedkqfilter);
 
 const struct cdevsw aed_cdevsw = {
-	aedopen, aedclose, aedread, nullwrite, aedioctl,
-	nostop, notty, aedpoll, nommap, aedkqfilter,
+	.d_open = aedopen,
+	.d_close = aedclose,
+	.d_read = aedread,
+	.d_write = nullwrite,
+	.d_ioctl = aedioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = aedpoll,
+	.d_mmap = nommap,
+	.d_kqfilter = aedkqfilter,
+	.d_discard = nodiscard,
+	.d_flag = 0
 };
 
 static int

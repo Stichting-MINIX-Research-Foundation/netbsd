@@ -1,4 +1,4 @@
-# Copyright (C) 2004, 2006-2010, 2012, 2013  Internet Systems Consortium, Inc. ("ISC")
+# Copyright (C) 2004, 2006-2010, 2012-2014  Internet Systems Consortium, Inc. ("ISC")
 # Copyright (C) 1999-2002  Internet Software Consortium.
 #
 # Permission to use, copy, modify, and/or distribute this software for any
@@ -49,7 +49,7 @@ dst_test@EXEEXT@: dst_test.@O@ ${DEPLIBS}
 	${LIBTOOL_MODE_LINK} ${PURIFY} ${CC} ${CFLAGS} ${LDFLAGS} -o $@ \
 		dst_test.@O@ ${LIBS}
 
-t_dst@EXEEXT@: t_dst.@O@ ${DEPLIBS} ${TLIB} randomfile
+t_dst@EXEEXT@: t_dst.@O@ ${DEPLIBS} ${TLIB}
 	${LIBTOOL_MODE_LINK} ${PURIFY} ${CC} ${CFLAGS} ${LDFLAGS} -o $@ \
 		t_dst.@O@ ${TLIB} ${LIBS}
 

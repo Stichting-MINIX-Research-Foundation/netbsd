@@ -1,5 +1,3 @@
-/*	$NetBSD: gai_strerror.c,v 1.1.1.2 2013/04/06 15:57:51 christos Exp $	*/
-
 /*
  * Copyright (C) 1995, 1996, 1997, and 1998 WIDE Project.
  * All rights reserved.
@@ -69,7 +67,7 @@ static char *ai_errlist[] = {
 #define EAI_MAX (sizeof(ai_errlist)/sizeof(ai_errlist[0]))
 #endif
 
-/* on MingW, gai_strerror is available. 
+/* on MingW, gai_strerror is available.
    We need to compile gai_strerrorA only for Cygwin
  */
 #ifndef gai_strerror

@@ -1,4 +1,4 @@
-/*	$NetBSD: icmp6.c,v 1.163 2013/11/23 14:20:22 christos Exp $	*/
+/*	$NetBSD: icmp6.c,v 1.177 2015/09/14 05:34:28 ozaki-r Exp $	*/
 /*	$KAME: icmp6.c,v 1.217 2001/06/20 15:03:29 jinmei Exp $	*/
 
 /*
@@ -62,14 +62,16 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: icmp6.c,v 1.163 2013/11/23 14:20:22 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: icmp6.c,v 1.177 2015/09/14 05:34:28 ozaki-r Exp $");
 
+#ifdef _KERNEL_OPT
 #include "opt_inet.h"
 #include "opt_ipsec.h"
+#endif
 
 #include <sys/param.h>
 #include <sys/systm.h>
-#include <sys/malloc.h>
+#include <sys/kmem.h>
 #include <sys/mbuf.h>
 #include <sys/protosw.h>
 #include <sys/socket.h>
@@ -253,10 +255,7 @@ icmp6_mtudisc_callback_register(void (*func)(struct in6_addr *))
 			return;
 	}
 
-	mc = malloc(sizeof(*mc), M_PCB, M_NOWAIT);
-	if (mc == NULL)
-		panic("icmp6_mtudisc_callback_register");
-
+	mc = kmem_alloc(sizeof(*mc), KM_SLEEP);
 	mc->mc_func = func;
 	LIST_INSERT_HEAD(&icmp6_mtudisc_callbacks, mc, mc_list);
 }
@@ -630,6 +629,8 @@ icmp6_input(struct mbuf **mp, int *offp, int proto)
 		}
 		IP6_EXTHDR_GET(nicmp6, struct icmp6_hdr *, n, off,
 		    sizeof(*nicmp6));
+		if (nicmp6 == NULL)
+			goto freeit;
 		nicmp6->icmp6_type = ICMP6_ECHO_REPLY;
 		nicmp6->icmp6_code = 0;
 		if (n) {
@@ -723,6 +724,8 @@ icmp6_input(struct mbuf **mp, int *offp, int proto)
 			n->m_pkthdr.rcvif = NULL;
 			n->m_len = 0;
 			maxhlen = M_TRAILINGSPACE(n) - ICMP6_MAXLEN;
+			if (maxhlen < 0)
+				break;
 			if (maxhlen > hostnamelen)
 				maxhlen = hostnamelen;
 			/*
@@ -1133,8 +1136,8 @@ icmp6_mtudisc_update(struct ip6ctlparam *ip6cp, int validated)
 			rt->rt_rmx.rmx_mtu = mtu;
 		}
 	}
-	if (rt) { /* XXX: need braces to avoid conflict with else in RTFREE. */
-		RTFREE(rt);
+	if (rt) {
+		rtfree(rt);
 	}
 
 	/*
@@ -1715,7 +1718,7 @@ ni6_store_addrs(struct icmp6_nodeinfo *ni6,
 	struct icmp6_nodeinfo *nni6, struct ifnet *ifp0,
 	int resid)
 {
-	struct ifnet *ifp = ifp0 ? ifp0 : TAILQ_FIRST(&ifnet);
+	struct ifnet *ifp = ifp0 ? ifp0 : IFNET_FIRST();
 	struct in6_ifaddr *ifa6;
 	struct ifaddr *ifa;
 	struct ifnet *ifp_dep = NULL;
@@ -1811,9 +1814,9 @@ ni6_store_addrs(struct icmp6_nodeinfo *ni6,
 				ltime = ND6_INFINITE_LIFETIME;
 			else {
 				if (ifa6->ia6_lifetime.ia6t_expire >
-				    time_second)
+				    time_uptime)
 					ltime = ifa6->ia6_lifetime.ia6t_expire -
-					    time_second;
+					    time_uptime;
 				else
 					ltime = 0;
 			}
@@ -2189,7 +2192,7 @@ icmp6_redirect_input(struct mbuf *m, int off)
 			    "ICMP6 redirect rejected; no route "
 			    "with inet6 gateway found for redirect dst: %s\n",
 			    icmp6_redirect_diag(&src6, &reddst6, &redtgt6)));
-			RTFREE(rt);
+			rtfree(rt);
 			goto bad;
 		}
 
@@ -2201,7 +2204,7 @@ icmp6_redirect_input(struct mbuf *m, int off)
 				"%s\n",
 				ip6_sprintf(gw6),
 				icmp6_redirect_diag(&src6, &reddst6, &redtgt6)));
-			RTFREE(rt);
+			rtfree(rt);
 			goto bad;
 		}
 	} else {
@@ -2211,7 +2214,7 @@ icmp6_redirect_input(struct mbuf *m, int off)
 			icmp6_redirect_diag(&src6, &reddst6, &redtgt6)));
 		goto bad;
 	}
-	RTFREE(rt);
+	rtfree(rt);
 	rt = NULL;
     }
 	if (IN6_IS_ADDR_MULTICAST(&reddst6)) {
@@ -2317,7 +2320,8 @@ icmp6_redirect_input(struct mbuf *m, int off)
 		sockaddr_in6_init(&sdst, &reddst6, 0, 0, 0);
 		pfctlinput(PRC_REDIRECT_HOST, (struct sockaddr *)&sdst);
 #if defined(IPSEC)
-		key_sa_routechange((struct sockaddr *)&sdst);
+		if (ipsec_used)
+			key_sa_routechange((struct sockaddr *)&sdst);
 #endif
 	}
 
@@ -2470,8 +2474,10 @@ icmp6_redirect_output(struct mbuf *m0, struct rtentry *rt)
 		len = sizeof(*nd_opt) + ifp->if_addrlen;
 		len = (len + 7) & ~7;	/* round by 8 */
 		/* safety check */
-		if (len + (p - (u_char *)ip6) > maxlen)
+		if (len + (p - (u_char *)ip6) > maxlen) {
+			rtfree(rt_nexthop);
 			goto nolladdropt;
+		}
 		if (!(rt_nexthop->rt_flags & RTF_GATEWAY) &&
 		    (rt_nexthop->rt_flags & RTF_LLINFO) &&
 		    (rt_nexthop->rt_gateway->sa_family == AF_LINK) &&
@@ -2484,6 +2490,7 @@ icmp6_redirect_output(struct mbuf *m0, struct rtentry *rt)
 			memcpy(lladdr, CLLADDR(sdl), ifp->if_addrlen);
 			p += len;
 		}
+		rtfree(rt_nexthop);
 	}
   nolladdropt:;
 
@@ -2707,12 +2714,14 @@ icmp6_mtudisc_clone(struct sockaddr *dst)
 static void
 icmp6_mtudisc_timeout(struct rtentry *rt, struct rttimer *r)
 {
-	if (rt == NULL)
-		panic("icmp6_mtudisc_timeout: bad route to timeout");
+
+	KASSERT(rt != NULL);
+	rt_assert_referenced(rt);
+
 	if ((rt->rt_flags & (RTF_DYNAMIC | RTF_HOST)) ==
 	    (RTF_DYNAMIC | RTF_HOST)) {
 		rtrequest((int) RTM_DELETE, rt_getkey(rt),
-		    rt->rt_gateway, rt_mask(rt), rt->rt_flags, 0);
+		    rt->rt_gateway, rt_mask(rt), rt->rt_flags, NULL);
 	} else {
 		if (!(rt->rt_rmx.rmx_locks & RTV_MTU))
 			rt->rt_rmx.rmx_mtu = 0;
@@ -2722,12 +2731,14 @@ icmp6_mtudisc_timeout(struct rtentry *rt, struct rttimer *r)
 static void
 icmp6_redirect_timeout(struct rtentry *rt, struct rttimer *r)
 {
-	if (rt == NULL)
-		panic("icmp6_redirect_timeout: bad route to timeout");
+
+	KASSERT(rt != NULL);
+	rt_assert_referenced(rt);
+
 	if ((rt->rt_flags & (RTF_GATEWAY | RTF_DYNAMIC | RTF_HOST)) ==
 	    (RTF_GATEWAY | RTF_DYNAMIC | RTF_HOST)) {
 		rtrequest((int) RTM_DELETE, rt_getkey(rt),
-		    rt->rt_gateway, rt_mask(rt), rt->rt_flags, 0);
+		    rt->rt_gateway, rt_mask(rt), rt->rt_flags, NULL);
 	}
 }
 
@@ -2756,16 +2767,43 @@ sysctl_net_inet6_icmp6_stats(SYSCTLFN_ARGS)
 	return (NETSTAT_SYSCTL(icmp6stat_percpu, ICMP6_NSTATS));
 }
 
+static int
+sysctl_net_inet6_icmp6_redirtimeout(SYSCTLFN_ARGS)
+{
+	int error, tmp;
+	struct sysctlnode node;
+
+	node = *rnode;
+	node.sysctl_data = &tmp;
+	tmp = icmp6_redirtimeout;
+	error = sysctl_lookup(SYSCTLFN_CALL(&node));
+	if (error || newp == NULL)
+		return error;
+	if (tmp < 0)
+		return EINVAL;
+	icmp6_redirtimeout = tmp;
+
+	if (icmp6_redirect_timeout_q != NULL) {
+		if (icmp6_redirtimeout == 0) {
+			rt_timer_queue_destroy(icmp6_redirect_timeout_q,
+			    true);
+		} else {
+			rt_timer_queue_change(icmp6_redirect_timeout_q,
+			    icmp6_redirtimeout);
+		}
+	} else if (icmp6_redirtimeout > 0) {
+		icmp6_redirect_timeout_q =
+		    rt_timer_queue_create(icmp6_redirtimeout);
+	}
+
+	return 0;
+}
+
 static void
 sysctl_net_inet6_icmp6_setup(struct sysctllog **clog)
 {
 	extern int nd6_maxqueuelen; /* defined in nd6.c */
 
-	sysctl_createv(clog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
-		       CTLTYPE_NODE, "net", NULL,
-		       NULL, 0, NULL, 0,
-		       CTL_NET, CTL_EOL);
 	sysctl_createv(clog, 0, NULL, NULL,
 		       CTLFLAG_PERMANENT,
 		       CTLTYPE_NODE, "inet6", NULL,
@@ -2796,7 +2834,8 @@ sysctl_net_inet6_icmp6_setup(struct sysctllog **clog)
 		       CTLFLAG_PERMANENT|CTLFLAG_READWRITE,
 		       CTLTYPE_INT, "redirtimeout",
 		       SYSCTL_DESCR("Redirect generated route lifetime"),
-		       NULL, 0, &icmp6_redirtimeout, 0,
+		       sysctl_net_inet6_icmp6_redirtimeout, 0,
+		       &icmp6_redirtimeout, 0,
 		       CTL_NET, PF_INET6, IPPROTO_ICMPV6,
 		       ICMPV6CTL_REDIRTIMEOUT, CTL_EOL);
 #if 0 /* obsoleted */

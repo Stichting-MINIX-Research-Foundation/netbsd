@@ -1,4 +1,4 @@
-#	$NetBSD: bsd.x11.mk,v 1.108 2013/06/05 23:14:13 mrg Exp $
+#	$NetBSD: bsd.x11.mk,v 1.117 2015/07/23 08:03:26 mrg Exp $
 
 .include <bsd.init.mk>
 
@@ -29,7 +29,6 @@ X11FLAGS.CONNECTION+=	-DIPv6
 .endif
 
 #	 EXT_DEFINES
-.if ${X11FLAVOUR} == "Xorg"
 X11FLAGS.BASE_EXTENSION=	-DMITMISC -DXTEST -DXTRAP -DXSYNC -DXCMISC \
 				-DXRECORD -DMITSHM -DBIGREQS -DXF86VIDMODE \
 				-DXF86MISC -DDPMSExtension -DEVI \
@@ -62,12 +61,6 @@ X11INCS.DIX=		-I${X11INCSDIR}/freetype2  \
 			-I$(X11SRCDIR.xorg-server)/randr \
 			-I$(X11SRCDIR.xorg-server)/fb \
 			-I$(X11SRCDIR.xorg-server)/../include
-.else
-X11FLAGS.EXTENSION=	-DMITMISC -DXTEST -DXTRAP -DXSYNC -DXCMISC -DXRECORD \
-			-DMITSHM -DBIGREQS -DXF86MISC -DDBE -DDPMSExtension \
-			-DEVI -DSCREENSAVER -DXV -DXVMC -DGLXEXT \
-			-DGLX_USE_MESA -DFONTCACHE -DRES
-.endif
 
 X11FLAGS.DRI=		-DGLXEXT -DXF86DRI -DGLX_DIRECT_RENDERING \
 			-DGLX_USE_DLOPEN -DGLX_USE_MESA
@@ -89,7 +82,6 @@ X11FLAGS.OS_DEFINES=	-DDDXOSINIT -DSERVER_LOCK -DDDXOSFATALERROR \
 			-DDDXOSVERRORF -DDDXTIME -DUSB_HID
 
 .if !(${MACHINE} == "acorn32"	|| \
-    (${MACHINE} == "alpha"  && ${X11FLAVOUR} != "Xorg")	|| \
     ${MACHINE} == "amiga"	|| \
     ${MACHINE} == "pmax"	|| \
     ${MACHINE} == "sun3"	|| \
@@ -127,7 +119,6 @@ X11FLAGS.LOADABLE=	-DXFree86LOADER -DIN_MODULE -DXFree86Module \
 .endif
   
 # XXX FIX ME
-.if ${X11FLAVOUR} == "Xorg"
 XVENDORNAMESHORT=	'"X.Org"'
 XVENDORNAME=		'"The X.Org Foundation"'
 XORG_RELEASE=		'"Release 1.10.6"'
@@ -137,22 +128,12 @@ XLOCALE.DEFINES=	-DXLOCALEDIR=\"${X11LIBDIR}/locale\" \
 
 # XXX oh yeah, fix me later
 XORG_VERSION_CURRENT="(((1) * 10000000) + ((10) * 100000) + ((6) * 1000) + 0)"
-.endif
 
 PRINT_PACKAGE_VERSION=	awk '/^PACKAGE_VERSION=/ {			\
 				match($$1, "([0-9]+\\.)+[0-9]+");	\
 				version = substr($$1, RSTART, RLENGTH);	\
 			} END { print version }'
 
-
-# Extract X11VERSION
-PRINTX11VERSION=${TOOL_AWK} ' \
-		     /^\#define XF86_VERSION_MAJOR/ {major = $$3} \
-		     /^\#define XF86_VERSION_MINOR/ {minor = $$3} \
-		     /^\#define XF86_VERSION_PATCH/ {patch = $$3} \
-		     /^\#define XF86_VERSION_SNAP/ {snap = $$3} \
-		     END { print "((("major") * 10000000) + (("minor") * 100000) + (("patch") * 1000) + "snap")"}' \
-		     ${X11SRCDIR.xc}/programs/Xserver/hw/xfree86/xf86Version.h
 
 # Commandline to convert 'XCOMM' comments and 'XHASH' to '#', among other
 # things. Transformed from the "CppSedMagic" macro from "Imake.rules".
@@ -217,7 +198,7 @@ CLEANFILES+= ${CPPSCRIPTS}
 .if defined(PKGDIST) && !defined(PKGCONFIG)
 PKGCONFIG=	${PKGDIST:tl}
 .endif
-.if defined(PKGCONFIG)
+.if defined(PKGCONFIG) && !defined(MLIBDIR)
 
 .include <bsd.files.mk>
 
@@ -246,7 +227,7 @@ pkgconfig-install: ${_PKGDEST.${_pkg}}
 # Add a dependancy on the configure file if it exists; this way we
 # will rebuild the .pc file if the version in configure changes.
 .if exists(${PKGDIST.${_pkg}}/configure)
-${_pkg}.pc: ${PKGDIST.${_pkg}}/configure
+${_pkg}.pc: ${PKGDIST.${_pkg}}/configure Makefile
 .endif
 
 .endfor				# }
@@ -255,8 +236,8 @@ ${_pkg}.pc: ${PKGDIST.${_pkg}}/configure
 # The sed script is very, very ugly.  What we actually need is a
 # mknative-xorg script that will generate all the .pc files from
 # running the autoconfigure script.
-# And yes, it has to be splitted in two otherwise it's too long
-# for sed to handle.
+# And yes, it has to be split in multiple parts otherwise it's
+# too long for sed to handle.
 
 # hacky transforms:
 #   @XCBPROTO_VERSION@
@@ -272,6 +253,7 @@ ${_pkg}.pc: ${PKGDIST.${_pkg}}/configure
 		    ${PKGDIST.${.PREFIX}}/configure); \
 	fi; \
 	${TOOL_SED} \
+		${PKGCONFIG_SED_FLAGS} \
 		-e "s,@prefix@,${X11ROOTDIR},; \
 		s,@INSTALL_DIR@,${X11ROOTDIR},; \
 		s,@exec_prefix@,\\$$\{prefix\},; \
@@ -297,6 +279,8 @@ ${_pkg}.pc: ${PKGDIST.${_pkg}}/configure
 		s,@xcbincludedir@,\\$$\{prefix\}/share/xcb,; \
 		s,@fontrootdir@,\\$$\{libdir\}/X11/fonts,; \
 		s,@LIBXML2_LIBS@,,; \
+		s,@LIBXML2_CFLAGS@,,; \
+		s,@ICONV_CFLAGS@,,; \
 		s,@ICONV_LIBS@,,; \
 		s,@NEEDED@,,; \
 		s,@FT2_EXTRA_LIBS@,," \
@@ -319,7 +303,8 @@ ${_pkg}.pc: ${PKGDIST.${_pkg}}/configure
 		s,@GL_LIB@,GL,; \
 		s,@GL_PC_REQ_PRIV@,x11 xext,; \
 		s,@GL_PC_LIB_PRIV@,-lm -lpthread,; \
-		s,@GL_PC_CFLAGS@,," \
+		s,@GL_PC_CFLAGS@,,; \
+		s,@GLX_TLS@,no," \
 		-e "s,@GLU_LIB@,GLU,; \
 		s,@GLU_PC_REQ@,gl,; \
 		s,@GLU_PC_REQ_PRIV@,,; \
@@ -335,18 +320,27 @@ ${_pkg}.pc: ${PKGDIST.${_pkg}}/configure
 		s,@DRI_DRIVER_DIR@,\\$$\{libdir\}/modules/dri,; \
 		s,@DRI_PC_REQ_PRIV@,,; \
 		s,@GLW_LIB@,GLw,; \
+		s,@GBM_PC_REQ_PRIV@,,; \
+		s,@GBM_PC_LIB_PRIV@,,; \
 		s,@abi_ansic@,0.4,; \
 		s,@abi_videodrv@,5.0,; \
 		s,@abi_xinput@,4.0,; \
 		s,@abi_extension@,2.0,; \
 		s,@abi_font@,0.6,; \
 		s,@fchown_define@,-DHAS_FCHOWN,; \
-		s,@sticky_bit_define@,-DHAS_STICKY_DIR_BIT," \
+		s,@sticky_bit_define@,-DHAS_STICKY_DIR_BIT,;" \
+		-e "s,@PKG_CONFIG_LIBS@,${PKG_CONFIG_LIBS},; \
+		s,@PACKAGE@,${PKGDIST},; \
+		s,@PKGCONFIG_REQUIRES@,${PKGCONFIG_REQUIRES},; \
+		s,@PKGCONFIG_REQUIRES_PRIVATELY@,${PKGCONFIG_REQUIRES_PRIVATELY},; \
+		s,@ERRORDBDIR@,${X11LIBDIR},; \
+		s,@EXPAT_CFLAGS@,,; \
+		s,@FREETYPE_CFLAGS@,-I${X11ROOTDIR}/include/freetype2 -I${X11ROOTDIR}/include,;" \
 		-e '/^Libs:/ s%-L\([^ 	]*\)%-Wl,-rpath,\1 &%g' \
 		< ${.IMPSRC} > ${.TARGET}.tmp && \
 	mv -f ${.TARGET}.tmp ${.TARGET}
 
-CLEANDIRFILES+= ${_PKGCONFIG_FILES} ${_PKGCONFIG_FILES:C/$/.tmp/}
+CLEANFILES+= ${_PKGCONFIG_FILES} ${_PKGCONFIG_FILES:C/$/.tmp/}
 .endif
 
 #
@@ -395,12 +389,6 @@ _X11MANTRANSFORM= \
 	${X11EXTRAMANTRANSFORMS}
 
 # Note the escaping trick for _X11MANTRANSFORM using % to replace spaces
-.if ${X11FLAVOUR} != "Xorg"
-X11VERSION=	"XFree86 4.5.0"
-X11MANCPP?=	yes
-_X11MANTRANSFORM+= \
-	__vendorversion__	${X11VERSION:C/ /%/gW}
-.else
 XORGVERSION=	'"X Version 11"'
 X11MANCPP?=	no
 _X11MANTRANSFORM+= \
@@ -411,7 +399,6 @@ _X11MANTRANSFORM+= \
 	__xorgversion__		${XORGVERSION:C/ /%/gW} \
 	__XSERVERNAME__		Xorg \
 	__xservername__		Xorg
-.endif
 
 _X11MANTRANSFORMCMD=	${TOOL_SED} -e 's/\\$$/\\ /' ${.IMPSRC}
 

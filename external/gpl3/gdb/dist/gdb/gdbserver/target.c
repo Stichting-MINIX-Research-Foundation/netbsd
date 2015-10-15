@@ -1,5 +1,5 @@
 /* Target operations for the remote server for GDB.
-   Copyright (C) 2002-2013 Free Software Foundation, Inc.
+   Copyright (C) 2002-2015 Free Software Foundation, Inc.
 
    Contributed by MontaVista Software.
 
@@ -19,11 +19,12 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
 #include "server.h"
+#include "tracepoint.h"
 
 struct target_ops *the_target;
 
 void
-set_desired_inferior (int use_general)
+set_desired_thread (int use_general)
 {
   struct thread_info *found;
 
@@ -33,9 +34,9 @@ set_desired_inferior (int use_general)
     found = find_thread_ptid (cont_thread);
 
   if (found == NULL)
-    current_inferior = (struct thread_info *) all_threads.head;
+    current_thread = get_first_thread ();
   else
-    current_inferior = found;
+    current_thread = found;
 }
 
 int
@@ -45,6 +46,22 @@ read_inferior_memory (CORE_ADDR memaddr, unsigned char *myaddr, int len)
   res = (*the_target->read_memory) (memaddr, myaddr, len);
   check_mem_read (memaddr, myaddr, len);
   return res;
+}
+
+/* See target/target.h.  */
+
+int
+target_read_memory (CORE_ADDR memaddr, gdb_byte *myaddr, ssize_t len)
+{
+  return read_inferior_memory (memaddr, myaddr, len);
+}
+
+/* See target/target.h.  */
+
+int
+target_read_uint32 (CORE_ADDR memaddr, uint32_t *result)
+{
+  return read_inferior_memory (memaddr, (gdb_byte *) result, sizeof (*result));
 }
 
 int
@@ -70,6 +87,14 @@ write_inferior_memory (CORE_ADDR memaddr, const unsigned char *myaddr,
   return res;
 }
 
+/* See target/target.h.  */
+
+int
+target_write_memory (CORE_ADDR memaddr, const gdb_byte *myaddr, ssize_t len)
+{
+  return write_inferior_memory (memaddr, myaddr, len);
+}
+
 ptid_t
 mywait (ptid_t ptid, struct target_waitstatus *ourstatus, int options,
 	int connected_wait)
@@ -81,18 +106,64 @@ mywait (ptid_t ptid, struct target_waitstatus *ourstatus, int options,
 
   ret = (*the_target->wait) (ptid, ourstatus, options);
 
-  if (ourstatus->kind == TARGET_WAITKIND_EXITED)
-    fprintf (stderr,
-	     "\nChild exited with status %d\n", ourstatus->value.integer);
-  else if (ourstatus->kind == TARGET_WAITKIND_SIGNALLED)
-    fprintf (stderr, "\nChild terminated with signal = 0x%x (%s)\n",
-	     gdb_signal_to_host (ourstatus->value.sig),
-	     gdb_signal_to_name (ourstatus->value.sig));
+  /* We don't expose _LOADED events to gdbserver core.  See the
+     `dlls_changed' global.  */
+  if (ourstatus->kind == TARGET_WAITKIND_LOADED)
+    ourstatus->kind = TARGET_WAITKIND_STOPPED;
+
+  /* If GDB is connected through TCP/serial, then GDBserver will most
+     probably be running on its own terminal/console, so it's nice to
+     print there why is GDBserver exiting.  If however, GDB is
+     connected through stdio, then there's no need to spam the GDB
+     console with this -- the user will already see the exit through
+     regular GDB output, in that same terminal.  */
+  if (!remote_connection_is_stdio ())
+    {
+      if (ourstatus->kind == TARGET_WAITKIND_EXITED)
+	fprintf (stderr,
+		 "\nChild exited with status %d\n", ourstatus->value.integer);
+      else if (ourstatus->kind == TARGET_WAITKIND_SIGNALLED)
+	fprintf (stderr, "\nChild terminated with signal = 0x%x (%s)\n",
+		 gdb_signal_to_host (ourstatus->value.sig),
+		 gdb_signal_to_name (ourstatus->value.sig));
+    }
 
   if (connected_wait)
     server_waiting = 0;
 
   return ret;
+}
+
+/* See target/target.h.  */
+
+void
+target_stop_and_wait (ptid_t ptid)
+{
+  struct target_waitstatus status;
+  int was_non_stop = non_stop;
+  struct thread_resume resume_info;
+
+  resume_info.thread = ptid;
+  resume_info.kind = resume_stop;
+  resume_info.sig = GDB_SIGNAL_0;
+  (*the_target->resume) (&resume_info, 1);
+
+  non_stop = 1;
+  mywait (ptid, &status, 0, 0);
+  non_stop = was_non_stop;
+}
+
+/* See target/target.h.  */
+
+void
+target_continue_no_signal (ptid_t ptid)
+{
+  struct thread_resume resume_info;
+
+  resume_info.thread = ptid;
+  resume_info.kind = resume_continue;
+  resume_info.sig = GDB_SIGNAL_0;
+  (*the_target->resume) (&resume_info, 1);
 }
 
 int
@@ -136,48 +207,6 @@ target_pid_to_str (ptid_t ptid)
   else
     xsnprintf (buf, sizeof (buf), "Process %d",
 	       ptid_get_pid (ptid));
-
-  return buf;
-}
-
-/* Return a pretty printed form of target_waitstatus.  */
-
-const char *
-target_waitstatus_to_string (const struct target_waitstatus *ws)
-{
-  static char buf[200];
-  const char *kind_str = "status->kind = ";
-
-  switch (ws->kind)
-    {
-    case TARGET_WAITKIND_EXITED:
-      sprintf (buf, "%sexited, status = %d",
-	       kind_str, ws->value.integer);
-      break;
-    case TARGET_WAITKIND_STOPPED:
-      sprintf (buf, "%sstopped, signal = %s",
-	       kind_str, gdb_signal_to_name (ws->value.sig));
-      break;
-    case TARGET_WAITKIND_SIGNALLED:
-      sprintf (buf, "%ssignalled, signal = %s",
-	       kind_str, gdb_signal_to_name (ws->value.sig));
-      break;
-    case TARGET_WAITKIND_LOADED:
-      sprintf (buf, "%sloaded", kind_str);
-      break;
-    case TARGET_WAITKIND_EXECD:
-      sprintf (buf, "%sexecd", kind_str);
-      break;
-    case TARGET_WAITKIND_SPURIOUS:
-      sprintf (buf, "%sspurious", kind_str);
-      break;
-    case TARGET_WAITKIND_IGNORE:
-      sprintf (buf, "%signore", kind_str);
-      break;
-    default:
-      sprintf (buf, "%sunknown???", kind_str);
-      break;
-    }
 
   return buf;
 }

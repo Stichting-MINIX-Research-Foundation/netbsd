@@ -1,4 +1,4 @@
-#	$NetBSD: files.marvell,v 1.3 2013/10/05 02:43:16 kiyohara Exp $
+#	$NetBSD: files.marvell,v 1.5 2014/03/18 05:50:06 matt Exp $
 #
 # Marvell Orion, Discovery Innovation and Kirkwood NASs configuration info
 #
@@ -11,6 +11,3 @@ file	arch/evbarm/marvell/marvell_machdep.c
 
 # CPU support and integrated peripherals
 include	"arch/arm/marvell/files.marvell"
-
-# Some SoC(ARMADAXP) reports false DeviceID. 
-defparam opt_mvsoc.h				MVSOC_FIXUP_DEVID

@@ -1,6 +1,6 @@
 /* Generic remote debugging interface for simulators.
 
-   Copyright (C) 1993-2013 Free Software Foundation, Inc.
+   Copyright (C) 1993-2015 Free Software Foundation, Inc.
 
    Contributed by Cygnus Support.
    Steve Chamberlain (sac@cygnus.com).
@@ -22,13 +22,12 @@
 
 #include "defs.h"
 #include "inferior.h"
+#include "infrun.h"
 #include "value.h"
-#include "gdb_string.h"
 #include <ctype.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <setjmp.h>
-#include <errno.h>
 #include "terminal.h"
 #include "target.h"
 #include "gdbcore.h"
@@ -36,7 +35,6 @@
 #include "gdb/remote-sim.h"
 #include "command.h"
 #include "regcache.h"
-#include "gdb_assert.h"
 #include "sim-regno.h"
 #include "arch-utils.h"
 #include "readline/readline.h"
@@ -45,8 +43,6 @@
 /* Prototypes */
 
 extern void _initialize_remote_sim (void);
-
-static void dump_mem (char *buf, int len);
 
 static void init_callbacks (void);
 
@@ -74,21 +70,24 @@ static void gdb_os_error (host_callback *, const char *, ...)
 
 static void gdbsim_kill (struct target_ops *);
 
-static void gdbsim_load (char *prog, int fromtty);
+static void gdbsim_load (struct target_ops *self, const char *prog,
+			 int fromtty);
 
-static void gdbsim_open (char *args, int from_tty);
+static void gdbsim_open (const char *args, int from_tty);
 
-static void gdbsim_close (int quitting);
+static void gdbsim_close (struct target_ops *self);
 
-static void gdbsim_detach (struct target_ops *ops, char *args, int from_tty);
+static void gdbsim_detach (struct target_ops *ops, const char *args,
+			   int from_tty);
 
-static void gdbsim_prepare_to_store (struct regcache *regcache);
+static void gdbsim_prepare_to_store (struct target_ops *self,
+				     struct regcache *regcache);
 
 static void gdbsim_files_info (struct target_ops *target);
 
 static void gdbsim_mourn_inferior (struct target_ops *target);
 
-static void gdbsim_stop (ptid_t ptid);
+static void gdbsim_stop (struct target_ops *self, ptid_t ptid);
 
 void simulator_command (char *args, int from_tty);
 
@@ -178,7 +177,7 @@ get_sim_inferior_data (struct inferior *inf, int sim_instance_needed)
      a potential allocation of a sim_inferior_data struct in order to
      avoid needlessly allocating that struct in the event that the sim
      instance allocation fails.  */
-  if (sim_instance_needed == SIM_INSTANCE_NEEDED 
+  if (sim_instance_needed == SIM_INSTANCE_NEEDED
       && (sim_data == NULL || sim_data->gdbsim_desc == NULL))
     {
       struct inferior *idup;
@@ -188,7 +187,7 @@ get_sim_inferior_data (struct inferior *inf, int sim_instance_needed)
 	       inf->num);
 
       idup = iterate_over_inferiors (check_for_duplicate_sim_descriptor,
-                                     sim_desc);
+				     sim_desc);
       if (idup != NULL)
 	{
 	  /* We don't close the descriptor due to the fact that it's
@@ -201,13 +200,13 @@ get_sim_inferior_data (struct inferior *inf, int sim_instance_needed)
 	  error (
  _("Inferior %d and inferior %d would have identical simulator state.\n"
    "(This simulator does not support the running of more than one inferior.)"),
-		 inf->num, idup->num); 
-        }
+		 inf->num, idup->num);
+	}
     }
 
   if (sim_data == NULL)
     {
-      sim_data = XZALLOC(struct sim_inferior_data);
+      sim_data = XCNEW(struct sim_inferior_data);
       set_inferior_data (inf, sim_inferior_data_key, sim_data);
 
       /* Allocate a ptid for this inferior.  */
@@ -223,7 +222,7 @@ get_sim_inferior_data (struct inferior *inf, int sim_instance_needed)
   else if (sim_desc)
     {
       /* This handles the case where sim_data was allocated prior to
-         needing a sim instance.  */
+	 needing a sim instance.  */
       sim_data->gdbsim_desc = sim_desc;
     }
 
@@ -243,7 +242,7 @@ get_sim_inferior_data_by_ptid (ptid_t ptid, int sim_instance_needed)
 
   if (pid <= 0)
     return NULL;
-  
+
   inf = find_inferior_pid (pid);
 
   if (inf)
@@ -271,28 +270,28 @@ sim_inferior_data_cleanup (struct inferior *inf, void *data)
 }
 
 static void
-dump_mem (char *buf, int len)
+dump_mem (const gdb_byte *buf, int len)
 {
-  printf_filtered ("\t");
+  fputs_unfiltered ("\t", gdb_stdlog);
 
   if (len == 8 || len == 4)
     {
       uint32_t l[2];
 
       memcpy (l, buf, len);
-      printf_filtered ("0x%08x", l[0]);
+      fprintf_unfiltered (gdb_stdlog, "0x%08x", l[0]);
       if (len == 8)
-	printf_filtered (" 0x%08x", l[1]);
+	fprintf_unfiltered (gdb_stdlog, " 0x%08x", l[1]);
     }
   else
     {
       int i;
 
       for (i = 0; i < len; i++)
-	printf_filtered ("0x%02x ", buf[i]);
+	fprintf_unfiltered (gdb_stdlog, "0x%02x ", buf[i]);
     }
 
-  printf_filtered ("\n");
+  fputs_unfiltered ("\n", gdb_stdlog);
 }
 
 /* Initialize gdb_callback.  */
@@ -445,7 +444,7 @@ gdbsim_fetch_register (struct target_ops *ops,
     case SIM_REGNO_DOES_NOT_EXIST:
       {
 	/* For moment treat a `does not exist' register the same way
-           as an ``unavailable'' register.  */
+	   as an ``unavailable'' register.  */
 	gdb_byte buf[MAX_REGISTER_SIZE];
 	int nr_bytes;
 
@@ -453,7 +452,7 @@ gdbsim_fetch_register (struct target_ops *ops,
 	regcache_raw_supply (regcache, regno, buf);
 	break;
       }
-      
+
     default:
       {
 	static int warn_user = 1;
@@ -488,7 +487,8 @@ gdbsim_fetch_register (struct target_ops *ops,
 	regcache_raw_supply (regcache, regno, buf);
 	if (remote_debug)
 	  {
-	    printf_filtered ("gdbsim_fetch_register: %d", regno);
+	    fprintf_unfiltered (gdb_stdlog,
+				"gdbsim_fetch_register: %d", regno);
 	    /* FIXME: We could print something more intelligible.  */
 	    dump_mem (buf, register_size (gdbarch, regno));
 	  }
@@ -514,7 +514,7 @@ gdbsim_store_register (struct target_ops *ops,
     }
   else if (gdbarch_register_sim_regno (gdbarch, regno) >= 0)
     {
-      char tmp[MAX_REGISTER_SIZE];
+      gdb_byte tmp[MAX_REGISTER_SIZE];
       int nr_bytes;
 
       regcache_cooked_read (regcache, regno, tmp);
@@ -526,15 +526,15 @@ gdbsim_store_register (struct target_ops *ops,
 	internal_error (__FILE__, __LINE__,
 			_("Register size different to expected"));
       if (nr_bytes < 0)
-        internal_error (__FILE__, __LINE__,
- 			_("Register %d not updated"), regno);
+	internal_error (__FILE__, __LINE__,
+			_("Register %d not updated"), regno);
       if (nr_bytes == 0)
-        warning (_("Register %s not updated"),
-                 gdbarch_register_name (gdbarch, regno));
+	warning (_("Register %s not updated"),
+		 gdbarch_register_name (gdbarch, regno));
 
       if (remote_debug)
 	{
-	  printf_filtered ("gdbsim_store_register: %d", regno);
+	  fprintf_unfiltered (gdb_stdlog, "gdbsim_store_register: %d", regno);
 	  /* FIXME: We could print something more intelligible.  */
 	  dump_mem (tmp, register_size (gdbarch, regno));
 	}
@@ -548,7 +548,7 @@ static void
 gdbsim_kill (struct target_ops *ops)
 {
   if (remote_debug)
-    printf_filtered ("gdbsim_kill\n");
+    fprintf_unfiltered (gdb_stdlog, "gdbsim_kill\n");
 
   /* There is no need to `kill' running simulator - the simulator is
      not running.  Mourning it is enough.  */
@@ -560,10 +560,10 @@ gdbsim_kill (struct target_ops *ops)
    GDB's symbol tables to match.  */
 
 static void
-gdbsim_load (char *args, int fromtty)
+gdbsim_load (struct target_ops *self, const char *args, int fromtty)
 {
   char **argv;
-  char *prog;
+  const char *prog;
   struct sim_inferior_data *sim_data
     = get_sim_inferior_data (current_inferior (), SIM_INSTANCE_NEEDED);
 
@@ -579,7 +579,7 @@ gdbsim_load (char *args, int fromtty)
     error (_("GDB sim does not yet support a load offset."));
 
   if (remote_debug)
-    printf_filtered ("gdbsim_load: prog \"%s\"\n", prog);
+    fprintf_unfiltered (gdb_stdlog, "gdbsim_load: prog \"%s\"\n", prog);
 
   /* FIXME: We will print two messages on error.
      Need error to either not print anything if passed NULL or need
@@ -617,9 +617,10 @@ gdbsim_create_inferior (struct target_ops *target, char *exec_file, char *args,
     warning (_("No program loaded."));
 
   if (remote_debug)
-    printf_filtered ("gdbsim_create_inferior: exec_file \"%s\", args \"%s\"\n",
-		     (exec_file ? exec_file : "(NULL)"),
-		     args);
+    fprintf_unfiltered (gdb_stdlog,
+			"gdbsim_create_inferior: exec_file \"%s\", args \"%s\"\n",
+			(exec_file ? exec_file : "(NULL)"),
+			args);
 
   if (ptid_equal (inferior_ptid, sim_data->remote_sim_ptid))
     gdbsim_kill (target);
@@ -654,7 +655,7 @@ gdbsim_create_inferior (struct target_ops *target, char *exec_file, char *args,
   insert_breakpoints ();	/* Needed to get correct instruction
 				   in cache.  */
 
-  clear_proceed_status ();
+  clear_proceed_status (0);
 }
 
 /* The open routine takes the rest of the parameters from the command,
@@ -663,7 +664,7 @@ gdbsim_create_inferior (struct target_ops *target, char *exec_file, char *args,
 /* Called when selecting the simulator.  E.g. (gdb) target sim name.  */
 
 static void
-gdbsim_open (char *args, int from_tty)
+gdbsim_open (const char *args, int from_tty)
 {
   int len;
   char *arg_buf;
@@ -671,7 +672,8 @@ gdbsim_open (char *args, int from_tty)
   SIM_DESC gdbsim_desc;
 
   if (remote_debug)
-    printf_filtered ("gdbsim_open: args \"%s\"\n", args ? args : "(null)");
+    fprintf_unfiltered (gdb_stdlog,
+			"gdbsim_open: args \"%s\"\n", args ? args : "(null)");
 
   /* Ensure that the sim target is not on the target stack.  This is
      necessary, because if it is on the target stack, the call to
@@ -759,7 +761,7 @@ static int
 gdbsim_close_inferior (struct inferior *inf, void *arg)
 {
   struct sim_inferior_data *sim_data = inferior_data (inf,
-                                                      sim_inferior_data_key);
+						      sim_inferior_data_key);
   if (sim_data != NULL)
     {
       ptid_t ptid = sim_data->remote_sim_ptid;
@@ -772,7 +774,7 @@ gdbsim_close_inferior (struct inferior *inf, void *arg)
 	 Thus we need to verify the existence of an inferior using the
 	 pid in question before setting inferior_ptid via
 	 switch_to_thread() or mourning the inferior.  */
-      if (find_inferior_pid (ptid_get_pid (ptid)) != NULL)
+      if (find_inferior_ptid (ptid) != NULL)
 	{
 	  switch_to_thread (ptid);
 	  generic_mourn_inferior ();
@@ -782,23 +784,16 @@ gdbsim_close_inferior (struct inferior *inf, void *arg)
   return 0;
 }
 
-/* Does whatever cleanup is required for a target that we are no longer
-   going to be calling.  Argument says whether we are quitting gdb and
-   should not get hung in case of errors, or whether we want a clean
-   termination even if it takes a while.  This routine is automatically
-   always called just before a routine is popped off the target stack.
-   Closing file descriptors and freeing memory are typical things it should
-   do.  */
 /* Close out all files and local state before this target loses control.  */
 
 static void
-gdbsim_close (int quitting)
+gdbsim_close (struct target_ops *self)
 {
   struct sim_inferior_data *sim_data
     = get_sim_inferior_data (current_inferior (), SIM_INSTANCE_NOT_NEEDED);
 
   if (remote_debug)
-    printf_filtered ("gdbsim_close: quitting %d\n", quitting);
+    fprintf_unfiltered (gdb_stdlog, "gdbsim_close\n");
 
   iterate_over_inferiors (gdbsim_close_inferior, NULL);
 
@@ -823,12 +818,12 @@ gdbsim_close (int quitting)
    Use this when you want to detach and do something else with your gdb.  */
 
 static void
-gdbsim_detach (struct target_ops *ops, char *args, int from_tty)
+gdbsim_detach (struct target_ops *ops, const char *args, int from_tty)
 {
   if (remote_debug)
-    printf_filtered ("gdbsim_detach: args \"%s\"\n", args);
+    fprintf_unfiltered (gdb_stdlog, "gdbsim_detach: args \"%s\"\n", args);
 
-  pop_target ();		/* calls gdbsim_close to do the real work */
+  unpush_target (ops);		/* calls gdbsim_close to do the real work */
   if (from_tty)
     printf_filtered ("Ending simulator %s debugging\n", target_shortname);
 }
@@ -856,8 +851,9 @@ gdbsim_resume_inferior (struct inferior *inf, void *arg)
       sim_data->resume_step = rd->step;
 
       if (remote_debug)
-	printf_filtered (_("gdbsim_resume: pid %d, step %d, signal %d\n"),
-	                 inf->pid, rd->step, rd->siggnal);
+	fprintf_unfiltered (gdb_stdlog,
+			    _("gdbsim_resume: pid %d, step %d, signal %d\n"),
+			    inf->pid, rd->step, rd->siggnal);
     }
 
   /* When called from iterate_over_inferiors, a zero return causes the
@@ -885,7 +881,7 @@ gdbsim_resume (struct target_ops *ops,
      either have multiple inferiors to resume or an error condition.  */
 
   if (sim_data)
-    gdbsim_resume_inferior (find_inferior_pid (ptid_get_pid (ptid)), &rd);
+    gdbsim_resume_inferior (find_inferior_ptid (ptid), &rd);
   else if (ptid_equal (ptid, minus_one_ptid))
     iterate_over_inferiors (gdbsim_resume_inferior, &rd);
   else
@@ -922,7 +918,7 @@ gdbsim_stop_inferior (struct inferior *inf, void *arg)
 }
 
 static void
-gdbsim_stop (ptid_t ptid)
+gdbsim_stop (struct target_ops *self, ptid_t ptid)
 {
   struct sim_inferior_data *sim_data;
 
@@ -932,7 +928,7 @@ gdbsim_stop (ptid_t ptid)
     }
   else
     {
-      struct inferior *inf = find_inferior_pid (ptid_get_pid (ptid));
+      struct inferior *inf = find_inferior_ptid (ptid);
 
       if (inf == NULL)
 	error (_("Can't stop pid %d.  No inferior found."),
@@ -966,7 +962,7 @@ gdb_os_poll_quit (host_callback *p)
 static void
 gdbsim_cntrl_c (int signo)
 {
-  gdbsim_stop (minus_one_ptid);
+  gdbsim_stop (NULL, minus_one_ptid);
 }
 
 static ptid_t
@@ -994,7 +990,7 @@ gdbsim_wait (struct target_ops *ops,
     }
 
   if (remote_debug)
-    printf_filtered ("gdbsim_wait\n");
+    fprintf_unfiltered (gdb_stdlog, "gdbsim_wait\n");
 
 #if defined (HAVE_SIGACTION) && defined (SA_RESTART)
   {
@@ -1009,7 +1005,7 @@ gdbsim_wait (struct target_ops *ops,
   prev_sigint = signal (SIGINT, gdbsim_cntrl_c);
 #endif
   sim_resume (sim_data->gdbsim_desc, sim_data->resume_step,
-              sim_data->resume_siggnal);
+	      sim_data->resume_siggnal);
 
   signal (SIGINT, prev_sigint);
   sim_data->resume_step = 0;
@@ -1056,30 +1052,28 @@ gdbsim_wait (struct target_ops *ops,
    debugged.  */
 
 static void
-gdbsim_prepare_to_store (struct regcache *regcache)
+gdbsim_prepare_to_store (struct target_ops *self, struct regcache *regcache)
 {
   /* Do nothing, since we can store individual regs.  */
 }
 
-/* Transfer LEN bytes between GDB address MYADDR and target address
-   MEMADDR.  If WRITE is non-zero, transfer them to the target,
-   otherwise transfer them from the target.  TARGET is unused.
+/* Helper for gdbsim_xfer_partial that handles memory transfers.
+   Arguments are like target_xfer_partial.  */
 
-   Returns the number of bytes transferred.  */
-
-static int
-gdbsim_xfer_inferior_memory (CORE_ADDR memaddr, gdb_byte *myaddr, int len,
-			     int write, struct mem_attrib *attrib,
-			     struct target_ops *target)
+static enum target_xfer_status
+gdbsim_xfer_memory (struct target_ops *target,
+		    gdb_byte *readbuf, const gdb_byte *writebuf,
+		    ULONGEST memaddr, ULONGEST len, ULONGEST *xfered_len)
 {
   struct sim_inferior_data *sim_data
     = get_sim_inferior_data (current_inferior (), SIM_INSTANCE_NOT_NEEDED);
+  int l;
 
   /* If this target doesn't have memory yet, return 0 causing the
      request to be passed to a lower target, hopefully an exec
      file.  */
   if (!target->to_has_memory (target))
-    return 0;
+    return TARGET_XFER_EOF;
 
   if (!sim_data->program_loaded)
     error (_("No program loaded."));
@@ -1093,27 +1087,54 @@ gdbsim_xfer_inferior_memory (CORE_ADDR memaddr, gdb_byte *myaddr, int len,
   gdb_assert (sim_data->gdbsim_desc != NULL);
 
   if (remote_debug)
-    {
-      /* FIXME: Send to something other than STDOUT?  */
-      printf_filtered ("gdbsim_xfer_inferior_memory: myaddr 0x");
-      gdb_print_host_address (myaddr, gdb_stdout);
-      printf_filtered (", memaddr %s, len %d, write %d\n",
-		       paddress (target_gdbarch (), memaddr), len, write);
-      if (remote_debug && write)
-	dump_mem (myaddr, len);
-    }
+    fprintf_unfiltered (gdb_stdlog,
+			"gdbsim_xfer_memory: readbuf %s, writebuf %s, "
+			"memaddr %s, len %s\n",
+			host_address_to_string (readbuf),
+			host_address_to_string (writebuf),
+			paddress (target_gdbarch (), memaddr),
+			pulongest (len));
 
-  if (write)
+  if (writebuf)
     {
-      len = sim_write (sim_data->gdbsim_desc, memaddr, myaddr, len);
+      if (remote_debug && len > 0)
+	dump_mem (writebuf, len);
+      l = sim_write (sim_data->gdbsim_desc, memaddr, writebuf, len);
     }
   else
     {
-      len = sim_read (sim_data->gdbsim_desc, memaddr, myaddr, len);
+      l = sim_read (sim_data->gdbsim_desc, memaddr, readbuf, len);
       if (remote_debug && len > 0)
-	dump_mem (myaddr, len);
+	dump_mem (readbuf, len);
     }
-  return len;
+  if (l > 0)
+    {
+      *xfered_len = (ULONGEST) l;
+      return TARGET_XFER_OK;
+    }
+  else if (l == 0)
+    return TARGET_XFER_EOF;
+  else
+    return TARGET_XFER_E_IO;
+}
+
+/* Target to_xfer_partial implementation.  */
+
+static enum target_xfer_status
+gdbsim_xfer_partial (struct target_ops *ops, enum target_object object,
+		     const char *annex, gdb_byte *readbuf,
+		     const gdb_byte *writebuf, ULONGEST offset, ULONGEST len,
+		     ULONGEST *xfered_len)
+{
+  switch (object)
+    {
+    case TARGET_OBJECT_MEMORY:
+      return gdbsim_xfer_memory (ops, readbuf, writebuf, offset, len,
+				 xfered_len);
+
+    default:
+      return TARGET_XFER_E_IO;
+    }
 }
 
 static void
@@ -1127,12 +1148,12 @@ gdbsim_files_info (struct target_ops *target)
     file = bfd_get_filename (exec_bfd);
 
   if (remote_debug)
-    printf_filtered ("gdbsim_files_info: file \"%s\"\n", file);
+    fprintf_unfiltered (gdb_stdlog, "gdbsim_files_info: file \"%s\"\n", file);
 
   if (exec_bfd)
     {
-      printf_filtered ("\tAttached to %s running program %s\n",
-		       target_shortname, file);
+      fprintf_unfiltered (gdb_stdlog, "\tAttached to %s running program %s\n",
+			  target_shortname, file);
       sim_info (sim_data->gdbsim_desc, 0);
     }
 }
@@ -1146,7 +1167,7 @@ gdbsim_mourn_inferior (struct target_ops *target)
     = get_sim_inferior_data (current_inferior (), SIM_INSTANCE_NOT_NEEDED);
 
   if (remote_debug)
-    printf_filtered ("gdbsim_mourn_inferior:\n");
+    fprintf_unfiltered (gdb_stdlog, "gdbsim_mourn_inferior:\n");
 
   remove_breakpoints ();
   generic_mourn_inferior ();
@@ -1176,14 +1197,14 @@ simulator_command (char *args, int from_tty)
     {
 
       /* PREVIOUSLY: The user may give a command before the simulator
-         is opened. [...] (??? assuming of course one wishes to
-         continue to allow commands to be sent to unopened simulators,
-         which isn't entirely unreasonable).  */
+	 is opened. [...] (??? assuming of course one wishes to
+	 continue to allow commands to be sent to unopened simulators,
+	 which isn't entirely unreasonable).  */
 
       /* The simulator is a builtin abstraction of a remote target.
-         Consistent with that model, access to the simulator, via sim
-         commands, is restricted to the period when the channel to the
-         simulator is open.  */
+	 Consistent with that model, access to the simulator, via sim
+	 commands, is restricted to the period when the channel to the
+	 simulator is open.  */
 
       error (_("Not connected to the simulator target"));
     }
@@ -1196,7 +1217,8 @@ simulator_command (char *args, int from_tty)
 }
 
 static VEC (char_ptr) *
-sim_command_completer (struct cmd_list_element *ignore, char *text, char *word)
+sim_command_completer (struct cmd_list_element *ignore, const char *text,
+		       const char *word)
 {
   struct sim_inferior_data *sim_data;
   char **tmp;
@@ -1290,7 +1312,7 @@ init_gdbsim_ops (void)
   gdbsim_ops.to_fetch_registers = gdbsim_fetch_register;
   gdbsim_ops.to_store_registers = gdbsim_store_register;
   gdbsim_ops.to_prepare_to_store = gdbsim_prepare_to_store;
-  gdbsim_ops.deprecated_xfer_memory = gdbsim_xfer_inferior_memory;
+  gdbsim_ops.to_xfer_partial = gdbsim_xfer_partial;
   gdbsim_ops.to_files_info = gdbsim_files_info;
   gdbsim_ops.to_insert_breakpoint = memory_insert_breakpoint;
   gdbsim_ops.to_remove_breakpoint = memory_remove_breakpoint;

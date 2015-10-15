@@ -1,4 +1,3 @@
-
 /******************************************************************************
  *
  * Module Name: exnames - interpreter/scanner name load/execute
@@ -6,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -42,8 +41,6 @@
  * POSSIBILITY OF SUCH DAMAGES.
  */
 
-#define __EXNAMES_C__
-
 #include "acpi.h"
 #include "accommon.h"
 #include "acinterp.h"
@@ -73,7 +70,7 @@ AcpiExNameSegment (
  *                                    (-1)==root,  0==none
  *              NumNameSegs         - count of 4-character name segments
  *
- * RETURN:      A pointer to the allocated string segment.  This segment must
+ * RETURN:      A pointer to the allocated string segment. This segment must
  *              be deleted by the caller.
  *
  * DESCRIPTION: Allocate a buffer for a name string. Ensure allocated name
@@ -224,7 +221,7 @@ AcpiExNameSegment (
 
         if (NameString)
         {
-            ACPI_STRCAT (NameString, CharBuf);
+            strcat (NameString, CharBuf);
             ACPI_DEBUG_PRINT ((ACPI_DB_NAMES,
                 "Appended to - %s\n", NameString));
         }
@@ -335,7 +332,6 @@ AcpiExGetNameString (
             HasPrefix = TRUE;
             break;
 
-
         case AML_PARENT_PREFIX:
 
             /* Increment past possibly multiple parent prefixes */
@@ -352,7 +348,6 @@ AcpiExGetNameString (
 
             HasPrefix = TRUE;
             break;
-
 
         default:
 
@@ -389,7 +384,6 @@ AcpiExGetNameString (
             }
             break;
 
-
         case AML_MULTI_NAME_PREFIX_OP:
 
             ACPI_DEBUG_PRINT ((ACPI_DB_LOAD, "MultiNamePrefix at %p\n",
@@ -421,7 +415,6 @@ AcpiExGetNameString (
 
             break;
 
-
         case 0:
 
             /* NullName valid as of 8-12-98 ASL/AML Grammar Update */
@@ -443,7 +436,6 @@ AcpiExGetNameString (
             }
 
             break;
-
 
         default:
 
@@ -484,5 +476,3 @@ AcpiExGetNameString (
 
     return_ACPI_STATUS (Status);
 }
-
-

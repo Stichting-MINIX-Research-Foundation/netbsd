@@ -1,4 +1,4 @@
-/*	$NetBSD: edc_mca.c,v 1.48 2013/10/12 21:11:42 christos Exp $	*/
+/*	$NetBSD: edc_mca.c,v 1.50 2015/04/13 16:33:24 riastradh Exp $	*/
 
 /*
  * Copyright (c) 2001 The NetBSD Foundation, Inc.
@@ -46,7 +46,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: edc_mca.c,v 1.48 2013/10/12 21:11:42 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: edc_mca.c,v 1.50 2015/04/13 16:33:24 riastradh Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -63,7 +63,7 @@ __KERNEL_RCSID(0, "$NetBSD: edc_mca.c,v 1.48 2013/10/12 21:11:42 christos Exp $"
 #include <sys/vnode.h>
 #include <sys/kernel.h>
 #include <sys/kthread.h>
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 
 #include <sys/bus.h>
 #include <sys/intr.h>
@@ -815,13 +815,13 @@ edcworker(void *arg)
 			}
 
 			/* Is there a buf for us ? */
-			simple_lock(&ed->sc_q_lock);
+			mutex_enter(&ed->sc_q_lock);
 			if ((bp = bufq_get(ed->sc_q)) == NULL) {
-				simple_unlock(&ed->sc_q_lock);
+				mutex_exit(&ed->sc_q_lock);
 				i++;
 				continue;
 			}
-			simple_unlock(&ed->sc_q_lock);
+			mutex_exit(&ed->sc_q_lock);
 
 			/* Instrumentation. */
 			disk_busy(&ed->sc_dk);

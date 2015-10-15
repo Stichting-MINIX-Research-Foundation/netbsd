@@ -1,6 +1,6 @@
 #!/usr/bin/perl -w
 #
-# Copyright (C) 2004-2008, 2010-2012  Internet Systems Consortium, Inc. ("ISC")
+# Copyright (C) 2004-2008, 2010-2014  Internet Systems Consortium, Inc. ("ISC")
 # Copyright (C) 2001  Internet Software Consortium.
 #
 # Permission to use, copy, modify, and/or distribute this software for any
@@ -15,7 +15,7 @@
 # OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
 # PERFORMANCE OF THIS SOFTWARE.
 
-# Id
+# Id: start.pl,v 1.30 2012/02/06 23:46:44 tbox Exp 
 
 # Framework for starting test servers.
 # Based on the type of server specified, check for port availability, remove
@@ -104,14 +104,28 @@ if ($server) {
 sub check_ports {
 	my $server = shift;
 	my $options = "";
+	my $port = 5300;
+	my $file = "";
+
+	$file = $testdir . "/" . $server . "/named.port" if ($server);
 
 	if ($server && $server =~ /(\d+)$/) {
 		$options = "-i $1";
 	}
 
+	if ($file ne "" && -e $file) {
+		open(FH, "<", $file);
+		while(my $line=<FH>) {
+			chomp $line;
+			$port = $line;
+			last;
+		}
+		close FH;
+	}
+
 	my $tries = 0;
 	while (1) {
-		my $return = system("$PERL $topdir/testsock.pl -p 5300 $options");
+		my $return = system("$PERL $topdir/testsock.pl -p $port $options");
 		last if ($return == 0);
 		if (++$tries > 4) {
 			print "$0: could not bind to server addresses, still running?\n";
@@ -155,14 +169,25 @@ sub start_server {
 			close FH;
 			$command .= "$options";
 		} else {
+			$command .= "-D $server ";
 			$command .= "-m record,size,mctx ";
 			$command .= "-T clienttest ";
 			$command .= "-T nosoa " 
 				if (-e "$testdir/$server/named.nosoa");
 			$command .= "-T noaa " 
 				if (-e "$testdir/$server/named.noaa");
-			$command .= "-c named.conf -d 99 -g -U 4 ";
+			$command .= "-T noedns " 
+				if (-e "$testdir/$server/named.noedns");
+			$command .= "-T dropedns " 
+				if (-e "$testdir/$server/named.dropedns");
+			$command .= "-T maxudp512 " 
+				if (-e "$testdir/$server/named.maxudp512");
+			$command .= "-T maxudp1460 " 
+				if (-e "$testdir/$server/named.maxudp1460");
+			$command .= "-c named.conf -d 99 -g -U 4";
 		}
+		$command .= " -T notcp"
+			if (-e "$testdir/$server/named.notcp");
 		if ($restart) {
 			$command .= " >>named.run 2>&1 &";
 		} else {
@@ -249,11 +274,26 @@ sub start_server {
 sub verify_server {
 	my $server = shift;
 	my $n = $server;
+	my $port = 5300;
+	my $tcp = "+tcp";
+
 	$n =~ s/^ns//;
+
+	if (-e "$testdir/$server/named.port") {
+		open(FH, "<", "$testdir/$server/named.port");
+		while(my $line=<FH>) {
+			chomp $line;
+			$port = $line;
+			last;
+		}
+		close FH;
+	}
+
+	$tcp = "" if (-e "$testdir/$server/named.notcp");
 
 	my $tries = 0;
 	while (1) {
-		my $return = system("$DIG +tcp +noadd +nosea +nostat +noquest +nocomm +nocmd -p 5300 version.bind. chaos txt \@10.53.0.$n > dig.out");
+		my $return = system("$DIG $tcp +noadd +nosea +nostat +noquest +nocomm +nocmd +noedns -p $port version.bind. chaos txt \@10.53.0.$n > dig.out");
 		last if ($return == 0);
 		if (++$tries >= 30) {
 			print `grep ";" dig.out > /dev/null`;

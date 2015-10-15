@@ -1,4 +1,4 @@
-/* $NetBSD: if_ie.c,v 1.32 2012/10/27 17:17:23 chs Exp $ */
+/* $NetBSD: if_ie.c,v 1.35 2015/05/20 09:17:17 ozaki-r Exp $ */
 
 /*
  * Copyright (c) 1995 Melvin Tang-Richardson.
@@ -45,7 +45,7 @@
  */
 
 /*
- *	This driver is at it's last beta release.  It should not cause
+ *	This driver is at its last beta release.  It should not cause
  *	any problems (Touch wood)
  *
  * 	If it passes field tests again.  This will constitute the realse
@@ -53,7 +53,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_ie.c,v 1.32 2012/10/27 17:17:23 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_ie.c,v 1.35 2015/05/20 09:17:17 ozaki-r Exp $");
 
 #define IGNORE_ETHER1_IDROM_CHECKSUM
 
@@ -71,7 +71,6 @@ __KERNEL_RCSID(0, "$NetBSD: if_ie.c,v 1.32 2012/10/27 17:17:23 chs Exp $");
 #include <sys/device.h>
 #include <machine/io.h>
 #include <machine/intr.h>
-#include <arm/arm32/katelib.h>
 #include <acorn32/podulebus/podulebus.h>
 #include <dev/podulebus/podules.h>
 
@@ -93,11 +92,6 @@ __KERNEL_RCSID(0, "$NetBSD: if_ie.c,v 1.32 2012/10/27 17:17:23 chs Exp $");
 #include <netinet/in_var.h>
 #include <netinet/ip.h>
 #include <netinet/if_inarp.h>
-#endif
-
-#ifdef NS
-#include <netns/ns.h>
-#include <netns/ns_if.h>
 #endif
 
 /* Import our data structres */
@@ -965,7 +959,7 @@ iestop(struct ie_softc *sc)
 }
 
 /*
- * Send a command to the card and awaits it's completion.
+ * Send a command to the card and await its completion.
  * Timeout if it's taking too long
  */
 

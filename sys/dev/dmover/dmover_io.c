@@ -1,4 +1,4 @@
-/*	$NetBSD: dmover_io.c,v 1.41 2013/07/25 04:32:37 msaitoh Exp $	*/
+/*	$NetBSD: dmover_io.c,v 1.44 2015/08/20 14:40:17 christos Exp $	*/
 
 /*
  * Copyright (c) 2002, 2003 Wasabi Systems, Inc.
@@ -55,7 +55,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: dmover_io.c,v 1.41 2013/07/25 04:32:37 msaitoh Exp $");
+__KERNEL_RCSID(0, "$NetBSD: dmover_io.c,v 1.44 2015/08/20 14:40:17 christos Exp $");
 
 #include <sys/param.h>
 #include <sys/queue.h>
@@ -80,6 +80,8 @@ __KERNEL_RCSID(0, "$NetBSD: dmover_io.c,v 1.41 2013/07/25 04:32:37 msaitoh Exp $
 
 #include <dev/dmover/dmovervar.h>
 #include <dev/dmover/dmover_io.h>
+
+#include "ioconf.h"
 
 struct dmio_usrreq_state {
 	union {
@@ -128,14 +130,21 @@ static void dmio_usrreq_fini1(struct work *wk, void *);
 struct pool dmio_state_pool;
 struct pool dmio_usrreq_state_pool;
 
-void	dmoverioattach(int);
-
 dev_type_open(dmoverioopen);
 
 const struct cdevsw dmoverio_cdevsw = {
-	dmoverioopen, noclose, noread, nowrite, noioctl,
-	nostop, notty, nopoll, nommap, nokqfilter,
-	D_OTHER
+	.d_open = dmoverioopen,
+	.d_close = noclose,
+	.d_read = noread,
+	.d_write = nowrite,
+	.d_ioctl = noioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_OTHER
 };
 
 /*

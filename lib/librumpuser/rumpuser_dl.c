@@ -1,4 +1,4 @@
-/*      $NetBSD: rumpuser_dl.c,v 1.25 2013/10/30 13:08:14 pooka Exp $	*/
+/*      $NetBSD: rumpuser_dl.c,v 1.30 2014/11/04 19:05:17 pooka Exp $	*/
 
 /*
  * Copyright (c) 2009 Antti Kantee.  All Rights Reserved.
@@ -40,7 +40,7 @@
 #include "rumpuser_port.h"
 
 #if !defined(lint)
-__RCSID("$NetBSD: rumpuser_dl.c,v 1.25 2013/10/30 13:08:14 pooka Exp $");
+__RCSID("$NetBSD: rumpuser_dl.c,v 1.30 2014/11/04 19:05:17 pooka Exp $");
 #endif /* !lint */
 
 #include <sys/types.h>
@@ -58,9 +58,7 @@ __RCSID("$NetBSD: rumpuser_dl.c,v 1.25 2013/10/30 13:08:14 pooka Exp $");
 
 #include <rump/rumpuser.h>
 
-#if defined(__ELF__) && (defined(__NetBSD__) || defined(__FreeBSD__)	\
-    || (defined(__sun__) && defined(__svr4__))) || defined(__linux__)	\
-    || defined(__DragonFly__)
+#if defined(__ELF__) && defined(HAVE_DLINFO)
 #include <elf.h>
 #include <link.h>
 
@@ -382,12 +380,31 @@ rumpuser_dl_bootstrap(rump_modinit_fn domodinit,
 	int error;
 
 	mainhandle = dlopen(NULL, RTLD_NOW);
+	/* Will be null if statically linked so just return */
+	if (mainhandle == NULL)
+		return;
 	if (dlinfo(mainhandle, RTLD_DI_LINKMAP, &mainmap) == -1) {
 		fprintf(stderr, "warning: rumpuser module bootstrap "
 		    "failed: %s\n", dlerror());
 		return;
 	}
 	origmap = mainmap;
+
+	/*
+	 * Use a heuristic to determine if we are static linked.
+	 * A dynamically linked binary should always have at least
+	 * two objects: itself and ld.so.
+	 *
+	 * In a statically linked binary with glibc the linkmap
+	 * contains some "info" that leads to a segfault.  Since we
+	 * can't really do anything useful in here without ld.so, just
+	 * simply bail and let the symbol references in librump do the
+	 * right things.
+	 */
+	if (origmap->l_next == NULL && origmap->l_prev == NULL) {
+		dlclose(mainhandle);
+		return;
+	}
 
 	/*
 	 * Process last->first because that's the most probable
@@ -468,10 +485,3 @@ rumpuser_dl_bootstrap(rump_modinit_fn domodinit,
 	return;
 }
 #endif
-
-void *
-rumpuser_dl_globalsym(const char *symname)
-{
-
-	return dlsym(RTLD_DEFAULT, symname);
-}

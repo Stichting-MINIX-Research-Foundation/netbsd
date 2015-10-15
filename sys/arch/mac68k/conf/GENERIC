@@ -1,4 +1,4 @@
-# $NetBSD: GENERIC,v 1.215 2013/07/16 07:31:40 jklos Exp $
+# $NetBSD: GENERIC,v 1.221 2015/08/08 06:36:25 maxv Exp $
 #
 # GENERIC machine description file
 # 
@@ -22,7 +22,9 @@ include		"arch/mac68k/conf/std.mac68k"
 
 options 	INCLUDE_CONFIG_FILE	# embed config file in kernel binary
 
-#ident 		"GENERIC-$Revision: 1.215 $"
+#ident 		"GENERIC-$Revision: 1.221 $"
+
+makeoptions	COPTS="-O2 -fno-reorder-blocks"	# see share/mk/sys.mk
 
 maxusers	16		# estimated number of users
 
@@ -65,7 +67,6 @@ options 	SYSCTL_INCLUDE_DESCR	# Include sysctl descriptions in kernel
 #options 	DIAGNOSTIC	# cheap kernel consistency checks
 #options 	DEBUG		# expensive debugging checks/support
 #options 	LOCKDEBUG	# kernel lock debugging
-options 	KMEMSTATS	# kernel memory statistics (vmstat -m)
 options 	DDB			# in-kernel debugger
 #options 	DDB_HISTORY_SIZE=100	# enable history editing in DDB
 #options 	KGDB			# remote debugger
@@ -86,8 +87,9 @@ options 	COMPAT_16	# NetBSD 1.6,
 options 	COMPAT_20	# NetBSD 2.0,
 options 	COMPAT_30	# NetBSD 3.0,
 options 	COMPAT_40	# NetBSD 4.0,
-options 	COMPAT_50	# NetBSD 5.0 compatibility.
-options 	COMPAT_60	# NetBSD 6.0 compatibility.
+options 	COMPAT_50	# NetBSD 5.0,
+options 	COMPAT_60	# NetBSD 6.0, and
+options 	COMPAT_70	# NetBSD 7.0 binary compatibility.
 options 	COMPAT_43	# and 4.3BSD
 #options 	TCP_COMPAT_42	# 4.2BSD TCP/IP bug compat. Not recommended.
 
@@ -131,6 +133,7 @@ options 	WAPBL		# File system journaling support
 #options	UFS_DIRHASH	# UFS Large Directory Hashing - Experimental
 options 	NFSSERVER	# Network File System server
 #options 	FFS_NO_SNAPSHOT	# No FFS snapshot support
+options 	UFS_EXTATTR	# Extended attribute support for UFS1
 #options 	EXT2FS_SYSTEM_FLAGS # makes ext2fs file flags (append and
 				# immutable) behave as system flags.
 

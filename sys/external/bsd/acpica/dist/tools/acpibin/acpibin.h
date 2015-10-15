@@ -1,4 +1,3 @@
-
 /******************************************************************************
  *
  * Module Name: acpibinh - Include file for AcpiBin utility
@@ -6,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -46,30 +45,15 @@
 #include "accommon.h"
 
 #include <stdio.h>
-#include <sys/stat.h>
-#include <sys/types.h>
 #include <fcntl.h>
-#include <ctype.h>
 #include <errno.h>
-
-#ifdef WIN32
-#include <stdlib.h>
-#include <io.h>
-#include <direct.h>
-#endif
-
-/* O_BINARY is not always defined */
-#ifndef O_BINARY
-#define O_BINARY    0x0
-#endif
 
 #define DB_CONSOLE_OUTPUT            0x02
 #define ACPI_DB_REDIRECTABLE_OUTPUT  0x01
 
 /*
- * Global variables.  Defined in main.c only, externed in all other files
+ * Global variables. Defined in main.c only, externed in all other files
  */
-
 #ifdef _DECLARE_GLOBALS
 #define EXTERN
 #define INIT_GLOBAL(a,b)        a=b
@@ -82,19 +66,12 @@
 /* Globals */
 
 EXTERN BOOLEAN              INIT_GLOBAL (Gbl_TerseMode, FALSE);
-EXTERN FILE                 INIT_GLOBAL (*AcpiGbl_DebugFile, NULL);
 
 
 /* Prototypes */
 
 int
 AbCompareAmlFiles (
-    char                    *File1Path,
-    char                    *File2Path);
-
-int
-AbExtractAmlFile (
-    char                    *TableSig,
     char                    *File1Path,
     char                    *File2Path);
 
@@ -110,4 +87,3 @@ AbComputeChecksum (
 void
 AbDisplayHeader (
     char                    *File1Path);
-

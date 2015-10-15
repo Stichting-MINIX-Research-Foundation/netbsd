@@ -1,4 +1,4 @@
-/*	$NetBSD: cpu_mainbus.c,v 1.13 2012/08/29 23:16:35 matt Exp $	*/
+/*	$NetBSD: cpu_mainbus.c,v 1.16 2014/10/29 14:14:14 skrll Exp $	*/
 
 /*
  * Copyright (c) 1995 Mark Brinicombe.
@@ -42,9 +42,10 @@
  */
 
 #include "locators.h"
+#include "opt_multiprocessor.h"
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: cpu_mainbus.c,v 1.13 2012/08/29 23:16:35 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: cpu_mainbus.c,v 1.16 2014/10/29 14:14:14 skrll Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -69,7 +70,7 @@ static void cpu_mainbus_attach(device_t, device_t, void *);
 #ifdef MULTIPROCESSOR
 extern u_int arm_cpu_max;
 #else
-#define	arm_cpu_max		0
+#define	arm_cpu_max		1
 #endif
  
 static int
@@ -79,24 +80,31 @@ cpu_mainbus_match(device_t parent, cfdata_t cf, void *aux)
 	int id = mb->mb_core;
 
 	if (id != MAINBUSCF_CORE_DEFAULT) {
-		if (id > arm_cpu_max || kcpuset_isset(kcpuset_attached, id))
+		if (id == 0)
+			return cpu_info_store.ci_dev == NULL;
+		if (id >= arm_cpu_max)
 			return 0;
-		if (id == 0 && cpu_info_store.ci_dev != NULL)
+#ifdef MULTIPROCESSOR
+		if (cpu_info[id] != NULL)
 			return 0;
+#endif
 		return 1;
 	}
 
-	for (id = 0; id <= arm_cpu_max; id++) {
+	if (cpu_info_store.ci_dev == NULL) {
+		mb->mb_core = 0;
+		return 1;
+	}
+
 #ifdef MULTIPROCESSOR
-		if (cpu_info[id] != NULL && cpu_info[id]->ci_dev != NULL)
+	for (id = 1; id < arm_cpu_max; id++) {
+		if (cpu_info[id] != NULL)
 			continue;
-#else
-		if (id != 0 || cpu_info_store.ci_dev != NULL)
-			continue;
-#endif
 		mb->mb_core = id;
 		return 1;
 	}
+#endif
+
 	return 0;
 }
 

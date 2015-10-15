@@ -1,4 +1,4 @@
-/*	$NetBSD: ppp_tty.c,v 1.57 2010/04/05 07:22:24 joerg Exp $	*/
+/*	$NetBSD: ppp_tty.c,v 1.59 2015/08/24 22:21:26 pooka Exp $	*/
 /*	Id: ppp_tty.c,v 1.3 1996/07/01 01:04:11 paulus Exp 	*/
 
 /*
@@ -93,11 +93,13 @@
 /* from NetBSD: if_ppp.c,v 1.15.2.2 1994/07/28 05:17:58 cgd Exp */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ppp_tty.c,v 1.57 2010/04/05 07:22:24 joerg Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ppp_tty.c,v 1.59 2015/08/24 22:21:26 pooka Exp $");
 
 #include "ppp.h"
 
+#ifdef _KERNEL_OPT
 #include "opt_ppp.h"
+#endif
 #define VJC
 #define PPP_COMPRESS
 
@@ -978,8 +980,8 @@ pppinput(int c, struct tty *tp)
 {
     struct ppp_softc *sc;
     struct mbuf *m;
-    const struct cdevsw *cdev;
     int ilen, s;
+    int result;
 
     sc = (struct ppp_softc *) tp->t_sc;
     if (sc == NULL || tp != (struct tty *) sc->sc_devp)
@@ -1000,26 +1002,12 @@ pppinput(int c, struct tty *tp)
     /*
      * Handle software flow control of output.
      */
-    if (tp->t_iflag & IXON) {
-	if (c == tp->t_cc[VSTOP] && tp->t_cc[VSTOP] != _POSIX_VDISABLE) {
-	    if ((tp->t_state & TS_TTSTOP) == 0) {
-		tp->t_state |= TS_TTSTOP;
-		cdev = cdevsw_lookup(tp->t_dev);
-		if (cdev != NULL)
-			(*cdev->d_stop)(tp, 0);
-	    }
+    result = tty_try_xonxoff(tp, c);
+    if (result == 0) {
+	    /* Character was recognized and consumed. */
 	    return 0;
-	}
-	if (c == tp->t_cc[VSTART] && tp->t_cc[VSTART] != _POSIX_VDISABLE) {
-	    tp->t_state &= ~TS_TTSTOP;
-	    if (tp->t_oproc != NULL) {
-	        mutex_spin_enter(&tty_lock);	/* XXX */
-		(*tp->t_oproc)(tp);
-	        mutex_spin_exit(&tty_lock);	/* XXX */
-	    }
-	    return 0;
-	}
     }
+    /* Character wasn't consumed, continue processing it. */
 
     s = spltty();
     if (c & 0x80)

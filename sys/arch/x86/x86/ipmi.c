@@ -1,4 +1,4 @@
-/*	$NetBSD: ipmi.c,v 1.56 2013/10/17 20:58:55 christos Exp $ */
+/*	$NetBSD: ipmi.c,v 1.62 2015/08/28 14:06:01 joerg Exp $ */
 
 /*
  * Copyright (c) 2006 Manuel Bouyer.
@@ -52,7 +52,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ipmi.c,v 1.56 2013/10/17 20:58:55 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ipmi.c,v 1.62 2015/08/28 14:06:01 joerg Exp $");
 
 #include <sys/types.h>
 #include <sys/param.h>
@@ -66,7 +66,6 @@ __KERNEL_RCSID(0, "$NetBSD: ipmi.c,v 1.56 2013/10/17 20:58:55 christos Exp $");
 #include <sys/kthread.h>
 #include <sys/bus.h>
 #include <sys/intr.h>
-#include <sys/rnd.h>
 
 #include <x86/smbiosvar.h>
 
@@ -89,7 +88,6 @@ struct ipmi_sensor {
 	uint32_t	i_props, i_defprops;
 	SLIST_ENTRY(ipmi_sensor) i_list;
 	int32_t		i_prevval;	/* feed rnd source on change */
-	krndsource_t	i_rnd;
 };
 
 int	ipmi_nintr;
@@ -891,6 +889,7 @@ dumpb(const char *lbl, int len, const uint8_t *data)
 void
 ipmi_smbios_probe(struct smbios_ipmi *pipmi, struct ipmi_attach_args *ia)
 {
+	const char *platform;
 
 	dbg_printf(1, "ipmi_smbios_probe: %02x %02x %02x %02x "
 	    "%08" PRIx64 " %02x %02x\n",
@@ -937,6 +936,15 @@ ipmi_smbios_probe(struct smbios_ipmi *pipmi, struct ipmi_attach_args *ia)
 	}
 	if (pipmi->smipmi_base_flags & SMIPMI_FLAG_ODDOFFSET)
 		ia->iaa_if_iobase++;
+
+	platform = pmf_get_platform("system-product");
+	if (platform != NULL &&
+	    strcmp(platform, "ProLiant MicroServer") == 0) {
+                ia->iaa_if_iospacing = 1;
+                ia->iaa_if_iobase = pipmi->smipmi_base_address - 7;
+                ia->iaa_if_iotype = 'i';
+                return;
+        }
 
 	if (pipmi->smipmi_base_flags == 0x7f) {
 		/* IBM 325 eServer workaround */
@@ -1209,6 +1217,7 @@ get_sdr(struct ipmi_softc *sc, uint16_t recid, uint16_t *nxtrec)
 		    psdr + offset, NULL)) {
 			printf("ipmi: get chunk : %d,%d fails\n",
 			    offset, len);
+			free(psdr, M_DEVBUF);
 			return (-1);
 		}
 	}
@@ -1294,7 +1303,7 @@ signextend(unsigned long val, int bits)
 
 /* fixpoint arithmetic */
 #define FIX2INT(x)   ((int64_t)((x) >> 32))
-#define INT2FIX(x)   ((int64_t)((int64_t)(x) << 32))
+#define INT2FIX(x)   ((int64_t)((uint64_t)(x) << 32))
 
 #define FIX2            0x0000000200000000ll /* 2.0 */
 #define FIX3            0x0000000300000000ll /* 3.0 */
@@ -1510,10 +1519,6 @@ ipmi_convert_sensor(uint8_t *reading, struct ipmi_sensor *psensor)
 	default:
 		val = 0;
 		break;
-	}
-	if (val != psensor->i_prevval) {
-		rnd_add_uint32(&psensor->i_rnd, val);
-		psensor->i_prevval = val;
 	}
 	return val;
 }
@@ -1811,7 +1816,7 @@ add_child_sensors(struct ipmi_softc *sc, uint8_t *psdr, int count,
 	char			*e;
 	struct ipmi_sensor	*psensor;
 	struct sdrtype1		*s1 = (struct sdrtype1 *)psdr;
-
+	
 	typ = ipmi_sensor_type(sensor_type, ext_type, entity);
 	if (typ == -1) {
 		dbg_printf(5, "Unknown sensor type:%.2x et:%.2x sn:%.2x "
@@ -1868,22 +1873,6 @@ add_child_sensors(struct ipmi_softc *sc, uint8_t *psdr, int count,
 			         ipmi_is_dupname(psensor->i_envdesc));
 		}
 
-		/*
-		 * Add entropy source.
-		 */
-		switch (psensor->i_envtype) {
-		    case ENVSYS_STEMP:
-		    case ENVSYS_SFANRPM:
-			rnd_attach_source(&psensor->i_rnd,
-					  psensor->i_envdesc,
-					  RND_TYPE_ENV, 0);
-		        break;
-		    default:	/* XXX intrusion sensors? */
-			rnd_attach_source(&psensor->i_rnd,
-					  psensor->i_envdesc,
-					  RND_TYPE_POWER, 0);
-		}
-		    
 		dbg_printf(5, "add sensor:%.4x %.2x:%d ent:%.2x:%.2x %s\n",
 		    s1->sdrhdr.record_id, s1->sensor_type,
 		    typ, s1->entity_id, s1->entity_instance,
@@ -2078,6 +2067,7 @@ ipmi_thread(void *cookie)
 		ipmi_s->i_envnum = -1;
 		sc->sc_sensor[i].units = ipmi_s->i_envtype;
 		sc->sc_sensor[i].state = ENVSYS_SINVALID;
+		sc->sc_sensor[i].flags |= ENVSYS_FHAS_ENTROPY;
 		/*
 		 * Monitor threshold limits in the sensors.
 		 */

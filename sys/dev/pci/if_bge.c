@@ -1,4 +1,4 @@
-/*	$NetBSD: if_bge.c,v 1.264 2013/11/07 18:45:32 msaitoh Exp $	*/
+/*	$NetBSD: if_bge.c,v 1.293 2015/07/21 03:15:50 knakahara Exp $	*/
 
 /*
  * Copyright (c) 2001 Wind River Systems
@@ -79,7 +79,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_bge.c,v 1.264 2013/11/07 18:45:32 msaitoh Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_bge.c,v 1.293 2015/07/21 03:15:50 knakahara Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -97,7 +97,7 @@ __KERNEL_RCSID(0, "$NetBSD: if_bge.c,v 1.264 2013/11/07 18:45:32 msaitoh Exp $")
 #include <net/if_media.h>
 #include <net/if_ether.h>
 
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 
 #ifdef INET
 #include <netinet/in.h>
@@ -183,6 +183,9 @@ static int bge_rxthresh_nodenum;
 typedef int (*bge_eaddr_fcn_t)(struct bge_softc *, uint8_t[]);
 
 static uint32_t bge_chipid(const struct pci_attach_args *);
+#ifdef __HAVE_PCI_MSI_MSIX
+static int bge_can_use_msi(struct bge_softc *);
+#endif
 static int bge_probe(device_t, cfdata_t, void *);
 static void bge_attach(device_t, device_t, void *);
 static int bge_detach(device_t, int);
@@ -435,16 +438,8 @@ static const struct bge_product {
 	  "Broadcom BCM5723 Gigabit Ethernet",
 	  },
 	{ PCI_VENDOR_BROADCOM,
-	  PCI_PRODUCT_BROADCOM_BCM5724,
-	  "Broadcom BCM5724 Gigabit Ethernet",
-	  },
-	{ PCI_VENDOR_BROADCOM,
 	  PCI_PRODUCT_BROADCOM_BCM5750,
 	  "Broadcom BCM5750 Gigabit Ethernet",
-	  },
-	{ PCI_VENDOR_BROADCOM,
-	  PCI_PRODUCT_BROADCOM_BCM5750M,
-	  "Broadcom BCM5750M Gigabit Ethernet",
 	  },
 	{ PCI_VENDOR_BROADCOM,
 	  PCI_PRODUCT_BROADCOM_BCM5751,
@@ -740,6 +735,7 @@ static const struct bge_revision {
 	{ BGE_CHIPID_BCM5761_A1, "BCM5761 A1" },
 	{ BGE_CHIPID_BCM5784_A0, "BCM5784 A0" },
 	{ BGE_CHIPID_BCM5784_A1, "BCM5784 A1" },
+	{ BGE_CHIPID_BCM5784_B0, "BCM5784 B0" },
 	/* 5754 and 5787 share the same ASIC ID */
 	{ BGE_CHIPID_BCM5787_A0, "BCM5754/5787 A0" },
 	{ BGE_CHIPID_BCM5787_A1, "BCM5754/5787 A1" },
@@ -975,7 +971,7 @@ bge_ape_read_fw_ver(struct bge_softc *sc)
 		fwtype = "UNKN";
 
 	/* Print the APE firmware version. */
-	printf(", APE firmware %s %d.%d.%d.%d", fwtype,
+	aprint_normal_dev(sc->bge_dev, "APE firmware %s %d.%d.%d.%d\n", fwtype,
 	    (apedata & BGE_APE_FW_VERSION_MAJMSK) >> BGE_APE_FW_VERSION_MAJSFT,
 	    (apedata & BGE_APE_FW_VERSION_MINMSK) >> BGE_APE_FW_VERSION_MINSFT,
 	    (apedata & BGE_APE_FW_VERSION_REVMSK) >> BGE_APE_FW_VERSION_REVSFT,
@@ -1397,11 +1393,11 @@ bge_miibus_writereg(device_t dev, int phy, int reg, int val)
 	uint32_t autopoll;
 	int i;
 
-	if (bge_ape_lock(sc, sc->bge_phy_ape_lock) != 0)
-		return;
-
 	if (BGE_ASICREV(sc->bge_chipid) == BGE_ASICREV_BCM5906 &&
 	    (reg == BRGPHY_MII_1000CTL || reg == BRGPHY_MII_AUXCTL))
+		return;
+
+	if (bge_ape_lock(sc, sc->bge_phy_ape_lock) != 0)
 		return;
 
 	/* Reading with autopolling on may trigger PCI errors */
@@ -1744,8 +1740,10 @@ bge_newbuf_std(struct bge_softc *sc, int i, struct mbuf *m,
 	if (!(sc->bge_flags & BGEF_RX_ALIGNBUG))
 	    m_adj(m_new, ETHER_ALIGN);
 	if (bus_dmamap_load_mbuf(sc->bge_dmatag, dmamap, m_new,
-	    BUS_DMA_READ|BUS_DMA_NOWAIT))
+	    BUS_DMA_READ|BUS_DMA_NOWAIT)) {
+		m_freem(m_new);
 		return ENOBUFS;
+	}
 	bus_dmamap_sync(sc->bge_dmatag, dmamap, 0, dmamap->dm_mapsize,
 	    BUS_DMASYNC_PREREAD);
 
@@ -2176,7 +2174,7 @@ bge_poll_fw(struct bge_softc *sc)
 			aprint_error_dev(sc->bge_dev, "reset timed out\n");
 			return -1;
 		}
-	} else if ((sc->bge_flags & BGEF_NO_EEPROM) == 0) {
+	} else {
 		/*
 		 * Poll the value location we just wrote until
 		 * we see the 1's complement of the magic number.
@@ -2191,7 +2189,8 @@ bge_poll_fw(struct bge_softc *sc)
 			DELAY(10);
 		}
 
-		if (i >= BGE_TIMEOUT) {
+		if ((i >= BGE_TIMEOUT)
+		    && ((sc->bge_flags & BGEF_NO_EEPROM) == 0)) {
 			aprint_error_dev(sc->bge_dev,
 			    "firmware handshake timed out, val = %x\n", val);
 			return -1;
@@ -2258,12 +2257,15 @@ bge_phy_addr(struct bge_softc *sc)
 static int
 bge_chipinit(struct bge_softc *sc)
 {
-	uint32_t dma_rw_ctl, mode_ctl, reg;
+	uint32_t dma_rw_ctl, misc_ctl, mode_ctl, reg;
 	int i;
 
 	/* Set endianness before we access any non-PCI registers. */
+	misc_ctl = BGE_INIT;
+	if (sc->bge_flags & BGEF_TAGGED_STATUS)
+		misc_ctl |= BGE_PCIMISCCTL_TAGGED_STATUS;
 	pci_conf_write(sc->sc_pc, sc->sc_pcitag, BGE_PCI_MISC_CTL,
-	    BGE_INIT);
+	    misc_ctl);
 
 	/*
 	 * Clear the MAC statistics block in the NIC's
@@ -2368,6 +2370,15 @@ bge_chipinit(struct bge_softc *sc)
 				dma_rw_ctl |= BGE_PCIDMARWCTL_ONEDMA_ATONCE_GLOBAL;
 			else
 				dma_rw_ctl |= BGE_PCIDMARWCTL_ONEDMA_ATONCE_LOCAL;
+		} else if (BGE_ASICREV(sc->bge_chipid) == BGE_ASICREV_BCM5703) {
+			/*
+			 * In the BCM5703, the DMA read watermark should
+			 * be set to less than or equal to the maximum
+			 * memory read byte count of the PCI-X command
+			 * register.
+			 */
+			dma_rw_ctl |= BGE_PCIDMARWCTL_RD_WAT_SHIFT(4) |
+			    BGE_PCIDMARWCTL_WR_WAT_SHIFT(3);
 		} else if (BGE_ASICREV(sc->bge_chipid) == BGE_ASICREV_BCM5704) {
 			/* 1536 bytes for read, 384 bytes for write. */
 			dma_rw_ctl |= BGE_PCIDMARWCTL_RD_WAT_SHIFT(7) |
@@ -2501,7 +2512,7 @@ bge_blockinit(struct bge_softc *sc)
 	bus_size_t rcb_addr;
 	struct ifnet *ifp = &sc->ethercom.ec_if;
 	bge_hostaddr taddr;
-	uint32_t	dmactl, val;
+	uint32_t	dmactl, mimode, val;
 	int		i, limit;
 
 	/*
@@ -3166,10 +3177,18 @@ bge_blockinit(struct bge_softc *sc)
 	if (sc->bge_flags & BGEF_FIBER_TBI) {
 		CSR_WRITE_4(sc, BGE_MI_STS, BGE_MISTS_LINK);
 	} else {
-		/* 5718 step 68 */
-		BGE_STS_SETBIT(sc, BGE_STS_AUTOPOLL);
-		/* 5718 step 69 (optionally) */
-		BGE_SETBIT(sc, BGE_MI_MODE, BGE_MIMODE_AUTOPOLL | (10 << 16));
+		if ((sc->bge_flags & BGEF_CPMU_PRESENT) != 0)
+			mimode = BGE_MIMODE_500KHZ_CONST;
+		else
+			mimode = BGE_MIMODE_BASE;
+		/* 5718 step 68. 5718 step 69 (optionally). */
+		if (BGE_IS_5700_FAMILY(sc) ||
+		    BGE_ASICREV(sc->bge_chipid) == BGE_ASICREV_BCM5705) {
+			mimode |= BGE_MIMODE_AUTOPOLL;
+			BGE_STS_SETBIT(sc, BGE_STS_AUTOPOLL);
+		}
+		mimode |= BGE_MIMODE_PHYADDR(sc->bge_phy_addr);
+		CSR_WRITE_4(sc, BGE_MI_MODE, mimode);
 		if (BGE_ASICREV(sc->bge_chipid) == BGE_ASICREV_BCM5700)
 			CSR_WRITE_4(sc, BGE_MAC_EVT_ENB,
 			    BGE_EVTENB_MI_INTERRUPT);
@@ -3238,7 +3257,6 @@ bge_chipid(const struct pci_attach_args *pa)
 		case PCI_PRODUCT_BROADCOM_BCM5718:
 		case PCI_PRODUCT_BROADCOM_BCM5719:
 		case PCI_PRODUCT_BROADCOM_BCM5720:
-		case PCI_PRODUCT_BROADCOM_BCM5724: /* ??? */
 			id = pci_conf_read(pa->pa_pc, pa->pa_tag,
 			    BGE_PCI_GEN2_PRODID_ASICREV);
 			break;
@@ -3262,6 +3280,36 @@ bge_chipid(const struct pci_attach_args *pa)
 
 	return id;
 }
+
+#ifdef __HAVE_PCI_MSI_MSIX
+/*
+ * Return true if MSI can be used with this device.
+ */
+static int
+bge_can_use_msi(struct bge_softc *sc)
+{
+	int can_use_msi = 0;
+
+	switch (BGE_ASICREV(sc->bge_chipid)) {
+	case BGE_ASICREV_BCM5714_A0:
+	case BGE_ASICREV_BCM5714:
+		/*
+		 * Apparently, MSI doesn't work when these chips are
+		 * configured in single-port mode.
+		 */
+		break;
+	case BGE_ASICREV_BCM5750:
+		if (BGE_CHIPREV(sc->bge_chipid) != BGE_CHIPREV_5750_AX &&
+		    BGE_CHIPREV(sc->bge_chipid) != BGE_CHIPREV_5750_BX)
+			can_use_msi = 1;
+		break;
+	default:
+		if (BGE_IS_575X_PLUS(sc))
+			can_use_msi = 1;
+	}
+	return (can_use_msi);
+}
+#endif
 
 /*
  * Probe for a Broadcom chip. Check the PCI vendor and device IDs
@@ -3291,9 +3339,14 @@ bge_attach(device_t parent, device_t self, void *aux)
 	const struct bge_product *bp;
 	const struct bge_revision *br;
 	pci_chipset_tag_t	pc;
+#ifndef __HAVE_PCI_MSI_MSIX
 	pci_intr_handle_t	ih;
+#else
+	int counts[PCI_INTR_TYPE_SIZE];
+	pci_intr_type_t intr_type, max_type;
+#endif
 	const char		*intrstr = NULL;
-	uint32_t 		hwcfg, hwcfg2, hwcfg3, hwcfg4;
+	uint32_t 		hwcfg, hwcfg2, hwcfg3, hwcfg4, hwcfg5;
 	uint32_t		command;
 	struct ifnet		*ifp;
 	uint32_t		misccfg, mimode;
@@ -3304,6 +3357,9 @@ bge_attach(device_t parent, device_t self, void *aux)
 	uint32_t		pm_ctl;
 	bool			no_seeprom;
 	int			capmask;
+	int			mii_flags;
+	int			map_flags;
+	char intrbuf[PCI_INTRSTR_LEN];
 
 	bp = bge_lookup(pa);
 	KASSERT(bp != NULL);
@@ -3339,34 +3395,32 @@ bge_attach(device_t parent, device_t self, void *aux)
 	switch (memtype) {
 	case PCI_MAPREG_TYPE_MEM | PCI_MAPREG_MEM_TYPE_32BIT:
 	case PCI_MAPREG_TYPE_MEM | PCI_MAPREG_MEM_TYPE_64BIT:
+#if 0
 		if (pci_mapreg_map(pa, BGE_PCI_BAR0,
 		    memtype, 0, &sc->bge_btag, &sc->bge_bhandle,
 		    &memaddr, &sc->bge_bsize) == 0)
 			break;
+#else
+		/*
+		 * Workaround for PCI prefetchable bit. Some BCM5717-5720 based
+		 * system get NMI on boot (PR#48451). This problem might not be
+		 * the driver's bug but our PCI common part's bug. Until we
+		 * find a real reason, we ignore the prefetchable bit.
+		 */
+		if (pci_mapreg_info(pa->pa_pc, pa->pa_tag, BGE_PCI_BAR0,
+		    memtype, &memaddr, &sc->bge_bsize, &map_flags) == 0) {
+			map_flags &= ~BUS_SPACE_MAP_PREFETCHABLE;
+			if (bus_space_map(pa->pa_memt, memaddr, sc->bge_bsize,
+			    map_flags, &sc->bge_bhandle) == 0) {
+				sc->bge_btag = pa->pa_memt;
+				break;
+			}
+		}
+#endif
 	default:
 		aprint_error_dev(sc->bge_dev, "can't find mem space\n");
 		return;
 	}
-
-	DPRINTFN(5, ("pci_intr_map\n"));
-	if (pci_intr_map(pa, &ih)) {
-		aprint_error_dev(sc->bge_dev, "couldn't map interrupt\n");
-		return;
-	}
-
-	DPRINTFN(5, ("pci_intr_string\n"));
-	intrstr = pci_intr_string(pc, ih);
-
-	DPRINTFN(5, ("pci_intr_establish\n"));
-	sc->bge_intrhand = pci_intr_establish(pc, ih, IPL_NET, bge_intr, sc);
-
-	if (sc->bge_intrhand == NULL) {
-		aprint_error_dev(sc->bge_dev,
-		    "couldn't establish interrupt%s%s\n",
-		    intrstr ? " at " : "", intrstr ? intrstr : "");
-		return;
-	}
-	aprint_normal_dev(sc->bge_dev, "interrupting at %s\n", intrstr);
 
 	/* Save various chip information. */
 	sc->bge_chipid = bge_chipid(pa);
@@ -3480,6 +3534,7 @@ bge_attach(device_t parent, device_t self, void *aux)
 	/* Chips with APE need BAR2 access for APE registers/memory. */
 	if ((sc->bge_flags & BGEF_APE) != 0) {
 		memtype = pci_mapreg_type(pa->pa_pc, pa->pa_tag, BGE_PCI_BAR2);
+#if 0
 		if (pci_mapreg_map(pa, BGE_PCI_BAR2, memtype, 0,
 			&sc->bge_apetag, &sc->bge_apehandle, NULL,
 			&sc->bge_apesize)) {
@@ -3487,6 +3542,29 @@ bge_attach(device_t parent, device_t self, void *aux)
 			    "couldn't map BAR2 memory\n");
 			return;
 		}
+#else
+		/*
+		 * Workaround for PCI prefetchable bit. Some BCM5717-5720 based
+		 * system get NMI on boot (PR#48451). This problem might not be
+		 * the driver's bug but our PCI common part's bug. Until we
+		 * find a real reason, we ignore the prefetchable bit.
+		 */
+		if (pci_mapreg_info(pa->pa_pc, pa->pa_tag, BGE_PCI_BAR2,
+		    memtype, &memaddr, &sc->bge_apesize, &map_flags) != 0) {
+			aprint_error_dev(sc->bge_dev,
+			    "couldn't map BAR2 memory\n");
+			return;
+		}
+
+		map_flags &= ~BUS_SPACE_MAP_PREFETCHABLE;
+		if (bus_space_map(pa->pa_memt, memaddr,
+		    sc->bge_apesize, map_flags, &sc->bge_apehandle) != 0) {
+			aprint_error_dev(sc->bge_dev,
+			    "couldn't map BAR2 memory\n");
+			return;
+		}
+		sc->bge_apetag = pa->pa_memt;
+#endif
 
 		/* Enable APE register/memory access by host driver. */
 		reg = pci_conf_read(pa->pa_pc, pa->pa_tag, BGE_PCI_PCISTATE);
@@ -3576,6 +3654,7 @@ bge_attach(device_t parent, device_t self, void *aux)
 	    PCI_PRODUCT(pa->pa_id) == PCI_PRODUCT_BROADCOM_BCM57791 ||
 	    PCI_PRODUCT(pa->pa_id) == PCI_PRODUCT_BROADCOM_BCM57795 ||
 	    BGE_ASICREV(sc->bge_chipid) == BGE_ASICREV_BCM5906) {
+		/* These chips are 10/100 only. */
 		capmask &= ~BMSR_EXTSTAT;
 		sc->bge_phy_flags |= BGEPHYF_NO_WIRESPEED;
 	}
@@ -3647,6 +3726,77 @@ bge_attach(device_t parent, device_t self, void *aux)
 		}
 	}
 
+#ifdef __HAVE_PCI_MSI_MSIX
+	counts[PCI_INTR_TYPE_MSI] = 1;
+	counts[PCI_INTR_TYPE_INTX] = 1;
+	/* Check MSI capability */
+	if (bge_can_use_msi(sc) != 0) {
+		max_type = PCI_INTR_TYPE_MSI;
+		sc->bge_flags |= BGEF_MSI;
+	} else
+		max_type = PCI_INTR_TYPE_INTX;
+
+alloc_retry:
+	if (pci_intr_alloc(pa, &sc->bge_pihp, counts, max_type) != 0) {
+		aprint_error_dev(sc->bge_dev, "couldn't alloc interrupt\n");
+		return;
+	}
+#else	/* !__HAVE_PCI_MSI_MSIX */
+	DPRINTFN(5, ("pci_intr_map\n"));
+	if (pci_intr_map(pa, &ih)) {
+		aprint_error_dev(sc->bge_dev, "couldn't map interrupt\n");
+		return;
+	}
+#endif
+
+	DPRINTFN(5, ("pci_intr_string\n"));
+#ifdef __HAVE_PCI_MSI_MSIX
+	intrstr = pci_intr_string(pc, sc->bge_pihp[0], intrbuf,
+	    sizeof(intrbuf));
+	DPRINTFN(5, ("pci_intr_establish\n"));
+	sc->bge_intrhand = pci_intr_establish(pc, sc->bge_pihp[0], IPL_NET,
+	    bge_intr, sc);
+	if (sc->bge_intrhand == NULL) {
+		intr_type = pci_intr_type(sc->bge_pihp[0]);
+		aprint_error_dev(sc->bge_dev,"unable to establish %s\n",
+		    (intr_type == PCI_INTR_TYPE_MSI) ? "MSI" : "INTx");
+		pci_intr_release(pc, sc->bge_pihp, 1);
+		switch (intr_type) {
+		case PCI_INTR_TYPE_MSI:
+			/* The next try is for INTx: Disable MSI */
+			max_type = PCI_INTR_TYPE_INTX;
+			counts[PCI_INTR_TYPE_INTX] = 1;
+			sc->bge_flags &= ~BGEF_MSI;
+			goto alloc_retry;
+		case PCI_INTR_TYPE_INTX:
+		default:
+			/* See below */
+			break;
+		}
+	}
+#else	/* !__HAVE_PCI_MSI_MSIX */
+	intrstr = pci_intr_string(pc, ih, intrbuf, sizeof(intrbuf));
+
+	DPRINTFN(5, ("pci_intr_establish\n"));
+	sc->bge_intrhand = pci_intr_establish(pc, ih, IPL_NET, bge_intr, sc);
+#endif
+
+	if (sc->bge_intrhand == NULL) {
+		aprint_error_dev(sc->bge_dev,
+		    "couldn't establish interrupt%s%s\n",
+		    intrstr ? " at " : "", intrstr ? intrstr : "");
+		return;
+	}
+	aprint_normal_dev(sc->bge_dev, "interrupting at %s\n", intrstr);
+
+	/*
+	 * All controllers except BCM5700 supports tagged status but
+	 * we use tagged status only for MSI case on BCM5717. Otherwise
+	 * MSI on BCM5717 does not work.
+	 */
+	if (BGE_IS_5717_PLUS(sc) && sc->bge_flags & BGEF_MSI)
+		sc->bge_flags |= BGEF_TAGGED_STATUS;
+
 	/*
 	 * Reset NVRAM before bge_reset(). It's required to acquire NVRAM
 	 * lock in bge_reset().
@@ -3666,7 +3816,7 @@ bge_attach(device_t parent, device_t self, void *aux)
 	 * memory, or fall back to the config word in the EEPROM.
 	 * Note: on some BCM5700 cards, this value appears to be unset.
 	 */
-	hwcfg = hwcfg2 = hwcfg3 = hwcfg4 = 0;
+	hwcfg = hwcfg2 = hwcfg3 = hwcfg4 = hwcfg5 = 0;
 	if (bge_readmem_ind(sc, BGE_SRAM_DATA_SIG) ==
 	    BGE_SRAM_DATA_SIG_MAGIC) {
 		uint32_t tmp;
@@ -3678,15 +3828,18 @@ bge_attach(device_t parent, device_t self, void *aux)
 			hwcfg2 = bge_readmem_ind(sc, BGE_SRAM_DATA_CFG_2);
 		if (sc->bge_flags & BGEF_PCIE)
 			hwcfg3 = bge_readmem_ind(sc, BGE_SRAM_DATA_CFG_3);
-		if (BGE_ASICREV(sc->bge_chipid == BGE_ASICREV_BCM5785))
+		if (BGE_ASICREV(sc->bge_chipid) == BGE_ASICREV_BCM5785)
 			hwcfg4 = bge_readmem_ind(sc, BGE_SRAM_DATA_CFG_4);
+		if (BGE_IS_5717_PLUS(sc))
+			hwcfg5 = bge_readmem_ind(sc, BGE_SRAM_DATA_CFG_5);
 	} else if (!(sc->bge_flags & BGEF_NO_EEPROM)) {
 		bge_read_eeprom(sc, (void *)&hwcfg,
 		    BGE_EE_HWCFG_OFFSET, sizeof(hwcfg));
 		hwcfg = be32toh(hwcfg);
 	}
-	aprint_normal_dev(sc->bge_dev, "HW config %08x, %08x, %08x, %08x\n",
-	    hwcfg, hwcfg2, hwcfg3, hwcfg4);
+	aprint_normal_dev(sc->bge_dev,
+	    "HW config %08x, %08x, %08x, %08x %08x\n",
+	    hwcfg, hwcfg2, hwcfg3, hwcfg4, hwcfg5);
 
 	bge_sig_legacy(sc, BGE_RESET_START);
 	bge_sig_post_reset(sc, BGE_RESET_START);
@@ -3860,10 +4013,11 @@ bge_attach(device_t parent, device_t self, void *aux)
 	 */
 	if (PCI_PRODUCT(pa->pa_id) == SK_SUBSYSID_9D41 ||
 	    (hwcfg & BGE_HWCFG_MEDIA) == BGE_MEDIA_FIBER) {
-		if (BGE_IS_5714_FAMILY(sc))
-		    sc->bge_flags |= BGEF_FIBER_MII;
-		else
-		    sc->bge_flags |= BGEF_FIBER_TBI;
+		if (BGE_IS_5705_PLUS(sc)) {
+			sc->bge_flags |= BGEF_FIBER_MII;
+			sc->bge_phy_flags |= BGEPHYF_NO_WIRESPEED;
+		} else
+			sc->bge_flags |= BGEF_FIBER_TBI;
 	}
 
 	/* Set bge_phy_flags before prop_dictionary_set_uint32() */
@@ -3898,9 +4052,11 @@ bge_attach(device_t parent, device_t self, void *aux)
 
 		ifmedia_init(&sc->bge_mii.mii_media, 0, bge_ifmedia_upd,
 			     bge_ifmedia_sts);
-		mii_attach(sc->bge_dev, &sc->bge_mii, capmask,
-			   sc->bge_phy_addr, MII_OFFSET_ANY,
-			   MIIF_DOPAUSE);
+		mii_flags = MIIF_DOPAUSE;
+		if (sc->bge_flags & BGEF_FIBER_MII)
+			mii_flags |= MIIF_HAVEFIBER;
+		mii_attach(sc->bge_dev, &sc->bge_mii, capmask, sc->bge_phy_addr,
+		    MII_OFFSET_ANY, mii_flags);
 
 		if (LIST_EMPTY(&sc->bge_mii.mii_phys)) {
 			aprint_error_dev(sc->bge_dev, "no PHY found!\n");
@@ -3928,7 +4084,7 @@ bge_attach(device_t parent, device_t self, void *aux)
 	ether_ifattach(ifp, eaddr);
 	ether_set_ifflags_cb(&sc->ethercom, bge_ifflags_cb);
 	rnd_attach_source(&sc->rnd_source, device_xname(sc->bge_dev),
-		RND_TYPE_NET, 0);
+		RND_TYPE_NET, RND_FLAG_DEFAULT);
 #ifdef BGE_EVENT_COUNTERS
 	/*
 	 * Attach event counters.
@@ -3999,6 +4155,9 @@ bge_release_resources(struct bge_softc *sc)
 	/* Disestablish the interrupt handler */
 	if (sc->bge_intrhand != NULL) {
 		pci_intr_disestablish(sc->sc_pc, sc->bge_intrhand);
+#ifdef __HAVE_PCI_MSI_MSIX
+		pci_intr_release(sc->sc_pc, sc->bge_pihp, 1);
+#endif
 		sc->bge_intrhand = NULL;
 	}
 
@@ -4100,7 +4259,7 @@ bge_reset(struct bge_softc *sc)
 	 * XXX: from FreeBSD/Linux; no documentation
 	 */
 	if (sc->bge_flags & BGEF_PCIE) {
-		if (BGE_ASICREV(sc->bge_chipid != BGE_ASICREV_BCM5785) &&
+		if ((BGE_ASICREV(sc->bge_chipid) != BGE_ASICREV_BCM5785) &&
 		    !BGE_IS_57765_PLUS(sc) &&
 		    (CSR_READ_4(sc, BGE_PHY_TEST_CTRL_REG) ==
 			(BGE_PHY_PCIE_LTASS_MODE | BGE_PHY_PCIE_SCRAM_MODE))) {
@@ -4231,13 +4390,13 @@ bge_reset(struct bge_softc *sc)
 		BGE_SETBIT(sc, BGE_TLP_CONTROL_REG, BGE_TLP_DATA_FIFO_PROTECT);
 	}
 
-	/* 5718 reset step 13, 57XX step 17 */
-	/* Poll until the firmware initialization is complete */
-	bge_poll_fw(sc);
-
 	/* 5718 reset step 12, 57XX step 15 and 16 */
 	/* Fix up byte swapping */
 	CSR_WRITE_4(sc, BGE_MODE_CTL, BGE_DMA_SWAP_OPTIONS);
+
+	/* 5718 reset step 13, 57XX step 17 */
+	/* Poll until the firmware initialization is complete */
+	bge_poll_fw(sc);
 
 	/* 57XX step 21 */
 	if (BGE_CHIPREV(sc->bge_chipid) == BGE_CHIPREV_5704_BX) {
@@ -4567,7 +4726,7 @@ bge_intr(void *xsc)
 {
 	struct bge_softc *sc;
 	struct ifnet *ifp;
-	uint32_t statusword;
+	uint32_t pcistate, statusword, statustag;
 	uint32_t intrmask = BGE_PCISTATE_INTR_NOT_ACTIVE;
 
 	sc = xsc;
@@ -4582,6 +4741,7 @@ bge_intr(void *xsc)
 	 * Reading the PCI State register will confirm whether the
 	 * interrupt is ours and will flush the status block.
 	 */
+	pcistate = CSR_READ_4(sc, BGE_PCI_PCISTATE);
 
 	/* read status word from status block */
 	bus_dmamap_sync(sc->bge_dmatag, sc->bge_ring_map,
@@ -4589,55 +4749,69 @@ bge_intr(void *xsc)
 	    sizeof (struct bge_status_block),
 	    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 	statusword = sc->bge_rdata->bge_status_block.bge_status;
+	statustag = sc->bge_rdata->bge_status_block.bge_status_tag << 24;
 
-	if ((statusword & BGE_STATFLAG_UPDATED) ||
-	    (~CSR_READ_4(sc, BGE_PCI_PCISTATE) & intrmask)) {
-		/* Ack interrupt and stop others from occuring. */
-		bge_writembx_flush(sc, BGE_MBX_IRQ0_LO, 1);
-
-		BGE_EVCNT_INCR(sc->bge_ev_intr);
-
-		/* clear status word */
-		sc->bge_rdata->bge_status_block.bge_status = 0;
-
-		if (BGE_ASICREV(sc->bge_chipid) == BGE_ASICREV_BCM5700 ||
-		    statusword & BGE_STATFLAG_LINKSTATE_CHANGED ||
-		    BGE_STS_BIT(sc, BGE_STS_LINK_EVT))
-			bge_link_upd(sc);
-
-		if (ifp->if_flags & IFF_RUNNING) {
-			/* Check RX return ring producer/consumer */
-			bge_rxeof(sc);
-
-			/* Check TX ring producer/consumer */
-			bge_txeof(sc);
+	if (sc->bge_flags & BGEF_TAGGED_STATUS) {
+		if (sc->bge_lasttag == statustag &&
+		    (~pcistate & intrmask)) {
+			return (0);
 		}
-
-		if (sc->bge_pending_rxintr_change) {
-			uint32_t rx_ticks = sc->bge_rx_coal_ticks;
-			uint32_t rx_bds = sc->bge_rx_max_coal_bds;
-
-			CSR_WRITE_4(sc, BGE_HCC_RX_COAL_TICKS, rx_ticks);
-			DELAY(10);
-			(void)CSR_READ_4(sc, BGE_HCC_RX_COAL_TICKS);
-
-			CSR_WRITE_4(sc, BGE_HCC_RX_MAX_COAL_BDS, rx_bds);
-			DELAY(10);
-			(void)CSR_READ_4(sc, BGE_HCC_RX_MAX_COAL_BDS);
-
-			sc->bge_pending_rxintr_change = 0;
+		sc->bge_lasttag = statustag;
+	} else {
+		if (!(statusword & BGE_STATFLAG_UPDATED) &&
+		    !(~pcistate & intrmask)) {
+			return (0);
 		}
-		bge_handle_events(sc);
+		statustag = 0;
+	}
+	/* Ack interrupt and stop others from occurring. */
+	bge_writembx_flush(sc, BGE_MBX_IRQ0_LO, 1);
+	BGE_EVCNT_INCR(sc->bge_ev_intr);
 
-		/* Re-enable interrupts. */
-		bge_writembx_flush(sc, BGE_MBX_IRQ0_LO, 0);
+	/* clear status word */
+	sc->bge_rdata->bge_status_block.bge_status = 0;
 
-		if (ifp->if_flags & IFF_RUNNING && !IFQ_IS_EMPTY(&ifp->if_snd))
-			bge_start(ifp);
+	bus_dmamap_sync(sc->bge_dmatag, sc->bge_ring_map,
+	    offsetof(struct bge_ring_data, bge_status_block),
+	    sizeof (struct bge_status_block),
+	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 
-		return 1;
-	} else
-		return 0;
+	if (BGE_ASICREV(sc->bge_chipid) == BGE_ASICREV_BCM5700 ||
+	    statusword & BGE_STATFLAG_LINKSTATE_CHANGED ||
+	    BGE_STS_BIT(sc, BGE_STS_LINK_EVT))
+		bge_link_upd(sc);
+
+	if (ifp->if_flags & IFF_RUNNING) {
+		/* Check RX return ring producer/consumer */
+		bge_rxeof(sc);
+
+		/* Check TX ring producer/consumer */
+		bge_txeof(sc);
+	}
+
+	if (sc->bge_pending_rxintr_change) {
+		uint32_t rx_ticks = sc->bge_rx_coal_ticks;
+		uint32_t rx_bds = sc->bge_rx_max_coal_bds;
+
+		CSR_WRITE_4(sc, BGE_HCC_RX_COAL_TICKS, rx_ticks);
+		DELAY(10);
+		(void)CSR_READ_4(sc, BGE_HCC_RX_COAL_TICKS);
+
+		CSR_WRITE_4(sc, BGE_HCC_RX_MAX_COAL_BDS, rx_bds);
+		DELAY(10);
+		(void)CSR_READ_4(sc, BGE_HCC_RX_MAX_COAL_BDS);
+
+		sc->bge_pending_rxintr_change = 0;
+	}
+	bge_handle_events(sc);
+
+	/* Re-enable interrupts. */
+	bge_writembx_flush(sc, BGE_MBX_IRQ0_LO, statustag);
+
+	if (ifp->if_flags & IFF_RUNNING && !IFQ_IS_EMPTY(&ifp->if_snd))
+		bge_start(ifp);
+
+	return 1;
 }
 
 static void
@@ -4653,7 +4827,7 @@ bge_asf_driver_up(struct bge_softc *sc)
 			bge_wait_for_event_ack(sc);
 
 			bge_writemem_ind(sc, BGE_SRAM_FW_CMD_MB,
-			    BGE_FW_CMD_DRV_ALIVE);
+			    BGE_FW_CMD_DRV_ALIVE3);
 			bge_writemem_ind(sc, BGE_SRAM_FW_CMD_LEN_MB, 4);
 			bge_writemem_ind(sc, BGE_SRAM_FW_CMD_DATA_MB,
 			    BGE_FW_HB_TIMEOUT_SEC);
@@ -4698,7 +4872,8 @@ bge_tick(void *xsc)
 
 	bge_asf_driver_up(sc);
 
-	callout_reset(&sc->bge_timeout, hz, bge_tick, sc);
+	if (!sc->bge_detaching)
+		callout_reset(&sc->bge_timeout, hz, bge_tick, sc);
 
 	splx(s);
 }
@@ -5039,7 +5214,7 @@ doit:
 			 * XXX jonathan@NetBSD.org: untested.
 			 * how to force  this branch to be taken?
 			 */
-			BGE_EVCNT_INCR(&sc->sc_ev_txtsopain);
+			BGE_EVCNT_INCR(sc->bge_ev_txtsopain);
 
 			m_copydata(m0, offset, sizeof(ip), &ip);
 			m_copydata(m0, hlen, sizeof(th), &th);
@@ -5314,6 +5489,29 @@ bge_init(struct ifnet *ifp)
 	bge_sig_pre_reset(sc, BGE_RESET_START);
 	bge_reset(sc);
 	bge_sig_legacy(sc, BGE_RESET_START);
+
+	if (BGE_CHIPREV(sc->bge_chipid) == BGE_CHIPREV_5784_AX) {
+		reg = CSR_READ_4(sc, BGE_CPMU_CTRL);
+		reg &= ~(BGE_CPMU_CTRL_LINK_AWARE_MODE |
+		    BGE_CPMU_CTRL_LINK_IDLE_MODE);
+		CSR_WRITE_4(sc, BGE_CPMU_CTRL, reg);
+
+		reg = CSR_READ_4(sc, BGE_CPMU_LSPD_10MB_CLK);
+		reg &= ~BGE_CPMU_LSPD_10MB_CLK;
+		reg |= BGE_CPMU_LSPD_10MB_MACCLK_6_25;
+		CSR_WRITE_4(sc, BGE_CPMU_LSPD_10MB_CLK, reg);
+
+		reg = CSR_READ_4(sc, BGE_CPMU_LNK_AWARE_PWRMD);
+		reg &= ~BGE_CPMU_LNK_AWARE_MACCLK_MASK;
+		reg |= BGE_CPMU_LNK_AWARE_MACCLK_6_25;
+		CSR_WRITE_4(sc, BGE_CPMU_LNK_AWARE_PWRMD, reg);
+
+		reg = CSR_READ_4(sc, BGE_CPMU_HST_ACC);
+		reg &= ~BGE_CPMU_HST_ACC_MACCLK_MASK;
+		reg |= BGE_CPMU_HST_ACC_MACCLK_6_25;
+		CSR_WRITE_4(sc, BGE_CPMU_HST_ACC, reg);
+	}
+
 	bge_sig_post_reset(sc, BGE_RESET_START);
 
 	bge_chipinit(sc);
@@ -5499,9 +5697,32 @@ bge_ifmedia_upd(struct ifnet *ifp)
 		return 0;
 	}
 
+	if ((BGE_ASICREV(sc->bge_chipid) == BGE_ASICREV_BCM5784) &&
+	    (BGE_CHIPREV(sc->bge_chipid) != BGE_CHIPREV_5784_AX)) {
+		uint32_t reg;
+
+		reg = CSR_READ_4(sc, BGE_CPMU_CTRL);
+		if ((reg & BGE_CPMU_CTRL_GPHY_10MB_RXONLY) != 0) {
+			reg &= ~BGE_CPMU_CTRL_GPHY_10MB_RXONLY;
+			CSR_WRITE_4(sc, BGE_CPMU_CTRL, reg);
+		}
+	}
+
 	BGE_STS_SETBIT(sc, BGE_STS_LINK_EVT);
 	if ((rc = mii_mediachg(mii)) == ENXIO)
 		return 0;
+
+	if (BGE_CHIPREV(sc->bge_chipid) == BGE_CHIPREV_5784_AX) {
+		uint32_t reg;
+
+		reg = CSR_READ_4(sc, BGE_CPMU_LSPD_1000MB_CLK);
+		if ((reg & BGE_CPMU_LSPD_1000MB_MACCLK_MASK)
+		    == (BGE_CPMU_LSPD_1000MB_MACCLK_12_5)) {
+			reg &= ~BGE_CPMU_LSPD_1000MB_MACCLK_MASK;
+			delay(40);
+			CSR_WRITE_4(sc, BGE_CPMU_LSPD_1000MB_CLK, reg);
+		}
+	}
 
 	/*
 	 * Force an interrupt so that we will call bge_link_upd
@@ -5679,7 +5900,11 @@ bge_stop(struct ifnet *ifp, int disable)
 {
 	struct bge_softc *sc = ifp->if_softc;
 
-	callout_stop(&sc->bge_timeout);
+	if (disable) {
+		sc->bge_detaching = 1;
+		callout_halt(&sc->bge_timeout, NULL);
+	} else
+		callout_stop(&sc->bge_timeout);
 
 	/* Disable host interrupts. */
 	BGE_SETBIT(sc, BGE_PCI_MISC_CTL, BGE_PCIMISCCTL_MASK_PCI_INTR);
@@ -5870,6 +6095,23 @@ bge_link_upd(struct bge_softc *sc)
 		mii_pollstat(mii);
 	}
 
+	if (BGE_CHIPREV(sc->bge_chipid) == BGE_CHIPREV_5784_AX) {
+		uint32_t reg, scale;
+
+		reg = CSR_READ_4(sc, BGE_CPMU_CLCK_STAT) &
+		    BGE_CPMU_CLCK_STAT_MAC_CLCK_MASK;
+		if (reg == BGE_CPMU_CLCK_STAT_MAC_CLCK_62_5)
+			scale = 65;
+		else if (reg == BGE_CPMU_CLCK_STAT_MAC_CLCK_6_25)
+			scale = 6;
+		else
+			scale = 12;
+
+		reg = CSR_READ_4(sc, BGE_MISC_CFG) &
+		    ~BGE_MISCCFG_TIMER_PRESCALER;
+		reg |= scale << 1;
+		CSR_WRITE_4(sc, BGE_MISC_CFG, reg);
+	}
 	/* Clear the attention */
 	CSR_WRITE_4(sc, BGE_MAC_STS, BGE_MACSTAT_SYNC_CHANGED|
 	    BGE_MACSTAT_CFG_CHANGED|BGE_MACSTAT_MI_COMPLETE|
@@ -5914,12 +6156,6 @@ bge_sysctl_init(struct bge_softc *sc)
 {
 	int rc, bge_root_num;
 	const struct sysctlnode *node;
-
-	if ((rc = sysctl_createv(&sc->bge_log, 0, NULL, NULL,
-	    CTLFLAG_PERMANENT, CTLTYPE_NODE, "hw", NULL,
-	    NULL, 0, NULL, 0, CTL_HW, CTL_EOL)) != 0) {
-		goto out;
-	}
 
 	if ((rc = sysctl_createv(&sc->bge_log, 0, NULL, &node,
 	    0, CTLTYPE_NODE, "bge",
@@ -5988,7 +6224,10 @@ bge_debug_info(struct bge_softc *sc)
 		printf(" - CPMU\n");
 	if (sc->bge_flags & BGEF_TSO)
 		printf(" - TSO\n");
+	if (sc->bge_flags & BGEF_TAGGED_STATUS)
+		printf(" - TAGGED_STATUS\n");
 
+	/* PHY related */
 	if (sc->bge_phy_flags & BGEPHYF_NO_3LED)
 		printf(" - No 3 LEDs\n");
 	if (sc->bge_phy_flags & BGEPHYF_CRC_BUG)
@@ -6005,6 +6244,14 @@ bge_debug_info(struct bge_softc *sc)
 		printf(" - adjust trim\n");
 	if (sc->bge_phy_flags & BGEPHYF_NO_WIRESPEED)
 		printf(" - no wirespeed\n");
+
+	/* ASF related */
+	if (sc->bge_asf_mode & ASF_ENABLE)
+		printf(" - ASF enable\n");
+	if (sc->bge_asf_mode & ASF_NEW_HANDSHAKE)
+		printf(" - ASF new handshake\n");
+	if (sc->bge_asf_mode & ASF_STACKUP)
+		printf(" - ASF stackup\n");
 }
 #endif /* BGE_DEBUG */
 

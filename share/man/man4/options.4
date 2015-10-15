@@ -1,4 +1,4 @@
-.\"	$NetBSD: options.4,v 1.432 2013/10/13 22:34:13 wiz Exp $
+.\"	$NetBSD: options.4,v 1.449 2015/08/20 11:05:06 wiz Exp $
 .\"
 .\" Copyright (c) 1996
 .\" 	Perry E. Metzger.  All rights reserved.
@@ -30,7 +30,7 @@
 .\" THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 .\"
 .\"
-.Dd October 13, 2013
+.Dd August 20, 2015
 .Dt OPTIONS 4
 .Os
 .Sh NAME
@@ -320,6 +320,9 @@ See
 for details about the changes made after the
 .Nx 3.0
 release.
+.It Cd options COMPAT_40
+Enable binary compatibility with
+.Nx 4.0 .
 .It Cd options COMPAT_43
 Enables compatibility with
 .Bx 4.3 .
@@ -348,6 +351,15 @@ It also enables
 support for some older pre
 .Bx 4.4
 socket calls.
+.It Cd options COMPAT_50
+Enable binary compatibility with
+.Nx 5.0 .
+.It Cd options COMPAT_60
+Enable binary compatibility with
+.Nx 6.0 .
+.It Cd options COMPAT_70
+Enable binary compatibility with
+.Nx 7.0 .
 .It Cd options COMPAT_BSDPTY
 This option is currently on by default and enables the pty multiplexer
 .Xr ptm 4
@@ -450,6 +462,22 @@ Currently only some system calls which use
 are adjusted and some binaries which use
 .Xr sysctl 3
 to retrieve network details would not work properly.
+.It Cd options EMUL_NATIVEROOT=string
+Just like emulated binaries first try looking up files in
+an emulation root (e.g.
+.Pa /emul/linux )
+before looking them up in real root, this option causes native
+binaries to first look up files in an "emulation" directory too.
+This can be useful to test an amd64 kernel on top of an i386 system
+before full migration: by unpacking the amd64 distribution in e.g.
+.Pa /emul/netbsd64
+and specifying that location as
+.Cd EMUL_NATIVEROOT ,
+native amd64 binaries can be run while the root file system remains
+populated with i386 binaries.
+Beware of
+.Pa /dev
+incompatibilities between i386 and amd64 if you do this.
 .It Cd options EXEC_ELF_NOTELESS
 Run unidentified ELF binaries as
 .Nx
@@ -467,11 +495,6 @@ Beware - if this option is on, the kernel would run
 unknown ELF binaries as if they were
 .Nx
 binaries.
-.It Cd options P1003_1B_SEMAPHORE
-Includes kernel support for the standard C library
-.Pq libc
-functions that implement semaphores as specified in
-.St -p1003.1-96 .
 .El
 .Ss Debugging Options
 .Bl -ohang
@@ -588,14 +611,21 @@ Note that many parts of the kernel (typically device drivers) include their own
 conditionals instead.
 This option also turns on certain other options,
 which may decrease system performance.
+Systems with this option are not suitable for regular use, and are
+intended only for debugging or looking for bugs.
 .It Cd options DIAGNOSTIC
 Adds code to the kernel that does internal consistency checks.
 This code will cause the kernel to panic if corruption of internal data
 structures is detected.
-These checks can decrease performance up to 15%.
+Historically, the performance degradation is sufficiently small that
+it is reasonable for systems with
+.Em options DIAGNOSTIC
+to be in production use, with the real consideration not being
+performance but instead a preference for more panics versus continued
+operation with undetected problems.
 .It Cd options LOCKDEBUG
 Adds code to the kernel to detect incorrect use of locking primitives
-(mutex, rwlock, simplelock).
+(mutex, rwlock).
 This code will cause the kernel to check for dead lock conditions.
 It will also check for memory being freed to not contain initialised
 lock primitives.
@@ -630,17 +660,6 @@ Note that not all systems are capable of obtaining a variable sized message
 buffer.
 There are also some systems on which memory contents are not preserved
 across reboots.
-.It Cd options MALLOCLOG
-Enables an event log for
-.Xr malloc 9 .
-Useful for tracking down
-.Dq Data modified on freelist
-and
-.Dq multiple free
-problems.
-.It Cd options MALLOCLOGSIZE=integer
-Defines the number of entries in the malloc log.
-Default is 100000 entries.
 .It Cd options KERNHIST
 Enables the kernel history logs, which create in-memory traces of
 various kernel activities.
@@ -942,8 +961,8 @@ routines, (a.k.a. the
 .Fn namei
 cache, though called by many other names in the kernel source).
 By default, this cache has
-.Dv NPROC
-(set as 20 + 16 * MAXUSERS) * (80 + NPROC / 8) entries.
+.Dv (NPROC + NTEXT + 100)
+entries (NPROC set as 20 + 16 * MAXUSERS and NTEXT as 80 + NPROC / 8).
 A reasonable way to derive a value of
 .Dv NVNODE ,
 should you notice a large number of namei cache misses with a tool such as
@@ -976,34 +995,25 @@ It also provides better general use performance over regular FFS.
 See also
 .Xr wapbl 4 .
 .It Cd options QUOTA
-Enables kernel support for file system quotas.
-See
-.Xr quotaon 8 ,
-.Xr edquota 8 ,
+Enables kernel support for traditional quotas in FFS.
+Traditional quotas store the quota information in external files and
+require
+.Xr quotacheck 8
 and
-.Xr quota 1
-for details.
-Note that quotas only work on
-.Dq ffs
-file systems, although
-.Xr rpc.rquotad 8
-permits them to be accessed over
-.Em NFS .
+.Xr quotaon 8
+at boot time.
+Traditional quotas are limited to 32-bit sizes and are at this point
+considered a legacy feature.
 .It Cd options QUOTA2
-Enables kernel support for the new file system quotas format.
-See
-.Xr tunefs 8 ,
-.Xr newfs 8 ,
-.Xr mount_mfs 8 ,
-.Xr edquota 8 ,
-and
-.Xr quota 1
-for details.
-Note that quota2 is only supported by
-.Dq ffs
-and
-.Dq mfs
-file systems at this time.
+Enables kernel support for in-volume quotas in FFS.
+The quota information is file system metadata maintained by
+.Xr fsck 8
+and/or WAPBL journaling.
+MFS volumes can also use
+.Dv QUOTA2
+quotas; see
+.Xr mount_mfs 8
+for more information.
 .It Cd options FFS_EI
 Enable
 .Dq Endian-Independent
@@ -1021,7 +1031,7 @@ of FFS file systems.
 Maybe useful for install media kernels, small memory systems and
 embedded systems which don't require the snapshot support.
 .It Cd options UFS_EXTATTR
-Enable extended attribute support for UFS1 filesystems.
+Enable extended attribute support for UFS1 file systems.
 .It Cd options UFS_DIRHASH
 Increase lookup performance by maintaining in-core hash tables
 for large directories.
@@ -1049,7 +1059,7 @@ created for another architecture.
 Increase lookup performance by maintaining in-core hash tables
 for large directories.
 .El
-.Ss Options for ext2fs File Systems
+.Ss Options for the ext2fs File System
 .Bl -ohang
 .It Cd options EXT2FS_SYSTEM_FLAGS
 This option changes the behavior of the APPEND and IMMUTABLE flags
@@ -1205,6 +1215,12 @@ Possible values include
 .It Cd options MODULAR
 Enables the framework for kernel modules (see
 .Xr module 7 ) .
+.It Cd options MODULAR_DEFAULT_AUTOLOAD
+Enables the autoloading of kernel modules by default.
+This sets the default value of the
+.Em kern.module.autoload
+.Xr sysctl 3
+variable which may be changed at run time.
 .It Cd options VND_COMPRESSION
 Enables the
 .Xr vnd 4
@@ -1247,19 +1263,6 @@ and
 .Em MEMORY_DISK_IS_ROOT .
 It is incompatible with
 .Em MEMORY_DISK_ROOT_SIZE .
-.It Cd options MALLOC_NOINLINE
-Time critical fixed size memory allocation is performed with
-.Fn MALLOC
-and
-.Fn FREE .
-Normally these expand to inline code, but with
-.Em MALLOC_NOINLINE
-these call the normal
-.Fn malloc
-and
-.Fn free
-functions.
-Useful for install media kernels, small memory systems and embedded systems.
 .It Cd options HZ=integer
 On ports that support it, set the system clock frequency (see
 .Xr hz 9 )
@@ -1416,24 +1419,6 @@ would necessitate changing
 .Em RTC_OFFSET
 twice a year.
 As such, this solution is imperfect.
-.It Cd options KMEMSTATS
-The kernel memory allocator,
-.Xr malloc 9 ,
-will keep statistics on its performance if this option is enabled.
-Unfortunately, this option therefore essentially disables the
-.Fn MALLOC
-and
-.Fn FREE
-forms of the memory allocator, which are used to enhance the performance
-of certain critical sections of code in the kernel.
-This option therefore can lead to a significant decrease in the
-performance of certain code in the kernel if enabled.
-Examples of such code include the
-.Fn namei
-routine, the
-.Xr ccd 4
-driver,
-and much of the networking code.
 .It Cd options MAXUPRC=integer
 Sets the soft
 .Dv RLIMIT_NPROC
@@ -1882,21 +1867,6 @@ may perform better with
 .Em MCLSHIFT
 set to 12 or 13, giving mbuf cluster sizes of 4096 and 8192 bytes,
 respectively.
-.It Cd options ISO,TPIP
-Include support for the ubiquitous
-.Tn OSI
-protocol stack.
-See
-.Xr iso 4
-for details.
-This option assumes
-.Em INET .
-.It Cd options EON
-Include support for tunneling
-.Tn OSI
-protocols over
-.Tn IP .
-Known to be broken, or at least very fragile, and undocumented.
 .It Cd options NETATALK
 Include support for the
 .Tn AppleTalk

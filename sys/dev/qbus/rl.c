@@ -1,4 +1,4 @@
-/*	$NetBSD: rl.c,v 1.42 2009/04/18 14:58:03 tsutsui Exp $	*/
+/*	$NetBSD: rl.c,v 1.50 2015/04/26 15:15:20 mlelstv Exp $	*/
 
 /*
  * Copyright (c) 2000 Ludd, University of Lule}, Sweden. All rights reserved.
@@ -43,7 +43,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: rl.c,v 1.42 2009/04/18 14:58:03 tsutsui Exp $");
+__KERNEL_RCSID(0, "$NetBSD: rl.c,v 1.50 2015/04/26 15:15:20 mlelstv Exp $");
 
 #include <sys/param.h>
 #include <sys/device.h>
@@ -96,12 +96,29 @@ static dev_type_dump(rldump);
 static dev_type_size(rlpsize);
 
 const struct bdevsw rl_bdevsw = {
-	rlopen, rlclose, rlstrategy, rlioctl, rldump, rlpsize, D_DISK
+	.d_open = rlopen,
+	.d_close = rlclose,
+	.d_strategy = rlstrategy,
+	.d_ioctl = rlioctl,
+	.d_dump = rldump,
+	.d_psize = rlpsize,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
 const struct cdevsw rl_cdevsw = {
-	rlopen, rlclose, rlread, rlwrite, rlioctl,
-	nostop, notty, nopoll, nommap, nokqfilter, D_DISK
+	.d_open = rlopen,
+	.d_close = rlclose,
+	.d_read = rlread,
+	.d_write = rlwrite,
+	.d_ioctl = rlioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_DISK
 };
 
 #define	MAXRLXFER (RL_BPS * RL_SPT)
@@ -123,7 +140,8 @@ static const char * const rlstates[] = {
 };
 
 static const struct dkdriver rldkdriver = {
-	rlstrategy, minphys
+	.d_strategy = rlstrategy,
+	.d_minphys = minphys
 };
 
 static const char *
@@ -277,7 +295,7 @@ rlattach(device_t parent, device_t self, void *aux)
 	dl->d_bbsize = BBSIZE;
 	dl->d_sbsize = SBLOCKSIZE;
 	dl->d_rpm = 2400;
-	dl->d_type = DTYPE_DEC;
+	dl->d_type = DKTYPE_DEC;
 	printf(": %s, %s\n", dl->d_typename, rlstate(rc->rc_rlc, ra->hwid));
 
 	/*
@@ -426,31 +444,18 @@ rlioctl(dev_t dev, u_long cmd, void *addr, int flag, struct lwp *l)
 {
 	struct rl_softc *rc = device_lookup_private(&rl_cd, DISKUNIT(dev));
 	struct disklabel *lp = rc->rc_disk.dk_label;
-	int err = 0;
+	int error;
 #ifdef __HAVE_OLD_DISKLABEL
 	struct disklabel newlabel;
 #endif
 
+	error = disk_ioctl(&rc->rc_disk, dev, cmd, addr, flag, l);
+	if (error != EPASSTHROUGH)
+		return error;
+	else
+		error = 0;
+
 	switch (cmd) {
-	case DIOCGDINFO:
-		memcpy(addr, lp, sizeof (struct disklabel));
-		break;
-
-#ifdef __HAVE_OLD_DISKLABEL
-	case ODIOCGDINFO:
-		newlabel = *lp;
-		if (newlabel.d_npartitions > OLDMAXPARTITIONS)
-			return ENOTTY;
-		memcpy(addr, &newlabel, sizeof (struct olddisklabel));
-		break;
-#endif
-
-	case DIOCGPART:
-		((struct partinfo *)addr)->disklab = lp;
-		((struct partinfo *)addr)->part =
-		    &lp->d_partitions[DISKPART(dev)];
-		break;
-
 	case DIOCSDINFO:
 	case DIOCWDINFO:
 #ifdef __HAVE_OLD_DISKLABEL
@@ -470,10 +475,10 @@ rlioctl(dev_t dev, u_long cmd, void *addr, int flag, struct lwp *l)
 		tp = (struct disklabel *)addr;
 
 		if ((flag & FWRITE) == 0)
-			err = EBADF;
+			error = EBADF;
 		else {
 			mutex_enter(&rc->rc_disk.dk_openlock);
-			err = ((
+			error = ((
 #ifdef __HAVE_OLD_DISKLABEL
 			       cmd == ODIOCSDINFO ||
 #endif
@@ -487,42 +492,14 @@ rlioctl(dev_t dev, u_long cmd, void *addr, int flag, struct lwp *l)
 
 	case DIOCWLABEL:
 		if ((flag & FWRITE) == 0)
-			err = EBADF;
+			error = EBADF;
 		break;
-
-	case DIOCAWEDGE: {
-		struct dkwedge_info *dkw = (void *) addr;
-
-		if ((flag & FWRITE) == 0)
-			return (EBADF);
-
-		/* If the ioctl happens here, the parent is us. */
-		strcpy(dkw->dkw_parent, device_xname(rc->rc_dev));
-		return dkwedge_add(dkw);
-	}
-
-	case DIOCDWEDGE: {
-		struct dkwedge_info *dkw = (void *) addr;
-
-		if ((flag & FWRITE) == 0)
-			return (EBADF);
-
-		/* If the ioctl happens here, the parent is us. */
-		strcpy(dkw->dkw_parent, device_xname(rc->rc_dev));
-		return dkwedge_del(dkw);
-	}
-
-	case DIOCLWEDGES: {
-		struct dkwedge_list *dkwl = (void *) addr;
-
-		return dkwedge_list(&rc->rc_disk, dkwl, l);
-	}
 
 	default:
-		err = ENOTTY;
+		error = ENOTTY;
 		break;
 	}
-	return err;
+	return error;
 }
 
 int

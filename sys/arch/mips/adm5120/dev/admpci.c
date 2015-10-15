@@ -1,4 +1,4 @@
-/* $NetBSD: admpci.c,v 1.9 2012/02/12 16:34:09 matt Exp $ */
+/* $NetBSD: admpci.c,v 1.13 2015/10/02 05:22:51 msaitoh Exp $ */
 
 /*-
  * Copyright (c) 2007 David Young.  All rights reserved.
@@ -61,13 +61,12 @@
 #include "pci.h"
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: admpci.c,v 1.9 2012/02/12 16:34:09 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: admpci.c,v 1.13 2015/10/02 05:22:51 msaitoh Exp $");
 
+#include <sys/param.h>
 #include <sys/types.h>
 #include <sys/bus.h>
 #include <sys/cpu.h>
-
-#include <sys/param.h>
 #include <sys/time.h>
 #include <sys/systm.h>
 #include <sys/errno.h>
@@ -84,8 +83,6 @@ __KERNEL_RCSID(0, "$NetBSD: admpci.c,v 1.9 2012/02/12 16:34:09 matt Exp $");
 #ifdef	PCI_NETBSD_CONFIGURE
 #include <mips/cache.h>
 #endif
-
-#include <mips/pte.h>
 
 #include <mips/adm5120/include/adm5120_mainbusvar.h>
 #include <mips/adm5120/include/adm5120reg.h>
@@ -137,7 +134,7 @@ static pcitag_t admpci_make_tag(void *, int, int, int);
 static void admpci_decompose_tag(void *, pcitag_t, int *, int *, int *);
 static pcireg_t admpci_conf_read(void *, pcitag_t, int);
 static void admpci_conf_write(void *, pcitag_t, int, pcireg_t);
-static const char *admpci_intr_string(void *, pci_intr_handle_t);
+static const char *admpci_intr_string(void *, pci_intr_handle_t, char *, size_t);
 static void admpci_conf_interrupt(void *, int, int, int, int, int *);
 static void *admpci_intr_establish(void *, pci_intr_handle_t, int,
     int (*)(void *), void *);
@@ -182,7 +179,6 @@ admpciattach(device_t parent, device_t self, void *aux)
 	struct mainbus_attach_args	*ma = (struct mainbus_attach_args *)aux;
 #if NPCI > 0
 	u_long				result;
-	pcitag_t			tag;
 	struct pcibus_attach_args	pba;
 #endif
 	
@@ -226,9 +222,11 @@ admpciattach(device_t parent, device_t self, void *aux)
 	sc->sc_pc.pc_intr_disestablish = admpci_intr_disestablish;
 	sc->sc_pc.pc_conf_interrupt = admpci_conf_interrupt;
 
-	tag = pci_make_tag(&sc->sc_pc, 0, 0, 0);
+#ifdef ADMPCI_DEBUG
+	pcitag_t tag = pci_make_tag(&sc->sc_pc, 0, 0, 0);
 	ADMPCI_DPRINTF("%s: BAR 0x10 0x%08x\n", __func__,
 	    pci_conf_read(&sc->sc_pc, tag, PCI_MAPREG_START));
+#endif
 
 #ifdef PCI_NETBSD_CONFIGURE
 	mem_ex = extent_create("pcimem",
@@ -326,6 +324,10 @@ admpci_tag_to_addr(void *v, pcitag_t tag, int reg, bus_addr_t *addrp)
 	int bus, device, function;
 
 	KASSERT(addrp != NULL);
+
+	if ((unsigned int)reg >= PCI_CONF_SIZE)
+		return -1;
+
 	/* panics if tag is not well-formed */
 	admpci_decompose_tag(v, tag, &bus, &device, &function);
 	if (reg > __SHIFTOUT_MASK(ADMPCI_TAG_REGISTER_MASK))
@@ -385,12 +387,10 @@ admpci_conf_write(void *v, pcitag_t tag, int reg, pcireg_t data)
 }
 
 const char *
-admpci_intr_string(void *v, pci_intr_handle_t ih)
+admpci_intr_string(void *v, pci_intr_handle_t ih, char *buf, size_t len)
 {
-	static char name[16];
-
-	(void)snprintf(name, sizeof(name), "irq %u", (unsigned)ih);
-	return name;
+	(void)snprintf(buf, len, "irq %u", (unsigned)ih);
+	return buf;
 }
 
 void *

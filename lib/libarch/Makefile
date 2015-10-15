@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.26 2013/07/18 22:14:10 matt Exp $
+#	$NetBSD: Makefile,v 1.29 2015/06/08 04:08:30 matt Exp $
 
 .include <bsd.own.mk>
 
@@ -14,12 +14,14 @@ OBJS+= ${ASM}
 POBJS+=	${ASM:.o=.po}
 CLEANFILES+= ${ASM} ${POBJS}
 
+LIBC_MACHINE_CPU?=	${MACHINE_CPU}
+
 # Build the library if SRCS is now defined ...
 .if defined(SRCS)
-.if defined(MLIBDIR) && ${MLIBDIR} != "none" && ${MACHINE_CPU} != "arm"
+.if defined(MLIBDIR) && ${LIBC_MACHINE_CPU} != "arm"
 LIB=	${MLIBDIR}
 .else
-LIB=	${MACHINE_CPU}
+LIB=	${LIBC_MACHINE_CPU}
 .endif
 SHLIB_VERSION_FILE= ${.CURDIR}/${LIB}/shlib_version
 

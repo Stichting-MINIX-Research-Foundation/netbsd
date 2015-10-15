@@ -1,4 +1,4 @@
-/*	$NetBSD: acpi.c,v 1.256 2013/10/16 17:30:42 christos Exp $	*/
+/*	$NetBSD: acpi.c,v 1.261 2015/10/02 05:22:52 msaitoh Exp $	*/
 
 /*-
  * Copyright (c) 2003, 2007 The NetBSD Foundation, Inc.
@@ -100,7 +100,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: acpi.c,v 1.256 2013/10/16 17:30:42 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: acpi.c,v 1.261 2015/10/02 05:22:52 msaitoh Exp $");
 
 #include "opt_acpi.h"
 #include "opt_pcifixup.h"
@@ -118,6 +118,7 @@ __KERNEL_RCSID(0, "$NetBSD: acpi.c,v 1.256 2013/10/16 17:30:42 christos Exp $");
 
 #include <dev/acpi/acpireg.h>
 #include <dev/acpi/acpivar.h>
+#include <dev/acpi/acpi_mcfg.h>
 #include <dev/acpi/acpi_osd.h>
 #include <dev/acpi/acpi_pci.h>
 #include <dev/acpi/acpi_power.h>
@@ -253,7 +254,6 @@ acpi_probe(void)
 	/*
 	 * Start up ACPICA.
 	 */
-	AcpiGbl_AllMethodsSerialized = false;
 	AcpiGbl_EnableInterpreterSlack = true;
 
 	rv = AcpiInitializeSubsystem();
@@ -483,6 +483,11 @@ acpi_attach(device_t parent, device_t self, void *aux)
 	 * Scan the namespace and build our device tree.
 	 */
 	acpi_build_tree(sc);
+
+	/*
+	 * Probe MCFG table
+	 */
+	acpimcfg_probe(sc);
 
 	acpi_md_callback(sc);
 
@@ -1409,7 +1414,7 @@ acpi_enter_sleep_state(int state)
 
 			(void)pmf_system_bus_resume(PMF_Q_NONE);
 			(void)AcpiLeaveSleepState(state);
-			(void)AcpiSetFirmwareWakingVector(0);
+			(void)AcpiSetFirmwareWakingVector(0, 0);
 			(void)pmf_system_resume(PMF_Q_NONE);
 		}
 
@@ -1459,18 +1464,10 @@ SYSCTL_SETUP(sysctl_acpi_setup, "sysctl hw.acpi subtree setup")
 	int err;
 
 	err = sysctl_createv(clog, 0, NULL, &rnode,
-	    CTLFLAG_PERMANENT, CTLTYPE_NODE, "hw",
-	    NULL, NULL, 0, NULL, 0,
-	    CTL_HW, CTL_EOL);
-
-	if (err != 0)
-		return;
-
-	err = sysctl_createv(clog, 0, &rnode, &rnode,
 	    CTLFLAG_PERMANENT, CTLTYPE_NODE,
 	    "acpi", SYSCTL_DESCR("ACPI subsystem parameters"),
 	    NULL, 0, NULL, 0,
-	    CTL_CREATE, CTL_EOL);
+	    CTL_HW, CTL_CREATE, CTL_EOL);
 
 	if (err != 0)
 		return;
@@ -1853,7 +1850,9 @@ acpi_allocate_resources(ACPI_HANDLE handle)
 	ACPI_BUFFER bufp, bufc, bufn;
 	ACPI_RESOURCE *resp, *resc, *resn;
 	ACPI_RESOURCE_IRQ *irq;
+#if 0
 	ACPI_RESOURCE_EXTENDED_IRQ *xirq;
+#endif
 	ACPI_STATUS rv;
 	uint delta;
 
@@ -1891,8 +1890,8 @@ acpi_allocate_resources(ACPI_HANDLE handle)
 		case ACPI_RESOURCE_TYPE_EXTENDED_IRQ:
 			memcpy(&resn->Data, &resp->Data,
 			       sizeof(ACPI_RESOURCE_EXTENDED_IRQ));
-			xirq = (ACPI_RESOURCE_EXTENDED_IRQ *)&resn->Data;
 #if 0
+			xirq = (ACPI_RESOURCE_EXTENDED_IRQ *)&resn->Data;
 			/*
 			 * XXX:	Not duplicating the interrupt logic above
 			 *	because its not clear what it accomplishes.

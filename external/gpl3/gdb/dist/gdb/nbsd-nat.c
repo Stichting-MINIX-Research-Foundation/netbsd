@@ -1,6 +1,6 @@
 /* Native-dependent code for NetBSD.
 
-   Copyright (C) 2006-2013 Free Software Foundation, Inc.
+   Copyright (C) 2006-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -19,27 +19,25 @@
 
 #include "defs.h"
 
-#include <sys/param.h>
-
 #include "nbsd-nat.h"
 
 /* Return the name of a file that can be opened to get the symbols for
    the child process identified by PID.  */
 
 char *
-nbsd_pid_to_exec_file (int pid)
+nbsd_pid_to_exec_file (struct target_ops *self, int pid)
 {
-  size_t len = MAXPATHLEN;
-  char *buf = xcalloc (len, sizeof (char));
-  char *path;
+  ssize_t len;
+  static char buf[PATH_MAX];
+  char name[PATH_MAX];
 
-  path = xstrprintf ("/proc/%d/exe", pid);
-  if (readlink (path, buf, MAXPATHLEN - 1) == -1)
+  xsnprintf (name, PATH_MAX, "/proc/%d/exe", pid);
+  len = readlink (name, buf, PATH_MAX - 1);
+  if (len != -1)
     {
-      xfree (buf);
-      buf = NULL;
+      buf[len] = '\0';
+      return buf;
     }
 
-  xfree (path);
-  return buf;
+  return NULL;
 }

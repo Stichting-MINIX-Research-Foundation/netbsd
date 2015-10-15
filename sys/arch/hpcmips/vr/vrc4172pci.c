@@ -1,4 +1,4 @@
-/*	$NetBSD: vrc4172pci.c,v 1.16 2012/10/27 17:17:55 chs Exp $	*/
+/*	$NetBSD: vrc4172pci.c,v 1.18 2015/10/02 05:22:51 msaitoh Exp $	*/
 
 /*-
  * Copyright (c) 2002 TAKEMURA Shin
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: vrc4172pci.c,v 1.16 2012/10/27 17:17:55 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: vrc4172pci.c,v 1.18 2015/10/02 05:22:51 msaitoh Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -90,7 +90,8 @@ static void	vrc4172pci_conf_write(pci_chipset_tag_t, pcitag_t, int,
 		    pcireg_t);
 static int	vrc4172pci_intr_map(const struct pci_attach_args *,
 		    pci_intr_handle_t *);
-static const char *vrc4172pci_intr_string(pci_chipset_tag_t,pci_intr_handle_t);
+static const char *vrc4172pci_intr_string(pci_chipset_tag_t,pci_intr_handle_t,
+		    char *, size_t);
 static const struct evcnt *vrc4172pci_intr_evcnt(pci_chipset_tag_t,
 		    pci_intr_handle_t);
 static void	*vrc4172pci_intr_establish(pci_chipset_tag_t,
@@ -260,6 +261,9 @@ vrc4172pci_conf_read(pci_chipset_tag_t pc, pcitag_t tag, int reg)
 	struct vrc4172pci_softc *sc = device_private(pc->pc_dev);
 	u_int32_t val;
 
+	if ((unsigned int)reg >= PCI_CONF_SIZE)
+		return ((pcireg_t) -1);
+
 #ifdef VRC4172PCI_MCR700_SUPPORT
 	if (sc->sc_fake_baseaddr != 0 &&
 	    tag == vrc4172pci_make_tag(pc, 0, 0, 1) &&
@@ -291,6 +295,9 @@ vrc4172pci_conf_write(pci_chipset_tag_t pc, pcitag_t tag, int reg,
 
 	DPRINTF(("%s: conf_write: tag = 0x%08x, reg = 0x%x, val = 0x%08x\n",
 	    device_xname(sc->sc_dev), (u_int32_t)tag, reg, (u_int32_t)data));
+
+	if ((unsigned int)reg >= PCI_CONF_SIZE)
+		return;
 
 #ifdef VRC4172PCI_MCR700_SUPPORT
 	if (sc->sc_fake_baseaddr != 0 &&
@@ -324,16 +331,15 @@ vrc4172pci_intr_map(const struct pci_attach_args *pa, pci_intr_handle_t *ihp)
 }
 
 const char *
-vrc4172pci_intr_string(pci_chipset_tag_t pc, pci_intr_handle_t ih)
+vrc4172pci_intr_string(pci_chipset_tag_t pc, pci_intr_handle_t ih, char *buf,
+    size_t len)
 {
-	static char irqstr[sizeof("pciintr") + 16];
-
-	snprintf(irqstr, sizeof(irqstr), "pciintr %d:%d:%d",
+	snprintf(buf, len, "pciintr %d:%d:%d",
 	    CONFIG_HOOK_PCIINTR_BUS((int)ih),
 	    CONFIG_HOOK_PCIINTR_DEVICE((int)ih),
 	    CONFIG_HOOK_PCIINTR_FUNCTION((int)ih));
 
-	return (irqstr);
+	return buf;
 }
 
 const struct evcnt *

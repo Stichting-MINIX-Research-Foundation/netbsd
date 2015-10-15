@@ -1,4 +1,4 @@
-/*	$NetBSD: pcap-can-linux.c,v 1.1.1.2 2013/04/06 15:57:49 christos Exp $	*/
+/*	$NetBSD: pcap-can-linux.c,v 1.3 2015/03/31 21:39:42 christos Exp $	*/
 
 /*
  * Copyright (c) 2009 Felix Obenhuber
@@ -33,6 +33,9 @@
  * By Felix Obenhuber <felix@obenhuber.de>
  *
  */
+
+#include <sys/cdefs.h>
+__RCSID("$NetBSD: pcap-can-linux.c,v 1.3 2015/03/31 21:39:42 christos Exp $");
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -74,12 +77,66 @@ static int can_setfilter_linux(pcap_t *, struct bpf_program *);
 static int can_setdirection_linux(pcap_t *, pcap_direction_t);
 static int can_stats_linux(pcap_t *, struct pcap_stat *);
 
-pcap_t *
-can_create(const char *device, char *ebuf)
+/*
+ * Private data for capturing on Linux CANbus devices.
+ */
+struct pcap_can {
+	int ifindex;		/* interface index of device we're bound to */
+};
+
+int
+can_findalldevs(pcap_if_t **devlistp, char *errbuf)
 {
+	/*
+	 * There are no platform-specific devices since each device
+	 * exists as a regular network interface.
+	 *
+	 * XXX - true?
+	 */
+	return 0;
+}
+
+pcap_t *
+can_create(const char *device, char *ebuf, int *is_ours)
+{
+	const char *cp;
+	char *cpend;
+	long devnum;
 	pcap_t* p;
 
-	p = pcap_create_common(device, ebuf);
+	/* Does this look like a CANbus device? */
+	cp = strrchr(device, '/');
+	if (cp == NULL)
+		cp = device;
+	/* Does it begin with "can" or "vcan"? */
+	if (strncmp(cp, "can", 3) == 0) {
+		/* Begins with "can" */
+		cp += 3;	/* skip past "can" */
+	} else if (strncmp(cp, "vcan", 4) == 0) {
+		/* Begins with "vcan" */
+		cp += 4;
+	} else {
+		/* Nope, doesn't begin with "can" or "vcan" */
+		*is_ours = 0;
+		return NULL;
+	}
+	/* Yes - is "can" or "vcan" followed by a number from 0? */
+	devnum = strtol(cp, &cpend, 10);
+	if (cpend == cp || *cpend != '\0') {
+		/* Not followed by a number. */
+		*is_ours = 0;
+		return NULL;
+	}
+	if (devnum < 0) {
+		/* Followed by a non-valid number. */
+		*is_ours = 0;
+		return NULL;
+	}
+
+	/* OK, it's probably ours. */
+	*is_ours = 1;
+
+	p = pcap_create_common(device, ebuf, sizeof (struct pcap_can));
 	if (p == NULL)
 		return (NULL);
 
@@ -91,6 +148,7 @@ can_create(const char *device, char *ebuf)
 static int
 can_activate(pcap_t* handle)
 {
+	struct pcap_can *handlep = handle->priv;
 	struct sockaddr_can addr;
 	struct ifreq ifr;
 
@@ -118,7 +176,7 @@ can_activate(pcap_t* handle)
 
 	/* get interface index */
 	memset(&ifr, 0, sizeof(ifr));
-	strncpy(ifr.ifr_name, handle->opt.source, sizeof(ifr.ifr_name));
+	strlcpy(ifr.ifr_name, handle->opt.source, sizeof(ifr.ifr_name));
 	if (ioctl(handle->fd, SIOCGIFINDEX, &ifr) < 0)
 	{
 		snprintf(handle->errbuf, PCAP_ERRBUF_SIZE,
@@ -127,7 +185,7 @@ can_activate(pcap_t* handle)
 		pcap_cleanup_live_common(handle);
 		return PCAP_ERROR;
 	}
-	handle->md.ifindex = ifr.ifr_ifindex;
+	handlep->ifindex = ifr.ifr_ifindex;
 
 	/* allocate butter */
 	handle->buffer = malloc(handle->bufsize);
@@ -141,11 +199,11 @@ can_activate(pcap_t* handle)
 
 	/* Bind to the socket */
 	addr.can_family = AF_CAN;
-	addr.can_ifindex = handle->md.ifindex;
+	addr.can_ifindex = handlep->ifindex;
 	if( bind( handle->fd, (struct sockaddr*)&addr, sizeof(addr) ) < 0  )
 	{
 		snprintf(handle->errbuf, PCAP_ERRBUF_SIZE, "Can't attach to device %d %d:%s",
-			handle->md.ifindex, errno, strerror(errno));
+			handlep->ifindex, errno, strerror(errno));
 		pcap_cleanup_live_common(handle);
 		return PCAP_ERROR;
 	}
@@ -154,7 +212,7 @@ can_activate(pcap_t* handle)
 	{
 		/* Monitor mode doesn't apply to CAN devices. */
 		pcap_cleanup_live_common(handle);
-		return PCAP_ERROR;
+		return PCAP_ERROR_RFMON_NOTSUP;
 	}
 
 	handle->selectable_fd = handle->fd;
@@ -190,7 +248,7 @@ can_read_linux(pcap_t *handle, int max_packets, pcap_handler callback, u_char *u
 		}
 	} while ((pkth.caplen == -1) && (errno == EINTR));
 
-	if (pkth.caplen < 0)
+	if (pkth.caplen == -1)
 	{
 		snprintf(handle->errbuf, PCAP_ERRBUF_SIZE, "Can't receive packet %d:%s",
 			errno, strerror(errno));

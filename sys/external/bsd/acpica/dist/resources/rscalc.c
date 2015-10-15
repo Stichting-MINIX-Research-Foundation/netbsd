@@ -5,7 +5,7 @@
  ******************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -40,8 +40,6 @@
  * IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGES.
  */
-
-#define __RSCALC_C__
 
 #include "acpi.h"
 #include "accommon.h"
@@ -197,6 +195,7 @@ AcpiRsStreamOptionLength (
  * FUNCTION:    AcpiRsGetAmlLength
  *
  * PARAMETERS:  Resource            - Pointer to the resource linked list
+ *              ResourceListSize    - Size of the resource linked list
  *              SizeNeeded          - Where the required size is returned
  *
  * RETURN:      Status
@@ -210,9 +209,11 @@ AcpiRsStreamOptionLength (
 ACPI_STATUS
 AcpiRsGetAmlLength (
     ACPI_RESOURCE           *Resource,
+    ACPI_SIZE               ResourceListSize,
     ACPI_SIZE               *SizeNeeded)
 {
     ACPI_SIZE               AmlSizeNeeded = 0;
+    ACPI_RESOURCE           *ResourceEnd;
     ACPI_RS_LENGTH          TotalSize;
 
 
@@ -221,13 +222,21 @@ AcpiRsGetAmlLength (
 
     /* Traverse entire list of internal resource descriptors */
 
-    while (Resource)
+    ResourceEnd = ACPI_ADD_PTR (ACPI_RESOURCE, Resource, ResourceListSize);
+    while (Resource < ResourceEnd)
     {
         /* Validate the descriptor type */
 
         if (Resource->Type > ACPI_RESOURCE_TYPE_MAX)
         {
             return_ACPI_STATUS (AE_AML_INVALID_RESOURCE_TYPE);
+        }
+
+        /* Sanity check the length. It must not be zero, or we loop forever */
+
+        if (!Resource->Length)
+        {
+            return_ACPI_STATUS (AE_AML_BAD_RESOURCE_LENGTH);
         }
 
         /* Get the base size of the (external stream) resource descriptor */
@@ -345,7 +354,27 @@ AcpiRsGetAmlLength (
             break;
 
 
+        case ACPI_RESOURCE_TYPE_GPIO:
+
+            TotalSize = (ACPI_RS_LENGTH) (TotalSize + (Resource->Data.Gpio.PinTableLength * 2) +
+                Resource->Data.Gpio.ResourceSource.StringLength +
+                Resource->Data.Gpio.VendorLength);
+
+            break;
+
+
+        case ACPI_RESOURCE_TYPE_SERIAL_BUS:
+
+            TotalSize = AcpiGbl_AmlResourceSerialBusSizes [Resource->Data.CommonSerialBus.Type];
+
+            TotalSize = (ACPI_RS_LENGTH) (TotalSize +
+                Resource->Data.I2cSerialBus.ResourceSource.StringLength +
+                Resource->Data.I2cSerialBus.VendorLength);
+
+            break;
+
         default:
+
             break;
         }
 
@@ -395,12 +424,13 @@ AcpiRsGetListLength (
     UINT32                  ExtraStructBytes;
     UINT8                   ResourceIndex;
     UINT8                   MinimumAmlResourceLength;
+    AML_RESOURCE            *AmlResource;
 
 
     ACPI_FUNCTION_TRACE (RsGetListLength);
 
 
-    *SizeNeeded = 0;
+    *SizeNeeded = ACPI_RS_SIZE_MIN;         /* Minimum size is one EndTag */
     EndAml = AmlBuffer + AmlBufferLength;
 
     /* Walk the list of AML resource descriptors */
@@ -409,11 +439,17 @@ AcpiRsGetListLength (
     {
         /* Validate the Resource Type and Resource Length */
 
-        Status = AcpiUtValidateResource (AmlBuffer, &ResourceIndex);
+        Status = AcpiUtValidateResource (NULL, AmlBuffer, &ResourceIndex);
         if (ACPI_FAILURE (Status))
         {
+            /*
+             * Exit on failure. Cannot continue because the descriptor length
+             * may be bogus also.
+             */
             return_ACPI_STATUS (Status);
         }
+
+        AmlResource = (void *) AmlBuffer;
 
         /* Get the resource length and base (minimum) AML size */
 
@@ -455,15 +491,23 @@ AcpiRsGetListLength (
              * Get the number of vendor data bytes
              */
             ExtraStructBytes = ResourceLength;
+
+            /*
+             * There is already one byte included in the minimum
+             * descriptor size. If there are extra struct bytes,
+             * subtract one from the count.
+             */
+            if (ExtraStructBytes)
+            {
+                ExtraStructBytes--;
+            }
             break;
 
 
         case ACPI_RESOURCE_NAME_END_TAG:
             /*
-             * End Tag:
-             * This is the normal exit, add size of EndTag
+             * End Tag: This is the normal exit
              */
-            *SizeNeeded += ACPI_RS_SIZE_MIN;
             return_ACPI_STATUS (AE_OK);
 
 
@@ -494,8 +538,33 @@ AcpiRsGetListLength (
                 ResourceLength - ExtraStructBytes, MinimumAmlResourceLength);
             break;
 
+        case ACPI_RESOURCE_NAME_GPIO:
+
+            /* Vendor data is optional */
+
+            if (AmlResource->Gpio.VendorLength)
+            {
+                ExtraStructBytes += AmlResource->Gpio.VendorOffset -
+                    AmlResource->Gpio.PinTableOffset + AmlResource->Gpio.VendorLength;
+            }
+            else
+            {
+                ExtraStructBytes += AmlResource->LargeHeader.ResourceLength +
+                    sizeof (AML_RESOURCE_LARGE_HEADER) -
+                    AmlResource->Gpio.PinTableOffset;
+            }
+            break;
+
+        case ACPI_RESOURCE_NAME_SERIAL_BUS:
+
+            MinimumAmlResourceLength = AcpiGbl_ResourceAmlSerialBusSizes[
+                AmlResource->CommonSerialBus.Type];
+            ExtraStructBytes += AmlResource->CommonSerialBus.ResourceLength -
+                MinimumAmlResourceLength;
+            break;
 
         default:
+
             break;
         }
 
@@ -505,8 +574,16 @@ AcpiRsGetListLength (
          * Important: Round the size up for the appropriate alignment. This
          * is a requirement on IA64.
          */
-        BufferSize = AcpiGbl_ResourceStructSizes[ResourceIndex] +
+        if (AcpiUtGetResourceType (AmlBuffer) == ACPI_RESOURCE_NAME_SERIAL_BUS)
+        {
+            BufferSize = AcpiGbl_ResourceStructSerialBusSizes[
+                AmlResource->CommonSerialBus.Type] + ExtraStructBytes;
+        }
+        else
+        {
+            BufferSize = AcpiGbl_ResourceStructSizes[ResourceIndex] +
                         ExtraStructBytes;
+        }
         BufferSize = (UINT32) ACPI_ROUND_UP_TO_NATIVE_WORD (BufferSize);
 
         *SizeNeeded += BufferSize;
@@ -569,7 +646,7 @@ AcpiRsGetPciRoutingTableLength (
     /*
      * Calculate the size of the return buffer.
      * The base size is the number of elements * the sizes of the
-     * structures.  Additional space for the strings is added below.
+     * structures. Additional space for the strings is added below.
      * The minus one is to subtract the size of the UINT8 Source[1]
      * member because it is added below.
      *
@@ -580,7 +657,7 @@ AcpiRsGetPciRoutingTableLength (
 
     for (Index = 0; Index < NumberOfElements; Index++)
     {
-        /* Dereference the sub-package */
+        /* Dereference the subpackage */
 
         PackageElement = *TopObjectList;
 
@@ -602,7 +679,9 @@ AcpiRsGetPciRoutingTableLength (
 
         NameFound = FALSE;
 
-        for (TableIndex = 0; TableIndex < 4 && !NameFound; TableIndex++)
+        for (TableIndex = 0;
+             TableIndex < PackageElement->Package.Count && !NameFound;
+             TableIndex++)
         {
             if (*SubObjectList && /* Null object allowed */
 

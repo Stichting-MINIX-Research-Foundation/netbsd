@@ -42,7 +42,7 @@
 
 struct bulk_waiter_node {
 	struct bulk_waiter bulk_waiter;
-	struct lwp *l;
+	int pid;
 	struct list_head list;
 };
 
@@ -57,7 +57,7 @@ struct vchiq_instance_struct {
 
 static VCHIQ_STATUS_T
 vchiq_blocking_bulk_transfer(VCHIQ_SERVICE_HANDLE_T handle, void *data,
-	int size, VCHIQ_BULK_DIR_T dir);
+	unsigned int size, VCHIQ_BULK_DIR_T dir);
 
 /****************************************************************************
 *
@@ -151,8 +151,8 @@ VCHIQ_STATUS_T vchiq_shutdown(VCHIQ_INSTANCE_T instance)
 			list_del(pos);
 			vchiq_log_info(vchiq_arm_log_level,
 					"bulk_waiter - cleaned up %x "
-					"for lwp %p",
-					(unsigned int)waiter, waiter->l);
+					"for pid %d",
+					(unsigned int)waiter, waiter->pid);
 			_sema_destroy(&waiter->bulk_waiter.event);
 
 			kfree(waiter);
@@ -242,7 +242,8 @@ VCHIQ_STATUS_T vchiq_add_service(
 		state,
 		params,
 		srvstate,
-		instance);
+		instance,
+		NULL);
 
 	if (service) {
 		*phandle = service->handle;
@@ -283,15 +284,17 @@ VCHIQ_STATUS_T vchiq_open_service(
 	service = vchiq_add_service_internal(state,
 		params,
 		VCHIQ_SRVSTATE_OPENING,
-		instance);
+		instance,
+		NULL);
 
 	if (service) {
+		*phandle = service->handle;
 		status = vchiq_open_service_internal(service,
-		    (uintptr_t)current);
-		if (status == VCHIQ_SUCCESS)
-			*phandle = service->handle;
-		else
+		    current->l_proc->p_pid);
+		if (status != VCHIQ_SUCCESS) {
 			vchiq_remove_service(service->handle);
+			*phandle = VCHIQ_SERVICE_HANDLE_INVALID;
+		}
 	}
 
 failed:
@@ -304,7 +307,7 @@ EXPORT_SYMBOL(vchiq_open_service);
 
 VCHIQ_STATUS_T
 vchiq_queue_bulk_transmit(VCHIQ_SERVICE_HANDLE_T handle,
-	void *data, int size, void *userdata)
+	void *data, unsigned int size, void *userdata)
 {
 	return vchiq_bulk_transfer(handle,
 		VCHI_MEM_HANDLE_INVALID, data, size, userdata,
@@ -313,8 +316,8 @@ vchiq_queue_bulk_transmit(VCHIQ_SERVICE_HANDLE_T handle,
 EXPORT_SYMBOL(vchiq_queue_bulk_transmit);
 
 VCHIQ_STATUS_T
-vchiq_queue_bulk_receive(VCHIQ_SERVICE_HANDLE_T handle, void *data, int size,
-	void *userdata)
+vchiq_queue_bulk_receive(VCHIQ_SERVICE_HANDLE_T handle, void *data,
+	unsigned int size, void *userdata)
 {
 	return vchiq_bulk_transfer(handle,
 		VCHI_MEM_HANDLE_INVALID, data, size, userdata,
@@ -323,8 +326,8 @@ vchiq_queue_bulk_receive(VCHIQ_SERVICE_HANDLE_T handle, void *data, int size,
 EXPORT_SYMBOL(vchiq_queue_bulk_receive);
 
 VCHIQ_STATUS_T
-vchiq_bulk_transmit(VCHIQ_SERVICE_HANDLE_T handle, void *data, int size,
-	void *userdata, VCHIQ_BULK_MODE_T mode)
+vchiq_bulk_transmit(VCHIQ_SERVICE_HANDLE_T handle, void *data,
+	unsigned int size, void *userdata, VCHIQ_BULK_MODE_T mode)
 {
 	VCHIQ_STATUS_T status;
 
@@ -348,8 +351,8 @@ vchiq_bulk_transmit(VCHIQ_SERVICE_HANDLE_T handle, void *data, int size,
 EXPORT_SYMBOL(vchiq_bulk_transmit);
 
 VCHIQ_STATUS_T
-vchiq_bulk_receive(VCHIQ_SERVICE_HANDLE_T handle, void *data, int size,
-	void *userdata, VCHIQ_BULK_MODE_T mode)
+vchiq_bulk_receive(VCHIQ_SERVICE_HANDLE_T handle, void *data,
+	unsigned int size, void *userdata, VCHIQ_BULK_MODE_T mode)
 {
 	VCHIQ_STATUS_T status;
 
@@ -374,7 +377,7 @@ EXPORT_SYMBOL(vchiq_bulk_receive);
 
 static VCHIQ_STATUS_T
 vchiq_blocking_bulk_transfer(VCHIQ_SERVICE_HANDLE_T handle, void *data,
-	int size, VCHIQ_BULK_DIR_T dir)
+	unsigned int size, VCHIQ_BULK_DIR_T dir)
 {
 	VCHIQ_INSTANCE_T instance;
 	VCHIQ_SERVICE_T *service;
@@ -393,7 +396,7 @@ vchiq_blocking_bulk_transfer(VCHIQ_SERVICE_HANDLE_T handle, void *data,
 	lmutex_lock(&instance->bulk_waiter_list_mutex);
 	list_for_each(pos, &instance->bulk_waiter_list) {
 		if (list_entry(pos, struct bulk_waiter_node,
-				list)->l == current) {
+				list)->pid == current->l_proc->p_pid) {
 			waiter = list_entry(pos,
 				struct bulk_waiter_node,
 				list);
@@ -445,13 +448,13 @@ vchiq_blocking_bulk_transfer(VCHIQ_SERVICE_HANDLE_T handle, void *data,
 
 		kfree(waiter);
 	} else {
-		waiter->l = current;
+		waiter->pid = current->l_proc->p_pid;
 		lmutex_lock(&instance->bulk_waiter_list_mutex);
 		list_add(&waiter->list, &instance->bulk_waiter_list);
 		lmutex_unlock(&instance->bulk_waiter_list_mutex);
 		vchiq_log_info(vchiq_arm_log_level,
-				"saved bulk_waiter %x for lwp %p",
-				(unsigned int)waiter, current);
+				"saved bulk_waiter %x for pid %d",
+				(unsigned int)waiter, current->l_proc->p_pid);
 	}
 
 	return status;

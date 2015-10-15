@@ -1,4 +1,4 @@
-/*	$NetBSD: disksubr.c,v 1.60 2009/09/12 09:18:42 phx Exp $	*/
+/*	$NetBSD: disksubr.c,v 1.63 2015/07/04 06:13:01 maxv Exp $	*/
 
 /*
  * Copyright (c) 1982, 1986, 1988 Regents of the University of California.
@@ -66,7 +66,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: disksubr.c,v 1.60 2009/09/12 09:18:42 phx Exp $");
+__KERNEL_RCSID(0, "$NetBSD: disksubr.c,v 1.63 2015/07/04 06:13:01 maxv Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -331,7 +331,6 @@ readdisklabel(dev_t dev, void (*strat)(struct buf *), struct disklabel *lp, stru
 			 */
 			msg = "bad partition info (environ < 11)";
 			goto done;
-			continue;
 		}
 
 		/*
@@ -536,7 +535,6 @@ setdisklabel(struct disklabel *olp, struct disklabel *nlp, u_long openmask, stru
 int
 writedisklabel(dev_t dev, void (*strat)(struct buf *), struct disklabel *lp, struct cpu_disklabel *clp)
 {
-	struct rdbmap *bmap;
 	struct buf *bp;
 	struct disklabel *dlp;
 	int error = 0;
@@ -568,16 +566,6 @@ writedisklabel(dev_t dev, void (*strat)(struct buf *), struct disklabel *lp, str
 done:
 	brelse(bp, 0);
 	return (error); 
-
-	/*
-	 * get write out partition list iff cpu_label is valid.
-	 */
-	if (clp->valid == 0 ||
-	    (clp->rdblock <= 0 || clp->rdblock >= RDB_MAXBLOCKS))
-		return(EINVAL);
-
-	bmap = getrdbmap(dev, strat, lp, clp);
-	return(EINVAL);
 }
 
 u_long

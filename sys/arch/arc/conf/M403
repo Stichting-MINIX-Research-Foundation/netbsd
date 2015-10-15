@@ -1,4 +1,4 @@
-#	$NetBSD: M403,v 1.61 2013/06/30 21:38:55 rmind Exp $
+#	$NetBSD: M403,v 1.65 2015/08/21 01:52:07 uebayasi Exp $
 #
 #	configuration file for MIPS Magnum 4000 system
 #
@@ -29,8 +29,8 @@ options 	SYSVSHM		# System V-like memory sharing
 # Diagnostic/debugging support options
 options 	DIAGNOSTIC		# cheap kernel consistency checks
 #options 	DEBUG			# expensive debugging checks/support
-#options 	KMEMSTATS		# kernel memory statistics (vmstat -m)
 options 	DDB			# in-kernel debugger
+pseudo-device	ksyms
 #options 	DDB_HISTORY_SIZE=100	# enable history editing in DDB
 #options 	KGDB			# remote gdb
 #options 	KGDB_DEVRATE=19200	# kernel gdb port rate (default 9600)
@@ -47,9 +47,9 @@ options 	COMPAT_14	# NetBSD 1.4,
 options 	COMPAT_15	# NetBSD 1.5,
 options 	COMPAT_16	# NetBSD 1.6,
 options 	COMPAT_20	# NetBSD 2.0,
-options 	COMPAT_30	# NetBSD 3.0,
-options 	COMPAT_40	# NetBSD 4.0 compatibility.
-options 	COMPAT_43	# and 4.3BSD
+options 	COMPAT_30	# NetBSD 3.0, and
+options 	COMPAT_40	# NetBSD 4.0 binary compatibility.
+options 	COMPAT_43	# 4.3BSD binary compatibility.
 options 	COMPAT_386BSD_MBRPART # recognize old partition ID
 
 # mipsel specific
@@ -100,6 +100,10 @@ options 	PPP_FILTER	# Active filter support for PPP (requires bpf)
 options 	IPFILTER_LOG	# ipmon(8) log support
 options 	IPFILTER_LOOKUP	# ippool(8) support
 #options 	TCP_DEBUG	# Record last TCP_NDEBUG packets with SO_DEBUG
+
+# JIT compiler for bpfilter
+#options	SLJIT
+#options	BPFJIT
 
 # These options enable verbose messages for several subsystems.
 # Warning, these may compile large string tables into the kernel!

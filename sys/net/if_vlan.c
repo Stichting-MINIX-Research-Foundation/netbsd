@@ -1,4 +1,4 @@
-/*	$NetBSD: if_vlan.c,v 1.69 2011/10/19 22:07:09 dyoung Exp $	*/
+/*	$NetBSD: if_vlan.c,v 1.82 2015/08/20 14:40:19 christos Exp $	*/
 
 /*-
  * Copyright (c) 2000, 2001 The NetBSD Foundation, Inc.
@@ -78,9 +78,12 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_vlan.c,v 1.69 2011/10/19 22:07:09 dyoung Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_vlan.c,v 1.82 2015/08/20 14:40:19 christos Exp $");
 
+#ifdef _KERNEL_OPT
 #include "opt_inet.h"
+#include "opt_net_mpsafe.h"
+#endif
 
 #include <sys/param.h>
 #include <sys/kernel.h>
@@ -91,6 +94,7 @@ __KERNEL_RCSID(0, "$NetBSD: if_vlan.c,v 1.69 2011/10/19 22:07:09 dyoung Exp $");
 #include <sys/systm.h>
 #include <sys/proc.h>
 #include <sys/kauth.h>
+#include <sys/mutex.h>
 
 #include <net/bpf.h>
 #include <net/if.h>
@@ -103,6 +107,11 @@ __KERNEL_RCSID(0, "$NetBSD: if_vlan.c,v 1.69 2011/10/19 22:07:09 dyoung Exp $");
 #include <netinet/in.h>
 #include <netinet/if_inarp.h>
 #endif
+#ifdef INET6
+#include <netinet6/in6_ifattach.h>
+#endif
+
+#include "ioconf.h"
 
 struct vlan_mc_entry {
 	LIST_ENTRY(vlan_mc_entry)	mc_entries;
@@ -172,10 +181,10 @@ static int	vlan_ioctl(struct ifnet *, u_long, void *);
 static void	vlan_start(struct ifnet *);
 static void	vlan_unconfig(struct ifnet *);
 
-void		vlanattach(int);
-
 /* XXX This should be a hash table with the tag as the basis of the key. */
 static LIST_HEAD(, ifvlan) ifv_list;
+
+static kmutex_t ifv_mtx __cacheline_aligned;
 
 struct if_clone vlan_cloner =
     IF_CLONE_INITIALIZER("vlan", vlan_clone_create, vlan_clone_destroy);
@@ -188,6 +197,7 @@ vlanattach(int n)
 {
 
 	LIST_INIT(&ifv_list);
+	mutex_init(&ifv_mtx, MUTEX_DEFAULT, IPL_NONE);
 	if_clone_attach(&vlan_cloner);
 }
 
@@ -245,9 +255,9 @@ vlan_clone_destroy(struct ifnet *ifp)
 	s = splnet();
 	LIST_REMOVE(ifv, ifv_list);
 	vlan_unconfig(ifp);
+	if_detach(ifp);
 	splx(s);
 
-	if_detach(ifp);
 	free(ifv, M_DEVBUF);
 
 	return (0);
@@ -355,9 +365,15 @@ static void
 vlan_unconfig(struct ifnet *ifp)
 {
 	struct ifvlan *ifv = ifp->if_softc;
+	struct ifnet *p;
 
-	if (ifv->ifv_p == NULL)
+	mutex_enter(&ifv_mtx);
+	p = ifv->ifv_p;
+
+	if (p == NULL) {
+		mutex_exit(&ifv_mtx);
 		return;
+	}
 
 	/*
  	 * Since the interface is being unconfigured, we need to empty the
@@ -367,23 +383,23 @@ vlan_unconfig(struct ifnet *ifp)
 	(*ifv->ifv_msw->vmsw_purgemulti)(ifv);
 
 	/* Disconnect from parent. */
-	switch (ifv->ifv_p->if_type) {
+	switch (p->if_type) {
 	case IFT_ETHER:
 	    {
-		struct ethercom *ec = (void *) ifv->ifv_p;
+		struct ethercom *ec = (void *) p;
 
 		if (ec->ec_nvlans-- == 1) {
 			/*
 			 * Disable Tx/Rx of VLAN-sized frames.
 			 */
 			ec->ec_capenable &= ~ETHERCAP_VLAN_MTU;
-			if (ifv->ifv_p->if_flags & IFF_UP) {
-				(void)if_flags_set(ifv->ifv_p,
-				    ifv->ifv_p->if_flags);
-			}
+			if (p->if_flags & IFF_UP)
+				(void)if_flags_set(p, p->if_flags);
 		}
 
 		ether_ifdetach(ifp);
+		/* Restore vlan_ioctl overwritten by ether_ifdetach */
+		ifp->if_ioctl = vlan_ioctl;
 		vlan_reset_linkname(ifp);
 		break;
 	    }
@@ -398,9 +414,17 @@ vlan_unconfig(struct ifnet *ifp)
 	ifv->ifv_if.if_mtu = 0;
 	ifv->ifv_flags = 0;
 
+#ifdef INET6
+	/* To delete v6 link local addresses */
+	in6_ifdetach(ifp);
+#endif
+	if ((ifp->if_flags & IFF_PROMISC) != 0)
+		ifpromisc(ifp, 0);
 	if_down(ifp);
 	ifp->if_flags &= ~(IFF_UP|IFF_RUNNING);
 	ifp->if_capabilities = 0;
+
+	mutex_exit(&ifv_mtx);
 }
 
 /*
@@ -482,6 +506,9 @@ vlan_ioctl(struct ifnet *ifp, u_long cmd, void *data)
 		if ((error = copyin(ifr->ifr_data, &vlr, sizeof(vlr))) != 0)
 			break;
 		if (vlr.vlr_parent[0] == '\0') {
+			if (ifv->ifv_p != NULL &&
+			    (ifp->if_flags & IFF_PROMISC) != 0)
+				error = ifpromisc(ifv->ifv_p, 0);
 			vlan_unconfig(ifp);
 			break;
 		}
@@ -681,6 +708,10 @@ vlan_start(struct ifnet *ifp)
 	int error;
 	ALTQ_DECL(struct altq_pktattr pktattr;)
 
+#ifndef NET_MPSAFE
+	KASSERT(KERNEL_LOCKED_P());
+#endif
+
 	ifp->if_flags |= IFF_OACTIVE;
 
 	for (;;) {
@@ -775,9 +806,10 @@ vlan_start(struct ifnet *ifp)
 				 * after deleting a tag.
 				 */
 				if (m->m_pkthdr.len <
-				    (ETHER_MIN_LEN + ETHER_VLAN_ENCAP_LEN)) {
+				    (ETHER_MIN_LEN - ETHER_CRC_LEN +
+				     ETHER_VLAN_ENCAP_LEN)) {
 					m_copyback(m, m->m_pkthdr.len,
-					    (ETHER_MIN_LEN +
+					    (ETHER_MIN_LEN - ETHER_CRC_LEN +
 					     ETHER_VLAN_ENCAP_LEN) -
 					     m->m_pkthdr.len,
 					    vlan_zero_pad_buff);
@@ -804,6 +836,10 @@ vlan_start(struct ifnet *ifp)
 		}
 
 		ifp->if_opackets++;
+
+		p->if_obytes += m->m_pkthdr.len;
+		if (m->m_flags & M_MCAST)
+			p->if_omcasts++;
 		if ((p->if_flags & (IFF_RUNNING|IFF_OACTIVE)) == IFF_RUNNING)
 			(*p->if_start)(p);
 	}
@@ -891,6 +927,6 @@ vlan_input(struct ifnet *ifp, struct mbuf *m)
 
 	bpf_mtap(&ifv->ifv_if, m);
 
-	/* Pass it back through the parent's input routine. */
-	(*ifp->if_input)(&ifv->ifv_if, m);
+	m->m_flags &= ~M_PROMISC;
+	ifv->ifv_if.if_input(&ifv->ifv_if, m);
 }

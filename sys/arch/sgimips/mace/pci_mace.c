@@ -1,4 +1,4 @@
-/*	$NetBSD: pci_mace.c,v 1.15 2012/10/27 17:18:10 chs Exp $	*/
+/*	$NetBSD: pci_mace.c,v 1.20 2015/10/02 05:22:52 msaitoh Exp $	*/
 
 /*
  * Copyright (c) 2001,2003 Christopher Sekiya
@@ -34,7 +34,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: pci_mace.c,v 1.15 2012/10/27 17:18:10 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: pci_mace.c,v 1.20 2015/10/02 05:22:52 msaitoh Exp $");
 
 #include "opt_pci.h"
 #include "pci.h"
@@ -65,6 +65,11 @@ __KERNEL_RCSID(0, "$NetBSD: pci_mace.c,v 1.15 2012/10/27 17:18:10 chs Exp $");
 
 #include <sgimips/mace/pcireg_mace.h>
 
+#ifndef __mips_o32
+#define USE_HIGH_PCI
+#endif
+
+
 struct macepci_softc {
 	struct sgimips_pci_chipset sc_pc;
 };
@@ -77,11 +82,19 @@ static void	macepci_conf_write(pci_chipset_tag_t, pcitag_t, int, pcireg_t);
 static int	macepci_intr_map(const struct pci_attach_args *,
 		    pci_intr_handle_t *);
 static const char *
-		macepci_intr_string(pci_chipset_tag_t, pci_intr_handle_t);
+		macepci_intr_string(pci_chipset_tag_t, pci_intr_handle_t,
+		    char *, size_t);
 static int	macepci_intr(void *);
 
 CFATTACH_DECL_NEW(macepci, sizeof(struct macepci_softc),
     macepci_match, macepci_attach, NULL, NULL);
+
+static void pcimem_bus_mem_init(bus_space_tag_t, void *);
+static void pciio_bus_mem_init(bus_space_tag_t, void *);
+static struct mips_bus_space	pcimem_mbst;
+static struct mips_bus_space	pciio_mbst;
+bus_space_tag_t	mace_pci_memt = NULL;
+bus_space_tag_t	mace_pci_iot = NULL;
 
 static int
 macepci_match(device_t parent, cfdata_t match, void *aux)
@@ -108,6 +121,11 @@ macepci_attach(device_t parent, device_t self, void *aux)
 
 	rev = bus_space_read_4(pc->iot, pc->ioh, MACEPCI_REVISION);
 	printf(": rev %d\n", rev);
+
+	pcimem_bus_mem_init(&pcimem_mbst, NULL);
+	mace_pci_memt = &pcimem_mbst;
+	pciio_bus_mem_init(&pciio_mbst, NULL);
+	mace_pci_iot = &pciio_mbst;
 
 	pc->pc_bus_maxdevs = macepci_bus_maxdevs;
 	pc->pc_conf_read = macepci_conf_read;
@@ -143,15 +161,23 @@ macepci_attach(device_t parent, device_t self, void *aux)
 	bus_space_write_4(pc->iot, pc->ioh, MACEPCI_CONTROL, control);
 
 #if NPCI > 0
+#ifdef USE_HIGH_PCI
 	pc->pc_ioext = extent_create("macepciio", 0x00001000, 0x01ffffff,
 	    NULL, 0, EX_NOWAIT);
+	pc->pc_memext = extent_create("macepcimem", 0x80000000, 0xffffffff,
+	    NULL, 0, EX_NOWAIT);
+#else
+	pc->pc_ioext = extent_create("macepciio", 0x00001000, 0x01ffffff,
+	    NULL, 0, EX_NOWAIT);
+	/* XXX no idea why we limit ourselves to only half of the 32MB window */
 	pc->pc_memext = extent_create("macepcimem", 0x80100000, 0x81ffffff,
 	    NULL, 0, EX_NOWAIT);
+#endif /* USE_HIGH_PCI */
 	pci_configure_bus(pc, pc->pc_ioext, pc->pc_memext, NULL, 0,
 	    mips_cache_info.mci_dcache_align);
 	memset(&pba, 0, sizeof pba);
-/*XXX*/	pba.pba_iot = SGIMIPS_BUS_SPACE_IO;
-/*XXX*/	pba.pba_memt = SGIMIPS_BUS_SPACE_MEM;
+	pba.pba_iot = mace_pci_iot;
+	pba.pba_memt = mace_pci_memt;
 	pba.pba_dmat = &pci_bus_dma_tag;
 	pba.pba_dmat64 = NULL;
 	pba.pba_bus = 0;
@@ -186,6 +212,9 @@ macepci_conf_read(pci_chipset_tag_t pc, pcitag_t tag, int reg)
 {
 	pcireg_t data;
 
+	if ((unsigned int)reg >= PCI_CONF_SIZE)
+		return (pcireg_t) -1;
+
 	bus_space_write_4(pc->iot, pc->ioh, MACE_PCI_CONFIG_ADDR, (tag | reg));
 	data = bus_space_read_4(pc->iot, pc->ioh, MACE_PCI_CONFIG_DATA);
 	bus_space_write_4(pc->iot, pc->ioh, MACE_PCI_CONFIG_ADDR, 0);
@@ -196,8 +225,8 @@ macepci_conf_read(pci_chipset_tag_t pc, pcitag_t tag, int reg)
 void
 macepci_conf_write(pci_chipset_tag_t pc, pcitag_t tag, int reg, pcireg_t data)
 {
-	/* XXX O2 soren */
-	if (tag == 0)
+
+	if ((unsigned int)reg >= PCI_CONF_SIZE)
 		return;
 
 	bus_space_write_4(pc->iot, pc->ioh, MACE_PCI_CONFIG_ADDR, (tag | reg));
@@ -248,12 +277,11 @@ macepci_intr_map(const struct pci_attach_args *pa, pci_intr_handle_t *ihp)
 }
 
 const char *
-macepci_intr_string(pci_chipset_tag_t pc, pci_intr_handle_t ih)
+macepci_intr_string(pci_chipset_tag_t pc, pci_intr_handle_t ih, char *buf,
+    size_t len)
 {
-	static char irqstr[32];
-
-	sprintf(irqstr, "crime interrupt %d", ih);
-	return irqstr;
+	snprintf(buf, len, "crime interrupt %d", ih);
+	return buf;
 }
 
 
@@ -347,3 +375,55 @@ macepci_intr(void *arg)
 	}
 	return 0;
 }
+
+/*
+ * use the 32MB windows to access PCI space when running a 32bit kernel,
+ * use full views at >4GB in LP64
+ * XXX access to PCI space is endian-twiddled which can't be turned off so we
+ * need to instruct bus_space to un-twiddle them for us so 8bit and 16bit
+ * accesses look little-endian
+ */
+#define CHIP	   		pcimem
+#define	CHIP_MEM		/* defined */
+#define CHIP_WRONG_ENDIAN
+
+/*
+ * the lower 2GB of PCI space are two views of system memory, with and without
+ * endianness twiddling
+ */
+#define	CHIP_W1_BUS_START(v)	0x80000000UL
+#define CHIP_W1_BUS_END(v)	0xffffffffUL
+#ifdef USE_HIGH_PCI
+#define	CHIP_W1_SYS_START(v)	MACE_PCI_HI_MEMORY
+#define	CHIP_W1_SYS_END(v)	MACE_PCI_HI_MEMORY + 0x7fffffffUL
+#else
+#define	CHIP_W1_SYS_START(v)	MACE_PCI_LOW_MEMORY
+#define	CHIP_W1_SYS_END(v)	MACE_PCI_LOW_MEMORY + 0x01ffffffUL
+#endif
+
+#include <mips/mips/bus_space_alignstride_chipdep.c>
+
+#undef CHIP
+#undef CHIP_W1_BUS_START
+#undef CHIP_W1_BUS_END
+#undef CHIP_W1_SYS_START
+#undef CHIP_W1_SYS_END
+
+#define CHIP	   		pciio
+/*
+ * Even though it's PCI IO space, it's memory mapped so there is no reason not
+ * to allow linear mappings or mmapings into userland. In fact we may need to
+ * do just that in order to use things like PCI graphics cards in X.
+ */
+#define	CHIP_MEM		/* defined */
+#define	CHIP_W1_BUS_START(v)	0x00000000UL
+#define CHIP_W1_BUS_END(v)	0xffffffffUL
+#ifdef USE_HIGH_PCI
+#define	CHIP_W1_SYS_START(v)	MACE_PCI_HI_IO
+#define	CHIP_W1_SYS_END(v)	MACE_PCI_HI_IO + 0xffffffffUL
+#else
+#define	CHIP_W1_SYS_START(v)	MACE_PCI_LOW_IO
+#define	CHIP_W1_SYS_END(v)	MACE_PCI_LOW_IO + 0x01ffffffUL
+#endif
+
+#include <mips/mips/bus_space_alignstride_chipdep.c>

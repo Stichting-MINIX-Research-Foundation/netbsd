@@ -1,6 +1,6 @@
 /* Target-dependent code for GNU/Linux UltraSPARC.
 
-   Copyright (C) 2003-2013 Free Software Foundation, Inc.
+   Copyright (C) 2003-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -111,7 +111,9 @@ sparc64_linux_sigframe_init (const struct tramp_frame *self,
 static CORE_ADDR
 sparc64_linux_step_trap (struct frame_info *frame, unsigned long insn)
 {
-  if (insn == 0x91d0206d)
+  /* __NR_rt_sigreturn is 101  */
+  if ((insn == 0x91d0206d)
+      && (get_frame_register_unsigned (frame, SPARC_G1_REGNUM) == 101))
     {
       struct gdbarch *gdbarch = get_frame_arch (frame);
       enum bfd_endian byte_order = gdbarch_byte_order (gdbarch);
@@ -137,7 +139,7 @@ sparc64_linux_step_trap (struct frame_info *frame, unsigned long insn)
 }
 
 
-const struct sparc_gregset sparc64_linux_core_gregset =
+const struct sparc_gregmap sparc64_linux_core_gregmap =
 {
   32 * 8,			/* %tstate */
   33 * 8,			/* %tpc */
@@ -156,7 +158,7 @@ sparc64_linux_supply_core_gregset (const struct regset *regset,
 				   struct regcache *regcache,
 				   int regnum, const void *gregs, size_t len)
 {
-  sparc64_supply_gregset (&sparc64_linux_core_gregset,
+  sparc64_supply_gregset (&sparc64_linux_core_gregmap,
 			  regcache, regnum, gregs);
 }
 
@@ -165,7 +167,7 @@ sparc64_linux_collect_core_gregset (const struct regset *regset,
 				    const struct regcache *regcache,
 				    int regnum, void *gregs, size_t len)
 {
-  sparc64_collect_gregset (&sparc64_linux_core_gregset,
+  sparc64_collect_gregset (&sparc64_linux_core_gregmap,
 			   regcache, regnum, gregs);
 }
 
@@ -174,7 +176,7 @@ sparc64_linux_supply_core_fpregset (const struct regset *regset,
 				    struct regcache *regcache,
 				    int regnum, const void *fpregs, size_t len)
 {
-  sparc64_supply_fpregset (&sparc64_bsd_fpregset, regcache, regnum, fpregs);
+  sparc64_supply_fpregset (&sparc64_bsd_fpregmap, regcache, regnum, fpregs);
 }
 
 static void
@@ -182,7 +184,7 @@ sparc64_linux_collect_core_fpregset (const struct regset *regset,
 				     const struct regcache *regcache,
 				     int regnum, void *fpregs, size_t len)
 {
-  sparc64_collect_fpregset (&sparc64_bsd_fpregset, regcache, regnum, fpregs);
+  sparc64_collect_fpregset (&sparc64_bsd_fpregmap, regcache, regnum, fpregs);
 }
 
 /* Set the program counter for process PTID to PC.  */
@@ -233,6 +235,64 @@ sparc64_linux_get_syscall_number (struct gdbarch *gdbarch,
 }
 
 
+/* Implement the "get_longjmp_target" gdbarch method.  */
+
+static int
+sparc64_linux_get_longjmp_target (struct frame_info *frame, CORE_ADDR *pc)
+{
+  struct gdbarch *gdbarch = get_frame_arch (frame);
+  struct gdbarch_tdep *tdep = gdbarch_tdep (gdbarch);
+  CORE_ADDR jb_addr;
+  gdb_byte buf[8];
+
+  jb_addr = get_frame_register_unsigned (frame, SPARC_O0_REGNUM);
+
+  /* setjmp and longjmp in SPARC64 are implemented in glibc using the
+     setcontext and getcontext system calls respectively.  These
+     system calls operate on ucontext_t structures, which happen to
+     partially have the same structure than jmp_buf.  However the
+     ucontext returned by getcontext, and thus the jmp_buf structure
+     returned by setjmp, contains the context of the trap instruction
+     in the glibc __[sig]setjmp wrapper, not the context of the user
+     code calling setjmp.
+
+     %o7 in the jmp_buf structure is stored at offset 18*8 in the
+     mc_gregs array, which is itself located at offset 32 into
+     jmp_buf.  See bits/setjmp.h.  This register contains the address
+     of the 'call setjmp' instruction in user code.
+
+     In order to determine the longjmp target address in the
+     initiating frame we need to examine the call instruction itself,
+     in particular whether the annul bit is set.  If it is not set
+     then we need to jump over the instruction at the delay slot.  */
+
+  if (target_read_memory (jb_addr + 32 + (18 * 8), buf, 8))
+    return 0;
+
+  *pc = extract_unsigned_integer (buf, 8, gdbarch_byte_order (gdbarch));
+
+  if (!sparc_is_annulled_branch_insn (*pc))
+      *pc += 4; /* delay slot insn  */
+  *pc += 4; /* call insn  */
+
+  return 1;
+}
+
+
+
+static const struct regset sparc64_linux_gregset =
+  {
+    NULL,
+    sparc64_linux_supply_core_gregset,
+    sparc64_linux_collect_core_gregset
+  };
+
+static const struct regset sparc64_linux_fpregset =
+  {
+    NULL,
+    sparc64_linux_supply_core_fpregset,
+    sparc64_linux_collect_core_fpregset
+  };
 
 static void
 sparc64_linux_init_abi (struct gdbarch_info info, struct gdbarch *gdbarch)
@@ -241,12 +301,10 @@ sparc64_linux_init_abi (struct gdbarch_info info, struct gdbarch *gdbarch)
 
   linux_init_abi (info, gdbarch);
 
-  tdep->gregset = regset_alloc (gdbarch, sparc64_linux_supply_core_gregset,
-				sparc64_linux_collect_core_gregset);
+  tdep->gregset = &sparc64_linux_gregset;
   tdep->sizeof_gregset = 288;
 
-  tdep->fpregset = regset_alloc (gdbarch, sparc64_linux_supply_core_fpregset,
-				 sparc64_linux_collect_core_fpregset);
+  tdep->fpregset = &sparc64_linux_fpregset;
   tdep->sizeof_fpregset = 280;
 
   tramp_frame_prepend_unwinder (gdbarch, &sparc64_linux_rt_sigframe);
@@ -272,10 +330,13 @@ sparc64_linux_init_abi (struct gdbarch_info info, struct gdbarch *gdbarch)
   /* Make sure we can single-step over signal return system calls.  */
   tdep->step_trap = sparc64_linux_step_trap;
 
+  /* Make sure we can single-step over longjmp calls.  */
+  set_gdbarch_get_longjmp_target (gdbarch, sparc64_linux_get_longjmp_target);
+
   set_gdbarch_write_pc (gdbarch, sparc64_linux_write_pc);
 
   /* Functions for 'catch syscall'.  */
-  set_xml_syscall_file_name (XML_SYSCALL_FILENAME_SPARC64);
+  set_xml_syscall_file_name (gdbarch, XML_SYSCALL_FILENAME_SPARC64);
   set_gdbarch_get_syscall_number (gdbarch,
                                   sparc64_linux_get_syscall_number);
 }

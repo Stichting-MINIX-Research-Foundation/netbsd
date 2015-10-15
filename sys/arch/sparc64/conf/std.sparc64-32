@@ -1,4 +1,4 @@
-#	$NetBSD: std.sparc64-32,v 1.3 2008/12/11 15:11:57 nakayama Exp $
+#	$NetBSD: std.sparc64-32,v 1.5 2015/05/09 01:20:07 mrg Exp $
 
 #
 # Unneeded NetBSD/sparc64 kernel options when building 32-bit kernels.

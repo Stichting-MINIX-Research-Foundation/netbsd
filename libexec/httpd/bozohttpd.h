@@ -1,9 +1,9 @@
-/*	$NetBSD: bozohttpd.h,v 1.30 2013/10/12 17:24:07 mbalmer Exp $	*/
+/*	$NetBSD: bozohttpd.h,v 1.36 2015/08/05 06:50:44 mrg Exp $	*/
 
 /*	$eterna: bozohttpd.h,v 1.39 2011/11/18 09:21:15 mrg Exp $	*/
 
 /*
- * Copyright (c) 1997-2013 Matthew R. Green
+ * Copyright (c) 1997-2015 Matthew R. Green
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -41,6 +41,11 @@
 #endif
 #include <stdio.h>
 
+/* QNX provides a lot of NetBSD things in nbutil.h */
+#ifdef USE_NBUTIL
+#include <nbutil.h>
+#endif
+
 /* lots of "const" but gets free()'ed etc at times, sigh */
 
 /* headers */
@@ -68,7 +73,6 @@ typedef struct lua_state_map {
 
 typedef struct bozo_content_map_t {
 	const char	*name;		/* postfix of file */
-	size_t	 	 namelen;	/* length of postfix */
 	const char	*type;		/* matching content-type */
 	const char	*encoding;	/* matching content-encoding */
 	const char	*encoding11;	/* matching content-encoding (HTTP/1.1) */
@@ -145,11 +149,12 @@ typedef struct bozo_httpreq_t {
 	char	*hr_file;
 	char	*hr_oldfile;	/* if we added an index_html */
 	char	*hr_query;
+	char	*hr_host;	/* HTTP/1.1 Host: or virtual hostname,
+				   possibly including a port number */
 	const char *hr_proto;
 	const char *hr_content_type;
 	const char *hr_content_length;
 	const char *hr_allow;
-	const char *hr_host;		/* HTTP/1.1 Host: */
 	const char *hr_referrer;
 	const char *hr_range;
 	const char *hr_if_modified_since;
@@ -234,18 +239,19 @@ char	*bozostrdup(bozohttpd_t *, const char *);
 #ifdef NO_SSL_SUPPORT
 #define bozo_ssl_set_opts(w, x, y)	do { /* nothing */ } while (0)
 #define bozo_ssl_init(x)		do { /* nothing */ } while (0)
-#define bozo_ssl_accept(x)		do { /* nothing */ } while (0)
+#define bozo_ssl_accept(x)		(0)
 #define bozo_ssl_destroy(x)		do { /* nothing */ } while (0)
 #else
 void	bozo_ssl_set_opts(bozohttpd_t *, const char *, const char *);
 void	bozo_ssl_init(bozohttpd_t *);
-void	bozo_ssl_accept(bozohttpd_t *);
+int	bozo_ssl_accept(bozohttpd_t *);
 void	bozo_ssl_destroy(bozohttpd_t *);
 #endif
 
 
 /* auth-bozo.c */
 #ifdef DO_HTPASSWD
+void	bozo_auth_init(bozo_httpreq_t *);
 int	bozo_auth_check(bozo_httpreq_t *, const char *);
 void	bozo_auth_cleanup(bozo_httpreq_t *);
 int	bozo_auth_check_headers(bozo_httpreq_t *, char *, char *, ssize_t);
@@ -254,6 +260,7 @@ void	bozo_auth_check_401(bozo_httpreq_t *, int);
 void	bozo_auth_cgi_setenv(bozo_httpreq_t *, char ***);
 int	bozo_auth_cgi_count(bozo_httpreq_t *);
 #else
+#define	bozo_auth_init(x)			do { /* nothing */ } while (0)
 #define	bozo_auth_check(x, y)			0
 #define	bozo_auth_cleanup(x)			do { /* nothing */ } while (0)
 #define	bozo_auth_check_headers(y, z, a, b)	0

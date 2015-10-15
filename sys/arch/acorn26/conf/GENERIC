@@ -1,4 +1,4 @@
-# $NetBSD: GENERIC,v 1.76 2013/07/12 14:28:39 kiyohara Exp $
+# $NetBSD: GENERIC,v 1.82 2015/08/12 07:53:56 maxv Exp $
 #
 # GENERIC machine description file
 # 
@@ -72,6 +72,7 @@ options 	FFS_EI		# FFS endianness-independence support
 options 	WAPBL		# File system journaling support
 #options	UFS_DIRHASH	# UFS Large Directory Hashing - Experimental
 #options 	FFS_NO_SNAPSHOT	# No FFS snapshot support
+options 	UFS_EXTATTR	# Extended attribute support for UFS1
 
 # Executable format options
 options 	EXEC_ELF32
@@ -106,7 +107,7 @@ options 	INET6		# IPV6
 
 #options 	TCP_COMPAT_42	# 4.2BSD TCP/IP bug compat. Not recommended.
 #options 	COMPAT_43	# 4.3BSD compatibility.
-options 	COMPAT_16	# NetBSD 1.6 compatibility.
+options 	COMPAT_16	# NetBSD 1.6 binary compatibility.
 options		COMPAT_BSDPTY	# /dev/[pt]ty?? ptys.
 
 # Binary compatibility with previous versions of NetBSD.
@@ -120,7 +121,6 @@ options 	SYSVSHM		# System V-like shared memory
 # Miscellaneous kernel options
 options 	KTRACE		# system call tracing, a la ktrace(1)
 #options 	IRQSTATS	# manage IRQ statistics
-#options 	KMEMSTATS	# kernel memory statistics
 #options 	SCSIVERBOSE	# Verbose SCSI errors
 options 	NTP		# Kernel PLL for ntpd(8).
 options 	USERCONF	# userconf(4) support

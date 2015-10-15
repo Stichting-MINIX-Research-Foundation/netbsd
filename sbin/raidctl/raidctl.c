@@ -1,4 +1,4 @@
-/*      $NetBSD: raidctl.c,v 1.56 2013/10/19 01:09:59 christos Exp $   */
+/*      $NetBSD: raidctl.c,v 1.63 2015/09/08 08:59:09 bad Exp $   */
 
 /*-
  * Copyright (c) 1996, 1997, 1998 The NetBSD Foundation, Inc.
@@ -39,7 +39,7 @@
 #include <sys/cdefs.h>
 
 #ifndef lint
-__RCSID("$NetBSD: raidctl.c,v 1.56 2013/10/19 01:09:59 christos Exp $");
+__RCSID("$NetBSD: raidctl.c,v 1.63 2015/09/08 08:59:09 bad Exp $");
 #endif
 
 
@@ -55,6 +55,7 @@ __RCSID("$NetBSD: raidctl.c,v 1.56 2013/10/19 01:09:59 christos Exp $");
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <inttypes.h>
 #include <unistd.h>
 #include <util.h>
 
@@ -85,8 +86,11 @@ static  void get_bar(char *, double, int);
 static  void get_time_string(char *, int);
 static  void rf_output_pmstat(int, int);
 static  void rf_pm_configure(int, int, char *, int[]);
+static  unsigned int xstrtouint(const char *);
 
 int verbose;
+
+static const char *rootpart[] = { "No", "Force", "Soft", "*invalid*" };
 
 int
 main(int argc,char *argv[])
@@ -181,7 +185,7 @@ main(int argc,char *argv[])
 			break;
 		case 'I':
 			action = RAIDFRAME_INIT_LABELS;
-			serial_number = atoi(optarg);
+			serial_number = xstrtouint(optarg);
 			num_options++;
 			break;
 		case 'm':
@@ -193,11 +197,11 @@ main(int argc,char *argv[])
 			action = RAIDFRAME_PARITYMAP_SET_DISABLE;
 			parityconf = strdup(optarg);
 			num_options++;
-			/* XXXjld: should rf_pm_configure do the atoi()s? */
+			/* XXXjld: should rf_pm_configure do the strtol()s? */
 			i = 0;
 			while (i < 3 && optind < argc &&
 			    isdigit((int)argv[optind][0]))
-				parityparams[i++] = atoi(argv[optind++]);
+				parityparams[i++] = xstrtouint(argv[optind++]);
 			while (i < 3)
 				parityparams[i++] = 0;
 			break;
@@ -572,6 +576,14 @@ rf_pm_configure(int fd, int raidID, char *parityconf, int parityparams[])
 	    raidID, dis ? "dis" : "en");
 }
 
+/* convert "component0" into "absent" */
+static const char *rf_output_devname(const char *name)
+{
+
+	if (strncmp(name, "component", 9) == 0)
+		return "absent";
+	return name;
+}
 
 static void
 rf_output_configuration(int fd, const char *name)
@@ -598,7 +610,8 @@ rf_output_configuration(int fd, const char *name)
 
 	printf("START disks\n");
 	for(i=0; i < device_config.ndevs; i++)
-		printf("%s\n", device_config.devs[i].devname);
+		printf("%s\n",
+		    rf_output_devname(device_config.devs[i].devname));
 	printf("\n");
 
 	if (device_config.nspares > 0) {
@@ -748,7 +761,7 @@ get_component_label(int fd, char *component)
 	printf("   Autoconfig: %s\n", 
 	       component_label.autoconfigure ? "Yes" : "No" );
 	printf("   Root partition: %s\n",
-	       component_label.root_partition ? "Yes" : "No" );
+	       rootpart[component_label.root_partition & 3]);
 	printf("   Last configured as: raid%d\n", component_label.last_unit );
 }
 
@@ -806,12 +819,16 @@ set_autoconfig(int fd, int raidID, char *autoconf)
 	auto_config = 0;
 	root_config = 0;
 
-	if (strncasecmp(autoconf,"root", 4) == 0) {
+	if (strncasecmp(autoconf, "root", 4) == 0 ||
+	    strncasecmp(autoconf, "hard", 4) == 0 ||
+	    strncasecmp(autoconf, "force", 5) == 0) {
 		root_config = 1;
+	} else if (strncasecmp(autoconf, "soft", 4) == 0) {
+		root_config = 2;
 	}
 
 	if ((strncasecmp(autoconf,"yes", 3) == 0) ||
-	    root_config == 1) {
+	    root_config > 0) {
 		auto_config = 1;
 	}
 
@@ -824,9 +841,8 @@ set_autoconfig(int fd, int raidID, char *autoconf)
 	printf("raid%d: Autoconfigure: %s\n", raidID,
 	       auto_config ? "Yes" : "No");
 
-	if (root_config == 1) {
-		printf("raid%d: Root: %s\n", raidID,
-		       auto_config ? "Yes" : "No");
+	if (auto_config == 1) {
+		printf("raid%d: Root: %s\n", raidID, rootpart[root_config]);
 	}
 }
 
@@ -1090,7 +1106,7 @@ get_bar(char *string, double percent, int max_strlen)
 		(int)((percent * max_strlen)/ 100);
 	if (offset < 0)
 		offset = 0;
-	snprintf(string,max_strlen,"%s",&stars[offset]);
+	snprintf(string,max_strlen,"%s",stars+offset);
 }
 
 static void
@@ -1130,7 +1146,7 @@ usage(void)
 	const char *progname = getprogname();
 
 	fprintf(stderr, "usage: %s [-v] -a component dev\n", progname);
-	fprintf(stderr, "       %s [-v] -A [yes | no | root] dev\n", progname);
+	fprintf(stderr, "       %s [-v] -A [yes | no | softroot | hardroot] dev\n", progname);
 	fprintf(stderr, "       %s [-v] -B dev\n", progname);
 	fprintf(stderr, "       %s [-v] -c config_file dev\n", progname);
 	fprintf(stderr, "       %s [-v] -C config_file dev\n", progname);
@@ -1152,4 +1168,14 @@ usage(void)
 	fprintf(stderr, "       %s [-v] -u dev\n", progname);
 	exit(1);
 	/* NOTREACHED */
+}
+
+static unsigned int
+xstrtouint(const char *str)
+{
+	int e;
+	unsigned int num = (unsigned int)strtou(str, NULL, 10, 0, INT_MAX, &e);
+	if (e)
+		errc(EXIT_FAILURE, e, "Bad number `%s'", str);
+	return num;
 }

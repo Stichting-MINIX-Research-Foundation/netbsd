@@ -1,4 +1,4 @@
-# $NetBSD: Makefile.usermode,v 1.34 2013/11/10 19:49:49 jmcneill Exp $
+# $NetBSD: Makefile.usermode,v 1.39 2015/08/27 03:20:13 uebayasi Exp $
 
 USETOOLS?=			no
 NEED_OWN_INSTALL_TARGET?=	no
@@ -68,14 +68,17 @@ MD_CFILES+=	${USERMODE}/target/${MACHINE_CPU}/cpu_${MACHINE_CPU}.c
 TEXTADDR?=	  %TEXTADDR%
 
 LINKFLAGS_NORMAL=	-X
-KERN_LDSCRIPT?=	kern.ldscript
-#LINKFORMAT=	-T ${USERMODE}/conf/${KERN_LDSCRIPT}
+KERNLDSCRIPT?=	${USERMODE}/conf/kern.ldscript
 
-SYSTEM_LD=	@${_MKSHMSG} "   link  ${.CURDIR:T}/${.TARGET}"; \
+SYSTEM_LD=	@do_system_ld() { \
+		target=$$1; shift; \
+		${_MKSHMSG} "   link  ${.CURDIR:T}/${.TARGET}"; \
 		${_MKSHECHO}\
-		${CC} -static ${COPTS} -Wl,-Map,$@.map -o $@ ${LINKFORMAT} -Ttext ${TEXTADDR} '$${SYSTEM_OBJ}' '$${EXTRA_OBJ}' vers.o ${USERMODE_LIBS}; \
+		${CC} -static ${COPTS} -Wl,-Map,$${target}.map -o $${target} ${LINKFORMAT} -Ttext ${TEXTADDR} '$${SYSTEM_OBJ}' '$${EXTRA_OBJ}' vers.o ${USERMODE_LIBS} $$@; \
 		${SYSTEM_LD_FIX} \
-		${CC} -static ${COPTS} -Wl,-Map,$@.map -o $@ ${LINKFORMAT} -Ttext ${TEXTADDR} ${SYSTEM_OBJ} ${EXTRA_OBJ} vers.o ${USERMODE_LIBS}
+		${CC} -static ${COPTS} -Wl,-Map,$${target}.map -o $${target} ${LINKFORMAT} -Ttext ${TEXTADDR} ${SYSTEM_OBJ} ${EXTRA_OBJ} vers.o ${USERMODE_LIBS} $$@; \
+		}; \
+		do_system_ld
 NVFLAGS=	-n
 
 ##

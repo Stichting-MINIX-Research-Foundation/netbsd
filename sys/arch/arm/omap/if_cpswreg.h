@@ -29,11 +29,16 @@
 #ifndef	_IF_CPSWREG_H
 #define	_IF_CPSWREG_H
 
+#define CPSW_ETH_PORTS			2
+#define CPSW_CPPI_PORTS			1
+
 #define CPSW_SS_OFFSET			0x0000
 #define CPSW_SS_IDVER			(CPSW_SS_OFFSET + 0x00)
 #define CPSW_SS_SOFT_RESET		(CPSW_SS_OFFSET + 0x08)
 #define CPSW_SS_STAT_PORT_EN		(CPSW_SS_OFFSET + 0x0C)
 #define CPSW_SS_PTYPE			(CPSW_SS_OFFSET + 0x10)
+#define CPSW_SS_FLOW_CONTROL		(CPSW_SS_OFFSET + 0x24)
+#define CPSW_SS_RGMII_CTL		(CPSW_SS_OFFSET + 0x88)
 
 #define CPSW_PORT_OFFSET		0x0100
 #define CPSW_PORT_P_TX_PRI_MAP(p)	(CPSW_PORT_OFFSET + 0x118 + ((p-1) * 0x100))
@@ -41,6 +46,8 @@
 #define CPSW_PORT_P0_CPDMA_RX_CH_MAP	(CPSW_PORT_OFFSET + 0x020)
 #define CPSW_PORT_P_SA_LO(p)		(CPSW_PORT_OFFSET + 0x120 + ((p-1) * 0x100))
 #define CPSW_PORT_P_SA_HI(p)		(CPSW_PORT_OFFSET + 0x124 + ((p-1) * 0x100))
+
+#define CPSW_GMII_SEL			0x0650
 
 #define CPSW_CPDMA_OFFSET		0x0800
 #define CPSW_CPDMA_TX_CONTROL		(CPSW_CPDMA_OFFSET + 0x04)
@@ -85,10 +92,17 @@
 #define CPSW_ALE_PORTCTL(p)		(CPSW_ALE_OFFSET + 0x40 + ((p) * 0x04))
 
 #define CPSW_SL_OFFSET			0x0D80
+#define CPSW_SL_IDVER(p)		(CPSW_SL_OFFSET + (0x40 * (p)) + 0x00)
 #define CPSW_SL_MACCONTROL(p)		(CPSW_SL_OFFSET + (0x40 * (p)) + 0x04)
+#define CPSW_SL_MACSTATUS(p)		(CPSW_SL_OFFSET + (0x40 * (p)) + 0x08)
 #define CPSW_SL_SOFT_RESET(p)		(CPSW_SL_OFFSET + (0x40 * (p)) + 0x0C)
 #define CPSW_SL_RX_MAXLEN(p)		(CPSW_SL_OFFSET + (0x40 * (p)) + 0x10)
+#define CPSW_SL_BOFFTEST(p)		(CPSW_SL_OFFSET + (0x40 * (p)) + 0x14)
+#define CPSW_SL_RX_PAUSE(p)		(CPSW_SL_OFFSET + (0x40 * (p)) + 0x18)
+#define CPSW_SL_TX_PAUSE(p)		(CPSW_SL_OFFSET + (0x40 * (p)) + 0x1C)
+#define CPSW_SL_EMCONTROL(p)		(CPSW_SL_OFFSET + (0x40 * (p)) + 0x20)
 #define CPSW_SL_RX_PRI_MAP(p)		(CPSW_SL_OFFSET + (0x40 * (p)) + 0x24)
+#define CPSW_SL_TX_GAP(p)		(CPSW_SL_OFFSET + (0x40 * (p)) + 0x28)
 
 #define MDIO_OFFSET			0x1000
 #define MDIOCONTROL			(MDIO_OFFSET + 0x04)
@@ -114,14 +128,24 @@
 #define __BIT32(x) ((uint32_t)__BIT(x))
 #define __BITS32(x, y) ((uint32_t)__BITS((x), (y)))
 
-/* flags for desciptor word 3 */
+/* flags for descriptor word 3 */
 #define CPDMA_BD_SOP		__BIT32(31)
 #define CPDMA_BD_EOP		__BIT32(30)
 #define CPDMA_BD_OWNER		__BIT32(29)
 #define CPDMA_BD_EOQ		__BIT32(28)
 #define CPDMA_BD_TDOWNCMPLT	__BIT32(27)
 #define CPDMA_BD_PASSCRC	__BIT32(26)
+
+#define CPDMA_BD_LONG		__BIT32(25) /* Rx descriptor only */
+#define CPDMA_BD_SHORT		__BIT32(24)
+#define CPDMA_BD_MAC_CTL	__BIT32(23)
+#define CPDMA_BD_OVERRUN	__BIT32(22)
 #define CPDMA_BD_PKT_ERR_MASK	__BITS32(21,20)
+#define CPDMA_BD_RX_VLAN_ENCAP	__BIT32(19)
+#define CPDMA_BD_FROM_PORT	__BITS32(18,16)
+
+#define CPDMA_BD_TO_PORT_EN	__BIT32(20) /* Tx descriptor only */
+#define CPDMA_BD_TO_PORT	__BITS32(17,16)
 
 struct cpsw_cpdma_bd {
 	uint32_t word[4];
@@ -129,8 +153,86 @@ struct cpsw_cpdma_bd {
 
 /* Interrupt offsets */
 #define CPSW_INTROFF_RXTH	0
-#define CPSW_INTROFF_RX		1 
+#define CPSW_INTROFF_RX		1
 #define CPSW_INTROFF_TX		2
 #define CPSW_INTROFF_MISC	3
+
+/* MDIOCONTROL Register Field */
+#define MDIOCTL_IDLE		__BIT32(31)
+#define MDIOCTL_ENABLE		__BIT32(30)
+#define MDIOCTL_HIGHEST_USER_CHANNEL(val)	((0xf & (val)) << 24)
+#define MDIOCTL_PREAMBLE	__BIT32(20)
+#define MDIOCTL_FAULT		__BIT32(19)
+#define MDIOCTL_FAULTENB	__BIT32(18)
+#define MDIOCTL_INTTESTENB	__BIT32(17)
+#define MDIOCTL_CLKDIV(val)	(0xff & (val))
+
+/* ALE Control Register Field */
+#define ALECTL_ENABLE_ALE	__BIT32(31)
+#define ALECTL_CLEAR_TABLE	__BIT32(30)
+#define ALECTL_AGE_OUT_NOW	__BIT32(29)
+#define ALECTL_EN_P0_UNI_FLOOD	__BIT32(8)
+#define ALECTL_LEARN_NO_VID	__BIT32(7)
+#define ALECTL_EN_VID0_MODE	__BIT32(6)
+#define ALECTL_ENABLE_OUI_DENY	__BIT32(5)
+#define ALECTL_BYPASS		__BIT32(4)
+#define ALECTL_RATE_LIMIT_TX	__BIT32(3)
+#define ALECTL_VLAN_AWARE	__BIT32(2)
+#define ALECTL_ENABLE_AUTH_MODE	__BIT32(1)
+#define ALECTL_ENABLE_RATE_LIMIT	__BIT32(0)
+
+/* GMII_SEL Register Field */
+#define GMIISEL_RMII2_IO_CLK_EN	__BIT32(7)
+#define GMIISEL_RMII1_IO_CLK_EN	__BIT32(6)
+#define GMIISEL_RGMII2_IDMODE	__BIT32(5)
+#define GMIISEL_RGMII1_IDMODE	__BIT32(4)
+#define GMIISEL_GMII2_SEL(val)	((0x3 & (val)) << 2)
+#define GMIISEL_GMII1_SEL(val)	((0x3 & (val)) << 0)
+#define GMII_MODE	0
+#define RMII_MODE	1
+#define RGMII_MODE	2
+
+/* Sliver MACCONTROL Register Field */
+#define SLMACCTL_RX_CMF_EN	__BIT32(24)
+#define SLMACCTL_RX_CSF_EN	__BIT32(23)
+#define SLMACCTL_RX_CEF_EN	__BIT32(22)
+#define SLMACCTL_TX_SHORT_GAP_LIM_EN	__BIT32(21)
+#define SLMACCTL_EXT_EN		__BIT32(18)
+#define SLMACCTL_GIG_FORCE	__BIT32(17)
+#define SLMACCTL_IFCTL_B	__BIT32(16)
+#define SLMACCTL_IFCTL_A	__BIT32(15)
+#define SLMACCTL_CMD_IDLE	__BIT32(11)
+#define SLMACCTL_TX_SHORT_GAP_EN	__BIT32(10)
+#define SLMACCTL_GIG		__BIT32(7)
+#define SLMACCTL_TX_PACE	__BIT32(6)
+#define SLMACCTL_GMII_EN	__BIT32(5)
+#define SLMACCTL_TX_FLOW_EN	__BIT32(4)
+#define SLMACCTL_RX_FLOW_EN	__BIT32(3)
+#define SLMACCTL_MTEST		__BIT32(2)
+#define SLMACCTL_LOOPBACK	__BIT32(1)
+#define SLMACCTL_FULLDUPLEX	__BIT32(0)
+
+/* ALE Address Table Entry Field */
+typedef enum {
+	ALE_ENTRY_TYPE,
+	ALE_MCAST_FWD_STATE,
+	ALE_PORT_MASK,
+	ALE_PORT_NUMBER,
+} ale_entry_field_t;
+
+#define ALE_TYPE_FREE		0
+#define ALE_TYPE_ADDRESS	1
+#define ALE_TYPE_VLAN		2
+#define ALE_TYPE_VLAN_ADDRESS	3
+
+/*
+ * The port state(s) required for the received port on a destination address lookup
+ * in order for the multicast packet to be forwarded to the transmit port(s)
+ */
+#define ALE_FWSTATE_ALL		1	/* Blocking/Forwarding/Learning */
+#define ALE_FWSTATE_NOBLOCK	2	/* Forwarding/Learning */
+#define ALE_FWSTATE_FWONLY	3	/* Forwarding */
+
+#define ALE_PORT_MASK_ALL	7
 
 #endif /*_IF_CPSWREG_H */

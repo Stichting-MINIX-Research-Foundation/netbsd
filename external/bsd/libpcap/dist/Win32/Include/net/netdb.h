@@ -1,5 +1,3 @@
-/*	$NetBSD: netdb.h,v 1.1.1.2 2013/04/06 15:57:51 christos Exp $	*/
-
 /*-
  * Copyright (c) 1980, 1983, 1988, 1993
  *     The Regents of the University of California.  All rights reserved.
@@ -59,7 +57,9 @@
 #ifndef _NETDB_H_
 #define _NETDB_H_
 
-#if defined(_POSIX_THREAD_SAFE_FUNCTIONS) || defined(_REENTRANT)
+/* MingW64 defines _POSIX_THREAD_SAFE_FUNCTIONS.
+ */
+#if defined(_POSIX_THREAD_SAFE_FUNCTIONS) || defined(_REENTRANT) && !defined(__MINGW64_VERSION_MAJOR)
 #include <stdio.h>
 #include <netinet/in.h>
 #endif

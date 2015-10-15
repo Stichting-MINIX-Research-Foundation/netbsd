@@ -1,4 +1,4 @@
-/*	$NetBSD: if_jme.c,v 1.23 2013/10/17 21:06:15 christos Exp $	*/
+/*	$NetBSD: if_jme.c,v 1.28 2015/09/12 19:19:11 christos Exp $	*/
 
 /*
  * Copyright (c) 2008 Manuel Bouyer.  All rights reserved.
@@ -58,7 +58,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_jme.c,v 1.23 2013/10/17 21:06:15 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_jme.c,v 1.28 2015/09/12 19:19:11 christos Exp $");
 
 
 #include <sys/param.h>
@@ -87,7 +87,7 @@ __KERNEL_RCSID(0, "$NetBSD: if_jme.c,v 1.23 2013/10/17 21:06:15 christos Exp $")
 #include <net/bpf.h>
 #include <net/bpfdesc.h>
 
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 
 #include <netinet/in.h>
 #include <netinet/in_systm.h>
@@ -278,6 +278,7 @@ jme_pci_attach(device_t parent, device_t self, void *aux)
 	int nsegs, i;
 	const struct sysctlnode *node;
 	int jme_nodenum;
+	char intrbuf[PCI_INTRSTR_LEN];
 
 	sc->jme_dev = self;
 	aprint_normal("\n");
@@ -392,7 +393,7 @@ jme_pci_attach(device_t parent, device_t self, void *aux)
 		aprint_error_dev(self, "couldn't map interrupt\n");
 		return;
 	}
-	intrstr = pci_intr_string(pa->pa_pc, intrhandle);
+	intrstr = pci_intr_string(pa->pa_pc, intrhandle, intrbuf, sizeof(intrbuf));
 	sc->jme_if.if_softc = sc;
 	sc->jme_ih = pci_intr_establish(pa->pa_pc, intrhandle, IPL_NET,
 	    jme_intr, sc);
@@ -509,7 +510,7 @@ jme_pci_attach(device_t parent, device_t self, void *aux)
 		aprint_error_dev(self, "couldn't establish power handler\n");
 
 	rnd_attach_source(&sc->rnd_source, device_xname(self),
-	    RND_TYPE_NET, 0);
+	    RND_TYPE_NET, RND_FLAG_DEFAULT);
 
 	sc->jme_intrxto = PCCRX_COAL_TO_DEFAULT;
 	sc->jme_intrxct = PCCRX_COAL_PKT_DEFAULT;
@@ -948,6 +949,7 @@ jme_init(struct ifnet *ifp, int do_ifinit)
 			error = 0;
 		else if (error != 0) {
 			aprint_error_dev(sc->jme_dev, "could not set media\n");
+			splx(s);
 			return error;
 		}
 	}
@@ -2053,12 +2055,6 @@ SYSCTL_SETUP(sysctl_jme, "sysctl jme subtree setup")
 {
 	int rc;
 	const struct sysctlnode *node;
-
-	if ((rc = sysctl_createv(clog, 0, NULL, NULL,
-	    0, CTLTYPE_NODE, "hw", NULL,
-	    NULL, 0, NULL, 0, CTL_HW, CTL_EOL)) != 0) {
-		goto err;
-	}
 
 	if ((rc = sysctl_createv(clog, 0, NULL, &node,
 	    0, CTLTYPE_NODE, "jme",

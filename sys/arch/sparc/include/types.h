@@ -1,4 +1,4 @@
-/*	$NetBSD: types.h,v 1.62 2012/11/02 00:01:19 chs Exp $ */
+/*	$NetBSD: types.h,v 1.64 2015/10/06 20:03:05 martin Exp $ */
 
 /*
  * Copyright (c) 1992, 1993
@@ -73,7 +73,7 @@ typedef unsigned long long int	register64_t;
 
 #if defined(_KERNEL)
 typedef struct label_t {
-#ifdef SUN4U
+#ifdef __sparc_v9__
 	register64_t val[2];
 #else
 	register_t val[3];
@@ -87,7 +87,7 @@ typedef vaddr_t			vsize_t;
 #define	PRIxVADDR		"lx"
 #define	PRIxVSIZE		"lx"
 #define	PRIuVSIZE		"lu"
-#ifdef SUN4U
+#ifdef __sparc_v9__
 #ifdef __arch64__
 typedef unsigned long int	paddr_t;
 #define	PRIxPADDR		"lx"
@@ -102,12 +102,12 @@ typedef unsigned long long int	paddr_t;
 typedef unsigned long int	paddr_t;
 #define	PRIxPADDR		"lx"
 #define	PRIuPSIZE		"lu"
-#endif /* SUN4U */
+#endif /* __sparc_v9__ */
 typedef paddr_t			psize_t;
 #define	PRIxPSIZE		PRIxPADDR
 #endif
 
-typedef	volatile unsigned char		__cpu_simple_lock_t;
+typedef	unsigned char		__cpu_simple_lock_nv_t;
 
 /* __cpu_simple_lock_t used to be a full word. */
 #define	__CPU_SIMPLE_LOCK_PAD
@@ -124,7 +124,7 @@ typedef	volatile unsigned char		__cpu_simple_lock_t;
 #define	__HAVE_CPU_VMSPACE_EXEC
 #define	__HAVE_RAS
 
-#ifdef SUN4U
+#ifdef __sparc_v9__
 #define	__HAVE_DEVICE_REGISTER_POSTCONFIG
 #define	__HAVE_ATOMIC64_OPS
 #define	__HAVE_CPU_COUNTER	/* sparc v9 CPUs have %tick */

@@ -1,4 +1,4 @@
-/*	$NetBSD: uipc_mbuf.c,v 1.157 2013/11/15 17:48:55 christos Exp $	*/
+/*	$NetBSD: uipc_mbuf.c,v 1.163 2015/08/24 22:21:26 pooka Exp $	*/
 
 /*-
  * Copyright (c) 1999, 2001 The NetBSD Foundation, Inc.
@@ -62,11 +62,13 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: uipc_mbuf.c,v 1.157 2013/11/15 17:48:55 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: uipc_mbuf.c,v 1.163 2015/08/24 22:21:26 pooka Exp $");
 
+#ifdef _KERNEL_OPT
 #include "opt_mbuftrace.h"
 #include "opt_nmbclusters.h"
 #include "opt_ddb.h"
+#endif
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -387,11 +389,6 @@ sysctl_kern_mbuf_setup(void)
 {
 
 	KASSERT(mbuf_sysctllog == NULL);
-	sysctl_createv(&mbuf_sysctllog, 0, NULL, NULL,
-		       CTLFLAG_PERMANENT,
-		       CTLTYPE_NODE, "kern", NULL,
-		       NULL, 0, NULL, 0,
-		       CTL_KERN, CTL_EOL);
 	sysctl_createv(&mbuf_sysctllog, 0, NULL, NULL,
 		       CTLFLAG_PERMANENT,
 		       CTLTYPE_NODE, "mbuf",
@@ -782,8 +779,13 @@ m_copym0(struct mbuf *m, int off0, int len, int wait, int deep)
 				/*
 				 * we are unsure about the way m was allocated.
 				 * copy into multiple MCLBYTES cluster mbufs.
+				 *
+				 * recompute m_len, it is no longer valid if MCLGET()
+				 * fails to allocate a cluster. Then we try to split
+				 * the source into normal sized mbufs.
 				 */
 				MCLGET(n, wait);
+				n->m_len = 0;
 				n->m_len = M_TRAILINGSPACE(n);
 				n->m_len = m_copylen(len, n->m_len);
 				n->m_len = min(n->m_len, m->m_len - off);
@@ -1689,7 +1691,7 @@ m_getptr(struct mbuf *m, int loc, int *off)
 /*
  * m_ext_free: release a reference to the mbuf external storage.
  *
- * => free the mbuf m itsself as well.
+ * => free the mbuf m itself as well.
  */
 
 void

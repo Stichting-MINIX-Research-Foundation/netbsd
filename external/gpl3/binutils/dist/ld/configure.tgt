@@ -35,6 +35,10 @@ aarch64_be-*-linux*)	targ_emul=aarch64linuxb
 			targ_extra_emuls="aarch64linux aarch64elfb aarch64elf armelfb_linux_eabi armelf_linux_eabi armelfb armelf" ;;
 aarch64-*-linux*)	targ_emul=aarch64linux
 			targ_extra_emuls="aarch64linuxb aarch64elf aarch64elfb armelf_linux_eabi armelfb_linux_eabi armelf armelfb" ;;
+aarch64_be-*-netbsd*)	targ_emul=aarch64nbsdb
+			targ_extra_emuls="aarch64nbsd aarch64elfb aarch64elf armelfb_nbsd_eabihf armelf_nbsd_eabihf armelfb_nbsd_eabi armelf_nbsd_eabi armelfb_nbsd armelf_nbsd armelf armelfb" ;;
+aarch64-*-netbsd*)	targ_emul=aarch64nbsd
+			targ_extra_emuls="aarch64nbsdb aarch64elf aarch64elfb armelf_nbsd_eabihf armelfb_nbsd_eabihf armelf_nbsd_eabi armelfb_nbsd_eabi armelf_nbsd armelfb_nbsd armelf armelfb" ;;
 alpha*-*-freebsd* | alpha*-*-kfreebsd*-gnu)
 		        targ_emul=elf64alpha_fbsd
 			targ_extra_emuls="elf64alpha alpha"
@@ -64,12 +68,18 @@ arm-*-coff)		targ_emul=armcoff ;;
 arm-*-freebsd* | arm-*-kfreebsd*-gnu)
 	       		targ_emul=armelf_fbsd
 			targ_extra_emuls="armelf" ;;
+arm*eb-*-netbsdelf*-*eabihf*)
+			targ_emul=armelfb_nbsd_eabihf;
+			targ_extra_emuls="armelf_nbsd_eabihf armelf_nbsd_eabi armelfb_nbsd_eabi armelf_nbsd armelfb_nbsd armelf armnbsd" ;;
 arm*eb-*-netbsdelf*-*eabi*)
 			targ_emul=armelfb_nbsd_eabi;
-			targ_extra_emuls="armelf_nbsd_eabi armelf armnbsd" ;;
+			targ_extra_emuls="armelf_nbsd_eabi armelf_nbsd_eabihf armelfb_nbsd_eabihf armelf_nbsd armelfb_nbsd armelf armnbsd" ;;
+arm*-*-netbsdelf*-*eabihf*)
+			targ_emul=armelf_nbsd_eabihf;
+			targ_extra_emuls="armelfb_nbsd_eabihf armelf_nbsd_eabi armelfb_nbsd_eabi armelf_nbsd armelfb_nbsd armelf armnbsd" ;;
 arm*-*-netbsdelf*-*eabi*)
 			targ_emul=armelf_nbsd_eabi;
-			targ_extra_emuls="armelfb_nbsd_eabi armelf armnbsd" ;;
+			targ_extra_emuls="armelfb_nbsd_eabi armelf_nbsd_eabihf armelfb_nbsd_eabihf armelf_nbsd armelfb_nbsd armelf armnbsd" ;;
 arm*eb-*-netbsdelf*)	targ_emul=armelfb_nbsd;
 			targ_extra_emuls="armelf_nbsd armelf armnbsd" ;;
 arm-*-netbsdelf*)	targ_emul=armelf_nbsd;
@@ -494,11 +504,11 @@ msp430-*-*)             targ_emul=msp430x110
 ns32k-pc532-mach* | ns32k-pc532-ux*)  targ_emul=pc532macha ;;
 ns32k-*-netbsd* | ns32k-pc532-lites*) targ_emul=ns32knbsd
 			;;
-openrisc-*-*)		targ_emul=elf32openrisc ;;
-or32-*-coff)		targ_emul=or32 ;;
-or32-*-elf)		targ_emul=or32elf ;;
-or32-*-rtems*)          targ_emul=or32elf
-			;;
+or1k-*-elf | or1knd-*-elf)		targ_emul=elf32or1k ;;
+or1k-*-linux* | or1knd-*-linux*)	targ_emul=elf32or1k_linux ;;
+or1k-*-netbsd* | or1knd-*-netbsd*)	targ_emul=elf32or1k_nbsd ;;
+or1k-*-rtems* | or1knd-*-rtems*)	targ_emul=elf32or1k ;;
+
 pdp11-*-*)		targ_emul=pdp11
 			;;
 pjl*-*-*)	        targ_emul=pjlelf ; targ_extra_emuls="elf_i386" ;;
@@ -542,8 +552,18 @@ powerpc*le-*-elf* | powerpc*le-*-eabi* | powerpc*le-*-solaris* \
 			*)	targ_emul=elf32lppc
 				targ_extra_emuls="elf32ppcsim" ;;
 			esac ;;
+powerpc64*-*-netbsd*)
+			targ_emul=elf64ppc
+		       	targ_extra_emuls="elf32ppc elf32ppc_nbsd elf32ppcsim"
+			tdir_elf32ppc=`echo "${targ_alias}" | sed -e 's/64//'`
+			tdir_elf32ppc_nbsd=$tdir_elf32ppc
+			tdir_elf32ppcsim=$tdir_elf32ppc
+			;;
+powerpc*-*-netbsd*)
+			targ_emul=elf32ppc_nbsd
+			targ_extra_emuls="elf32ppc elf32ppcsim" ;;
 powerpc*-*-elf* | powerpc*-*-eabi* | powerpc*-*-sysv* \
-  | powerpc*-*-netbsd* | powerpc-*-openbsd* | powerpc*-*-kaos*)
+  | powerpc-*-openbsd* | powerpc*-*-kaos*)
   		       case "${targ}" in
 		       *64*)	targ_emul=elf64ppc
 		       		targ_extra_emuls="elf32ppc elf32ppclinux elf32ppcsim"
@@ -570,6 +590,12 @@ powerpc-*-aix*)		targ_emul=aixppc ;;
 powerpc-*-beos*)	targ_emul=aixppc ;;
 powerpc-*-windiss*)	targ_emul=elf32ppcwindiss ;;
 powerpc-*-lynxos*)	targ_emul=ppclynx ;;
+riscv32-*-*)		targ_emul=elf32lriscv
+			targ_extra_emuls="elf64lriscv"
+			targ_extra_libpath=$targ_extra_emuls ;;
+riscv*-*-*)		targ_emul=elf64lriscv
+			targ_extra_emuls="elf32lriscv"
+			targ_extra_libpath=$targ_extra_emuls ;;
 rs6000-*-aix[5-9]*)	targ_emul=aix5rs6 ;;
 rs6000-*-aix*)		targ_emul=aixrs6
 			;;

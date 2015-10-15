@@ -1,4 +1,4 @@
-/*	$NetBSD: vcprop.h,v 1.8 2013/04/17 06:12:42 skrll Exp $	*/
+/*	$NetBSD: vcprop.h,v 1.13 2014/09/28 14:38:29 macallan Exp $	*/
 
 /*-
  * Copyright (c) 2012 The NetBSD Foundation, Inc.
@@ -35,6 +35,8 @@
 
 #ifndef	_EVBARM_RPI_VCPROP_H_
 #define	_EVBARM_RPI_VCPROP_H_
+
+#include "opt_vcprop.h"
 
 struct vcprop_tag {
 	uint32_t vpt_tag;
@@ -86,6 +88,13 @@ struct vcprop_tag {
 
 #define	VCPROPTAG_GET_EDID_BLOCK	0x00030020
 
+#define	VCPROPTAG_ALLOCMEM		0x0003000c
+#define	VCPROPTAG_LOCKMEM		0x0003000d
+#define	VCPROPTAG_UNLOCKMEM		0x0003000e
+#define	VCPROPTAG_RELEASEMEM		0x0003000f
+
+#define	VCPROPTAG_SET_CURSOR_INFO	0x00008010
+#define	VCPROPTAG_SET_CURSOR_STATE	0x00008011
 
 	uint32_t vpt_len;
 	uint32_t vpt_rcode;
@@ -154,7 +163,9 @@ struct vcprop_tag_clock {
 	struct vcprop_clock clk[VCPROP_MAXCLOCKS];
 };
 
-#define	VCPROP_MAXCMDLINE 256
+#ifndef	VCPROP_MAXCMDLINE
+#define	VCPROP_MAXCMDLINE 1024
+#endif
 struct vcprop_tag_cmdline {
 	struct vcprop_tag tag;
 	uint8_t cmdline[VCPROP_MAXCMDLINE];
@@ -272,6 +283,49 @@ struct vcprop_tag_edidblock {
 	uint8_t data[128];
 };
 
+struct vcprop_tag_cursorinfo {
+	struct vcprop_tag tag;
+	uint32_t width;
+	uint32_t height;
+	uint32_t format;
+	uint32_t pixels;	/* bus address in VC memory */
+	uint32_t hotspot_x;
+	uint32_t hotspot_y;
+};
+
+struct vcprop_tag_cursorstate {
+	struct vcprop_tag tag;
+	uint32_t enable;	/* 1 - visible */
+	uint32_t x;
+	uint32_t y;
+	uint32_t flags;		/* 0 - display coord. 1 - fb coord. */
+};
+
+struct vcprop_tag_allocmem {
+	struct vcprop_tag tag;
+	uint32_t size;	/* handle returned here */
+	uint32_t align;
+	uint32_t flags;
+/*
+ * flag definitions from
+ * https://github.com/raspberrypi/firmware/wiki/Mailbox-property-interface
+ */
+#define MEM_FLAG_DISCARDABLE	(1 << 0) /* can be resized to 0 at any time. Use for cached data */
+#define MEM_FLAG_NORMAL		(0 << 2) /* normal allocating alias. Don't use from ARM */
+#define MEM_FLAG_DIRECT		(1 << 2) /* 0xC alias uncached */
+#define MEM_FLAG_COHERENT	(2 << 2) /* 0x8 alias. Non-allocating in L2 but coherent */
+#define MEM_FLAG_L1_NONALLOCATING (MEM_FLAG_DIRECT | MEM_FLAG_COHERENT) /* Allocating in L2 */
+#define MEM_FLAG_ZERO		(1 << 4)  /* initialise buffer to all zeros */
+#define MEM_FLAG_NO_INIT	(1 << 5) /* don't initialise (default is initialise to all ones */
+#define MEM_FLAG_HINT_PERMALOCK	(1 << 6) /* Likely to be locked for long periods of time. */
+};
+
+/* also for unlock and release */
+struct vcprop_tag_lockmem {
+	struct vcprop_tag tag;
+	uint32_t handle;	/* bus address returned here */
+};
+
 struct vcprop_buffer_hdr {
 	uint32_t vpb_len;
 	uint32_t vpb_rcode;
@@ -302,3 +356,13 @@ vcprop_tag_resplen(struct vcprop_tag *vpbt)
 }
 
 #endif	/* _EVBARM_RPI_VCPROP_H_ */
+
+uint32_t rpi_alloc_mem(uint32_t, uint32_t, uint32_t);
+bus_addr_t rpi_lock_mem(uint32_t);
+int rpi_unlock_mem(uint32_t);
+int rpi_release_mem(uint32_t);
+
+int rpi_fb_set_video(int);
+
+int rpi_fb_movecursor(int, int, int);
+int rpi_fb_initcursor(bus_addr_t, int, int);

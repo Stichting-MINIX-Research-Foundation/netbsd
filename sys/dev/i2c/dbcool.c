@@ -1,4 +1,4 @@
-/*	$NetBSD: dbcool.c,v 1.39 2013/09/12 19:46:31 martin Exp $ */
+/*	$NetBSD: dbcool.c,v 1.43 2015/04/23 23:23:00 pgoyette Exp $ */
 
 /*-
  * Copyright (c) 2008 The NetBSD Foundation, Inc.
@@ -50,7 +50,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: dbcool.c,v 1.39 2013/09/12 19:46:31 martin Exp $");
+__KERNEL_RCSID(0, "$NetBSD: dbcool.c,v 1.43 2015/04/23 23:23:00 pgoyette Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -1111,19 +1111,6 @@ dbcool_read_volt(struct dbcool_softc *sc, uint8_t reg, int nom_idx, bool extres)
 	return ret;
 }
 
-SYSCTL_SETUP(sysctl_dbcoolsetup, "sysctl dBCool subtree setup")
-{
-	sysctl_createv(clog, 0, NULL, NULL,
-#ifdef _MODULE
-		       0,
-#else
-		       CTLFLAG_PERMANENT,
-#endif
-		       CTLTYPE_NODE, "hw", NULL,
-		       NULL, 0, NULL, 0,
-		       CTL_HW, CTL_EOL);
-}
-
 static int
 sysctl_dbcool_temp(SYSCTLFN_ARGS)
 {
@@ -1619,6 +1606,7 @@ dbcool_setup_sensors(struct dbcool_softc *sc)
 			sc->sc_sensor[i].units = ENVSYS_STEMP;
 			sc->sc_sensor[i].state = ENVSYS_SINVALID;
 			sc->sc_sensor[i].flags |= ENVSYS_FMONLIMITS;
+			sc->sc_sensor[i].flags |= ENVSYS_FHAS_ENTROPY;
 			error = dbcool_attach_sensor(sc, i);
 			break;
 		case DBC_VOLT:
@@ -1635,12 +1623,14 @@ dbcool_setup_sensors(struct dbcool_softc *sc)
 			sc->sc_sensor[i].units = ENVSYS_SVOLTS_DC;
 			sc->sc_sensor[i].state = ENVSYS_SINVALID;
 			sc->sc_sensor[i].flags |= ENVSYS_FMONLIMITS;
+			sc->sc_sensor[i].flags |= ENVSYS_FHAS_ENTROPY;
 			error = dbcool_attach_sensor(sc, i);
 			break;
 		case DBC_FAN:
 			sc->sc_sensor[i].units = ENVSYS_SFANRPM;
 			sc->sc_sensor[i].state = ENVSYS_SINVALID;
 			sc->sc_sensor[i].flags |= ENVSYS_FMONLIMITS;
+			sc->sc_sensor[i].flags |= ENVSYS_FHAS_ENTROPY;
 			error = dbcool_attach_sensor(sc, i);
 			break;
 		case DBC_VID:
@@ -2171,7 +2161,7 @@ dbcool_set_fan_limits(struct dbcool_softc *sc, int idx,
 	}
 }
 
-MODULE(MODULE_CLASS_DRIVER, dbcool, "iic");
+MODULE(MODULE_CLASS_DRIVER, dbcool, "i2cexec,sysmon_envsys");
 
 #ifdef _MODULE
 #include "ioconf.c"

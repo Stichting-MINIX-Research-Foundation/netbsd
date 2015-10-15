@@ -1,4 +1,4 @@
-/*	$NetBSD: rump.c,v 1.276 2013/11/18 18:45:29 njoly Exp $	*/
+/*	$NetBSD: rump.c,v 1.325 2015/08/31 07:38:48 ozaki-r Exp $	*/
 
 /*
  * Copyright (c) 2007-2011 Antti Kantee.  All Rights Reserved.
@@ -26,7 +26,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: rump.c,v 1.276 2013/11/18 18:45:29 njoly Exp $");
+__KERNEL_RCSID(0, "$NetBSD: rump.c,v 1.325 2015/08/31 07:38:48 ozaki-r Exp $");
 
 #include <sys/systm.h>
 #define ELFSIZE ARCH_ELFSIZE
@@ -70,8 +70,9 @@ __KERNEL_RCSID(0, "$NetBSD: rump.c,v 1.276 2013/11/18 18:45:29 njoly Exp $");
 #include <sys/uidinfo.h>
 #include <sys/vmem.h>
 #include <sys/xcall.h>
-#include <sys/simplelock.h>
 #include <sys/cprng.h>
+#include <sys/rnd.h>
+#include <sys/ktrace.h>
 
 #include <rump/rumpuser.h>
 
@@ -88,6 +89,7 @@ __KERNEL_RCSID(0, "$NetBSD: rump.c,v 1.276 2013/11/18 18:45:29 njoly Exp $");
 #include "rump_dev_private.h"
 
 char machine[] = MACHINE;
+char machine_arch[] = MACHINE_ARCH;
 
 struct proc *initproc;
 
@@ -101,22 +103,11 @@ int rump_threads = 0;
 int rump_threads = 1;
 #endif
 
-static int rump_hyp_syscall(int, void *, long *);
-static int rump_hyp_rfork(void *, int, const char *);
-static void rump_hyp_lwpexit(void);
-static void rump_hyp_execnotify(const char *);
-
 static void rump_component_addlocal(void);
-static void rump_component_load(const struct rump_component *);
 static struct lwp *bootlwp;
 
 static char rump_msgbuf[16*1024]; /* 16k should be enough for std rump needs */
 
-#ifdef LOCKDEBUG
-const int rump_lockdebug = 1;
-#else
-const int rump_lockdebug = 0;
-#endif
 bool rump_ttycomponent = false;
 
 static void
@@ -130,75 +121,33 @@ rump_aiodone_worker(struct work *wk, void *dummy)
 
 static int rump_inited;
 
-void (*rump_vfs_drainbufs)(int);
-void (*rump_vfs_fini)(void);
+void (*rump_vfs_drainbufs)(int) = (void *)nullop;
 int  (*rump_vfs_makeonedevnode)(dev_t, const char *,
 				devmajor_t, devminor_t) = (void *)nullop;
 int  (*rump_vfs_makedevnodes)(dev_t, const char *, char,
 			      devmajor_t, devminor_t, int) = (void *)nullop;
+int  (*rump_vfs_makesymlink)(const char *, const char *) = (void *)nullop;
 
-int rump__unavailable(void);
-int rump__unavailable() {return EOPNOTSUPP;}
-
-__weak_alias(biodone,rump__unavailable);
-__weak_alias(sopoll,rump__unavailable);
-
-void rump__unavailable_vfs_panic(void);
-void rump__unavailable_vfs_panic() {panic("vfs component not available");}
-__weak_alias(usermount_common_policy,rump__unavailable_vfs_panic);
-
-/* easier to write vfs-less clients */
-__weak_alias(rump_pub_etfs_register,rump__unavailable);
-__weak_alias(rump_pub_etfs_register_withsize,rump__unavailable);
-__weak_alias(rump_pub_etfs_remove,rump__unavailable);
-
-rump_proc_vfs_init_fn rump_proc_vfs_init;
-rump_proc_vfs_release_fn rump_proc_vfs_release;
+rump_proc_vfs_init_fn rump_proc_vfs_init = (void *)nullop;
+rump_proc_vfs_release_fn rump_proc_vfs_release = (void *)nullop;
 
 static void add_linkedin_modules(const struct modinfo *const *, size_t);
 
-/*
- * Create some sysctl nodes.  why only this you ask.  well, init_sysctl
- * is a kitchen sink in need of some gardening.  but i want to use
- * others today.  Furthermore, creating a whole kitchen sink full of
- * sysctl nodes is a waste of cycles for rump kernel bootstrap.
- */
-static void
-mksysctls(void)
-{
-
-	/* kern.hostname */
-	sysctl_createv(NULL, 0, NULL, NULL,
-	    CTLFLAG_PERMANENT, CTLTYPE_NODE, "kern", NULL,
-	    NULL, 0, NULL, 0, CTL_KERN, CTL_EOL);
-	/* XXX: setting hostnamelen is missing */
-	sysctl_createv(NULL, 0, NULL, NULL,
-	    CTLFLAG_PERMANENT|CTLFLAG_READWRITE, CTLTYPE_STRING, "hostname",
-	    SYSCTL_DESCR("System hostname"), NULL, 0,
-	    hostname, MAXHOSTNAMELEN, CTL_KERN, KERN_HOSTNAME, CTL_EOL);
-
-	/* hw.pagesize */
-	sysctl_createv(NULL, 0, NULL, NULL,
-	    CTLFLAG_PERMANENT,
-	    CTLTYPE_NODE, "hw", NULL,
-	    NULL, 0, NULL, 0,
-	    CTL_HW, CTL_EOL);
-	sysctl_createv(NULL, 0, NULL, NULL,
-	    CTLFLAG_PERMANENT|CTLFLAG_IMMEDIATE,
-	    CTLTYPE_INT, "pagesize",
-	    SYSCTL_DESCR("Software page size"),
-	    NULL, PAGE_SIZE, NULL, 0,
-	    CTL_HW, HW_PAGESIZE, CTL_EOL);
+static pid_t rspo_wrap_getpid(void) {
+	return rump_sysproxy_hyp_getpid();
 }
-
-/* there's no convenient kernel entry point for this, so just craft out own */
-static pid_t
-spgetpid(void)
-{
-
-	return curproc->p_pid;
+static int rspo_wrap_syscall(int num, void *arg, long *retval) {
+	return rump_sysproxy_hyp_syscall(num, arg, retval);
 }
-
+static int rspo_wrap_rfork(void *priv, int flag, const char *comm) {
+	return rump_sysproxy_hyp_rfork(priv, flag, comm);
+}
+static void rspo_wrap_lwpexit(void) {
+	rump_sysproxy_hyp_lwpexit();
+}
+static void rspo_wrap_execnotify(const char *comm) {
+	rump_sysproxy_hyp_execnotify(comm);
+}
 static const struct rumpuser_hyperup hyp = {
 	.hyp_schedule		= rump_schedule,
 	.hyp_unschedule		= rump_unschedule,
@@ -206,13 +155,28 @@ static const struct rumpuser_hyperup hyp = {
 	.hyp_backend_schedule	= rump_user_schedule,
 	.hyp_lwproc_switch	= rump_lwproc_switch,
 	.hyp_lwproc_release	= rump_lwproc_releaselwp,
-	.hyp_lwproc_rfork	= rump_hyp_rfork,
 	.hyp_lwproc_newlwp	= rump_lwproc_newlwp,
 	.hyp_lwproc_curlwp	= rump_lwproc_curlwp,
-	.hyp_lwpexit		= rump_hyp_lwpexit,
-	.hyp_syscall		= rump_hyp_syscall,
-	.hyp_execnotify		= rump_hyp_execnotify,
-	.hyp_getpid		= spgetpid,
+
+	.hyp_getpid		= rspo_wrap_getpid,
+	.hyp_syscall		= rspo_wrap_syscall,
+	.hyp_lwproc_rfork	= rspo_wrap_rfork,
+	.hyp_lwpexit		= rspo_wrap_lwpexit,
+	.hyp_execnotify		= rspo_wrap_execnotify,
+};
+struct rump_sysproxy_ops rump_sysproxy_ops = {
+	.rspo_copyin		= (void *)enxio,
+	.rspo_copyinstr 	= (void *)enxio,
+	.rspo_copyout	 	= (void *)enxio,
+	.rspo_copyoutstr 	= (void *)enxio,
+	.rspo_anonmmap 		= (void *)enxio,
+	.rspo_raise 		= (void *)enxio,
+	.rspo_fini 		= (void *)enxio,
+	.rspo_hyp_getpid 	= (void *)enxio,
+	.rspo_hyp_syscall 	= (void *)enxio,
+	.rspo_hyp_rfork 	= (void *)enxio,
+	.rspo_hyp_lwpexit 	= (void *)enxio,
+	.rspo_hyp_execnotify 	= (void *)enxio,
 };
 
 int
@@ -232,6 +196,15 @@ rump_daemonize_done(int error)
 	return rumpuser_daemonize_done(error);
 }
 
+#ifdef RUMP_USE_CTOR
+
+/* sysctl bootstrap handling */
+struct sysctl_boot_chain sysctl_boot_chain \
+    = LIST_HEAD_INITIALIZER(sysctl_boot_chain);
+__link_set_add_text(sysctl_funcs,voidop); /* ensure linkset is non-empty */
+
+#else /* RUMP_USE_CTOR */
+
 RUMP_COMPONENT(RUMP_COMPONENT_POSTINIT)
 {
 	__link_set_decl(rump_components, struct rump_component);
@@ -243,6 +216,8 @@ RUMP_COMPONENT(RUMP_COMPONENT_POSTINIT)
 	asm("" :: "r"(__start_link_set_rump_components));
 	asm("" :: "r"(__stop_link_set_rump_components));
 }
+
+#endif /* RUMP_USE_CTOR */
 
 int
 rump_init(void)
@@ -269,14 +244,10 @@ rump_init(void)
 	}
 
 	/* init minimal lwp/cpu context */
+	rump_lwproc_init();
 	l = &lwp0;
-	l->l_lid = 1;
 	l->l_cpu = l->l_target_cpu = rump_cpu;
-	l->l_fd = &filedesc0;
-
-	/* lwp0 isn't created like other threads, so notify hypervisor here */
-	rumpuser_curlwpop(RUMPUSER_LWP_CREATE, l);
-	rumpuser_curlwpop(RUMPUSER_LWP_SET, l);
+	rump_lwproc_curlwp_set(l);
 
 	/* retrieve env vars which affect the early stage of bootstrap */
 	if (rumpuser_getparam("RUMP_THREADS", buf, sizeof(buf)) == 0) {
@@ -320,34 +291,44 @@ rump_init(void)
 	prop_kern_init();
 
 	kmem_init();
-	kmeminit();
 
 	uvm_ra_init();
 	uao_init();
 
 	mutex_obj_init();
+	rw_obj_init();
 	callout_startup();
 
 	kprintf_init();
 	pserialize_init();
-	loginit();
 
 	kauth_init();
 
 	secmodel_init();
+	sysctl_init();
+	/*
+	 * The above call to sysctl_init() only initializes sysctl nodes
+	 * from link sets.  Initialize sysctls in case we used ctors.
+	 */
+#ifdef RUMP_USE_CTOR
+	{
+		struct sysctl_setup_chain *ssc;
+
+		LIST_FOREACH(ssc, &sysctl_boot_chain, ssc_entries) {
+			ssc->ssc_func(NULL);
+		}
+	}
+#endif /* RUMP_USE_CTOR */
 
 	rnd_init();
-
-	/*
-	 * Create the kernel cprng.  Yes, it's currently stubbed out
-	 * to arc4random() for RUMP, but this won't always be so.
-	 */
+	cprng_init();
 	kern_cprng = cprng_strong_create("kernel", IPL_VM,
-					 CPRNG_INIT_ANY|CPRNG_REKEY_ANY);
+	    CPRNG_INIT_ANY|CPRNG_REKEY_ANY);
+
+	rump_hyperentropy_init();
 
 	procinit();
 	proc0_init();
-	sysctl_init();
 	uid_init();
 	chgproccnt(0, 1);
 
@@ -357,11 +338,13 @@ rump_init(void)
 	lwpinit_specificdata();
 	lwp_initspecific(&lwp0);
 
+	loginit();
+
 	rump_biglock_init();
 
 	rump_scheduler_init(numcpu);
 	/* revert temporary context and schedule a semireal context */
-	rumpuser_curlwpop(RUMPUSER_LWP_CLEAR, l);
+	rump_lwproc_curlwp_clear(l);
 	initproc = &proc0; /* borrow proc0 before we get initproc started */
 	rump_schedule();
 	bootlwp = curlwp;
@@ -370,8 +353,15 @@ rump_init(void)
 	inittimecounter();
 	ntp_init();
 
+#ifdef KTRACE
+	ktrinit();
+#endif
+
 	ts = boottime;
 	tc_setclock(&ts);
+
+	extern krwlock_t exec_lock;
+	rw_init(&exec_lock);
 
 	/* we are mostly go.  do per-cpu subsystem init */
 	for (i = 0; i < numcpu; i++) {
@@ -395,11 +385,16 @@ rump_init(void)
 
 		aprint_verbose("cpu%d at thinair0: rump virtual cpu\n", i);
 	}
+	ncpuonline = ncpu;
+
+	/* Once all CPUs are detected, initialize the per-CPU cprng_fast.  */
+	cprng_fast_init();
 
 	/* CPUs are up.  allow kernel threads to run */
-	rump_thread_allow();
+	rump_thread_allow(NULL);
 
-	mksysctls();
+	rnd_init_softint();
+
 	kqueue_init();
 	iostat_init();
 	fd_sys_init();
@@ -408,6 +403,8 @@ rump_init(void)
 	pipe_init();
 	resource_init();
 	procinit_sysctl();
+	time_init();
+	time_init2();
 
 	/* start page baroness */
 	if (rump_threads) {
@@ -480,67 +477,12 @@ rump_init(void)
 	mutex_exit(proc_lock);
 	if (initproc == NULL)
 		panic("where in the world is initproc?");
-
-	/*
-	 * Adjust syscall vector in case factions were dlopen()'d
-	 * before calling rump_init().
-	 * (modules will handle dynamic syscalls the usual way)
-	 *
-	 * Note: this will adjust the function vectors of
-	 * syscalls which use a funcalias (getpid etc.), but
-	 * it makes no difference.
-	 */
-	for (i = 0; i < SYS_NSYSENT; i++) {
-		void *sym;
-
-		if (rump_sysent[i].sy_flags & SYCALL_NOSYS ||
-		    *syscallnames[i] == '#' ||
-		    rump_sysent[i].sy_call == sys_nomodule)
-			continue;
-
-		/*
-		 * deal with compat wrappers.  makesyscalls.sh should
-		 * generate the necessary info instead of this hack,
-		 * though.  ugly, fix it later.
-		 */ 
-#define CPFX "compat_"
-#define CPFXLEN (sizeof(CPFX)-1)
-		if (strncmp(syscallnames[i], CPFX, CPFXLEN) == 0) {
-			const char *p = syscallnames[i] + CPFXLEN;
-			size_t namelen;
-
-			/* skip version number */
-			while (*p >= '0' && *p <= '9')
-				p++;
-			if (p == syscallnames[i] + CPFXLEN || *p != '_')
-				panic("invalid syscall name %s\n",
-				    syscallnames[i]);
-
-			/* skip over the next underscore */
-			p++;
-			namelen = p + (sizeof("rumpns_")-1) - syscallnames[i];
-
-			strcpy(buf, "rumpns_");
-			strcat(buf, syscallnames[i]);
-			/* XXX: no strncat in the kernel */
-			strcpy(buf+namelen, "sys_");
-			strcat(buf, p);
-#undef CPFX
-#undef CPFXLEN
-		} else {
-			sprintf(buf, "rumpns_sys_%s", syscallnames[i]);
-		}
-		if ((sym = rumpuser_dl_globalsym(buf)) != NULL
-		    && sym != rump_sysent[i].sy_call) {
-#if 0
-			rumpuser_dprintf("adjusting %s: %p (old %p)\n",
-			    syscallnames[i], sym, rump_sysent[i].sy_call);
-#endif
-			rump_sysent[i].sy_call = sym;
-		}
-	}
+	strlcpy(initproc->p_comm, "rumplocal", sizeof(initproc->p_comm));
 
 	rump_component_init(RUMP_COMPONENT_POSTINIT);
+
+	/* load syscalls */
+	rump_component_init(RUMP_COMPONENT_SYSCALL);
 
 	/* component inits done */
 	bootlwp = NULL;
@@ -559,159 +501,32 @@ rump_init(void)
 /* historic compat */
 __strong_alias(rump__init,rump_init);
 
-int
-rump_init_server(const char *url)
-{
-
-	return rumpuser_sp_init(url, ostype, osrelease, MACHINE);
-}
-
-void
-cpu_reboot(int howto, char *bootstr)
-{
-	int ruhow = 0;
-	void *finiarg;
-
-	printf("rump kernel halting...\n");
-
-	if (!RUMP_LOCALPROC_P(curproc))
-		finiarg = curproc->p_vmspace->vm_map.pmap;
-	else
-		finiarg = NULL;
-
-	/* dump means we really take the dive here */
-	if ((howto & RB_DUMP) || panicstr) {
-		ruhow = RUMPUSER_PANIC;
-		goto out;
-	}
-
-	/* try to sync */
-	if (!((howto & RB_NOSYNC) || panicstr)) {
-		if (rump_vfs_fini)
-			rump_vfs_fini();
-	}
-
-	doshutdownhooks();
-
-	/* your wish is my command */
-	if (howto & RB_HALT) {
-		printf("rump kernel halted\n");
-		rumpuser_sp_fini(finiarg);
-		for (;;) {
-			rumpuser_clock_sleep(RUMPUSER_CLOCK_RELWALL, 10, 0);
-		}
-	}
-
-	/* this function is __dead, we must exit */
- out:
-	printf("halted\n");
-	rumpuser_sp_fini(finiarg);
-	rumpuser_exit(ruhow);
-}
-
-struct uio *
-rump_uio_setup(void *buf, size_t bufsize, off_t offset, enum rump_uiorw rw)
-{
-	struct uio *uio;
-	enum uio_rw uiorw;
-
-	switch (rw) {
-	case RUMPUIO_READ:
-		uiorw = UIO_READ;
-		break;
-	case RUMPUIO_WRITE:
-		uiorw = UIO_WRITE;
-		break;
-	default:
-		panic("%s: invalid rw %d", __func__, rw);
-	}
-
-	uio = kmem_alloc(sizeof(struct uio), KM_SLEEP);
-	uio->uio_iov = kmem_alloc(sizeof(struct iovec), KM_SLEEP);
-
-	uio->uio_iov->iov_base = buf;
-	uio->uio_iov->iov_len = bufsize;
-
-	uio->uio_iovcnt = 1;
-	uio->uio_offset = offset;
-	uio->uio_resid = bufsize;
-	uio->uio_rw = uiorw;
-	UIO_SETUP_SYSSPACE(uio);
-
-	return uio;
-}
-
-size_t
-rump_uio_getresid(struct uio *uio)
-{
-
-	return uio->uio_resid;
-}
-
-off_t
-rump_uio_getoff(struct uio *uio)
-{
-
-	return uio->uio_offset;
-}
-
-size_t
-rump_uio_free(struct uio *uio)
-{
-	size_t resid;
-
-	resid = uio->uio_resid;
-	kmem_free(uio->uio_iov, sizeof(*uio->uio_iov));
-	kmem_free(uio, sizeof(*uio));
-
-	return resid;
-}
-
-kauth_cred_t
-rump_cred_create(uid_t uid, gid_t gid, size_t ngroups, gid_t *groups)
-{
-	kauth_cred_t cred;
-	int rv;
-
-	cred = kauth_cred_alloc();
-	kauth_cred_setuid(cred, uid);
-	kauth_cred_seteuid(cred, uid);
-	kauth_cred_setsvuid(cred, uid);
-	kauth_cred_setgid(cred, gid);
-	kauth_cred_setgid(cred, gid);
-	kauth_cred_setegid(cred, gid);
-	kauth_cred_setsvgid(cred, gid);
-	rv = kauth_cred_setgroups(cred, groups, ngroups, 0, UIO_SYSSPACE);
-	/* oh this is silly.  and by "this" I mean kauth_cred_setgroups() */
-	assert(rv == 0);
-
-	return cred;
-}
-
-void
-rump_cred_put(kauth_cred_t cred)
-{
-
-	kauth_cred_free(cred);
-}
-
 static int compcounter[RUMP_COMPONENT_MAX];
 static int compinited[RUMP_COMPONENT_MAX];
 
 /*
  * Yea, this is O(n^2), but we're only looking at a handful of components.
  * Components are always initialized from the thread that called rump_init().
- * Could also free these when done with them, but prolly not worth it.
  */
-struct compstore {
-	const struct rump_component *cs_rc;
-	LIST_ENTRY(compstore) cs_entries;
-};
-static LIST_HEAD(, compstore) cshead = LIST_HEAD_INITIALIZER(cshead);
+static LIST_HEAD(, rump_component) rchead = LIST_HEAD_INITIALIZER(rchead);
 
-/*
- * add components which are visible from the current object.
- */
+#ifdef RUMP_USE_CTOR
+struct modinfo_boot_chain modinfo_boot_chain \
+    = LIST_HEAD_INITIALIZER(modinfo_boot_chain);
+
+static void
+rump_component_addlocal(void)
+{
+	struct modinfo_chain *mc;
+	
+	while ((mc = LIST_FIRST(&modinfo_boot_chain)) != NULL) {
+		LIST_REMOVE(mc, mc_entries);
+		module_builtin_add(&mc->mc_info, 1, false);
+	}
+}
+
+#else /* RUMP_USE_CTOR */
+
 static void
 rump_component_addlocal(void)
 {
@@ -722,22 +537,30 @@ rump_component_addlocal(void)
 		rump_component_load(*rc);
 	}
 }
+#endif /* RUMP_USE_CTOR */
 
-static void
-rump_component_load(const struct rump_component *rc)
+void
+rump_component_load(const struct rump_component *rc_const)
 {
-	struct compstore *cs;
+	struct rump_component *rc, *rc_iter;
 
-	KASSERT(curlwp == bootlwp);
+	/*
+	 * XXX: this is ok since the "const" was removed from the
+	 * definition of RUMP_COMPONENT().
+	 *
+	 * However, to preserve the hypercall interface, the const
+	 * remains here.  This can be fixed in the next hypercall revision.
+	 */
+	rc = __UNCONST(rc_const);
 
-	LIST_FOREACH(cs, &cshead, cs_entries) {
-		if (rc == cs->cs_rc)
+	KASSERT(!rump_inited || curlwp == bootlwp);
+
+	LIST_FOREACH(rc_iter, &rchead, rc_entries) {
+		if (rc_iter == rc)
 			return;
 	}
 
-	cs = kmem_alloc(sizeof(*cs), KM_SLEEP);
-	cs->cs_rc = rc;
-	LIST_INSERT_HEAD(&cshead, cs, cs_entries);
+	LIST_INSERT_HEAD(&rchead, rc, rc_entries);
 	KASSERT(rc->rc_type < RUMP_COMPONENT_MAX);
 	compcounter[rc->rc_type]++;
 }
@@ -754,15 +577,15 @@ rump_component_count(enum rump_component_type type)
 void
 rump_component_init(enum rump_component_type type)
 {
-	struct compstore *cs;
-	const struct rump_component *rc;
+	const struct rump_component *rc, *rc_safe;
 
 	KASSERT(curlwp == bootlwp);
 	KASSERT(!compinited[type]);
-	LIST_FOREACH(cs, &cshead, cs_entries) {
-		rc = cs->cs_rc;
-		if (rc->rc_type == type)
+	LIST_FOREACH_SAFE(rc, &rchead, rc_entries, rc_safe) {
+		if (rc->rc_type == type) {
 			rc->rc_init();
+			LIST_REMOVE(rc, rc_entries);
+		}
 	}
 	compinited[type] = 1;
 }
@@ -770,6 +593,10 @@ rump_component_init(enum rump_component_type type)
 /*
  * Initialize a module which has already been loaded and linked
  * with dlopen(). This is fundamentally the same as a builtin module.
+ *
+ * XXX: this interface does not really work in the RUMP_USE_CTOR case,
+ * but I'm not sure it's anything to cry about.  In feeling blue,
+ * things could somehow be handled via modinfo_boot_chain.
  */
 int
 rump_module_init(const struct modinfo * const *mip, size_t nmodinfo)
@@ -821,120 +648,6 @@ rump_kernelfsym_load(void *symtab, uint64_t symsize,
 	return 0;
 }
 
-static int
-rump_hyp_syscall(int num, void *arg, long *retval)
-{
-	register_t regrv[2] = {0, 0};
-	struct lwp *l;
-	struct sysent *callp;
-	int rv;
-
-	if (__predict_false(num >= SYS_NSYSENT))
-		return ENOSYS;
-
-	callp = rump_sysent + num;
-	l = curlwp;
-	rv = sy_call(callp, l, (void *)arg, regrv);
-	retval[0] = regrv[0];
-	retval[1] = regrv[1];
-
-	return rv;
-}
-
-static int
-rump_hyp_rfork(void *priv, int flags, const char *comm)
-{
-	struct vmspace *newspace;
-	struct proc *p;
-	int error;
-
-	if ((error = rump_lwproc_rfork(flags)) != 0)
-		return error;
-
-	/*
-	 * Since it's a proxy proc, adjust the vmspace.
-	 * Refcount will eternally be 1.
-	 */
-	p = curproc;
-	newspace = kmem_zalloc(sizeof(*newspace), KM_SLEEP);
-	newspace->vm_refcnt = 1;
-	newspace->vm_map.pmap = priv;
-	KASSERT(p->p_vmspace == vmspace_kernel());
-	p->p_vmspace = newspace;
-	if (comm)
-		strlcpy(p->p_comm, comm, sizeof(p->p_comm));
-
-	return 0;
-}
-
-/*
- * Order all lwps in a process to exit.  does *not* wait for them to drain.
- */
-static void
-rump_hyp_lwpexit(void)
-{
-	struct proc *p = curproc;
-	uint64_t where;
-	struct lwp *l;
-
-	mutex_enter(p->p_lock);
-	/*
-	 * First pass: mark all lwps in the process with LW_RUMP_QEXIT
-	 * so that they know they should exit.
-	 */
-	LIST_FOREACH(l, &p->p_lwps, l_sibling) {
-		if (l == curlwp)
-			continue;
-		l->l_flag |= LW_RUMP_QEXIT;
-	}
-	mutex_exit(p->p_lock);
-
-	/*
-	 * Next, make sure everyone on all CPUs sees our status
-	 * update.  This keeps threads inside cv_wait() and makes
-	 * sure we don't access a stale cv pointer later when
-	 * we wake up the threads.
-	 */
-
-	where = xc_broadcast(0, (xcfunc_t)nullop, NULL, NULL);
-	xc_wait(where);
-
-	/*
-	 * Ok, all lwps are either:
-	 *  1) not in the cv code
-	 *  2) sleeping on l->l_private
-	 *  3) sleeping on p->p_waitcv
-	 *
-	 * Either way, l_private is stable until we set PS_RUMP_LWPEXIT
-	 * in p->p_sflag.
-	 */
-
-	mutex_enter(p->p_lock);
-	LIST_FOREACH(l, &p->p_lwps, l_sibling) {
-		if (l->l_private)
-			cv_broadcast(l->l_private);
-	}
-	p->p_sflag |= PS_RUMP_LWPEXIT;
-	cv_broadcast(&p->p_waitcv);
-	mutex_exit(p->p_lock);
-}
-
-/*
- * Notify process that all threads have been drained and exec is complete.
- */
-static void
-rump_hyp_execnotify(const char *comm)
-{
-	struct proc *p = curproc;
-
-	fd_closeexec();
-	mutex_enter(p->p_lock);
-	KASSERT(p->p_nlwps == 1 && p->p_sflag & PS_RUMP_LWPEXIT);
-	p->p_sflag &= ~PS_RUMP_LWPEXIT;
-	mutex_exit(p->p_lock);
-	strlcpy(p->p_comm, comm, sizeof(p->p_comm));
-}
-
 int
 rump_boot_gethowto()
 {
@@ -955,6 +668,8 @@ rump_getversion(void)
 
 	return __NetBSD_Version__;
 }
+/* compat */
+__strong_alias(rump_pub_getversion,rump_getversion);
 
 /*
  * Note: may be called unscheduled.  Not fully safe since no locking
@@ -1011,6 +726,7 @@ rump_syscall(int num, void *data, size_t dlen, register_t *retval)
 	struct proc *p;
 	struct emul *e;
 	struct sysent *callp;
+	const int *etrans = NULL;
 	int rv;
 
 	rump_schedule();
@@ -1021,8 +737,63 @@ rump_syscall(int num, void *data, size_t dlen, register_t *retval)
 #endif
 	callp = e->e_sysent + num;
 
-	rv = sy_call(callp, curlwp, data, retval);
+	rv = sy_invoke(callp, curlwp, data, retval, num);
+
+	/*
+	 * I hope that (!__HAVE_MINIMAL_EMUL || __HAVE_SYSCALL_INTERN) is
+	 * an invariant ...
+	 */
+#if !defined(__HAVE_MINIMAL_EMUL)
+	etrans = e->e_errno;
+#elif defined(__HAVE_SYSCALL_INTERN)
+	etrans = p->p_emuldata;
+#endif
+
+	if (etrans) {
+		rv = etrans[rv];
+		/*
+		 * XXX: small hack since Linux etrans vectors on some
+		 * archs contain negative errnos, but rump_syscalls
+		 * uses the -1 + errno ABI.  Note that these
+		 * negative values are always the result of translation,
+		 * otherwise the above translation method would not
+		 * work very well.
+		 */
+		if (rv < 0)
+			rv = -rv;
+	}
 	rump_unschedule();
 
 	return rv;
+}
+
+void
+rump_syscall_boot_establish(const struct rump_onesyscall *calls, size_t ncall)
+{
+	struct sysent *callp;
+	size_t i;
+
+	for (i = 0; i < ncall; i++) {
+		callp = rump_sysent + calls[i].ros_num;
+		KASSERT(bootlwp != NULL
+		    && callp->sy_call == (sy_call_t *)enosys);
+		callp->sy_call = calls[i].ros_handler;
+	}
+}
+
+struct rump_boot_etfs *ebstart;
+void
+rump_boot_etfs_register(struct rump_boot_etfs *eb)
+{
+
+	/*
+	 * Could use atomics, but, since caller would need to synchronize
+	 * against calling rump_init() anyway, easier to just specify the
+	 * interface as "caller serializes".  This solve-by-specification
+	 * approach avoids the grey area of using atomics before rump_init()
+	 * runs.
+	 */
+	eb->_eb_next = ebstart;
+	eb->eb_status = -1;
+	ebstart = eb;
 }

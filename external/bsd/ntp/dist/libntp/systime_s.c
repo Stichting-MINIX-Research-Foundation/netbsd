@@ -1,4 +1,4 @@
-/*	$NetBSD: systime_s.c,v 1.1.1.1 2009/12/13 16:55:06 kardel Exp $	*/
+/*	$NetBSD: systime_s.c,v 1.3 2015/07/10 14:20:32 christos Exp $	*/
 
 #define SIM
 #include "systime.c"

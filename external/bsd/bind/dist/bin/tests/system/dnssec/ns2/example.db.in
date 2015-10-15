@@ -1,4 +1,4 @@
-; Copyright (C) 2004, 2007-2012  Internet Systems Consortium, Inc. ("ISC")
+; Copyright (C) 2004, 2007-2014  Internet Systems Consortium, Inc. ("ISC")
 ; Copyright (C) 2000-2002  Internet Software Consortium.
 ;
 ; Permission to use, copy, modify, and/or distribute this software for any
@@ -54,8 +54,8 @@ dname2			DNAME	dname2-target
 foo.dname2-target	TXT	"testing dname"
 
 ; A secure subdomain
-secure			NS	ns.secure
-ns.secure		A	10.53.0.3
+secure			NS	ns3.secure
+ns3.secure		A	10.53.0.3
 
 ; An insecure subdomain
 insecure		NS	ns.insecure
@@ -97,6 +97,12 @@ ns.nsec3-unknown	A	10.53.0.3
 
 optout-unknown		NS	ns.optout-unknown
 ns.optout-unknown	A	10.53.0.3
+
+dnskey-unknown		NS	ns.dnskey-unknown
+ns.dnskey-unknown	A	10.53.0.3
+
+dnskey-nsec3-unknown	NS	ns.dnskey-nsec3-unknown
+ns.dnskey-nsec3-unknown	A	10.53.0.3
 
 multiple		NS	ns.multiple
 ns.multiple		A	10.53.0.3
@@ -147,3 +153,6 @@ NS.LOWER		A	10.53.0.3
 
 expiring                 NS      ns.expiring
 ns.expiring              A       10.53.0.3
+
+future			NS	ns.future
+ns.future		A	10.53.0.3

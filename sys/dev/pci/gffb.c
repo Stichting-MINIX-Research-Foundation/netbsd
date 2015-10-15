@@ -1,4 +1,4 @@
-/*	$NetBSD: gffb.c,v 1.7 2013/10/23 13:15:47 macallan Exp $	*/
+/*	$NetBSD: gffb.c,v 1.10 2015/09/16 16:52:54 macallan Exp $	*/
 
 /*
  * Copyright (c) 2013 Michael Lorenz
@@ -35,7 +35,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: gffb.c,v 1.7 2013/10/23 13:15:47 macallan Exp $");
+__KERNEL_RCSID(0, "$NetBSD: gffb.c,v 1.10 2015/09/16 16:52:54 macallan Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -181,7 +181,7 @@ gffb_attach(device_t parent, device_t self, void *aux)
 	struct wsemuldisplaydev_attach_args aa;
 	prop_dictionary_t	dict;
 	unsigned long		defattr;
-	bool			is_console;
+	bool			is_console = FALSE;
 	int			i, j, f;
 	uint8_t			cmap[768];
 
@@ -246,7 +246,7 @@ gffb_attach(device_t parent, device_t self, void *aux)
 	aprint_normal("%s: %d MB aperture at 0x%08x\n", device_xname(self),
 	    (int)(sc->sc_fbsize >> 20), (uint32_t)sc->sc_fb);
 	aprint_normal_dev(sc->sc_dev, "%d MB video memory\n",
-	    sc->sc_vramsize >> 20);
+	    (int)(sc->sc_vramsize >> 20));
 
 	sc->sc_defaultscreen_descr = (struct wsscreen_descr){
 		"default",
@@ -644,12 +644,11 @@ gffb_putpalreg(struct gffb_softc *sc, uint8_t idx, uint8_t r, uint8_t g,
 static void
 gffb_dma_kickoff(struct gffb_softc *sc)
 {
-	volatile uint8_t scratch;
 
-	if(sc->sc_current != sc->sc_put) {
+	if (sc->sc_current != sc->sc_put) {
 		sc->sc_put = sc->sc_current;
 		membar_sync();
-		scratch = *sc->sc_fbaddr;
+		(void)*sc->sc_fbaddr;
 		GFFB_WRITE_4(GFFB_FIFO_PUT, sc->sc_put);
 		membar_sync();
 	}

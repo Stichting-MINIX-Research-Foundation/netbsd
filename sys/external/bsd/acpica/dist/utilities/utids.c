@@ -1,11 +1,11 @@
 /******************************************************************************
  *
- * Module Name: utids - support for device IDs - HID, UID, CID
+ * Module Name: utids - support for device IDs - HID, UID, CID, SUB, CLS
  *
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -41,8 +41,6 @@
  * POSSIBILITY OF SUCH DAMAGES.
  */
 
-#define __UTIDS_C__
-
 #include "acpi.h"
 #include "accommon.h"
 #include "acinterp.h"
@@ -73,10 +71,10 @@
 ACPI_STATUS
 AcpiUtExecute_HID (
     ACPI_NAMESPACE_NODE     *DeviceNode,
-    ACPI_DEVICE_ID          **ReturnId)
+    ACPI_PNP_DEVICE_ID      **ReturnId)
 {
     ACPI_OPERAND_OBJECT     *ObjDesc;
-    ACPI_DEVICE_ID          *Hid;
+    ACPI_PNP_DEVICE_ID      *Hid;
     UINT32                  Length;
     ACPI_STATUS             Status;
 
@@ -104,16 +102,16 @@ AcpiUtExecute_HID (
 
     /* Allocate a buffer for the HID */
 
-    Hid = ACPI_ALLOCATE_ZEROED (sizeof (ACPI_DEVICE_ID) + (ACPI_SIZE) Length);
+    Hid = ACPI_ALLOCATE_ZEROED (sizeof (ACPI_PNP_DEVICE_ID) + (ACPI_SIZE) Length);
     if (!Hid)
     {
         Status = AE_NO_MEMORY;
         goto Cleanup;
     }
 
-    /* Area for the string starts after DEVICE_ID struct */
+    /* Area for the string starts after PNP_DEVICE_ID struct */
 
-    Hid->String = ACPI_ADD_PTR (char, Hid, sizeof (ACPI_DEVICE_ID));
+    Hid->String = ACPI_ADD_PTR (char, Hid, sizeof (ACPI_PNP_DEVICE_ID));
 
     /* Convert EISAID to a string or simply copy existing string */
 
@@ -123,11 +121,82 @@ AcpiUtExecute_HID (
     }
     else
     {
-        ACPI_STRCPY (Hid->String, ObjDesc->String.Pointer);
+        strcpy (Hid->String, ObjDesc->String.Pointer);
     }
 
     Hid->Length = Length;
     *ReturnId = Hid;
+
+
+Cleanup:
+
+    /* On exit, we must delete the return object */
+
+    AcpiUtRemoveReference (ObjDesc);
+    return_ACPI_STATUS (Status);
+}
+
+
+/*******************************************************************************
+ *
+ * FUNCTION:    AcpiUtExecute_SUB
+ *
+ * PARAMETERS:  DeviceNode          - Node for the device
+ *              ReturnId            - Where the _SUB is returned
+ *
+ * RETURN:      Status
+ *
+ * DESCRIPTION: Executes the _SUB control method that returns the subsystem
+ *              ID of the device. The _SUB value is always a string containing
+ *              either a valid PNP or ACPI ID.
+ *
+ *              NOTE: Internal function, no parameter validation
+ *
+ ******************************************************************************/
+
+ACPI_STATUS
+AcpiUtExecute_SUB (
+    ACPI_NAMESPACE_NODE     *DeviceNode,
+    ACPI_PNP_DEVICE_ID      **ReturnId)
+{
+    ACPI_OPERAND_OBJECT     *ObjDesc;
+    ACPI_PNP_DEVICE_ID      *Sub;
+    UINT32                  Length;
+    ACPI_STATUS             Status;
+
+
+    ACPI_FUNCTION_TRACE (UtExecute_SUB);
+
+
+    Status = AcpiUtEvaluateObject (DeviceNode, METHOD_NAME__SUB,
+                ACPI_BTYPE_STRING, &ObjDesc);
+    if (ACPI_FAILURE (Status))
+    {
+        return_ACPI_STATUS (Status);
+    }
+
+    /* Get the size of the String to be returned, includes null terminator */
+
+    Length = ObjDesc->String.Length + 1;
+
+    /* Allocate a buffer for the SUB */
+
+    Sub = ACPI_ALLOCATE_ZEROED (sizeof (ACPI_PNP_DEVICE_ID) + (ACPI_SIZE) Length);
+    if (!Sub)
+    {
+        Status = AE_NO_MEMORY;
+        goto Cleanup;
+    }
+
+    /* Area for the string starts after PNP_DEVICE_ID struct */
+
+    Sub->String = ACPI_ADD_PTR (char, Sub, sizeof (ACPI_PNP_DEVICE_ID));
+
+    /* Simply copy existing string */
+
+    strcpy (Sub->String, ObjDesc->String.Pointer);
+    Sub->Length = Length;
+    *ReturnId = Sub;
 
 
 Cleanup:
@@ -160,10 +229,10 @@ Cleanup:
 ACPI_STATUS
 AcpiUtExecute_UID (
     ACPI_NAMESPACE_NODE     *DeviceNode,
-    ACPI_DEVICE_ID          **ReturnId)
+    ACPI_PNP_DEVICE_ID      **ReturnId)
 {
     ACPI_OPERAND_OBJECT     *ObjDesc;
-    ACPI_DEVICE_ID          *Uid;
+    ACPI_PNP_DEVICE_ID      *Uid;
     UINT32                  Length;
     ACPI_STATUS             Status;
 
@@ -191,16 +260,16 @@ AcpiUtExecute_UID (
 
     /* Allocate a buffer for the UID */
 
-    Uid = ACPI_ALLOCATE_ZEROED (sizeof (ACPI_DEVICE_ID) + (ACPI_SIZE) Length);
+    Uid = ACPI_ALLOCATE_ZEROED (sizeof (ACPI_PNP_DEVICE_ID) + (ACPI_SIZE) Length);
     if (!Uid)
     {
         Status = AE_NO_MEMORY;
         goto Cleanup;
     }
 
-    /* Area for the string starts after DEVICE_ID struct */
+    /* Area for the string starts after PNP_DEVICE_ID struct */
 
-    Uid->String = ACPI_ADD_PTR (char, Uid, sizeof (ACPI_DEVICE_ID));
+    Uid->String = ACPI_ADD_PTR (char, Uid, sizeof (ACPI_PNP_DEVICE_ID));
 
     /* Convert an Integer to string, or just copy an existing string */
 
@@ -210,7 +279,7 @@ AcpiUtExecute_UID (
     }
     else
     {
-        ACPI_STRCPY (Uid->String, ObjDesc->String.Pointer);
+        strcpy (Uid->String, ObjDesc->String.Pointer);
     }
 
     Uid->Length = Length;
@@ -252,11 +321,11 @@ Cleanup:
 ACPI_STATUS
 AcpiUtExecute_CID (
     ACPI_NAMESPACE_NODE     *DeviceNode,
-    ACPI_DEVICE_ID_LIST     **ReturnCidList)
+    ACPI_PNP_DEVICE_ID_LIST **ReturnCidList)
 {
     ACPI_OPERAND_OBJECT     **CidObjects;
     ACPI_OPERAND_OBJECT     *ObjDesc;
-    ACPI_DEVICE_ID_LIST     *CidList;
+    ACPI_PNP_DEVICE_ID_LIST *CidList;
     char                    *NextIdString;
     UINT32                  StringAreaSize;
     UINT32                  Length;
@@ -304,14 +373,17 @@ AcpiUtExecute_CID (
         switch (CidObjects[i]->Common.Type)
         {
         case ACPI_TYPE_INTEGER:
+
             StringAreaSize += ACPI_EISAID_STRING_SIZE;
             break;
 
         case ACPI_TYPE_STRING:
+
             StringAreaSize += CidObjects[i]->String.Length + 1;
             break;
 
         default:
+
             Status = AE_TYPE;
             goto Cleanup;
         }
@@ -320,11 +392,11 @@ AcpiUtExecute_CID (
     /*
      * Now that we know the length of the CIDs, allocate return buffer:
      * 1) Size of the base structure +
-     * 2) Size of the CID DEVICE_ID array +
+     * 2) Size of the CID PNP_DEVICE_ID array +
      * 3) Size of the actual CID strings
      */
-    CidListSize = sizeof (ACPI_DEVICE_ID_LIST) +
-        ((Count - 1) * sizeof (ACPI_DEVICE_ID)) +
+    CidListSize = sizeof (ACPI_PNP_DEVICE_ID_LIST) +
+        ((Count - 1) * sizeof (ACPI_PNP_DEVICE_ID)) +
         StringAreaSize;
 
     CidList = ACPI_ALLOCATE_ZEROED (CidListSize);
@@ -334,10 +406,10 @@ AcpiUtExecute_CID (
         goto Cleanup;
     }
 
-    /* Area for CID strings starts after the CID DEVICE_ID array */
+    /* Area for CID strings starts after the CID PNP_DEVICE_ID array */
 
     NextIdString = ACPI_CAST_PTR (char, CidList->Ids) +
-        ((ACPI_SIZE) Count * sizeof (ACPI_DEVICE_ID));
+        ((ACPI_SIZE) Count * sizeof (ACPI_PNP_DEVICE_ID));
 
     /* Copy/convert the CIDs to the return buffer */
 
@@ -354,7 +426,7 @@ AcpiUtExecute_CID (
         {
             /* Copy the String CID from the returned object */
 
-            ACPI_STRCPY (NextIdString, CidObjects[i]->String.Pointer);
+            strcpy (NextIdString, CidObjects[i]->String.Pointer);
             Length = CidObjects[i]->String.Length + 1;
         }
 
@@ -378,3 +450,96 @@ Cleanup:
     return_ACPI_STATUS (Status);
 }
 
+
+/*******************************************************************************
+ *
+ * FUNCTION:    AcpiUtExecute_CLS
+ *
+ * PARAMETERS:  DeviceNode          - Node for the device
+ *              ReturnId            - Where the _CLS is returned
+ *
+ * RETURN:      Status
+ *
+ * DESCRIPTION: Executes the _CLS control method that returns PCI-defined
+ *              class code of the device. The _CLS value is always a package
+ *              containing PCI class information as a list of integers.
+ *              The returned string has format "BBSSPP", where:
+ *                BB = Base-class code
+ *                SS = Sub-class code
+ *                PP = Programming Interface code
+ *
+ ******************************************************************************/
+
+ACPI_STATUS
+AcpiUtExecute_CLS (
+    ACPI_NAMESPACE_NODE     *DeviceNode,
+    ACPI_PNP_DEVICE_ID      **ReturnId)
+{
+    ACPI_OPERAND_OBJECT     *ObjDesc;
+    ACPI_OPERAND_OBJECT     **ClsObjects;
+    UINT32                  Count;
+    ACPI_PNP_DEVICE_ID      *Cls;
+    UINT32                  Length;
+    ACPI_STATUS             Status;
+    UINT8                   ClassCode[3] = {0, 0, 0};
+
+
+    ACPI_FUNCTION_TRACE (UtExecute_CLS);
+
+
+    Status = AcpiUtEvaluateObject (DeviceNode, METHOD_NAME__CLS,
+                ACPI_BTYPE_PACKAGE, &ObjDesc);
+    if (ACPI_FAILURE (Status))
+    {
+        return_ACPI_STATUS (Status);
+    }
+
+    /* Get the size of the String to be returned, includes null terminator */
+
+    Length = ACPI_PCICLS_STRING_SIZE;
+    ClsObjects = ObjDesc->Package.Elements;
+    Count = ObjDesc->Package.Count;
+
+    if (ObjDesc->Common.Type == ACPI_TYPE_PACKAGE)
+    {
+        if (Count > 0 && ClsObjects[0]->Common.Type == ACPI_TYPE_INTEGER)
+        {
+            ClassCode[0] = (UINT8) ClsObjects[0]->Integer.Value;
+        }
+        if (Count > 1 && ClsObjects[1]->Common.Type == ACPI_TYPE_INTEGER)
+        {
+            ClassCode[1] = (UINT8) ClsObjects[1]->Integer.Value;
+        }
+        if (Count > 2 && ClsObjects[2]->Common.Type == ACPI_TYPE_INTEGER)
+        {
+            ClassCode[2] = (UINT8) ClsObjects[2]->Integer.Value;
+        }
+    }
+
+    /* Allocate a buffer for the CLS */
+
+    Cls = ACPI_ALLOCATE_ZEROED (sizeof (ACPI_PNP_DEVICE_ID) + (ACPI_SIZE) Length);
+    if (!Cls)
+    {
+        Status = AE_NO_MEMORY;
+        goto Cleanup;
+    }
+
+    /* Area for the string starts after PNP_DEVICE_ID struct */
+
+    Cls->String = ACPI_ADD_PTR (char, Cls, sizeof (ACPI_PNP_DEVICE_ID));
+
+    /* Simply copy existing string */
+
+    AcpiExPciClsToString (Cls->String, ClassCode);
+    Cls->Length = Length;
+    *ReturnId = Cls;
+
+
+Cleanup:
+
+    /* On exit, we must delete the return object */
+
+    AcpiUtRemoveReference (ObjDesc);
+    return_ACPI_STATUS (Status);
+}

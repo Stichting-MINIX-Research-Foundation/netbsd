@@ -1,4 +1,4 @@
-/*	$NetBSD: scsivar.h,v 1.1 2013/01/05 17:44:24 tsutsui Exp $	*/
+/*	$NetBSD: scsivar.h,v 1.3 2015/02/14 05:03:09 tsutsui Exp $	*/
 
 /*
  * Copyright (c) 1992 OMRON Corporation.
@@ -71,17 +71,19 @@
  */
 
 struct	scsi_softc {
-	struct	hp_ctlr *sc_hc;
-	u_char	*sc_buf;				/* Data Buffer Pointor*/
-	u_char	*sc_cdb;				/* CDB Buffer Pointor */
+	struct	scsidevice *sc_spc;
+	int	sc_ctlr;
+
+	uint8_t	*sc_buf;				/* Data Buffer Pointor*/
+	uint8_t	*sc_cdb;				/* CDB Buffer Pointor */
 	volatile int *sc_lock;				/* Lock Flag addres   */
 	int	sc_flags;				/* SPC Status Flags   */
 	int	sc_phase;				/* Current SCSI Phase */
 	int	sc_target;				/* Current Target ID  */
 	int	sc_len;					/* Buffer Length      */
 	int	sc_cdblen;				/* CDB length         */
-	u_char	sc_stat;
-	u_char	sc_msg[7];
+	uint8_t	sc_stat;
+	uint8_t	sc_msg[7];
 };
 
 

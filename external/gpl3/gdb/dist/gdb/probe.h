@@ -1,6 +1,6 @@
 /* Generic SDT probe support for GDB.
 
-   Copyright (C) 2012-2013 Free Software Foundation, Inc.
+   Copyright (C) 2012-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -64,20 +64,29 @@ struct probe_ops
 
     void (*get_probes) (VEC (probe_p) **probes, struct objfile *objfile);
 
-    /* Function used to relocate addresses from PROBE according to some DELTA
-       provided.  */
+    /* Compute the probe's relocated address.  OBJFILE is the objfile
+       in which the probe originated.  */
 
-    void (*relocate) (struct probe *probe, CORE_ADDR delta);
+    CORE_ADDR (*get_probe_address) (struct probe *probe,
+				    struct objfile *objfile);
 
     /* Return the number of arguments of PROBE.  */
 
-    unsigned (*get_probe_argument_count) (struct probe *probe);
+    unsigned (*get_probe_argument_count) (struct probe *probe,
+					  struct frame_info *frame);
+
+    /* Return 1 if the probe interface can evaluate the arguments of probe
+       PROBE, zero otherwise.  See the comments on
+       sym_probe_fns:can_evaluate_probe_arguments for more details.  */
+
+    int (*can_evaluate_probe_arguments) (struct probe *probe);
 
     /* Evaluate the Nth argument from the PROBE, returning a value
        corresponding to it.  The argument number is represented N.  */
 
     struct value *(*evaluate_probe_argument) (struct probe *probe,
-					      unsigned n);
+					      unsigned n,
+					      struct frame_info *frame);
 
     /* Compile the Nth argument of the PROBE to an agent expression.
        The argument number is represented by N.  */
@@ -87,15 +96,17 @@ struct probe_ops
 
     /* Set the semaphore associated with the PROBE.  This function only makes
        sense if the probe has a concept of semaphore associated to a
-       probe.  */
+       probe, otherwise it can be set to NULL.  */
 
-    void (*set_semaphore) (struct probe *probe, struct gdbarch *gdbarch);
+    void (*set_semaphore) (struct probe *probe, struct objfile *objfile,
+			   struct gdbarch *gdbarch);
 
     /* Clear the semaphore associated with the PROBE.  This function only
        makes sense if the probe has a concept of semaphore associated to
-       a probe.  */
+       a probe, otherwise it can be set to NULL.  */
 
-    void (*clear_semaphore) (struct probe *probe, struct gdbarch *gdbarch);
+    void (*clear_semaphore) (struct probe *probe, struct objfile *objfile,
+			     struct gdbarch *gdbarch);
 
     /* Function called to destroy PROBE's specific data.  This function
        shall not free PROBE itself.  */
@@ -158,10 +169,8 @@ struct probe
     /* The operations associated with this probe.  */
     const struct probe_ops *pops;
 
-    /* The objfile which contains this probe.  Even if the probe is also
-       present in a separate debug objfile, this variable always points to
-       the non-separate debug objfile.  */
-    struct objfile *objfile;
+    /* The probe's architecture.  */
+    struct gdbarch *arch;
 
     /* The name of the probe.  */
     const char *name;
@@ -170,13 +179,29 @@ struct probe
        the objfile which contains the probe.  */
     const char *provider;
 
-    /* The address where the probe is inserted.  */
+    /* The address where the probe is inserted, relative to
+       SECT_OFF_TEXT.  */
     CORE_ADDR address;
   };
 
+/* A bound probe holds a pointer to a probe and a pointer to the
+   probe's defining objfile.  This is needed because probes are
+   independent of the program space and thus require relocation at
+   their point of use.  */
+
+struct bound_probe
+  {
+    /* The probe.  */
+
+    struct probe *probe;
+
+    /* The objfile in which the probe originated.  */
+
+    struct objfile *objfile;
+  };
+
 /* A helper for linespec that decodes a probe specification.  It returns a
-   symtabs_and_lines object and updates *ARGPTR or throws an error.  The
-   argument PTYPE specifies the type of the probe(s) to be parsed.  */
+   symtabs_and_lines object and updates *ARGPTR or throws an error.  */
 
 extern struct symtabs_and_lines parse_probes (char **argptr,
 					      struct linespec_result *canon);
@@ -186,14 +211,15 @@ extern struct symtabs_and_lines parse_probes (char **argptr,
 
 extern void register_probe_ops (struct probe *probe);
 
-/* Given a PC, find an associated probe with type PTYPE.  If a probe is
-   found, return it.  If no probe is found, return NULL.  */
+/* Given a PC, find an associated probe.  If a probe is found, return
+   it.  If no probe is found, return a bound probe whose fields are
+   both NULL.  */
 
-extern struct probe *find_probe_by_pc (CORE_ADDR pc);
+extern struct bound_probe find_probe_by_pc (CORE_ADDR pc);
 
-/* Search OBJFILE for a probe with the given PROVIDER, NAME and PTYPE.
-   Return a VEC of all probes that were found.  If no matching probe
-   is found, return NULL.  The caller must free the VEC.  */
+/* Search OBJFILE for a probe with the given PROVIDER, NAME.  Return a
+   VEC of all probes that were found.  If no matching probe is found,
+   return NULL.  The caller must free the VEC.  */
 
 extern VEC (probe_p) *find_probes_in_objfile (struct objfile *objfile,
 					      const char *provider,
@@ -204,7 +230,7 @@ extern VEC (probe_p) *find_probes_in_objfile (struct objfile *objfile,
    function that can be used by the probe backends to print their
    `info probe TYPE'.  */
 
-extern void info_probes_for_ops (char *arg, int from_tty,
+extern void info_probes_for_ops (const char *arg, int from_tty,
 				 const struct probe_ops *pops);
 
 /* Return the `cmd_list_element' associated with the `info probes' command,
@@ -213,6 +239,30 @@ extern void info_probes_for_ops (char *arg, int from_tty,
    associated with `info probes', without having it registered yet.  */
 
 extern struct cmd_list_element **info_probes_cmdlist_get (void);
+
+/* Compute the probe's relocated address.  OBJFILE is the objfile in
+   which the probe originated.  */
+
+extern CORE_ADDR get_probe_address (struct probe *probe,
+				    struct objfile *objfile);
+
+/* Return the argument count of the specified probe.  */
+
+extern unsigned get_probe_argument_count (struct probe *probe,
+					  struct frame_info *frame);
+
+/* Return 1 if the probe interface associated with PROBE can evaluate
+   arguments, zero otherwise.  See the comments on the definition of
+   sym_probe_fns:can_evaluate_probe_arguments for more details.  */
+
+extern int can_evaluate_probe_arguments (struct probe *probe);
+
+/* Evaluate argument N of the specified probe.  N must be between 0
+   inclusive and get_probe_argument_count exclusive.  */
+
+extern struct value *evaluate_probe_argument (struct probe *probe,
+					      unsigned n,
+					      struct frame_info *frame);
 
 /* A convenience function that finds a probe at the PC in FRAME and
    evaluates argument N, with 0 <= N < number_of_args.  If there is no

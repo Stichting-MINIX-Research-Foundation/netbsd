@@ -1,4 +1,4 @@
-/*	$NetBSD: if_cas.c,v 1.20 2013/09/13 20:56:17 martin Exp $	*/
+/*	$NetBSD: if_cas.c,v 1.23 2015/04/13 16:33:25 riastradh Exp $	*/
 /*	$OpenBSD: if_cas.c,v 1.29 2009/11/29 16:19:38 kettenis Exp $	*/
 
 /*
@@ -44,7 +44,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_cas.c,v 1.20 2013/09/13 20:56:17 martin Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_cas.c,v 1.23 2015/04/13 16:33:25 riastradh Exp $");
 
 #ifndef _MODULE
 #include "opt_inet.h"
@@ -83,7 +83,7 @@ __KERNEL_RCSID(0, "$NetBSD: if_cas.c,v 1.20 2013/09/13 20:56:17 martin Exp $");
 
 #include <sys/bus.h>
 #include <sys/intr.h>
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 
 #include <dev/mii/mii.h>
 #include <dev/mii/miivar.h>
@@ -612,7 +612,7 @@ cas_config(struct cas_softc *sc, const uint8_t *enaddr)
 	ether_ifattach(ifp, enaddr);
 
 	rnd_attach_source(&sc->rnd_source, device_xname(sc->sc_dev),
-			  RND_TYPE_NET, 0);
+			  RND_TYPE_NET, RND_FLAG_DEFAULT);
 
 	evcnt_attach_dynamic(&sc->sc_ev_intr, EVCNT_TYPE_INTR,
 	    NULL, device_xname(sc->sc_dev), "interrupts");
@@ -1819,10 +1819,11 @@ cas_estintr(struct cas_softc *sc, int what)
 	bus_space_tag_t t = sc->sc_memt;
 	bus_space_handle_t h = sc->sc_memh;
 	const char *intrstr = NULL;
+	char intrbuf[PCI_INTRSTR_LEN];
 
 	/* PCI interrupts */
 	if (what & CAS_INTR_PCI) {
-		intrstr = pci_intr_string(sc->sc_pc, sc->sc_handle);
+		intrstr = pci_intr_string(sc->sc_pc, sc->sc_handle, intrbuf, sizeof(intrbuf));
 		sc->sc_ih = pci_intr_establish(sc->sc_pc, sc->sc_handle,
 		    IPL_NET, cas_intr, sc);
 		if (sc->sc_ih == NULL) {

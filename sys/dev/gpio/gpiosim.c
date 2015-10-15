@@ -1,4 +1,4 @@
-/* $NetBSD: gpiosim.c,v 1.15 2013/05/20 15:48:25 mbalmer Exp $ */
+/* $NetBSD: gpiosim.c,v 1.18 2015/08/20 14:40:18 christos Exp $ */
 /*      $OpenBSD: gpiosim.c,v 1.1 2008/11/23 18:46:49 mbalmer Exp $	*/
 
 /*
@@ -30,6 +30,9 @@
 #include <sys/ioccom.h>
 #include <dev/gpio/gpiovar.h>
 
+#include "gpiosim.h"
+#include "ioconf.h"
+
 #define	GPIOSIM_NPINS	64
 
 struct gpiosim_softc {
@@ -43,7 +46,6 @@ struct gpiosim_softc {
 };
 
 static int	gpiosim_match(device_t, cfdata_t, void *);
-void		gpiosimattach(int);
 static void	gpiosim_attach(device_t, device_t, void *);
 static int	gpiosim_detach(device_t, int);
 static int	gpiosim_sysctl(SYSCTLFN_PROTO);
@@ -64,7 +66,7 @@ gpiosim_match(device_t parent, cfdata_t match, void *aux)
 }
 
 void
-gpiosimattach(int num)
+gpiosimattach(int num __unused)
 {
 	cfdata_t cf;
 	int n, err;
@@ -73,7 +75,7 @@ gpiosimattach(int num)
 	if (err)
 		printf("%s: unable to register cfattach\n", gpiosim_cd.cd_name);
 
-	for (n = 0; n < num; n++) {
+	for (n = 0; n < NGPIOSIM; n++) {
 		cf = malloc(sizeof(*cf), M_DEVBUF, M_WAITOK);
 		cf->cf_name = "gpiosim";
 		cf->cf_atname = "gpiosim";
@@ -121,11 +123,6 @@ gpiosim_attach(device_t parent, device_t self, void *aux)
 
 	pmf_device_register(self, NULL, NULL);
 
-	sysctl_createv(NULL, 0, NULL, NULL,
-            CTLFLAG_PERMANENT,
-            CTLTYPE_NODE, "hw", NULL,
-            NULL, 0, NULL, 0,
-            CTL_HW, CTL_EOL);
         sysctl_createv(&sc->sc_log, 0, NULL, &node,
             0,
             CTLTYPE_NODE, device_xname(sc->sc_dev),

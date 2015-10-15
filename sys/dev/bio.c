@@ -1,4 +1,4 @@
-/*	$NetBSD: bio.c,v 1.9 2009/05/07 12:15:33 cegger Exp $ */
+/*	$NetBSD: bio.c,v 1.13 2015/08/20 14:40:17 christos Exp $ */
 /*	$OpenBSD: bio.c,v 1.9 2007/03/20 02:35:55 marco Exp $	*/
 
 /*
@@ -28,7 +28,7 @@
 /* A device controller ioctl tunnelling device.  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: bio.c,v 1.9 2009/05/07 12:15:33 cegger Exp $");
+__KERNEL_RCSID(0, "$NetBSD: bio.c,v 1.13 2015/08/20 14:40:17 christos Exp $");
 
 #include "opt_compat_netbsd.h"
 
@@ -45,6 +45,9 @@ __KERNEL_RCSID(0, "$NetBSD: bio.c,v 1.9 2009/05/07 12:15:33 cegger Exp $");
 #include <sys/kauth.h>
 
 #include <dev/biovar.h>
+#include <dev/sysmon/sysmonvar.h>
+
+#include "ioconf.h"
 
 struct bio_mapping {
 	LIST_ENTRY(bio_mapping) bm_link;
@@ -65,11 +68,19 @@ static int	bio_delegate_ioctl(void *, u_long, void *);
 static struct	bio_mapping *bio_lookup(char *);
 static int	bio_validate(void *);
 
-void	bioattach(int);
-
 const struct cdevsw bio_cdevsw = {
-        bioopen, bioclose, noread, nowrite, bioioctl,
-        nostop, notty, nopoll, nommap, nokqfilter, D_OTHER | D_MPSAFE
+        .d_open = bioopen,
+	.d_close = bioclose,
+	.d_read = noread,
+	.d_write = nowrite,
+	.d_ioctl = bioioctl,
+        .d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_OTHER | D_MPSAFE
 };
 
 
@@ -291,4 +302,65 @@ bio_delegate_ioctl(void *cookie, u_long cmd, void *addr)
 	struct bio_mapping *bm = cookie;
 	
 	return bm->bm_ioctl(bm->bm_dev, cmd, addr);
+}
+
+void
+bio_disk_to_envsys(envsys_data_t *edata, const struct bioc_disk *bd)
+{
+	switch (bd->bd_status) {
+	case BIOC_SDONLINE:
+		edata->value_cur = ENVSYS_DRIVE_ONLINE;
+		edata->state = ENVSYS_SVALID;
+		break;
+	case BIOC_SDOFFLINE:
+		edata->value_cur = ENVSYS_DRIVE_OFFLINE;
+		edata->state = ENVSYS_SCRITICAL;
+		break;
+	default:
+		edata->value_cur = ENVSYS_DRIVE_FAIL;
+		edata->state = ENVSYS_SCRITICAL;
+		break;
+	}
+}
+
+void
+bio_vol_to_envsys(envsys_data_t *edata, const struct bioc_vol *bv)
+{
+	switch (bv->bv_status) {
+	case BIOC_SVOFFLINE:
+		edata->value_cur = ENVSYS_DRIVE_OFFLINE;
+		edata->state = ENVSYS_SCRITICAL;
+		break;
+	case BIOC_SVDEGRADED:
+		edata->value_cur = ENVSYS_DRIVE_PFAIL;
+		edata->state = ENVSYS_SCRITICAL;
+		break;
+	case BIOC_SVBUILDING:
+		edata->value_cur = ENVSYS_DRIVE_BUILD;
+		edata->state = ENVSYS_SVALID;
+		break;
+	case BIOC_SVMIGRATING:
+		edata->value_cur = ENVSYS_DRIVE_MIGRATING;
+		edata->state = ENVSYS_SVALID;
+		break;
+	case BIOC_SVCHECKING:
+		edata->value_cur = ENVSYS_DRIVE_CHECK;
+		edata->state = ENVSYS_SVALID;
+		break;
+	case BIOC_SVREBUILD:
+		edata->value_cur = ENVSYS_DRIVE_REBUILD;
+		edata->state = ENVSYS_SCRITICAL;
+		break;
+	case BIOC_SVSCRUB:
+	case BIOC_SVONLINE:
+		edata->value_cur = ENVSYS_DRIVE_ONLINE;
+		edata->state = ENVSYS_SVALID;
+		break;
+	case BIOC_SVINVALID:
+		/* FALLTHROUGH */
+	default:
+		edata->value_cur = ENVSYS_DRIVE_EMPTY; /* unknown state */
+		edata->state = ENVSYS_SINVALID;
+		break;
+	}
 }

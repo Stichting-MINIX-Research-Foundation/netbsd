@@ -1,4 +1,4 @@
-/*      $NetBSD: if_atmsubr.c,v 1.50 2012/10/11 20:05:50 christos Exp $       */
+/*      $NetBSD: if_atmsubr.c,v 1.54 2015/08/24 22:21:26 pooka Exp $       */
 
 /*
  * Copyright (c) 1996 Charles D. Cranor and Washington University.
@@ -30,12 +30,13 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_atmsubr.c,v 1.50 2012/10/11 20:05:50 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_atmsubr.c,v 1.54 2015/08/24 22:21:26 pooka Exp $");
 
+#ifdef _KERNEL_OPT
 #include "opt_inet.h"
 #include "opt_gateway.h"
 #include "opt_natm.h"
-
+#endif
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -89,13 +90,12 @@ __KERNEL_RCSID(0, "$NetBSD: if_atmsubr.c,v 1.50 2012/10/11 20:05:50 christos Exp
 
 int
 atm_output(struct ifnet *ifp, struct mbuf *m0, const struct sockaddr *dst,
-    struct rtentry *rt0)
+    struct rtentry *rt)
 {
 	uint16_t etype = 0;			/* if using LLC/SNAP */
 	int error = 0, sz;
 	struct atm_pseudohdr atmdst, *ad;
 	struct mbuf *m = m0;
-	struct rtentry *rt;
 	struct atmllc *atmllc;
 	uint32_t atm_flags;
 	ALTQ_DECL(struct altq_pktattr pktattr;)
@@ -109,33 +109,6 @@ atm_output(struct ifnet *ifp, struct mbuf *m0, const struct sockaddr *dst,
 	 */
 	IFQ_CLASSIFY(&ifp->if_snd, m,
 	     (dst != NULL ? dst->sa_family : AF_UNSPEC), &pktattr);
-
-	/*
-	 * check route
-	 */
-	if ((rt = rt0) != NULL) {
-
-		if ((rt->rt_flags & RTF_UP) == 0) { /* route went down! */
-			if ((rt0 = rt = RTALLOC1(dst, 0)) != NULL)
-				rt->rt_refcnt--;
-			else
-				senderr(EHOSTUNREACH);
-		}
-
-		if (rt->rt_flags & RTF_GATEWAY) {
-			if (rt->rt_gwroute == 0)
-				goto lookup;
-			if (((rt = rt->rt_gwroute)->rt_flags & RTF_UP) == 0) {
-				rtfree(rt); rt = rt0;
-			lookup: rt->rt_gwroute = RTALLOC1(rt->rt_gateway, 0);
-				if ((rt = rt->rt_gwroute) == 0)
-					senderr(EHOSTUNREACH);
-			}
-		}
-
-		/* XXX: put RTF_REJECT code here if doing ATMARP */
-
-	}
 
 	/*
 	 * check for non-native ATM traffic   (dst != NULL)
@@ -226,9 +199,8 @@ void
 atm_input(struct ifnet *ifp, struct atm_pseudohdr *ah, struct mbuf *m,
     void *rxhand)
 {
-	struct ifqueue *inq;
+	pktqueue_t *pktq = NULL;
 	uint16_t etype = ETHERTYPE_IP; /* default */
-	int s;
 
 	if ((ifp->if_flags & IFF_UP) == 0) {
 		m_freem(m);
@@ -239,17 +211,31 @@ atm_input(struct ifnet *ifp, struct atm_pseudohdr *ah, struct mbuf *m,
 	if (rxhand) {
 #ifdef NATM
 	  struct natmpcb *npcb = rxhand;
+	  struct ifqueue *inq;
+	  int s, isr = 0;
+
 	  s = splnet();			/* in case 2 atm cards @ diff lvls */
 	  npcb->npcb_inq++;			/* count # in queue */
 	  splx(s);
-	  schednetisr(NETISR_NATM);
+	  isr = NETISR_NATM;
 	  inq = &natmintrq;
 	  m->m_pkthdr.rcvif = rxhand; /* XXX: overload */
+
+	  s = splnet();
+	  if (IF_QFULL(inq)) {
+	  	IF_DROP(inq);
+	  	m_freem(m);
+	  } else {
+	  	IF_ENQUEUE(inq, m);
+	  	schednetisr(isr);
+	  }
+	  splx(s);
 #else
 	  printf("atm_input: NATM detected but not configured in kernel\n");
 	  m_freem(m);
-	  return;
 #endif
+	  return;
+
 	} else {
 	  /*
 	   * handle LLC/SNAP header, if present
@@ -278,12 +264,11 @@ atm_input(struct ifnet *ifp, struct atm_pseudohdr *ah, struct mbuf *m,
 #ifdef INET
 	  case ETHERTYPE_IP:
 #ifdef GATEWAY
-		  if (ipflow_fastforward(m))
+		if (ipflow_fastforward(m))
 			return;
 #endif
-		  schednetisr(NETISR_IP);
-		  inq = &ipintrq;
-		  break;
+		pktq = ip_pktq;
+		break;
 #endif /* INET */
 #ifdef INET6
 	  case ETHERTYPE_IPV6:
@@ -291,9 +276,8 @@ atm_input(struct ifnet *ifp, struct atm_pseudohdr *ah, struct mbuf *m,
 		if (ip6flow_fastforward(&m))
 			return;
 #endif
-		  schednetisr(NETISR_IPV6);
-		  inq = &ip6intrq;
-		  break;
+		pktq = ip6_pktq;
+		break;
 #endif
 	  default:
 	      m_freem(m);
@@ -301,13 +285,9 @@ atm_input(struct ifnet *ifp, struct atm_pseudohdr *ah, struct mbuf *m,
 	  }
 	}
 
-	s = splnet();
-	if (IF_QFULL(inq)) {
-		IF_DROP(inq);
+	if (__predict_false(!pktq_enqueue(pktq, m, 0))) {
 		m_freem(m);
-	} else
-		IF_ENQUEUE(inq, m);
-	splx(s);
+	}
 }
 
 /*

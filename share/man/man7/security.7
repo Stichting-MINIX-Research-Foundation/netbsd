@@ -1,4 +1,4 @@
-.\" $NetBSD: security.7,v 1.10 2013/07/20 21:39:59 wiz Exp $
+.\" $NetBSD: security.7,v 1.13 2015/06/14 16:56:36 christos Exp $
 .\"
 .\" Copyright (c) 2006, 2011 Elad Efrat <elad@NetBSD.org>
 .\" All rights reserved.
@@ -25,7 +25,7 @@
 .\" (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 .\" THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 .\"
-.Dd March 30, 2011
+.Dd June 14, 2015
 .Dt SECURITY 7
 .Os
 .Sh NAME
@@ -131,8 +131,6 @@ executables, the
 implementation introduces randomization to the following memory regions:
 .Pp
 .Bl -enum -compact -offset indent
-.It
-The data segment
 .It
 The stack
 .El
@@ -351,8 +349,7 @@ In
 .Nx
 it is possible to restrict whether user processes are
 allowed to make mappings at the zero address.
-By default, address 0 mappings are restricted
-on the i386 and amd64 architectures.
+By default, address 0 mappings are restricted on all architectures.
 It is however known that some third-party programs
 may not function properly with the restriction.
 Such mappings can be allowed either by using the

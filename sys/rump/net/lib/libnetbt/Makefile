@@ -1,5 +1,7 @@
-#	$NetBSD: Makefile,v 1.3 2013/11/11 00:56:20 joerg Exp $
+#	$NetBSD: Makefile,v 1.5 2015/08/30 08:33:29 christos Exp $
 #
+
+NOLINT=	#defined
 
 .include <bsd.own.mk>
 
@@ -20,7 +22,7 @@ SRCS=	bt_proto.c bt_sysctl.c						\
 COPTS.l2cap_signal.c=	-O0
 .endif
 .endif
-SRCS+=	component.c
+SRCS+=	netbt_component.c
 
 .include <bsd.lib.mk>
 .include <bsd.klinks.mk>

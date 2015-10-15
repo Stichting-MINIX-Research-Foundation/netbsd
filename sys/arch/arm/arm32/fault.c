@@ -1,4 +1,4 @@
-/*	$NetBSD: fault.c,v 1.91 2013/11/06 02:37:58 christos Exp $	*/
+/*	$NetBSD: fault.c,v 1.103 2015/03/02 13:36:36 martin Exp $	*/
 
 /*
  * Copyright 2003 Wasabi Systems, Inc.
@@ -81,7 +81,7 @@
 #include "opt_kgdb.h"
 
 #include <sys/types.h>
-__KERNEL_RCSID(0, "$NetBSD: fault.c,v 1.91 2013/11/06 02:37:58 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: fault.c,v 1.103 2015/03/02 13:36:36 martin Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -99,8 +99,6 @@ __KERNEL_RCSID(0, "$NetBSD: fault.c,v 1.91 2013/11/06 02:37:58 christos Exp $");
 
 #include <arm/locore.h>
 
-#include <arm/arm32/katelib.h>
-
 #include <machine/pcb.h>
 #if defined(DDB) || defined(KGDB)
 #include <machine/db_machdep.h>
@@ -114,7 +112,7 @@ __KERNEL_RCSID(0, "$NetBSD: fault.c,v 1.91 2013/11/06 02:37:58 christos Exp $");
 
 #include <arch/arm/arm/disassem.h>
 #include <arm/arm32/machdep.h>
- 
+
 extern char fusubailout[];
 
 #ifdef DEBUG
@@ -168,8 +166,23 @@ static const struct data_abort data_aborts[] = {
 #endif
 
 static inline void
-call_trapsignal(struct lwp *l, ksiginfo_t *ksi)
+call_trapsignal(struct lwp *l, const struct trapframe *tf, ksiginfo_t *ksi)
 {
+	if (l->l_proc->p_pid == 1 || cpu_printfataltraps) {
+		printf("%d.%d(%s): trap: signo=%d code=%d addr=%p trap=%#x\n",
+		    l->l_proc->p_pid, l->l_lid, l->l_proc->p_comm,
+		    ksi->ksi_signo, ksi->ksi_code, ksi->ksi_addr,
+		    ksi->ksi_trap);
+		printf("r0=%08x r1=%08x r2=%08x r3=%08x\n",
+		    tf->tf_r0, tf->tf_r1, tf->tf_r2, tf->tf_r3);
+		printf("r4=%08x r5=%08x r6=%08x r7=%08x\n",
+		    tf->tf_r4, tf->tf_r5, tf->tf_r6, tf->tf_r7);
+		printf("r8=%08x r9=%08x rA=%08x rB=%08x\n",
+		    tf->tf_r8, tf->tf_r9, tf->tf_r10, tf->tf_r11);
+		printf("ip=%08x sp=%08x lr=%08x pc=%08x spsr=%08x\n",
+		    tf->tf_r12, tf->tf_usr_sp, tf->tf_usr_lr, tf->tf_pc,
+		    tf->tf_spsr);
+	}
 
 	TRAPSIGNAL(l, ksi);
 }
@@ -227,7 +240,8 @@ data_abort_handler(trapframe_t *tf)
 	int error;
 	ksiginfo_t ksi;
 
-	UVMHIST_FUNC(__func__); UVMHIST_CALLED(maphist);
+	UVMHIST_FUNC(__func__);
+	UVMHIST_CALLED(maphist);
 
 	/* Grab FAR/FSR before enabling interrupts */
 	far = cpu_faultaddress();
@@ -237,14 +251,21 @@ data_abort_handler(trapframe_t *tf)
 	ci->ci_data.cpu_ntrap++;
 
 	/* Re-enable interrupts if they were enabled previously */
-	KASSERT(!TRAP_USERMODE(tf) || (tf->tf_spsr & IF32_bits) == 0);
+	KASSERT(!TRAP_USERMODE(tf) || VALID_R15_PSR(tf->tf_pc, tf->tf_spsr));
+#ifdef __NO_FIQ
+	if (__predict_true((tf->tf_spsr & I32_bit) != I32_bit))
+		restore_interrupts(tf->tf_spsr & IF32_bits);
+#else
 	if (__predict_true((tf->tf_spsr & IF32_bits) != IF32_bits))
 		restore_interrupts(tf->tf_spsr & IF32_bits);
+#endif
 
 	/* Get the current lwp structure */
 
-	UVMHIST_LOG(maphist, " (pc=0x%x, l=0x%x, far=0x%x, fsr=0x%x)",
-	    tf->tf_pc, l, far, fsr);
+	UVMHIST_LOG(maphist, " (l=%#x, far=%#x, fsr=%#x",
+	    l, far, fsr, 0);
+	UVMHIST_LOG(maphist, "  tf=%#x, pc=%#x)",
+	    tf, tf->tf_pc, 0, 0);
 
 	/* Data abort came from user mode? */
 	bool user = (TRAP_USERMODE(tf) != 0);
@@ -300,7 +321,7 @@ data_abort_handler(trapframe_t *tf)
 	 * further down if we have to decode the current instruction.
 	 */
 #ifdef THUMB_CODE
-	/* 
+	/*
 	 * XXX: It would be nice to be able to support Thumb in the kernel
 	 * at some point.
 	 */
@@ -360,7 +381,7 @@ data_abort_handler(trapframe_t *tf)
 	if (!user && (va >= VM_MIN_KERNEL_ADDRESS ||
 	    (va < VM_MIN_ADDRESS && vector_page == ARM_VECTORS_LOW)) &&
 	    __predict_true((pcb->pcb_onfault == NULL ||
-	     (ReadWord(tf->tf_pc) & 0x05200000) != 0x04200000))) {
+	     (read_insn(tf->tf_pc, false) & 0x05200000) != 0x04200000))) {
 		map = kernel_map;
 
 		/* Was the fault due to the FPE/IPKDB ? */
@@ -385,24 +406,25 @@ data_abort_handler(trapframe_t *tf)
 	}
 
 	/*
-	 * We need to know whether the page should be mapped
-	 * as R or R/W. The MMU does not give us the info as
-	 * to whether the fault was caused by a read or a write.
+	 * We need to know whether the page should be mapped as R or R/W.
+	 * Before ARMv6, the MMU did not give us the info as to whether the
+	 * fault was caused by a read or a write.
 	 *
-	 * However, we know that a permission fault can only be
-	 * the result of a write to a read-only location, so
-	 * we can deal with those quickly.
+	 * However, we know that a permission fault can only be the result of
+	 * a write to a read-only location, so we can deal with those quickly.
 	 *
-	 * Otherwise we need to disassemble the instruction
-	 * responsible to determine if it was a write.
+	 * Otherwise we need to disassemble the instruction responsible to
+	 * determine if it was a write.
 	 */
-	if (IS_PERMISSION_FAULT(fsr))
-		ftype = VM_PROT_WRITE; 
-	else {
+	if (CPU_IS_ARMV6_P() || CPU_IS_ARMV7_P()) {
+		ftype = (fsr & FAULT_WRITE) ? VM_PROT_WRITE : VM_PROT_READ;
+	} else if (IS_PERMISSION_FAULT(fsr)) {
+		ftype = VM_PROT_WRITE;
+	} else {
 #ifdef THUMB_CODE
 		/* Fast track the ARM case.  */
 		if (__predict_false(tf->tf_spsr & PSR_T_bit)) {
-			u_int insn = fusword((void *)(tf->tf_pc & ~1));
+			u_int insn = read_thumb_insn(tf->tf_pc, user);
 			u_int insn_f8 = insn & 0xf800;
 			u_int insn_fe = insn & 0xfe00;
 
@@ -421,17 +443,17 @@ data_abort_handler(trapframe_t *tf)
 		else
 #endif
 		{
-			u_int insn = ReadWord(tf->tf_pc);
+			u_int insn = read_insn(tf->tf_pc, user);
 
 			if (((insn & 0x0c100000) == 0x04000000) || /* STR[B] */
 			    ((insn & 0x0e1000b0) == 0x000000b0) || /* STR[HD]*/
 			    ((insn & 0x0a100000) == 0x08000000) || /* STM/CDT*/
 			    ((insn & 0x0f9000f0) == 0x01800090))   /* STREX[BDH] */
-				ftype = VM_PROT_WRITE; 
+				ftype = VM_PROT_WRITE;
 			else if ((insn & 0x0fb00ff0) == 0x01000090)/* SWP */
-				ftype = VM_PROT_READ | VM_PROT_WRITE; 
+				ftype = VM_PROT_READ | VM_PROT_WRITE;
 			else
-				ftype = VM_PROT_READ; 
+				ftype = VM_PROT_READ;
 		}
 	}
 
@@ -485,21 +507,32 @@ data_abort_handler(trapframe_t *tf)
 
 	KSI_INIT_TRAP(&ksi);
 
-	if (error == ENOMEM) {
+	switch (error) {
+	case ENOMEM:
 		printf("UVM: pid %d (%s), uid %d killed: "
 		    "out of swap\n", l->l_proc->p_pid, l->l_proc->p_comm,
 		    l->l_cred ? kauth_cred_geteuid(l->l_cred) : -1);
 		ksi.ksi_signo = SIGKILL;
-	} else
+		break;
+	case EACCES:
 		ksi.ksi_signo = SIGSEGV;
-
-	ksi.ksi_code = (error == EACCES) ? SEGV_ACCERR : SEGV_MAPERR;
+		ksi.ksi_code = SEGV_ACCERR;
+		break;
+	case EINVAL:
+		ksi.ksi_signo = SIGBUS;
+		ksi.ksi_code = BUS_ADRERR;
+		break;
+	default:
+		ksi.ksi_signo = SIGSEGV;
+		ksi.ksi_code = SEGV_MAPERR;
+		break;
+	}
 	ksi.ksi_addr = (uint32_t *)(intptr_t) far;
 	ksi.ksi_trap = fsr;
 	UVMHIST_LOG(maphist, " <- error (%d)", error, 0, 0, 0);
 
 do_trapsignal:
-	call_trapsignal(l, &ksi);
+	call_trapsignal(l, tf, &ksi);
 out:
 	/* If returning to user mode, make sure to invoke userret() */
 	if (user)
@@ -764,7 +797,8 @@ prefetch_abort_handler(trapframe_t *tf)
 	ksiginfo_t ksi;
 	int error, user;
 
-	UVMHIST_FUNC(__func__); UVMHIST_CALLED(maphist);
+	UVMHIST_FUNC(__func__);
+	UVMHIST_CALLED(maphist);
 
 	/* Update vmmeter statistics */
 	curcpu()->ci_data.cpu_ntrap++;
@@ -780,14 +814,19 @@ prefetch_abort_handler(trapframe_t *tf)
 	 * from user mode so we know interrupts were not disabled.
 	 * But we check anyway.
 	 */
-	KASSERT(!TRAP_USERMODE(tf) || (tf->tf_spsr & IF32_bits) == 0);
-	if (__predict_true((tf->tf_spsr & I32_bit) != IF32_bits))
+	KASSERT(!TRAP_USERMODE(tf) || VALID_R15_PSR(tf->tf_pc, tf->tf_spsr));
+#ifdef __NO_FIQ
+	if (__predict_true((tf->tf_spsr & I32_bit) != I32_bit))
 		restore_interrupts(tf->tf_spsr & IF32_bits);
+#else
+	if (__predict_true((tf->tf_spsr & IF32_bits) != IF32_bits))
+		restore_interrupts(tf->tf_spsr & IF32_bits);
+#endif
 
 	/* See if the CPU state needs to be fixed up */
 	switch (prefetch_abort_fixup(tf)) {
 	case ABORT_FIXUP_RETURN:
-		KASSERT(!TRAP_USERMODE(tf) || (tf->tf_spsr & IF32_bits) == 0);
+		KASSERT(!TRAP_USERMODE(tf) || VALID_R15_PSR(tf->tf_pc, tf->tf_spsr));
 		return;
 	case ABORT_FIXUP_FAILED:
 		/* Deliver a SIGILL to the process */
@@ -808,8 +847,8 @@ prefetch_abort_handler(trapframe_t *tf)
 	/* Get fault address */
 	fault_pc = tf->tf_pc;
 	lwp_settrapframe(l, tf);
-	UVMHIST_LOG(maphist, " (pc=0x%x, l=0x%x, tf=0x%x)", fault_pc, l, tf,
-	    0);
+	UVMHIST_LOG(maphist, " (pc=0x%x, l=0x%x, tf=0x%x)",
+	    fault_pc, l, tf, 0);
 
 	/* Ok validate the address, can only execute in USER space */
 	if (__predict_false(fault_pc >= VM_MAXUSER_ADDRESS ||
@@ -844,7 +883,7 @@ prefetch_abort_handler(trapframe_t *tf)
 #endif
 
 	KASSERT(pcb->pcb_onfault == NULL);
-	error = uvm_fault(map, va, VM_PROT_READ);
+	error = uvm_fault(map, va, VM_PROT_READ|VM_PROT_EXECUTE);
 
 	if (__predict_true(error == 0)) {
 		UVMHIST_LOG (maphist, " <- uvm", 0, 0, 0, 0);
@@ -853,6 +892,7 @@ prefetch_abort_handler(trapframe_t *tf)
 	KSI_INIT_TRAP(&ksi);
 
 	UVMHIST_LOG (maphist, " <- fatal (%d)", error, 0, 0, 0);
+
 	if (error == ENOMEM) {
 		printf("UVM: pid %d (%s), uid %d killed: "
 		    "out of swap\n", l->l_proc->p_pid, l->l_proc->p_comm,
@@ -866,10 +906,10 @@ prefetch_abort_handler(trapframe_t *tf)
 	ksi.ksi_trap = fault_pc;
 
 do_trapsignal:
-	call_trapsignal(l, &ksi);
+	call_trapsignal(l, tf, &ksi);
 
 out:
-	KASSERT(!TRAP_USERMODE(tf) || (tf->tf_spsr & IF32_bits) == 0);
+	KASSERT(!TRAP_USERMODE(tf) || VALID_R15_PSR(tf->tf_pc, tf->tf_spsr));
 	userret(l);
 }
 

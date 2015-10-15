@@ -1,4 +1,3 @@
-
 /******************************************************************************
  *
  * Module Name: asremove - Source conversion - removal functions
@@ -6,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -59,7 +58,7 @@ AsRemoveStatement (
  *
  * DESCRIPTION: Remove all statements that contain the given keyword.
  *              Limitations:  Removes text from the start of the line that
- *              contains the keyword to the next semicolon.  Currently
+ *              contains the keyword to the next semicolon. Currently
  *              doesn't ignore comments.
  *
  ******************************************************************************/
@@ -174,7 +173,14 @@ AsRemoveConditionalCompile (
          * Check for translation escape string -- means to ignore
          * blocks of code while replacing
          */
-        Comment = strstr (SubString, AS_START_IGNORE);
+        if (Gbl_IgnoreTranslationEscapes)
+        {
+            Comment = NULL;
+        }
+        else
+        {
+            Comment = strstr (SubString, AS_START_IGNORE);
+        }
 
         if ((Comment) &&
             (Comment < SubBuffer))
@@ -293,14 +299,20 @@ AsRemoveConditionalCompile (
 }
 
 
+#ifdef _OBSOLETE_FUNCTIONS
 /******************************************************************************
  *
  * FUNCTION:    AsRemoveMacro
  *
- * DESCRIPTION: Remove every line that contains the keyword.  Does not
+ * DESCRIPTION: Remove every line that contains the keyword. Does not
  *              skip comments.
  *
  ******************************************************************************/
+
+NOTE: This function is no longer used and is commented out for now.
+
+Also, it appears to have one or more bugs in it. It can incorrectly remove
+lines of code, producing some garbage.
 
 void
 AsRemoveMacro (
@@ -362,13 +374,13 @@ AsRemoveMacro (
         }
     }
 }
-
+#endif
 
 /******************************************************************************
  *
  * FUNCTION:    AsRemoveLine
  *
- * DESCRIPTION: Remove every line that contains the keyword.  Does not
+ * DESCRIPTION: Remove every line that contains the keyword. Does not
  *              skip comments.
  *
  ******************************************************************************/
@@ -459,7 +471,7 @@ AsReduceTypedefs (
             }
             SubString++;
 
-            /* Find the closing brace.  Handles nested braces */
+            /* Find the closing brace. Handles nested braces */
 
             NestLevel = 1;
             while (*SubString)
@@ -505,7 +517,7 @@ AsReduceTypedefs (
  *
  * FUNCTION:    AsRemoveEmptyBlocks
  *
- * DESCRIPTION: Remove any C blocks (e.g., if {}) that contain no code.  This
+ * DESCRIPTION: Remove any C blocks (e.g., if {}) that contain no code. This
  *              can happen as a result of removing lines such as DEBUG_PRINT.
  *
  ******************************************************************************/
@@ -614,3 +626,116 @@ AsRemoveDebugMacros (
 }
 
 
+/******************************************************************************
+ *
+ * FUNCTION:    AsCleanupSpecialMacro
+ *
+ * DESCRIPTION: For special macro invocations (invoked without ";" at the end
+ *              of the lines), do the following:
+ *              1. Remove spaces appended by indent at the beginning of lines.
+ *              2. Add an empty line between two special macro invocations.
+ *
+ ******************************************************************************/
+
+void
+AsCleanupSpecialMacro (
+    char                    *Buffer,
+    char                    *Keyword)
+{
+    char                    *SubString;
+    char                    *SubBuffer;
+    char                    *CommentEnd;
+    int                     NewLine;
+    int                     NestLevel;
+
+
+    SubBuffer = Buffer;
+    SubString = Buffer;
+
+    while (SubString)
+    {
+        SubString = strstr (SubBuffer, Keyword);
+
+        if (SubString)
+        {
+            /* Find start of the macro parameters */
+
+            while (*SubString != '(')
+            {
+                SubString++;
+            }
+            SubString++;
+
+            NestLevel = 1;
+            while (*SubString)
+            {
+                if (*SubString == '(')
+                {
+                    NestLevel++;
+                }
+                else if (*SubString == ')')
+                {
+                    NestLevel--;
+                }
+
+                SubString++;
+
+                if (NestLevel == 0)
+                {
+                    break;
+                }
+            }
+
+SkipLine:
+
+            /* Find end of the line */
+
+            NewLine = FALSE;
+            while (!NewLine && *SubString)
+            {
+                if (*SubString == '\n' && *(SubString - 1) != '\\')
+                {
+                    NewLine = TRUE;
+                }
+                SubString++;
+            }
+
+            /* Find end of the line */
+
+            if (*SubString == '#' || *SubString == '\n')
+            {
+                goto SkipLine;
+            }
+
+            SubBuffer = SubString;
+
+            /* Find start of the non-space */
+
+            while (*SubString == ' ')
+            {
+                SubString++;
+            }
+
+            /* Find end of the line */
+
+            if (*SubString == '#' || *SubString == '\n')
+            {
+                goto SkipLine;
+            }
+
+            /* Find end of the line */
+
+            if (*SubString == '/' || *SubString == '*')
+            {
+                CommentEnd = strstr (SubString, "*/");
+                if (CommentEnd)
+                {
+                    SubString = CommentEnd + 2;
+                    goto SkipLine;
+                }
+            }
+
+            SubString = AsRemoveData (SubBuffer, SubString);
+        }
+    }
+}

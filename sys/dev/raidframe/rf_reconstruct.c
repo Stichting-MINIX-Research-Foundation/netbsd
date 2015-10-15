@@ -1,4 +1,4 @@
-/*	$NetBSD: rf_reconstruct.c,v 1.119 2013/03/06 11:38:15 yamt Exp $	*/
+/*	$NetBSD: rf_reconstruct.c,v 1.121 2014/11/14 14:29:16 oster Exp $	*/
 /*
  * Copyright (c) 1995 Carnegie-Mellon University.
  * All rights reserved.
@@ -33,7 +33,7 @@
  ************************************************************/
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: rf_reconstruct.c,v 1.119 2013/03/06 11:38:15 yamt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: rf_reconstruct.c,v 1.121 2014/11/14 14:29:16 oster Exp $");
 
 #include <sys/param.h>
 #include <sys/time.h>
@@ -46,6 +46,8 @@ __KERNEL_RCSID(0, "$NetBSD: rf_reconstruct.c,v 1.119 2013/03/06 11:38:15 yamt Ex
 #include <sys/vnode.h>
 #include <sys/namei.h> /* for pathbuf */
 #include <dev/raidframe/raidframevar.h>
+
+#include <miscfs/specfs/specdev.h> /* for v_rdev */
 
 #include "rf_raid.h"
 #include "rf_reconutil.h"
@@ -261,7 +263,7 @@ rf_ReconstructFailedDiskBasic(RF_Raid_t *raidPtr, RF_RowCol_t col)
 		for (scol = raidPtr->numCol; scol < raidPtr->numCol + raidPtr->numSpare; scol++) {
 			if (raidPtr->Disks[scol].status == rf_ds_spare) {
 				spareDiskPtr = &raidPtr->Disks[scol];
-				spareDiskPtr->status = rf_ds_used_spare;
+				spareDiskPtr->status = rf_ds_rebuilding_spare;
 				break;
 			}
 		}
@@ -308,6 +310,13 @@ rf_ReconstructFailedDiskBasic(RF_Raid_t *raidPtr, RF_RowCol_t col)
 		/* XXX doesn't hold for RAID 6!!*/
 
 		rf_lock_mutex2(raidPtr->mutex);
+		/* The failed disk has already been marked as rf_ds_spared 
+		   (or rf_ds_dist_spared) in
+		   rf_ContinueReconstructFailedDisk() 
+		   so we just update the spare disk as being a used spare
+		*/
+
+		spareDiskPtr->status = rf_ds_used_spare;
 		raidPtr->parity_good = RF_RAID_CLEAN;
 		rf_unlock_mutex2(raidPtr->mutex);
 
@@ -352,7 +361,6 @@ rf_ReconstructInPlace(RF_Raid_t *raidPtr, RF_RowCol_t col)
 	unsigned int secsize;
 	struct pathbuf *pb;
 	struct vnode *vp;
-	struct vattr va;
 	int retcode;
 	int ac;
 
@@ -456,18 +464,6 @@ rf_ReconstructInPlace(RF_Raid_t *raidPtr, RF_RowCol_t col)
 	/* Ok, so we can at least do a lookup...
 	   How about actually getting a vp for it? */
 
-	vn_lock(vp, LK_SHARED | LK_RETRY);
-	retcode = VOP_GETATTR(vp, &va, curlwp->l_cred);
-	VOP_UNLOCK(vp);
-	if (retcode != 0) {
-		vn_close(vp, FREAD | FWRITE, kauth_cred_get());
-		rf_lock_mutex2(raidPtr->mutex);
-		raidPtr->reconInProgress--;
-		rf_signal_cond2(raidPtr->waitForReconCond);
-		rf_unlock_mutex2(raidPtr->mutex);
-		return(retcode);
-	}
-
 	retcode = getdisksize(vp, &numsec, &secsize);
 	if (retcode) {
 		vn_close(vp, FREAD | FWRITE, kauth_cred_get());
@@ -482,9 +478,9 @@ rf_ReconstructInPlace(RF_Raid_t *raidPtr, RF_RowCol_t col)
 	raidPtr->Disks[col].numBlocks = numsec - rf_protectedSectors;
 
 	raidPtr->raid_cinfo[col].ci_vp = vp;
-	raidPtr->raid_cinfo[col].ci_dev = va.va_rdev;
+	raidPtr->raid_cinfo[col].ci_dev = vp->v_rdev;
 
-	raidPtr->Disks[col].dev = va.va_rdev;
+	raidPtr->Disks[col].dev = vp->v_rdev;
 
 	/* we allow the user to specify that only a fraction
 	   of the disks should be used this is just for debug:
@@ -494,7 +490,7 @@ rf_ReconstructInPlace(RF_Raid_t *raidPtr, RF_RowCol_t col)
 	rf_unlock_mutex2(raidPtr->mutex);
 
 	spareDiskPtr = &raidPtr->Disks[col];
-	spareDiskPtr->status = rf_ds_used_spare;
+	spareDiskPtr->status = rf_ds_rebuilding_spare;
 
 	printf("raid%d: initiating in-place reconstruction on column %d\n",
 	       raidPtr->raidid, col);

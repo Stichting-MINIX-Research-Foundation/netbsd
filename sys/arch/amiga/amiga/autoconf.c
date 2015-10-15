@@ -1,4 +1,4 @@
-/*	$NetBSD: autoconf.c,v 1.114 2012/10/27 17:17:26 chs Exp $	*/
+/*	$NetBSD: autoconf.c,v 1.117 2014/08/24 12:18:21 mlelstv Exp $	*/
 
 /*
  * Copyright (c) 1994 Christian E. Hopps
@@ -31,7 +31,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: autoconf.c,v 1.114 2012/10/27 17:17:26 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: autoconf.c,v 1.117 2014/08/24 12:18:21 mlelstv Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -52,6 +52,11 @@ __KERNEL_RCSID(0, "$NetBSD: autoconf.c,v 1.114 2012/10/27 17:17:26 chs Exp $");
 #ifdef P5PB_CONSOLE
 #include <amiga/pci/p5pbvar.h>
 #endif /* P5PB_CONSOLE */
+
+#include "acafh.h"
+#if NACAFH > 0
+#include <amiga/dev/acafhvar.h>
+#endif /* NACAFH > 0 */
 
 static void findroot(void);
 void mbattach(device_t, device_t, void *);
@@ -300,6 +305,12 @@ mbattach(device_t parent, device_t self, void *aux)
 #endif
 		config_found(self, __UNCONST("aucc"), simple_devprint);
 
+#if NACAFH > 0
+	if (!is_a600() && !is_a1200() && !is_a3000() && !is_a4000())
+		if (acafh_mbattach_probe() == true)
+			config_found(self, __UNCONST("acafh"), simple_devprint);
+#endif
+
 	config_found(self, __UNCONST("zbus"), simple_devprint);
 }
 
@@ -470,11 +481,11 @@ findroot(void)
 			maj = bdevsw_lookup_major(bdp);
 
 			/* Open disk; forces read of disklabel. */
-			if ((*bdp->d_open)(MAKEDISKDEV(maj,
-			    unit, 0), FREAD|FNONBLOCK, 0, &lwp0))
+			if ((*bdp->d_open)(MAKEDISKDEV(maj, unit, RAW_PART),
+				FREAD|FNONBLOCK, 0, &lwp0))
 				continue;
-			(void)(*bdp->d_close)(MAKEDISKDEV(maj,
-			    unit, 0), FREAD|FNONBLOCK, 0, &lwp0);
+			(void)(*bdp->d_close)(MAKEDISKDEV(maj, unit, RAW_PART),
+				FREAD|FNONBLOCK, 0, &lwp0);
 
 			pp = &dkp->dk_label->d_partitions[0];
 			if (pp->p_size != 0 && pp->p_fstype == FS_BSDFFS) {

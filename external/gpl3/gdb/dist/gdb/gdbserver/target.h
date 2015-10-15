@@ -1,5 +1,5 @@
 /* Target operations for the remote server for GDB.
-   Copyright (C) 2002-2013 Free Software Foundation, Inc.
+   Copyright (C) 2002-2015 Free Software Foundation, Inc.
 
    Contributed by MontaVista Software.
 
@@ -21,23 +21,16 @@
 #ifndef TARGET_H
 #define TARGET_H
 
+#include "target/target.h"
+#include "target/resume.h"
+#include "target/wait.h"
+#include "target/waitstatus.h"
+#include "mem-break.h"
+
 struct emit_ops;
 struct btrace_target_info;
 struct buffer;
-
-/* Ways to "resume" a thread.  */
-
-enum resume_kind
-{
-  /* Thread should continue.  */
-  resume_continue,
-
-  /* Thread should single-step.  */
-  resume_step,
-
-  /* Thread should be stopped.  */
-  resume_stop
-};
+struct process_info;
 
 /* This structure describes how to resume a particular thread (or all
    threads) based on the client's request.  If thread is -1, then this
@@ -57,58 +50,16 @@ struct thread_resume
      linux; SuspendThread on win32).  This is a host signal value (not
      enum gdb_signal).  */
   int sig;
+
+  /* Range to single step within.  Valid only iff KIND is resume_step.
+
+     Single-step once, and then continuing stepping as long as the
+     thread stops in this range.  (If the range is empty
+     [STEP_RANGE_START == STEP_RANGE_END], then this is a single-step
+     request.)  */
+  CORE_ADDR step_range_start;	/* Inclusive */
+  CORE_ADDR step_range_end;	/* Exclusive */
 };
-
-/* Generally, what has the program done?  */
-enum target_waitkind
-  {
-    /* The program has exited.  The exit status is in
-       value.integer.  */
-    TARGET_WAITKIND_EXITED,
-
-    /* The program has stopped with a signal.  Which signal is in
-       value.sig.  */
-    TARGET_WAITKIND_STOPPED,
-
-    /* The program has terminated with a signal.  Which signal is in
-       value.sig.  */
-    TARGET_WAITKIND_SIGNALLED,
-
-    /* The program is letting us know that it dynamically loaded
-       something.  */
-    TARGET_WAITKIND_LOADED,
-
-    /* The program has exec'ed a new executable file.  The new file's
-       pathname is pointed to by value.execd_pathname.  */
-    TARGET_WAITKIND_EXECD,
-
-    /* Nothing of interest to GDB happened, but we stopped anyway.  */
-    TARGET_WAITKIND_SPURIOUS,
-
-    /* An event has occurred, but we should wait again.  In this case,
-       we want to go back to the event loop and wait there for another
-       event from the inferior.  */
-    TARGET_WAITKIND_IGNORE
-  };
-
-struct target_waitstatus
-  {
-    enum target_waitkind kind;
-
-    /* Forked child pid, execd pathname, exit status or signal number.  */
-    union
-      {
-	int integer;
-	enum gdb_signal sig;
-	ptid_t related_pid;
-	char *execd_pathname;
-      }
-    value;
-  };
-
-/* Options that can be passed to target_ops->wait.  */
-
-#define TARGET_WNOHANG 1
 
 struct target_ops
 {
@@ -187,8 +138,8 @@ struct target_ops
      inferior such that it is possible to access memory.
 
      This should generally only be called from client facing routines,
-     such as gdb_read_memory/gdb_write_memory, or the insert_point
-     callbacks.
+     such as gdb_read_memory/gdb_write_memory, or the GDB breakpoint
+     insertion routine.
 
      Like `read_memory' and `write_memory' below, returns 0 on success
      and errno on failure.  */
@@ -238,17 +189,23 @@ struct target_ops
   int (*read_auxv) (CORE_ADDR offset, unsigned char *myaddr,
 		    unsigned int len);
 
-  /* Insert and remove a break or watchpoint.
-     Returns 0 on success, -1 on failure and 1 on unsupported.
-     The type is coded as follows:
+  /* Returns true if GDB Z breakpoint type TYPE is supported, false
+     otherwise.  The type is coded as follows:
        '0' - software-breakpoint
        '1' - hardware-breakpoint
        '2' - write watchpoint
        '3' - read watchpoint
-       '4' - access watchpoint  */
+       '4' - access watchpoint
+  */
+  int (*supports_z_point_type) (char z_type);
 
-  int (*insert_point) (char type, CORE_ADDR addr, int len);
-  int (*remove_point) (char type, CORE_ADDR addr, int len);
+  /* Insert and remove a break or watchpoint.
+     Returns 0 on success, -1 on failure and 1 on unsupported.  */
+
+  int (*insert_point) (enum raw_bkpt_type type, CORE_ADDR addr,
+		       int size, struct raw_breakpoint *bp);
+  int (*remove_point) (enum raw_bkpt_type type, CORE_ADDR addr,
+		       int size, struct raw_breakpoint *bp);
 
   /* Returns 1 if target was stopped due to a watchpoint hit, 0 otherwise.  */
 
@@ -347,9 +304,6 @@ struct target_ops
      the pause call.  */
   void (*unpause_all) (int unfreeze);
 
-  /* Cancel all pending breakpoints hits in all threads.  */
-  void (*cancel_breakpoints) (void);
-
   /* Stabilize all threads.  That is, force them out of jump pads.  */
   void (*stabilize_threads) (void);
 
@@ -401,19 +355,24 @@ struct target_ops
   int (*supports_agent) (void);
 
   /* Check whether the target supports branch tracing.  */
-  int (*supports_btrace) (void);
+  int (*supports_btrace) (struct target_ops *);
 
   /* Enable branch tracing for @ptid and allocate a branch trace target
      information struct for reading and for disabling branch trace.  */
   struct btrace_target_info *(*enable_btrace) (ptid_t ptid);
 
-  /* Disable branch tracing.  */
+  /* Disable branch tracing.
+     Returns zero on success, non-zero otherwise.  */
   int (*disable_btrace) (struct btrace_target_info *tinfo);
 
   /* Read branch trace data into buffer.  We use an int to specify the type
-     to break a cyclic dependency.  */
-  void (*read_btrace) (struct btrace_target_info *, struct buffer *, int type);
+     to break a cyclic dependency.
+     Return 0 on success; print an error message into BUFFER and return -1,
+     otherwise.  */
+  int (*read_btrace) (struct btrace_target_info *, struct buffer *, int type);
 
+  /* Return true if target supports range stepping.  */
+  int (*supports_range_stepping) (void);
 };
 
 extern struct target_ops *the_target;
@@ -491,13 +450,6 @@ int kill_inferior (int);
 	(*the_target->unpause_all) (unfreeze);	\
     } while (0)
 
-#define cancel_breakpoints()			\
-  do						\
-    {						\
-      if (the_target->cancel_breakpoints)     	\
-	(*the_target->cancel_breakpoints) ();  	\
-    } while (0)
-
 #define stabilize_threads()			\
   do						\
     {						\
@@ -537,8 +489,9 @@ int kill_inferior (int);
   (the_target->supports_agent ? \
    (*the_target->supports_agent) () : 0)
 
-#define target_supports_btrace() \
-  (the_target->supports_btrace ? (*the_target->supports_btrace) () : 0)
+#define target_supports_btrace()			\
+  (the_target->supports_btrace				\
+   ? (*the_target->supports_btrace) (the_target) : 0)
 
 #define target_enable_btrace(ptid) \
   (*the_target->enable_btrace) (ptid)
@@ -548,6 +501,10 @@ int kill_inferior (int);
 
 #define target_read_btrace(tinfo, buffer, type)	\
   (*the_target->read_btrace) (tinfo, buffer, type)
+
+#define target_supports_range_stepping() \
+  (the_target->supports_range_stepping ? \
+   (*the_target->supports_range_stepping) () : 0)
 
 /* Start non-stop mode, returns 0 on success, -1 on failure.   */
 
@@ -577,10 +534,8 @@ int read_inferior_memory (CORE_ADDR memaddr, unsigned char *myaddr, int len);
 int write_inferior_memory (CORE_ADDR memaddr, const unsigned char *myaddr,
 			   int len);
 
-void set_desired_inferior (int id);
+void set_desired_thread (int id);
 
 const char *target_pid_to_str (ptid_t);
-
-const char *target_waitstatus_to_string (const struct target_waitstatus *);
 
 #endif /* TARGET_H */

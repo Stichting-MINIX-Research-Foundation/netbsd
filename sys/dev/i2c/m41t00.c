@@ -1,4 +1,4 @@
-/*	$NetBSD: m41t00.c,v 1.16 2009/12/12 14:44:10 tsutsui Exp $	*/
+/*	$NetBSD: m41t00.c,v 1.19 2014/11/20 16:34:26 christos Exp $	*/
 
 /*
  * Copyright (c) 2003 Wasabi Systems, Inc.
@@ -36,7 +36,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: m41t00.c,v 1.16 2009/12/12 14:44:10 tsutsui Exp $");
+__KERNEL_RCSID(0, "$NetBSD: m41t00.c,v 1.19 2014/11/20 16:34:26 christos Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -76,8 +76,18 @@ dev_type_read(m41t00_read);
 dev_type_write(m41t00_write);
 
 const struct cdevsw m41t00_cdevsw = {
-	m41t00_open, m41t00_close, m41t00_read, m41t00_write, noioctl,
-	nostop, notty, nopoll, nommap, nokqfilter, D_OTHER
+	.d_open = m41t00_open,
+	.d_close = m41t00_close,
+	.d_read = m41t00_read,
+	.d_write = m41t00_write,
+	.d_ioctl = noioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_OTHER
 };
 
 static int m41t00_clock_read(struct m41t00_softc *, struct clock_ymdhms *);
@@ -301,13 +311,13 @@ m41t00_clock_read(struct m41t00_softc *sc, struct clock_ymdhms *dt)
 	/*
 	 * Convert the M41T00's register values into something useable
 	 */
-	dt->dt_sec = FROMBCD(bcd[M41T00_SEC] & M41T00_SEC_MASK);
-	dt->dt_min = FROMBCD(bcd[M41T00_MIN] & M41T00_MIN_MASK);
-	dt->dt_hour = FROMBCD(bcd[M41T00_CENHR] & M41T00_HOUR_MASK);
-	dt->dt_day = FROMBCD(bcd[M41T00_DATE] & M41T00_DATE_MASK);
-	dt->dt_wday = FROMBCD(bcd[M41T00_DAY] & M41T00_DAY_MASK);
-	dt->dt_mon = FROMBCD(bcd[M41T00_MONTH] & M41T00_MONTH_MASK);
-	dt->dt_year = FROMBCD(bcd[M41T00_YEAR] & M41T00_YEAR_MASK);
+	dt->dt_sec = bcdtobin(bcd[M41T00_SEC] & M41T00_SEC_MASK);
+	dt->dt_min = bcdtobin(bcd[M41T00_MIN] & M41T00_MIN_MASK);
+	dt->dt_hour = bcdtobin(bcd[M41T00_CENHR] & M41T00_HOUR_MASK);
+	dt->dt_day = bcdtobin(bcd[M41T00_DATE] & M41T00_DATE_MASK);
+	dt->dt_wday = bcdtobin(bcd[M41T00_DAY] & M41T00_DAY_MASK);
+	dt->dt_mon = bcdtobin(bcd[M41T00_MONTH] & M41T00_MONTH_MASK);
+	dt->dt_year = bcdtobin(bcd[M41T00_YEAR] & M41T00_YEAR_MASK);
 
 	/*
 	 * Since the m41t00 just stores 00-99, and this is 2003 as I write
@@ -329,13 +339,13 @@ m41t00_clock_write(struct m41t00_softc *sc, struct clock_ymdhms *dt)
 	 * Convert our time representation into something the MAX6900
 	 * can understand.
 	 */
-	bcd[M41T00_SEC] = TOBCD(dt->dt_sec);
-	bcd[M41T00_MIN] = TOBCD(dt->dt_min);
-	bcd[M41T00_CENHR] = TOBCD(dt->dt_hour);
-	bcd[M41T00_DATE] = TOBCD(dt->dt_day);
-	bcd[M41T00_DAY] = TOBCD(dt->dt_wday);
-	bcd[M41T00_MONTH] = TOBCD(dt->dt_mon);
-	bcd[M41T00_YEAR] = TOBCD(dt->dt_year % 100);
+	bcd[M41T00_SEC] = bintobcd(dt->dt_sec);
+	bcd[M41T00_MIN] = bintobcd(dt->dt_min);
+	bcd[M41T00_CENHR] = bintobcd(dt->dt_hour);
+	bcd[M41T00_DATE] = bintobcd(dt->dt_day);
+	bcd[M41T00_DAY] = bintobcd(dt->dt_wday);
+	bcd[M41T00_MONTH] = bintobcd(dt->dt_mon);
+	bcd[M41T00_YEAR] = bintobcd(dt->dt_year % 100);
 
 	if (iic_acquire_bus(sc->sc_tag, I2C_F_POLL)) {
 		aprint_error_dev(sc->sc_dev,
@@ -376,7 +386,7 @@ m41t00_clock_write(struct m41t00_softc *sc, struct clock_ymdhms *dt)
 		    "INITIAL SECONDS\n");
 		return 0;
 	}
-	init_seconds = FROMBCD(init_seconds & M41T00_SEC_MASK);
+	init_seconds = bcdtobin(init_seconds & M41T00_SEC_MASK);
 
 	for (i = 1; i < M41T00_DATE_BYTES; i++) {
 		cmdbuf[0] = m41t00_rtc_offset[i];
@@ -401,7 +411,7 @@ m41t00_clock_write(struct m41t00_softc *sc, struct clock_ymdhms *dt)
 		    "FINAL SECONDS\n");
 		return 0;
 	}
-	final_seconds = FROMBCD(final_seconds & M41T00_SEC_MASK);
+	final_seconds = bcdtobin(final_seconds & M41T00_SEC_MASK);
 
 	if ((init_seconds != final_seconds) &&
 	    (((init_seconds + 1) % 60) != final_seconds)) {

@@ -1,4 +1,4 @@
-/* $NetBSD: wskbd.c,v 1.132 2012/08/29 02:38:31 macallan Exp $ */
+/* $NetBSD: wskbd.c,v 1.136 2015/08/24 22:50:33 pooka Exp $ */
 
 /*
  * Copyright (c) 1996, 1997 Christopher G. Demetriou.  All rights reserved.
@@ -105,11 +105,13 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: wskbd.c,v 1.132 2012/08/29 02:38:31 macallan Exp $");
+__KERNEL_RCSID(0, "$NetBSD: wskbd.c,v 1.136 2015/08/24 22:50:33 pooka Exp $");
 
+#ifdef _KERNEL_OPT
 #include "opt_ddb.h"
 #include "opt_kgdb.h"
 #include "opt_wsdisplay_compat.h"
+#endif
 
 #include "wsdisplay.h"
 #include "wskbd.h"
@@ -297,8 +299,18 @@ dev_type_poll(wskbdpoll);
 dev_type_kqfilter(wskbdkqfilter);
 
 const struct cdevsw wskbd_cdevsw = {
-	wskbdopen, wskbdclose, wskbdread, nowrite, wskbdioctl,
-	nostop, notty, wskbdpoll, nommap, wskbdkqfilter, D_OTHER
+	.d_open = wskbdopen,
+	.d_close = wskbdclose,
+	.d_read = wskbdread,
+	.d_write = nowrite,
+	.d_ioctl = wskbdioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = wskbdpoll,
+	.d_mmap = nommap,
+	.d_kqfilter = wskbdkqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_OTHER
 };
 
 #ifndef WSKBD_DEFAULT_BELL_PITCH
@@ -624,7 +636,7 @@ wskbd_detach(device_t self, int flags)
 		wsmux_detach_sc(&sc->sc_base);
 #endif
 
-	callout_stop(&sc->sc_repeat_ch);
+	callout_halt(&sc->sc_repeat_ch, NULL);
 	callout_destroy(&sc->sc_repeat_ch);
 
 	if (sc->sc_isconsole) {

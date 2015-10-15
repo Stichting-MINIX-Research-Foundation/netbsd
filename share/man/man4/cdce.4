@@ -25,9 +25,9 @@
 .\" ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 .\" POSSIBILITY OF SUCH DAMAGE.
 .\"
-.\" $NetBSD: cdce.4,v 1.9 2013/07/20 21:39:58 wiz Exp $
+.\" $NetBSD: cdce.4,v 1.12 2015/01/05 10:48:40 jmcneill Exp $
 .\"
-.Dd June 7, 2011
+.Dd January 5, 2015
 .Dt CDCE 4
 .Os
 .Sh NAME
@@ -39,7 +39,8 @@
 The
 .Nm
 driver provides support for USB Host-to-Host (aka USB-to-USB) bridges
-based on the USB Communication Device Class (CDC) and Ethernet subclass,
+and USB-to-Ethernet adapters based on the USB Communication Device Class (CDC)
+and Ethernet subclass,
 including the following:
 .Pp
 .Bl -bullet -compact
@@ -53,6 +54,8 @@ Motorola USBNET
 NetChip EthernetGadget
 .It
 Prolific PL-2501
+.It
+Realtek RTL8152B Ethernet controller
 .It
 Sharp Zaurus
 .El

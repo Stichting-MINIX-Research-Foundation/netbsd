@@ -1,4 +1,4 @@
-/*	$NetBSD: ast.c,v 1.22 2013/08/18 06:28:18 matt Exp $	*/
+/*	$NetBSD: ast.c,v 1.28 2015/04/17 17:28:33 matt Exp $	*/
 
 /*
  * Copyright (c) 1994,1995 Mark Brinicombe
@@ -41,7 +41,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ast.c,v 1.22 2013/08/18 06:28:18 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ast.c,v 1.28 2015/04/17 17:28:33 matt Exp $");
 
 #include "opt_ddb.h"
 
@@ -50,10 +50,11 @@ __KERNEL_RCSID(0, "$NetBSD: ast.c,v 1.22 2013/08/18 06:28:18 matt Exp $");
 #include <sys/proc.h>
 #include <sys/acct.h>
 #include <sys/systm.h>
+#include <sys/atomic.h>
 #include <sys/kernel.h>
 #include <sys/signal.h>
-#include <sys/vmmeter.h>
 #include <sys/userret.h>
+#include <sys/vmmeter.h>
 
 #include <arm/locore.h>
 
@@ -71,11 +72,30 @@ void ast(struct trapframe *);
 void
 userret(struct lwp *l)
 {
+#if defined(__PROG32) && defined(ARM_MMU_EXTENDED)
+	/*
+	 * If our ASID got released, access via TTBR0 will have been disabled.
+	 * So if it is disabled, activate the lwp again to get a new ASID.
+	 */
+#ifdef __HAVE_PREEMPTION
+	kpreempt_disable();
+#endif
+	KASSERT(curcpu()->ci_pmap_cur == l->l_proc->p_vmspace->vm_map.pmap);
+	if (__predict_false(armreg_ttbcr_read() & TTBCR_S_PD0)) {
+		pmap_activate(l);
+	}
+	KASSERT(!(armreg_ttbcr_read() & TTBCR_S_PD0));
+#ifdef __HAVE_PREEMPTION
+	kpreempt_enable();
+#endif
+#endif
+
 	/* Invoke MI userret code */
 	mi_userret(l);
 
 #if defined(__PROG32) && defined(DIAGNOSTIC)
-	KASSERT((lwp_trapframe(l)->tf_spsr & IF32_bits) == 0);
+	KASSERT(VALID_R15_PSR(lwp_trapframe(l)->tf_pc,
+	    lwp_trapframe(l)->tf_spsr));
 #endif
 }
 
@@ -100,15 +120,21 @@ ast(struct trapframe *tf)
 #endif
 
 #ifdef __PROG32
-	KASSERT((tf->tf_spsr & IF32_bits) == 0);
+	KASSERT(VALID_R15_PSR(tf->tf_pc, tf->tf_spsr));
 #endif
 
-	curcpu()->ci_data.cpu_ntrap++;
-	//curcpu()->ci_data.cpu_nast++;
+#ifdef __HAVE_PREEMPTION
+	kpreempt_disable();
+#endif
+	struct cpu_info * const ci = curcpu();
 
-#ifdef DEBUG
-	KDASSERT(curcpu()->ci_cpl == IPL_NONE);
-#endif	
+	ci->ci_data.cpu_ntrap++;
+
+	KDASSERT(ci->ci_cpl == IPL_NONE);
+	const int want_resched = ci->ci_want_resched;
+#ifdef __HAVE_PREEMPTION
+	kpreempt_enable();
+#endif
 
 	if (l->l_pflag & LP_OWEUPC) {
 		l->l_pflag &= ~LP_OWEUPC;
@@ -116,8 +142,7 @@ ast(struct trapframe *tf)
 	}
 
 	/* Allow a forced task switch. */
-	if (l->l_cpu->ci_want_resched)
+	if (want_resched)
 		preempt();
-
 	userret(l);
 }

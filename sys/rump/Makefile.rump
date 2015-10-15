@@ -1,33 +1,62 @@
-#	$NetBSD: Makefile.rump,v 1.87 2013/09/03 19:57:02 pooka Exp $
+#	$NetBSD: Makefile.rump,v 1.118 2015/08/24 22:52:15 pooka Exp $
 #
+
+.if !defined(_RUMP_MK)
+_RUMP_MK= #defined
 
 WARNS?=		3	# XXX: src/sys won't compile with -Wsign-compare yet
 NOLINT=		# kernel code
 
 .include <bsd.own.mk>
 
-# If RUMPKMOD is _not_ set (only on capable archs, from bsd.own.mk),
-# use rump ABI instead of the NetBSD kernel ABI.
-.ifndef RUMPKMOD
-CPPFLAGS:=	-I${RUMPTOP}/include ${CPPFLAGS}
-CPPFLAGS+=	-D_RUMPKERNEL
+# Use NetBSD kernel ABI by default on x86 archs.  Performance-related
+# compile-time options may override this at a later date.
+.if (${MACHINE_ARCH} == "i386" || ${MACHINE_ARCH} == "x86_64")
+_RUMP_NATIVEABI= yes
 .else
-CPPFLAGS+=	-D_RUMP_NATIVE_ABI
+_RUMP_NATIVEABI= no
+CPPFLAGS:=	-I${RUMPTOP}/include ${CPPFLAGS}
+CPPFLAGS+=	-D_RUMPKERNEL -I${RUMPTOP}/librump/rumpkern
 .endif
 
-CPPFLAGS+=	-DMAXUSERS=32
-CPPFLAGS+=	-DCOMPAT_50=1 -DCOMPAT_60=1
+# Define baseline cpu for mips ports, required for
+# rumpcomp_sync_icache() hypercall.
+.if !empty(MACHINE_ARCH:Mmips*)
+.if !empty(MACHINE_ARCH:Mmips64*)
+CPPFLAGS+=	-DMIPS64=1
+.else
+CPPFLAGS+=	-DMIPS1=1
+.endif
+.endif
+
+# which NetBSD compat to build
+RUMP_NBCOMPAT?=default
+.if ${RUMP_NBCOMPAT} == "all" || ${RUMP_NBCOMPAT} == "default"
+RUMP_NBCOMPAT=	50 60 70
+.endif
+.if ${RUMP_NBCOMPAT} == "none"
+RUMP_NBCOMPAT=
+.endif
+RUMP_NBCOMPAT:=	${RUMP_NBCOMPAT:S/,/ /g}
+CPPFLAGS+=	${RUMP_NBCOMPAT:C/[1-9]0/-DCOMPAT_&/g}
 
 CPPFLAGS+=	-nostdinc
 CFLAGS+=	-ffreestanding -fno-strict-aliasing
 
 CWARNFLAGS+=	-Wno-format-zero-length -Wno-pointer-sign
-CPPFLAGS+=	-D_KERNEL -DMULTIPROCESSOR -D_MODULE -DMODULAR
-CPPFLAGS+=	-DDEBUGPRINT
+
+CPPFLAGS+=	-imacros ${RUMPTOP}/include/opt/opt_rumpkernel.h
+.ifdef BUILDRUMP_IMACROS
+CPPFLAGS+=	-imacros ${BUILDRUMP_IMACROS}
+.endif
+
 CPPFLAGS+=	-I${.CURDIR} -I.
 CPPFLAGS+=	-I${RUMPTOP}/../../common/include
 CPPFLAGS+=	-I${RUMPTOP}/include
-CPPFLAGS+=	-I${RUMPTOP}/librump/rumpkern/opt
+CPPFLAGS+=	-I${RUMPTOP}/include/opt
+
+SHLIB_MAJOR?=	0
+SHLIB_MINOR?=	0
 
 .ifdef NEED_ISYSTEM
 CPPFLAGS+=	-isystem ${RUMPTOP}/../arch
@@ -37,15 +66,31 @@ CPPFLAGS+=	-I${RUMPTOP}/../arch
 CPPFLAGS+=	-I${RUMPTOP}/..
 .endif
 
-RUMP_LDSCRIPT?=yes
+RUMP_LDSCRIPT?=	GNU
 .if ${RUMP_LDSCRIPT} != "no"
 # my ld or yours?
-.ifdef HAVE_SUN_LD
+.if ${RUMP_LDSCRIPT} == "sun"
 LDFLAGS+=	-Wl,-M ${RUMPTOP}/ldscript_sun.rump
 SRCS+=		linksyms_sun.c
 .PATH:		${RUMPTOP}
-.else
+.elif ${RUMP_LDSCRIPT} == "GNU"
 LDFLAGS+=	-Wl,-T,${RUMPTOP}/ldscript.rump
+.elif ${RUMP_LDSCRIPT} == "ctor"
+CPPFLAGS+=	-DRUMP_USE_CTOR
+.else
+.error Unknown ldscript ${RUMP_LDSCRIPT}
+.endif
+.endif
+
+.if defined(RUMP_CURLWP)
+.if   ${RUMP_CURLWP} == "hypercall"
+CPPFLAGS+=	-DRUMP_CURLWP=RUMP_CURLWP_HYPERCALL
+.elif ${RUMP_CURLWP} == "__thread"
+CPPFLAGS+=	-DRUMP_CURLWP=RUMP_CURLWP___THREAD
+.elif ${RUMP_CURLWP} == "register"
+CPPFLAGS+=	-DRUMP_CURLWP=RUMP_CURLWP_REGISTER
+.else
+.error Unsupported curlwp scheme: ${RUMP_CURLWP}
 .endif
 .endif
 
@@ -62,6 +107,11 @@ CPPFLAGS+=	-DDEBUG
 CPPFLAGS+=	-DLOCKDEBUG
 .endif
 
+RUMP_KTRACE?=yes
+.if ${RUMP_KTRACE} == "yes"
+CPPFLAGS+=	-DKTRACE
+.endif
+
 # kernel libs should not get linked against libc
 # XXX: actually, we would like to enable this but cannot, since it
 # also leaves out libgcc, it causes problems on some platforms.
@@ -70,7 +120,7 @@ CPPFLAGS+=	-DLOCKDEBUG
 
 # make sure __NetBSD__ gets defined (for builds on non-NetBSD)
 # also, give those builds a way to undef the local compiler's macros
-CPPFLAGS+=	-D__NetBSD__ ${RUMPKERN_UNDEF}
+CPPFLAGS+=	${RUMPKERN_UNDEF}
 
 RUMPKERNEL=	This is NetBSD and I am the rump.  Good evening.
 
@@ -79,39 +129,43 @@ RUMPKERNEL=	This is NetBSD and I am the rump.  Good evening.
 CPPFLAGS+=	-DPPC_OEA
 .endif
 
-# If this file changes, we need a full rebuild
+# If any of these files change, we need a full rebuild
 DPSRCS+=	${RUMPTOP}/Makefile.rump
 
 #
 # Support for component-specific hypercalls
 #
 
-# XXX: Warning flags are not in CWARNFLAGS.  Manually add a few important ones.
+# no easy way to get WARNS out of bsd.sys.mk
+RUMPCOMP_USER_WARNFLAGS=	-Wall -Wextra -Wno-unused-parameter
+RUMPCOMP_USER_WARNFLAGS+=	-Wstrict-prototypes -Wmissing-prototypes
 
-.ifdef RUMPCOMP_USER && !defined(RUMPKERN_ONLY)
+.ifdef RUMPCOMP_USER_SRCS && !defined(RUMPKERN_ONLY)
 .if empty(DESTDIR)
 DESTDIR=/
 .endif
 BUILDRUMP_CPPFLAGS ?= -isysroot ${DESTDIR}
 RUMPCOMP_USER_WERROR = ${${_NOWERROR} == "no" :?-Werror:}
-rumpcomp_user.d: rumpcomp_user.c
+.for rcusrc in ${RUMPCOMP_USER_SRCS:R}
+${rcusrc}.d: ${rcusrc}.c
 	${_MKTARGET_CREATE}
-	${MKDEP} -f ${.TARGET} -- ${MKDEPFLAGS} ${BUILDRUMP_CPPFLAGS} ${RUMPCOMP_USER_CPPFLAGS} ${.ALLSRC:O:u:M*rumpcomp_user.c}
+	${MKDEP} -f ${.TARGET} -- ${MKDEPFLAGS} ${BUILDRUMP_CPPFLAGS} ${RUMPCOMP_USER_CPPFLAGS} ${.ALLSRC:O:u:M*${rcusrc}.c}
 
-rumpcomp_user.o: rumpcomp_user.c
+${rcusrc}.o: ${rcusrc}.c
 	${_MKTARGET_COMPILE}
-	${CC} -o ${.TARGET} ${DBG} ${CWARNFLAGS} ${RUMPCOMP_USER_WERROR} -Wall -Wmissing-prototypes ${BUILDRUMP_CPPFLAGS} ${BUILDRUMP_CFLAGS} ${RUMPCOMP_USER_CPPFLAGS} ${RUMPCOMP_USER_CFLAGS} -c ${.ALLSRC:O:u:M*rumpcomp_user.c}
+	${CC} -o ${.TARGET} ${DBG} ${CWARNFLAGS} ${RUMPCOMP_USER_WERROR} ${RUMPCOMP_USER_WARNFLAGS} ${BUILDRUMP_CPPFLAGS} ${BUILDRUMP_CFLAGS} ${RUMPCOMP_USER_CPPFLAGS} ${RUMPCOMP_USER_CFLAGS} -c ${.ALLSRC:O:u:M*${rcusrc}.c}
 
-rumpcomp_user.pico: rumpcomp_user.c
+${rcusrc}.pico: ${rcusrc}.c
 	${_MKTARGET_COMPILE}
-	${CC} -o ${.TARGET} -fPIC -DPIC ${DBG} ${CWARNFLAGS} ${RUMPCOMP_USER_WERROR} -Wall -Wmissing-prototypes ${BUILDRUMP_CPPFLAGS} ${BUILDRUMP_CFLAGS} ${RUMPCOMP_USER_CPPFLAGS} ${RUMPCOMP_USER_CFLAGS} -c ${.ALLSRC:O:u:M*rumpcomp_user.c}
+	${CC} -o ${.TARGET} -fPIC -DPIC ${DBG} ${CWARNFLAGS} ${RUMPCOMP_USER_WERROR} ${RUMPCOMP_USER_WARNFLAGS} ${BUILDRUMP_CPPFLAGS} ${BUILDRUMP_CFLAGS} ${RUMPCOMP_USER_CPPFLAGS} ${RUMPCOMP_USER_CFLAGS} -c ${.ALLSRC:O:u:M*${rcusrc}.c}
 
-rumpcomp_user.po: rumpcomp_user.c
+${rcusrc}.po: ${rcusrc}.c
 	${_MKTARGET_COMPILE}
-	${CC} -o ${.TARGET} ${PROFFLAGS} -pg ${DBG} ${CWARNFLAGS} ${RUMPCOMP_USER_WERROR} -Wall -Wmissing-prototypes ${BUILDRUMP_CPPFLAGS} ${BUILDRUMP_CFLAGS} ${RUMPCOMP_USER_CPPFLAGS} ${RUMPCOMP_USER_CFLAGS} -c ${.ALLSRC:O:u:M*rumpcomp_user.c}
+	${CC} -o ${.TARGET} ${PROFFLAGS} -pg ${DBG} ${CWARNFLAGS} ${RUMPCOMP_USER_WERROR} ${RUMPCOMP_USER_WARNFLAGS} ${BUILDRUMP_CPPFLAGS} ${BUILDRUMP_CFLAGS} ${RUMPCOMP_USER_CPPFLAGS} ${RUMPCOMP_USER_CFLAGS} -c ${.ALLSRC:O:u:M*${rcusrc}.c}
 
-RUMPOBJ_NORENAME+=rumpcomp_user.*o
-SRCS+=rumpcomp_user.c
+RUMPOBJ_NORENAME+=${rcusrc}.o ${rcusrc}.pico ${rcusrc}.po
+SRCS+=${rcusrc}.c
+.endfor
 .endif
 
 #
@@ -174,14 +228,14 @@ __archivebuild: .USE
 	${_MKTARGET_BUILD}
 	rm -f ${.TARGET}
 .endif
-	for obj in ${RUMP_SYMREN:U${.ALLSRC:N${RUMPOBJ_NORENAME}}}; do \
-		${NM} -go $${obj} | ${TOOL_AWK} ' \
-		    $$NF!~/^'${_PQ}'(rump|RUMP|__|_GLOBAL_OFFSET_TABLE'${_SYMQUIRK}')/ \
+	for renameobj in ${RUMP_SYMREN:U${.ALLSRC:C/(${RUMPOBJ_NORENAME:ts|})//g}}; do \
+		${NM} -go $${renameobj} | ${TOOL_AWK} ' \
+		    $$NF!~/^'${_PQ}'(rump|RUMP|__|_GLOBAL_OFFSET_TABLE'${_SYMQUIRK}'${RUMP_SYM_NORENAME:D|${RUMP_SYM_NORENAME}})/ \
 		      {s=$$NF;sub(/^'${_PQ}'/, "&rumpns_", s); print $$NF, s}'\
-		    | sort | uniq  > renametab.$${obj}; \
+		    | sort | uniq  > renametab.$${renameobj}; \
 		${OBJCOPY} --preserve-dates --redefine-syms \
-		    renametab.$${obj} $${obj}; \
-		rm -f renametab.$${obj}; \
+		    renametab.$${renameobj} $${renameobj}; \
+		rm -f renametab.$${renameobj}; \
 	done
 .if !defined(RUMP_SYMREN)
 	${AR} ${_ARFL} ${.TARGET} \
@@ -193,3 +247,5 @@ _BSD_IOCONF_MK_USER_=1
 
 .-include "${NETBSDSRCDIR}/sys/arch/${MACHINE_CPU}/include/Makefile.inc"
 .-include "${NETBSDSRCDIR}/sys/arch/${MACHINE}/include/Makefile.inc"
+
+.endif # _RUMP_MK

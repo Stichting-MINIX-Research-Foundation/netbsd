@@ -1,4 +1,4 @@
-/*	$NetBSD: if_mpls.c,v 1.11 2013/10/25 09:25:32 kefren Exp $ */
+/*	$NetBSD: if_mpls.c,v 1.19 2015/08/24 22:21:26 pooka Exp $ */
 
 /*
  * Copyright (c) 2010 The NetBSD Foundation, Inc.
@@ -30,10 +30,12 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_mpls.c,v 1.11 2013/10/25 09:25:32 kefren Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_mpls.c,v 1.19 2015/08/24 22:21:26 pooka Exp $");
 
+#ifdef _KERNEL_OPT
 #include "opt_inet.h"
 #include "opt_mpls.h"
+#endif
 
 #include <sys/param.h>
 
@@ -53,6 +55,7 @@ __KERNEL_RCSID(0, "$NetBSD: if_mpls.c,v 1.11 2013/10/25 09:25:32 kefren Exp $");
 #include <netinet/in_systm.h>
 #include <netinet/in_var.h>
 #include <netinet/ip.h>
+#include <netinet/ip_var.h>
 #endif
 
 #ifdef INET6
@@ -66,6 +69,8 @@ __KERNEL_RCSID(0, "$NetBSD: if_mpls.c,v 1.11 2013/10/25 09:25:32 kefren Exp $");
 
 #include "if_mpls.h"
 
+#include "ioconf.h"
+
 #define TRIM_LABEL do { \
 	m_adj(m, sizeof(union mpls_shim)); \
 	if (m->m_len < sizeof(union mpls_shim) && \
@@ -74,8 +79,6 @@ __KERNEL_RCSID(0, "$NetBSD: if_mpls.c,v 1.11 2013/10/25 09:25:32 kefren Exp $");
 	dst.smpls_addr.s_addr = ntohl(mtod(m, union mpls_shim *)->s_addr); \
 	} while (/* CONSTCOND */ 0)
 
-
-void ifmplsattach(int);
 
 static int mpls_clone_create(struct if_clone *, int);
 static int mpls_clone_destroy(struct ifnet *);
@@ -104,7 +107,7 @@ static struct mbuf *mpls_label_inet6(struct mbuf *, union mpls_shim *, uint);
 static struct mbuf *mpls_prepend_shim(struct mbuf *, union mpls_shim *);
 
 extern int mpls_defttl, mpls_mapttl_inet, mpls_mapttl_inet6, mpls_icmp_respond,
-	mpls_forwarding, mpls_accept, mpls_mapprec_inet, mpls_mapclass_inet6,
+	mpls_forwarding, mpls_frame_accept, mpls_mapprec_inet, mpls_mapclass_inet6,
 	mpls_rfc4182;
 
 /* ARGSUSED */
@@ -205,6 +208,8 @@ mpls_output(struct ifnet *ifp, struct mbuf *m, const struct sockaddr *dst, struc
 	int err;
 	uint psize = sizeof(struct sockaddr_mpls);
 
+	KASSERT(KERNEL_LOCKED_P());
+
 	if ((ifp->if_flags & (IFF_UP|IFF_RUNNING)) != (IFF_UP|IFF_RUNNING)) {
 		m_freem(m);
 		return ENETDOWN;
@@ -268,7 +273,7 @@ mpls_output(struct ifnet *ifp, struct mbuf *m, const struct sockaddr *dst, struc
 	}
 
 	err = mpls_send_frame(m, rt1->rt_ifp, rt);
-	RTFREE(rt1);
+	rtfree(rt1);
 	return err;
 }
 
@@ -329,7 +334,7 @@ mpls_lse(struct mbuf *m)
 
 	/* Check if we're accepting MPLS Frames */
 	error = EINVAL;
-	if (!mpls_accept)
+	if (!mpls_frame_accept)
 		goto done;
 
 	/* TTL decrement */
@@ -439,7 +444,7 @@ done:
 	if (error != 0 && m != NULL)
 		m_freem(m);
 	if (rt != NULL)
-		RTFREE(rt);
+		rtfree(rt);
 
 	return error;
 }
@@ -448,6 +453,7 @@ static int
 mpls_send_frame(struct mbuf *m, struct ifnet *ifp, struct rtentry *rt)
 {
 	union mpls_shim msh;
+	int ret;
 
 	if ((rt->rt_flags & RTF_GATEWAY) == 0)
 		return EHOSTUNREACH;
@@ -466,7 +472,14 @@ mpls_send_frame(struct mbuf *m, struct ifnet *ifp, struct rtentry *rt)
 	case IFT_ETHER:
 	case IFT_TUNNEL:
 	case IFT_LOOP:
-		return (*ifp->if_output)(ifp, m, rt->rt_gateway, rt);
+#ifdef INET
+		ret = ip_hresolv_output(ifp, m, rt->rt_gateway, rt);
+#else
+		KERNEL_LOCK(1, NULL);
+		ret =  (*ifp->if_output)(ifp, m, rt->rt_gateway, rt);
+		KERNEL_UNLOCK_ONE(NULL);
+#endif
+		return ret;
 		break;
 	default:
 		return ENETUNREACH;
@@ -480,10 +493,9 @@ mpls_send_frame(struct mbuf *m, struct ifnet *ifp, struct rtentry *rt)
 static int
 mpls_unlabel_inet(struct mbuf *m)
 {
-	int s, iphlen;
 	struct ip *iph;
 	union mpls_shim *ms;
-	struct ifqueue *inq;
+	int iphlen;
 
 	if (mpls_mapttl_inet || mpls_mapprec_inet) {
 
@@ -531,18 +543,10 @@ mpls_unlabel_inet(struct mbuf *m)
 		m_adj(m, sizeof(union mpls_shim));
 
 	/* Put it on IP queue */
-	inq = &ipintrq;
-	s = splnet();
-	if (IF_QFULL(inq)) {
-		IF_DROP(inq);
-		splx(s);
+	if (__predict_false(!pktq_enqueue(ip_pktq, m, 0))) {
 		m_freem(m);
 		return ENOBUFS;
 	}
-	IF_ENQUEUE(inq, m);
-	splx(s);
-	schednetisr(NETISR_IP);
-
 	return 0;
 }
 
@@ -584,8 +588,6 @@ mpls_unlabel_inet6(struct mbuf *m)
 {
 	struct ip6_hdr *ip6hdr;
 	union mpls_shim ms;
-	struct ifqueue *inq;
-	int s;
 
 	/* TODO: mapclass */
 	if (mpls_mapttl_inet6) {
@@ -602,20 +604,11 @@ mpls_unlabel_inet6(struct mbuf *m)
 	} else
 		m_adj(m, sizeof(union mpls_shim));
 
-	/* Put it back on IPv6 stack */
-	schednetisr(NETISR_IPV6);
-	inq = &ip6intrq;
-	s = splnet();
-	if (IF_QFULL(inq)) {
-		IF_DROP(inq);
-		splx(s);
+	/* Put it back on IPv6 queue. */
+	if (__predict_false(!pktq_enqueue(ip6_pktq, m, 0))) {
 		m_freem(m);
 		return ENOBUFS;
 	}
-
-	IF_ENQUEUE(inq, m);
-	splx(s);
-
 	return 0;
 }
 

@@ -1,4 +1,4 @@
-/*	$NetBSD: ucbsnd.c,v 1.21 2012/10/27 17:17:53 chs Exp $ */
+/*	$NetBSD: ucbsnd.c,v 1.24 2015/06/26 22:16:27 matt Exp $ */
 
 /*-
  * Copyright (c) 2000 The NetBSD Foundation, Inc.
@@ -37,7 +37,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ucbsnd.c,v 1.21 2012/10/27 17:17:53 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ucbsnd.c,v 1.24 2015/06/26 22:16:27 matt Exp $");
 
 #include "opt_use_poll.h"
 
@@ -48,11 +48,11 @@ __KERNEL_RCSID(0, "$NetBSD: ucbsnd.c,v 1.21 2012/10/27 17:17:53 chs Exp $");
 #include <sys/device.h>
 #include <sys/proc.h>
 #include <sys/endian.h>
+#include <sys/bus.h>
+#include <sys/intr.h>
 
+#include <mips/locore.h>
 #include <mips/cache.h>
-
-#include <machine/bus.h>
-#include <machine/intr.h>
 
 #include <hpcmips/tx/tx39var.h>
 #include <hpcmips/tx/tx39sibvar.h>
@@ -176,8 +176,18 @@ dev_type_read(ucbsndread);
 dev_type_write(ucbsndwrite);
 
 const struct cdevsw ucbsnd_cdevsw = {
-	ucbsndopen, ucbsndclose, ucbsndread, ucbsndwrite, nullioctl,
-	nostop, notty, nopoll, nullmmap, nokqfilter,
+	.d_open = ucbsndopen,
+	.d_close = ucbsndclose,
+	.d_read = ucbsndread,
+	.d_write = ucbsndwrite,
+	.d_ioctl = nullioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nullmmap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = 0
 };
 
 int

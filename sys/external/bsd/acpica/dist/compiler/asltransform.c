@@ -1,4 +1,3 @@
-
 /******************************************************************************
  *
  * Module Name: asltransform - Parse tree transforms
@@ -6,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -41,7 +40,6 @@
  * IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGES.
  */
-
 
 #include "aslcompiler.h"
 #include "aslcompiler.y.h"
@@ -100,7 +98,7 @@ TrDoSwitch (
  *
  * RETURN:      A pointer to name (allocated here).
  *
- * DESCRIPTION: Generate an ACPI name of the form _T_x.  These names are
+ * DESCRIPTION: Generate an ACPI name of the form _T_x. These names are
  *              reserved for use by the ASL compiler. (_T_0 through _T_Z)
  *
  ******************************************************************************/
@@ -281,7 +279,7 @@ TrAmlTransformWalk (
  *
  * RETURN:      None
  *
- * DESCRIPTION: Prepare nodes to be output as AML data and operands.  The more
+ * DESCRIPTION: Prepare nodes to be output as AML data and operands. The more
  *              complex AML opcodes require processing of the child nodes
  *              (arguments/operands).
  *
@@ -300,15 +298,16 @@ TrTransformSubtree (
     switch (Op->Asl.ParseOpcode)
     {
     case PARSEOP_DEFINITIONBLOCK:
+
         TrDoDefinitionBlock (Op);
         break;
 
     case PARSEOP_SWITCH:
+
         TrDoSwitch (Op);
         break;
 
     case PARSEOP_METHOD:
-
         /*
          * TBD: Zero the tempname (_T_x) count. Probably shouldn't be a global,
          * however
@@ -317,7 +316,9 @@ TrTransformSubtree (
         break;
 
     default:
+
         /* Nothing to do here for other opcodes */
+
         break;
     }
 }
@@ -332,7 +333,7 @@ TrTransformSubtree (
  * RETURN:      None
  *
  * DESCRIPTION: Find the end of the definition block and set a global to this
- *              node.  It is used by the compiler to insert compiler-generated
+ *              node. It is used by the compiler to insert compiler-generated
  *              names at the root level of the namespace.
  *
  ******************************************************************************/
@@ -375,8 +376,7 @@ TrDoDefinitionBlock (
  *
  * RETURN:      None
  *
- *
- * DESCRIPTION: Translate ASL SWITCH statement to if/else pairs.  There is
+ * DESCRIPTION: Translate ASL SWITCH statement to if/else pairs. There is
  *              no actual AML opcode for SWITCH -- it must be simulated.
  *
  ******************************************************************************/
@@ -398,6 +398,7 @@ TrDoSwitch (
     ACPI_PARSE_OBJECT       *MethodOp;
     ACPI_PARSE_OBJECT       *StoreOp;
     ACPI_PARSE_OBJECT       *BreakOp;
+    ACPI_PARSE_OBJECT       *BufferOp;
     char                    *PredicateValueName;
     UINT16                  Index;
     UINT32                  Btype;
@@ -447,10 +448,6 @@ TrDoSwitch (
             {
                 /* Add an ELSE to complete the previous CASE */
 
-                if (!Conditional)
-                {
-                    return;
-                }
                 NewOp             = TrCreateLeafNode (PARSEOP_ELSE);
                 NewOp->Asl.Parent = Conditional->Asl.Parent;
                 TrAmlInitLineNumbers (NewOp, NewOp->Asl.Parent);
@@ -573,7 +570,7 @@ TrDoSwitch (
             else
             {
                 /*
-                 * The IF is a child of previous IF/ELSE.  It
+                 * The IF is a child of previous IF/ELSE. It
                  * is therefore without peer.
                  */
                 CurrentParentNode->Asl.Child = Conditional;
@@ -617,11 +614,6 @@ TrDoSwitch (
         {
             /* Convert the DEFAULT node to an ELSE */
 
-            if (!Conditional)
-            {
-                return;
-            }
-
             TrAmlInitNode (DefaultOp, PARSEOP_ELSE);
             DefaultOp->Asl.Parent = Conditional->Asl.Parent;
 
@@ -647,6 +639,7 @@ TrDoSwitch (
 
     Predicate = StartNode->Asl.Child;
     NewOp = TrCreateLeafNode (PARSEOP_NAME);
+    TrAmlInitLineNumbers (NewOp, StartNode);
 
     /* Find the parent method */
 
@@ -690,6 +683,7 @@ TrDoSwitch (
 
     NewOp2 = TrCreateValuedLeafNode (PARSEOP_NAMESEG,
                 (UINT64) ACPI_TO_INTEGER (PredicateValueName));
+    TrAmlInitLineNumbers (NewOp2, NewOp);
     NewOp2->Asl.CompileFlags |= NODE_IS_NAME_DECLARATION;
     NewOp->Asl.Child  = NewOp2;
 
@@ -698,28 +692,38 @@ TrDoSwitch (
     switch (Btype)
     {
     case ACPI_BTYPE_INTEGER:
+
         NewOp2->Asl.Next = TrCreateValuedLeafNode (PARSEOP_ZERO,
                                 (UINT64) 0);
+        TrAmlInitLineNumbers (NewOp2->Asl.Next, NewOp);
         break;
 
     case ACPI_BTYPE_STRING:
+
         NewOp2->Asl.Next = TrCreateValuedLeafNode (PARSEOP_STRING_LITERAL,
                                 (UINT64) ACPI_TO_INTEGER (""));
+        TrAmlInitLineNumbers (NewOp2->Asl.Next, NewOp);
         break;
 
     case ACPI_BTYPE_BUFFER:
+
         (void) TrLinkPeerNode (NewOp2, TrCreateValuedLeafNode (PARSEOP_BUFFER,
                                     (UINT64) 0));
         Next = NewOp2->Asl.Next;
+        TrAmlInitLineNumbers (Next, NewOp2);
         (void) TrLinkChildren (Next, 1, TrCreateValuedLeafNode (PARSEOP_ZERO,
                                     (UINT64) 1));
-        (void) TrLinkPeerNode (Next->Asl.Child,
-            TrCreateValuedLeafNode (PARSEOP_DEFAULT_ARG, (UINT64) 0));
+        TrAmlInitLineNumbers (Next->Asl.Child, Next);
+
+        BufferOp = TrCreateValuedLeafNode (PARSEOP_DEFAULT_ARG, (UINT64) 0);
+        TrAmlInitLineNumbers (BufferOp, Next->Asl.Child);
+        (void) TrLinkPeerNode (Next->Asl.Child, BufferOp);
 
         TrAmlSetSubtreeParent (Next->Asl.Child, Next);
         break;
 
     default:
+
         break;
     }
 
@@ -728,11 +732,12 @@ TrDoSwitch (
     /*
      * Transform the Switch() into a While(One)-Break node.
      * And create a Store() node which will be used to save the
-     * Switch() value.  The store is of the form: Store (Value, _T_x)
+     * Switch() value. The store is of the form: Store (Value, _T_x)
      * where _T_x is the temp variable.
      */
     TrAmlInitNode (StartNode, PARSEOP_WHILE);
     NewOp = TrCreateLeafNode (PARSEOP_ONE);
+    TrAmlInitLineNumbers (NewOp, StartNode);
     NewOp->Asl.Next = Predicate->Asl.Next;
     NewOp->Asl.Parent = StartNode;
     StartNode->Asl.Child = NewOp;
@@ -740,6 +745,7 @@ TrDoSwitch (
     /* Create a Store() node */
 
     StoreOp = TrCreateLeafNode (PARSEOP_STORE);
+    TrAmlInitLineNumbers (StoreOp, NewOp);
     StoreOp->Asl.Parent = StartNode;
     TrAmlInsertPeer (NewOp, StoreOp);
 
@@ -750,6 +756,7 @@ TrDoSwitch (
 
     NewOp = TrCreateValuedLeafNode (PARSEOP_NAMESEG,
                 (UINT64) ACPI_TO_INTEGER (PredicateValueName));
+    TrAmlInitLineNumbers (NewOp, StoreOp);
     NewOp->Asl.Parent    = StoreOp;
     Predicate->Asl.Next  = NewOp;
 
@@ -762,8 +769,7 @@ TrDoSwitch (
     }
 
     BreakOp = TrCreateLeafNode (PARSEOP_BREAK);
+    TrAmlInitLineNumbers (BreakOp, NewOp);
     BreakOp->Asl.Parent = StartNode;
     TrAmlInsertPeer (Conditional, BreakOp);
 }
-
-

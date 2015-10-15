@@ -1,4 +1,4 @@
-/*	$NetBSD: nd6.h,v 1.58 2013/05/21 08:37:27 roy Exp $	*/
+/*	$NetBSD: nd6.h,v 1.66 2015/07/17 02:21:08 ozaki-r Exp $	*/
 /*	$KAME: nd6.h,v 1.95 2002/06/08 11:31:06 itojun Exp $	*/
 
 /*
@@ -93,6 +93,7 @@ struct nd_ifinfo {
 					 * DAD failure.  (XXX: not ND-specific)
 					 */
 #define	ND6_IFF_OVERRIDE_RTADV	0x10	/* See "RTADV Key", below. */
+#define	ND6_IFF_AUTO_LINKLOCAL	0x20
 
 /*
  * RTADV Key
@@ -271,17 +272,22 @@ struct	nd_defrouter {
 };
 
 struct nd_prefixctl {
-	struct ifnet *ndpr_ifp;
+	struct ifnet *ndprc_ifp;
 
 	/* prefix */
-	struct sockaddr_in6 ndpr_prefix;
-	u_char	ndpr_plen;
+	struct sockaddr_in6 ndprc_prefix;
+	u_char	ndprc_plen;
 
-	u_int32_t ndpr_vltime;	/* advertised valid lifetime */
-	u_int32_t ndpr_pltime;	/* advertised preferred lifetime */
+	u_int32_t ndprc_vltime;	/* advertised valid lifetime */
+	u_int32_t ndprc_pltime;	/* advertised preferred lifetime */
 
-	struct prf_ra ndpr_flags;
+	struct prf_ra ndprc_flags;
 };
+
+#define ndprc_raf		ndprc_flags
+#define ndprc_raf_onlink	ndprc_flags.onlink
+#define ndprc_raf_auto		ndprc_flags.autonomous
+#define ndprc_raf_router	ndprc_flags.router
 
 struct nd_prefix {
 	struct ifnet *ndpr_ifp;
@@ -401,7 +407,7 @@ union nd_opts {
 /* nd6.c */
 void nd6_init(void);
 struct nd_ifinfo *nd6_ifattach(struct ifnet *);
-void nd6_ifdetach(struct nd_ifinfo *);
+void nd6_ifdetach(struct ifnet *, struct in6_ifextra *);
 int nd6_is_addr_neighbor(const struct sockaddr_in6 *, struct ifnet *);
 void nd6_option_init(void *, int, union nd_opts *);
 struct nd_opt_hdr *nd6_option(union nd_opts *);
@@ -410,13 +416,13 @@ struct	rtentry *nd6_lookup(const struct in6_addr *, int, struct ifnet *);
 void nd6_setmtu(struct ifnet *);
 void nd6_llinfo_settimer(struct llinfo_nd6 *, long);
 void nd6_timer(void *);
-void nd6_purge(struct ifnet *);
-void nd6_nud_hint(struct rtentry *, struct in6_addr *, int);
+void nd6_purge(struct ifnet *, struct in6_ifextra *);
+void nd6_nud_hint(struct rtentry *);
 int nd6_resolve(struct ifnet *, struct rtentry *,
 	struct mbuf *, struct sockaddr *, u_char *);
 void nd6_rtrequest(int, struct rtentry *, const struct rt_addrinfo *);
 int nd6_ioctl(u_long, void *, struct ifnet *);
-struct rtentry *nd6_cache_lladdr(struct ifnet *, struct in6_addr *,
+void nd6_cache_lladdr(struct ifnet *, struct in6_addr *,
 	char *, int, int, int);
 int nd6_output(struct ifnet *, struct ifnet *, struct mbuf *,
 	const struct sockaddr_in6 *, struct rtentry *);
@@ -435,7 +441,6 @@ void nd6_ns_input(struct mbuf *, int, int);
 void nd6_ns_output(struct ifnet *, const struct in6_addr *,
 	const struct in6_addr *, struct llinfo_nd6 *, int);
 const void *nd6_ifptomac(const struct ifnet *);
-void nd6_newaddrmsg(struct ifaddr *);
 void nd6_dad_start(struct ifaddr *, int);
 void nd6_dad_stop(struct ifaddr *);
 void nd6_dad_duplicated(struct ifaddr *);
@@ -447,7 +452,7 @@ void prelist_del(struct nd_prefix *);
 void defrouter_addreq(struct nd_defrouter *);
 void defrouter_reset(void);
 void defrouter_select(void);
-void defrtrlist_del(struct nd_defrouter *);
+void defrtrlist_del(struct nd_defrouter *, struct in6_ifextra *);
 void prelist_remove(struct nd_prefix *);
 int nd6_prelist_add(struct nd_prefixctl *, struct nd_defrouter *,
 	struct nd_prefix **);

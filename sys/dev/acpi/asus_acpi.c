@@ -1,4 +1,4 @@
-/* $NetBSD: asus_acpi.c,v 1.24 2012/06/02 21:36:43 dsl Exp $ */
+/* $NetBSD: asus_acpi.c,v 1.26 2015/04/23 23:23:00 pgoyette Exp $ */
 
 /*-
  * Copyright (c) 2007, 2008, 2009 Jared D. McNeill <jmcneill@invisible.ca>
@@ -27,7 +27,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: asus_acpi.c,v 1.24 2012/06/02 21:36:43 dsl Exp $");
+__KERNEL_RCSID(0, "$NetBSD: asus_acpi.c,v 1.26 2015/04/23 23:23:00 pgoyette Exp $");
 
 #include <sys/param.h>
 #include <sys/device.h>
@@ -344,10 +344,6 @@ asus_sysctl_setup(struct asus_softc *sc)
 	if (sc->sc_cfvnum == 0)
 		return;
 
-	err = sysctl_createv(&sc->sc_log, 0, NULL, NULL, 0,
-	    CTLTYPE_NODE, "hw", NULL, NULL, 0, NULL, 0, CTL_HW, CTL_EOL);
-	if (err)
-		goto sysctl_err;
 	err = sysctl_createv(&sc->sc_log, 0, NULL, &node, 0,
 	    CTLTYPE_NODE, device_xname(sc->sc_dev), NULL, NULL, 0,
 	    NULL, 0, CTL_HW, CTL_CREATE, CTL_EOL);
@@ -413,7 +409,7 @@ asus_get_fan_speed(struct asus_softc *sc, uint32_t *speed)
 	return true;
 }
 
-MODULE(MODULE_CLASS_DRIVER, asus, NULL);
+MODULE(MODULE_CLASS_DRIVER, asus, "sysmon_envsys,sysmon_power");
 
 #ifdef _MODULE
 #include "ioconf.c"

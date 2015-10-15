@@ -1,7 +1,7 @@
-/*	$NetBSD: zt.c,v 1.5 2012/12/04 23:38:43 spz Exp $	*/
+/*	$NetBSD: zt.c,v 1.8 2015/07/08 17:28:59 christos Exp $	*/
 
 /*
- * Copyright (C) 2004-2007, 2011, 2012  Internet Systems Consortium, Inc. ("ISC")
+ * Copyright (C) 2004-2007, 2011-2015  Internet Systems Consortium, Inc. ("ISC")
  * Copyright (C) 1999-2002  Internet Software Consortium.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
@@ -76,8 +76,7 @@ static isc_result_t
 doneloading(dns_zt_t *zt, dns_zone_t *zone, isc_task_t *task);
 
 isc_result_t
-dns_zt_create(isc_mem_t *mctx, dns_rdataclass_t rdclass, dns_zt_t **ztp)
-{
+dns_zt_create(isc_mem_t *mctx, dns_rdataclass_t rdclass, dns_zt_t **ztp) {
 	dns_zt_t *zt;
 	isc_result_t result;
 
@@ -317,12 +316,15 @@ asyncload(dns_zone_t *zone, void *callback) {
 	zt = dns_zone_getview(zone)->zonetable;
 	INSIST(VALID_ZT(zt));
 
+	INSIST(zt->references > 0);
+	zt->references++;
+	zt->loads_pending++;
+
 	result = dns_zone_asyncload(zone, *loaded, zt);
-	if (result == ISC_R_SUCCESS) {
+	if (result != ISC_R_SUCCESS) {
+		zt->references--;
+		zt->loads_pending--;
 		INSIST(zt->references > 0);
-		zt->references++;
-		INSIST(zt->references != 0);
-		zt->loads_pending++;
 	}
 	return (ISC_R_SUCCESS);
 }
@@ -398,16 +400,16 @@ freezezones(dns_zone_t *zone, void *uap) {
 			result = DNS_R_FROZEN;
 		if (result == ISC_R_SUCCESS)
 			result = dns_zone_flush(zone);
+		if (result == ISC_R_SUCCESS)
+			dns_zone_setupdatedisabled(zone, freeze);
 	} else {
 		if (frozen) {
-			result = dns_zone_load(zone);
+			result = dns_zone_loadandthaw(zone);
 			if (result == DNS_R_CONTINUE ||
 			    result == DNS_R_UPTODATE)
 				result = ISC_R_SUCCESS;
 		}
 	}
-	if (result == ISC_R_SUCCESS)
-		dns_zone_setupdatedisabled(zone, freeze);
 	view = dns_zone_getview(zone);
 	if (strcmp(view->name, "_bind") == 0 ||
 	    strcmp(view->name, "_default") == 0)
@@ -536,6 +538,5 @@ auto_detach(void *data, void *arg) {
 	dns_zone_t *zone = data;
 
 	UNUSED(arg);
-
 	dns_zone_detach(&zone);
 }

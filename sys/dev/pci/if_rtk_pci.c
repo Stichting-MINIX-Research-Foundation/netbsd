@@ -1,4 +1,4 @@
-/*	$NetBSD: if_rtk_pci.c,v 1.44 2013/03/30 03:21:07 christos Exp $	*/
+/*	$NetBSD: if_rtk_pci.c,v 1.46 2015/05/09 21:53:45 christos Exp $	*/
 
 /*
  * Copyright (c) 1997, 1998
@@ -47,7 +47,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_rtk_pci.c,v 1.44 2013/03/30 03:21:07 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_rtk_pci.c,v 1.46 2015/05/09 21:53:45 christos Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -104,6 +104,8 @@ static const struct rtk_type rtk_pci_devs[] = {
 		RTK_8139, "Addtron Technology 8139 10/100BaseTX" },
 	{ PCI_VENDOR_SEGA, PCI_PRODUCT_SEGA_BROADBAND,
 		RTK_8139, "SEGA Broadband Adapter" },
+	{ PCI_VENDOR_DLINK, PCI_PRODUCT_DLINK_DFE520TX,
+		RTK_8139, "D-Link Systems DFE 520TX" }, 
 	{ PCI_VENDOR_DLINK, PCI_PRODUCT_DLINK_DFE530TXPLUS,
 		RTK_8139, "D-Link Systems DFE 530TX+" },
 	{ PCI_VENDOR_NORTEL, PCI_PRODUCT_NORTEL_BAYSTACK_21,
@@ -162,6 +164,7 @@ rtk_pci_attach(device_t parent, device_t self, void *aux)
 	const char *intrstr = NULL;
 	const struct rtk_type *t;
 	bool ioh_valid, memh_valid;
+	char intrbuf[PCI_INTRSTR_LEN];
 
 	sc->sc_dev = self;
 	psc->sc_pc = pa->pa_pc;
@@ -211,7 +214,7 @@ rtk_pci_attach(device_t parent, device_t self, void *aux)
 		aprint_error_dev(self, "couldn't map interrupt\n");
 		return;
 	}
-	intrstr = pci_intr_string(pc, ih);
+	intrstr = pci_intr_string(pc, ih, intrbuf, sizeof(intrbuf));
 	psc->sc_ih = pci_intr_establish(pc, ih, IPL_NET, rtk_intr, sc);
 	if (psc->sc_ih == NULL) {
 		aprint_error_dev(self, "couldn't establish interrupt");

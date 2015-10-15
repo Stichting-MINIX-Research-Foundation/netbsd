@@ -1,6 +1,6 @@
 /* Target-dependent code for OpenBSD/arm.
 
-   Copyright (C) 2006-2013 Free Software Foundation, Inc.
+   Copyright (C) 2006-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -21,8 +21,6 @@
 #include "osabi.h"
 #include "trad-frame.h"
 #include "tramp-frame.h"
-
-#include "gdb_string.h"
 
 #include "obsd-tdep.h"
 #include "arm-tdep.h"
@@ -71,8 +69,8 @@ static const struct tramp_frame armobsd_sigframe =
 
 
 /* Override default thumb breakpoints.  */
-static const char arm_obsd_thumb_le_breakpoint[] = {0xfe, 0xdf};
-static const char arm_obsd_thumb_be_breakpoint[] = {0xdf, 0xfe};
+static const gdb_byte arm_obsd_thumb_le_breakpoint[] = {0xfe, 0xdf};
+static const gdb_byte arm_obsd_thumb_be_breakpoint[] = {0xdf, 0xfe};
 
 static void
 armobsd_init_abi (struct gdbarch_info info,
@@ -93,8 +91,8 @@ armobsd_init_abi (struct gdbarch_info info,
   tdep->jb_pc = 24;
   tdep->jb_elt_size = 4;
 
-  set_gdbarch_regset_from_core_section
-    (gdbarch, armbsd_regset_from_core_section);
+  set_gdbarch_iterate_over_regset_sections
+    (gdbarch, armbsd_iterate_over_regset_sections);
 
   /* OpenBSD/arm uses -fpcc-struct-return by default.  */
   tdep->struct_return = pcc_struct_return;

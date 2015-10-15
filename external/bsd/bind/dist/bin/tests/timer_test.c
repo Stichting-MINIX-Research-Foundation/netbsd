@@ -1,7 +1,7 @@
-/*	$NetBSD: timer_test.c,v 1.5 2013/07/27 19:23:10 christos Exp $	*/
+/*	$NetBSD: timer_test.c,v 1.8 2014/12/10 04:37:53 christos Exp $	*/
 
 /*
- * Copyright (C) 2004, 2007, 2013  Internet Systems Consortium, Inc. ("ISC")
+ * Copyright (C) 2004, 2007, 2013, 2014  Internet Systems Consortium, Inc. ("ISC")
  * Copyright (C) 1998-2001  Internet Software Consortium.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
@@ -96,6 +96,10 @@ timeout(isc_task_t *task, isc_event_t *event) {
 	isc_task_shutdown(task);
 }
 
+static char one[] = "1";
+static char two[] = "2";
+static char three[] = "3";
+
 int
 main(int argc, char *argv[]) {
 	isc_taskmgr_t *manager = NULL;
@@ -103,11 +107,6 @@ main(int argc, char *argv[]) {
 	unsigned int workers;
 	isc_time_t expires, now;
 	isc_interval_t interval;
-
-	isc__mem_register();
-	isc__task_register();
-	isc__timer_register();
-	isc__socket_register();
 
 	if (argc > 1) {
 		workers = atoi(argv[1]);
@@ -130,11 +129,11 @@ main(int argc, char *argv[]) {
 		      ISC_R_SUCCESS);
 	RUNTIME_CHECK(isc_task_create(manager, 0, &t3) ==
 		      ISC_R_SUCCESS);
-	RUNTIME_CHECK(isc_task_onshutdown(t1, shutdown_task, "1") ==
+	RUNTIME_CHECK(isc_task_onshutdown(t1, shutdown_task, one) ==
 		      ISC_R_SUCCESS);
-	RUNTIME_CHECK(isc_task_onshutdown(t2, shutdown_task, "2") ==
+	RUNTIME_CHECK(isc_task_onshutdown(t2, shutdown_task, two) ==
 		      ISC_R_SUCCESS);
-	RUNTIME_CHECK(isc_task_onshutdown(t3, shutdown_task, "3") ==
+	RUNTIME_CHECK(isc_task_onshutdown(t3, shutdown_task, three) ==
 		      ISC_R_SUCCESS);
 
 	printf("task 1: %p\n", t1);
@@ -145,12 +144,12 @@ main(int argc, char *argv[]) {
 
 	isc_interval_set(&interval, 2, 0);
 	RUNTIME_CHECK(isc_timer_create(timgr, isc_timertype_once, NULL,
-				       &interval, t2, timeout, "2", &ti2) ==
+				       &interval, t2, timeout, two, &ti2) ==
 		      ISC_R_SUCCESS);
 
 	isc_interval_set(&interval, 1, 0);
 	RUNTIME_CHECK(isc_timer_create(timgr, isc_timertype_ticker, NULL,
-				       &interval, t1, tick, "1", &ti1) ==
+				       &interval, t1, tick, one, &ti1) ==
 		      ISC_R_SUCCESS);
 
 	isc_interval_set(&interval, 10, 0);
@@ -158,19 +157,27 @@ main(int argc, char *argv[]) {
 		      ISC_R_SUCCESS);
 	isc_interval_set(&interval, 2, 0);
 	RUNTIME_CHECK(isc_timer_create(timgr, isc_timertype_once, &expires,
-				       &interval, t3, timeout, "3", &ti3) ==
+				       &interval, t3, timeout, three, &ti3) ==
 		      ISC_R_SUCCESS);
 
 	isc_task_detach(&t1);
 	isc_task_detach(&t2);
 	isc_task_detach(&t3);
 
+#ifndef WIN32
 	sleep(15);
+#else
+	Sleep(15000);
+#endif
 	printf("destroy\n");
 	isc_timer_detach(&ti1);
 	isc_timer_detach(&ti2);
 	isc_timer_detach(&ti3);
+#ifndef WIN32
 	sleep(2);
+#else
+	Sleep(2000);
+#endif
 	isc_timermgr_destroy(&timgr);
 	isc_taskmgr_destroy(&manager);
 	printf("destroyed\n");

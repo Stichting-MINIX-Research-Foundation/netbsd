@@ -1,4 +1,4 @@
-/*	$NetBSD: svr4_net.c,v 1.58 2009/12/20 09:36:05 dsl Exp $	*/
+/*	$NetBSD: svr4_net.c,v 1.61 2014/09/05 09:21:55 matt Exp $	*/
 
 /*-
  * Copyright (c) 1994, 2008, 2009 The NetBSD Foundation, Inc.
@@ -34,7 +34,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: svr4_net.c,v 1.58 2009/12/20 09:36:05 dsl Exp $");
+__KERNEL_RCSID(0, "$NetBSD: svr4_net.c,v 1.61 2014/09/05 09:21:55 matt Exp $");
 
 #define COMPAT_SVR4 1
 
@@ -76,8 +76,18 @@ __KERNEL_RCSID(0, "$NetBSD: svr4_net.c,v 1.58 2009/12/20 09:36:05 dsl Exp $");
 dev_type_open(svr4_netopen);
 
 const struct cdevsw svr4_net_cdevsw = {
-	svr4_netopen, noclose, noread, nowrite, noioctl,
-	nostop, notty, nopoll, nommap, nokqfilter, D_OTHER,
+	.d_open = svr4_netopen,
+	.d_close = noclose,
+	.d_read = noread,
+	.d_write = nowrite,
+	.d_ioctl = noioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_OTHER,
 };
 
 /*
@@ -208,7 +218,7 @@ svr4_netopen(dev_t dev, int flag, int mode, struct lwp *l)
 int
 svr4_soo_close(file_t *fp)
 {
-	struct socket *so = fp->f_data;
+	struct socket *so = fp->f_socket;
 
 	svr4_delete_socket(curproc, fp);
 	free(so->so_internal, M_NETADDR);
@@ -225,7 +235,7 @@ svr4_stream_get(file_t *fp)
 	if (fp == NULL || fp->f_type != DTYPE_SOCKET)
 		return NULL;
 
-	so = fp->f_data;
+	so = fp->f_socket;
 
 	if (so->so_internal)
 		return so->so_internal;

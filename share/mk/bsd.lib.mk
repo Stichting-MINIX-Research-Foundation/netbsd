@@ -1,4 +1,4 @@
-#	$NetBSD: bsd.lib.mk,v 1.342 2013/10/18 16:06:52 christos Exp $
+#	$NetBSD: bsd.lib.mk,v 1.362 2015/09/08 16:06:42 uebayasi Exp $
 #	@(#)bsd.lib.mk	8.3 (Berkeley) 4/22/94
 
 .include <bsd.init.mk>
@@ -64,7 +64,7 @@ DPADD+=		${LIBDO.${_lib}}/lib${_lib}.so	# Don't use _LIB_PREFIX
 .endif									# }
 
 ##### Build and install rules
-MKDEP_SUFFIXES?=	.o .po .pico .go .ln
+MKDEP_SUFFIXES?=	.o .po .pico .go .ln .d
 
 .if !defined(SHLIB_MAJOR) && exists(${SHLIB_VERSION_FILE})		# {
 SHLIB_MAJOR != . ${SHLIB_VERSION_FILE} ; echo $$major
@@ -169,7 +169,9 @@ CFLAGS+=	-g
 # Platform-independent linker flags for ELF shared libraries
 SHLIB_SOVERSION=	${SHLIB_MAJOR}
 SHLIB_SHFLAGS=		-Wl,-soname,${_LIB}.so.${SHLIB_SOVERSION}
+.if !defined(SHLIB_WARNTEXTREL) || ${SHLIB_WARNTEXTREL} != "no"
 SHLIB_SHFLAGS+=		-Wl,--warn-shared-textrel
+.endif
 .if !defined(SHLIB_MKMAP) || ${SHLIB_MKMAP} != "no"
 SHLIB_SHFLAGS+=		-Wl,-Map=${_LIB}.so.${SHLIB_SOVERSION}.map
 .endif
@@ -185,6 +187,9 @@ FFLAGS+=	${FOPTS}
 .if defined(CTFCONVERT)
 .if defined(CFLAGS) && !empty(CFLAGS:M*-g*)
 CTFFLAGS+=	-g
+.if defined(HAVE_GCC) && ${HAVE_GCC} >= 48
+#CFLAGS+=	-gdwarf-2
+.endif
 .endif
 .endif
 
@@ -401,6 +406,7 @@ _LIB.ln:=llib-l${LIB}.ln
 _LIB.so:=${_LIB}.so
 _LIB.so.major:=${_LIB}.so.${SHLIB_MAJOR}
 _LIB.so.full:=${_LIB}.so.${SHLIB_FULLVERSION}
+_LIB.so.link:=${_LIB}.so.${SHLIB_FULLVERSION}.link
 .if ${MKDEBUG} != "no"
 _LIB.so.debug:=${_LIB.so.full}.debug
 .endif
@@ -439,7 +445,7 @@ ${_LIB}_combine.o: ${COMBINESRCS}
 	${_MKTARGET_COMPILE}
 	${COMPILE.c} -MD --combine ${.ALLSRC} -o ${.TARGET}
 .if defined(LIBSTRIPOBJS)
-	${OBJCOPY} -x ${.TARGET}
+	${OBJCOPY} ${OBJCOPYLIBFLAGS} ${.TARGET}
 .endif
 
 CLEANFILES+=	${_LIB}_combine.d
@@ -518,7 +524,7 @@ _YLSRCS=	${SRCS:M*.[ly]:C/\..$/.c/} ${YHEADER:D${SRCS:M*.y:.y=.h}}
 
 realall: ${SRCS} ${ALLOBJS:O} ${_LIBS} ${_LIB.so.debug}
 
-MKARZERO?=no
+MKARZERO?= ${MKREPRO:Uno}
 
 .if ${MKARZERO} == "yes"
 _ARFL=crsD
@@ -599,10 +605,8 @@ LDADD+= -lgcc
 LIBCC:=	${CXX}
 . if ${MKLIBCXX} == "yes"
 LIBDPLIBS+=     c++	${.CURDIR}/../../../../../external/bsd/libc++/lib
-. elif defined(HAVE_GCC) && ${HAVE_GCC} == 4
-LIBDPLIBS+=     stdc++	${.CURDIR}/../../../../../gnu/lib/libstdc++-v3_4
 . else
-LIBDPLIBS+=     stdc++	${.CURDIR}/../../../../../external/gpl3/gcc/lib/libstdc++-v3
+LIBDPLIBS+=     stdc++	${.CURDIR}/../../../../../external/gpl3/${EXTERNAL_GCC_SUBDIR}/lib/libstdc++-v3
 . endif
 .else
 LIBCC:=	${CC}
@@ -611,8 +615,25 @@ LIBCC:=	${CC}
 _LDADD.${_LIB}=	${LDADD} ${LDADD.${_LIB}}
 _LDFLAGS.${_LIB}=	${LDFLAGS} ${LDFLAGS.${_LIB}}
 
-${_LIB.so.full}: ${SOLIB} ${DPADD} ${DPLIBC} \
-    ${SHLIB_LDSTARTFILE} ${SHLIB_LDENDFILE}
+_MAINLIBDEPS=	${SOLIB} ${DPADD} ${DPLIBC} \
+		${SHLIB_LDSTARTFILE} ${SHLIB_LDENDFILE}
+
+.if defined(_LIB.so.debug)
+${_LIB.so.debug}: ${_LIB.so.link}
+	${_MKTARGET_CREATE}
+	(  ${OBJCOPY} --only-keep-debug \
+		${_LIB.so.link} ${_LIB.so.debug} \
+	) || (rm -f ${.TARGET}; false)
+${_LIB.so.full}: ${_LIB.so.link} ${_LIB.so.debug}
+	${_MKTARGET_CREATE}
+	(  ${OBJCOPY} --strip-debug -p -R .gnu_debuglink \
+		--add-gnu-debuglink=${_LIB.so.debug} \
+		${_LIB.so.link} ${_LIB.so.full} \
+	) || (rm -f ${.TARGET}; false)
+${_LIB.so.link}: ${_MAINLIBDEPS}
+.else # aka no MKDEBUG
+${_LIB.so.full}: ${_MAINLIBDEPS}
+.endif
 	${_MKTARGET_BUILD}
 	rm -f ${.TARGET}
 	${LIBCC} ${LDLIBC} -Wl,-x -shared ${SHLIB_SHFLAGS} \
@@ -622,6 +643,8 @@ ${_LIB.so.full}: ${SOLIB} ${DPADD} ${DPLIBC} \
 #  We don't use INSTALL_SYMLINK here because this is just
 #  happening inside the build directory/objdir. XXX Why does
 #  this spend so much effort on libraries that aren't live??? XXX
+#  XXX Also creates dead symlinks until the .full rule runs
+#  above and creates the main link
 .if defined(SHLIB_FULLVERSION) && defined(SHLIB_MAJOR) && \
     "${SHLIB_FULLVERSION}" != "${SHLIB_MAJOR}"
 	${HOST_LN} -sf ${_LIB.so.full} ${_LIB.so.major}.tmp
@@ -631,15 +654,6 @@ ${_LIB.so.full}: ${SOLIB} ${DPADD} ${DPLIBC} \
 	mv -f ${_LIB.so}.tmp ${_LIB.so}
 .if ${MKSTRIPIDENT} != "no"
 	${OBJCOPY} -R .ident ${.TARGET}
-.endif
-
-.if defined(_LIB.so.debug)
-${_LIB.so.debug}: ${_LIB.so.full}
-	${_MKTARGET_CREATE}
-	(  ${OBJCOPY} --only-keep-debug ${_LIB.so.full} ${_LIB.so.debug} \
-	&& ${OBJCOPY} --strip-debug -p -R .gnu_debuglink \
-		--add-gnu-debuglink=${_LIB.so.debug} ${_LIB.so.full} \
-	) || (rm -f ${.TARGET}; false)
 .endif
 
 .if !empty(LOBJS)							# {

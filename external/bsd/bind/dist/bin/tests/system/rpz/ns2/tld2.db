@@ -111,6 +111,9 @@ a5-1-2		A	192.168.5.1
 		A	192.168.5.2
 		TXT	"a5-1-2 tld2 text"
 
+a5-2		A	192.168.5.2
+		TXT	"a5-2 tld2 text"
+
 a5-3		A	192.168.5.3
 		TXT	"a5-3 tld2 text"
 
@@ -121,3 +124,6 @@ a6-1		A	192.168.6.1
 		TXT	"a6-1 tld2 text"
 a6-2		A	192.168.6.2
 		TXT	"a6-2 tld2 text"
+
+a7-1		A	192.168.7.1
+		TXT	"a7-1 tld2 text"

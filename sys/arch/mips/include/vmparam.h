@@ -1,4 +1,4 @@
-/*	$NetBSD: vmparam.h,v 1.50 2011/08/24 16:01:53 matt Exp $	*/
+/*	$NetBSD: vmparam.h,v 1.54 2015/06/30 04:20:19 matt Exp $	*/
 
 /*
  * Copyright (c) 1988 University of Utah.
@@ -42,13 +42,18 @@
 #define	_MIPS_VMPARAM_H_
 
 #ifdef _KERNEL_OPT
-#include "opt_multiprocessor.h"
 #include "opt_cputype.h"
+#include "opt_multiprocessor.h"
+#include "opt_modular.h"
 #endif
 
 /*
  * Machine dependent VM constants for MIPS.
  */
+#if !defined(_RUMPKERNEL) && (defined(MODULAR) || defined(_MODULE))
+#define MAX_PAGE_SIZE	16384
+#define MIN_PAGE_SIZE	4096
+#endif
 
 /*
  * We normally use a 4K page but may use 16K on MIPS systems.
@@ -74,9 +79,6 @@
  */
 #define	USRSTACK	(VM_MAXUSER_ADDRESS-0x8000) /* Start of user stack */
 #define	USRSTACK32	((uint32_t)VM_MAXUSER32_ADDRESS-0x8000)
-
-/* alignment requirement for u-area space in bytes */
-#define	USPACE_ALIGN	USPACE
 
 /*
  * Virtual memory related constants, all in bytes
@@ -181,10 +183,16 @@
  * The address to which unspecified mapping requests default
  */
 #define __USE_TOPDOWN_VM
-#define VM_DEFAULT_ADDRESS(da, sz) \
-	trunc_page(USRSTACK - MAXSSIZ - (sz))
-#define VM_DEFAULT_ADDRESS32(da, sz) \
-	trunc_page(USRSTACK32 - MAXSSIZ32 - (sz))
+
+#define VM_DEFAULT_ADDRESS_TOPDOWN(da, sz) \
+    trunc_page(USRSTACK - MAXSSIZ - (sz))
+#define VM_DEFAULT_ADDRESS_BOTTOMUP(da, sz) \
+    round_page((vaddr_t)(da) + (vsize_t)maxdmap)
+
+#define VM_DEFAULT_ADDRESS32_TOPDOWN(da, sz) \
+    trunc_page(USRSTACK32 - MAXSSIZ32 - (sz))
+#define VM_DEFAULT_ADDRESS32_BOTTOMUP(da, sz) \
+    round_page((vaddr_t)(da) + (vsize_t)MAXDSIZ32)
 
 /* virtual sizes (bytes) for various kernel submaps */
 #define VM_PHYS_SIZE		(USRIOSIZE*PAGE_SIZE)

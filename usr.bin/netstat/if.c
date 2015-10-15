@@ -1,4 +1,4 @@
-/*	$NetBSD: if.c,v 1.79 2013/10/19 15:56:06 christos Exp $	*/
+/*	$NetBSD: if.c,v 1.82 2015/09/20 00:30:04 mrg Exp $	*/
 
 /*
  * Copyright (c) 1983, 1988, 1993
@@ -34,7 +34,7 @@
 #if 0
 static char sccsid[] = "from: @(#)if.c	8.2 (Berkeley) 2/21/94";
 #else
-__RCSID("$NetBSD: if.c,v 1.79 2013/10/19 15:56:06 christos Exp $");
+__RCSID("$NetBSD: if.c,v 1.82 2015/09/20 00:30:04 mrg Exp $");
 #endif
 #endif /* not lint */
 
@@ -44,6 +44,7 @@ __RCSID("$NetBSD: if.c,v 1.79 2013/10/19 15:56:06 christos Exp $");
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/sysctl.h>
+#include <sys/ioctl.h>
 
 #include <net/if.h>
 #include <net/if_dl.h>
@@ -63,6 +64,7 @@ __RCSID("$NetBSD: if.c,v 1.79 2013/10/19 15:56:06 christos Exp $");
 #include <err.h>
 
 #include "netstat.h"
+#include "rtutil.h"
 #include "prog_ops.h"
 
 #define	MAXIF	100
@@ -81,6 +83,7 @@ struct	iftot {
 	int ift_dr;			/* drops */
 };
 
+static void set_lines(void);
 static void print_addr(struct sockaddr *, struct sockaddr **, struct if_data *,
     struct ifnet *);
 static void sidewaysintpr(u_int, u_long);
@@ -98,6 +101,22 @@ static void intpr_kvm(u_long, void (*)(const char *));
 
 struct iftot iftot[MAXIF], ip_cur, ip_old, sum_cur, sum_old;
 bool	signalled;			/* set if alarm goes off "early" */
+
+static unsigned redraw_lines = 21;
+
+static void
+set_lines(void)
+{
+	static bool first = true;
+	struct ttysize ts;
+
+	if (!first)
+		return;
+	first = false;
+	if (ioctl(STDOUT_FILENO, TIOCGSIZE, &ts) != -1 && ts.ts_lines)
+		redraw_lines = ts.ts_lines - 3;
+}
+
 
 /*
  * Print a description of the network interfaces.
@@ -336,7 +355,7 @@ print_addr(struct sockaddr *sa, struct sockaddr **rtinfo, struct if_data *ifd,
 	const int niflag = NI_NUMERICHOST;
 	struct sockaddr_in6 *sin6, *netmask6;
 #endif
-	in_addr_t netmask;
+	struct sockaddr_in netmask;
 	struct sockaddr_in *sin;
 	char *cp;
 	int n, m;
@@ -348,30 +367,19 @@ print_addr(struct sockaddr *sa, struct sockaddr **rtinfo, struct if_data *ifd,
 		break;
 	case AF_INET:
 		sin = (struct sockaddr_in *)sa;
-#ifdef notdef
-		/*
-		 * can't use inet_makeaddr because kernel
-		 * keeps nets unshifted.
-		 */
-		in = inet_makeaddr(ifaddr.in.ia_subnet,
-			INADDR_ANY);
-		cp = netname4(in.s_addr,
-			ifaddr.in.ia_subnetmask);
-#else
 		if (use_sysctl) {
-			netmask = ((struct sockaddr_in *)rtinfo[RTAX_NETMASK])->sin_addr.s_addr;
+			netmask = *((struct sockaddr_in *)rtinfo[RTAX_NETMASK]);
 		} else {
 			struct in_ifaddr *ifaddr_in = (void *)rtinfo;
-			netmask = ifaddr_in->ia_subnetmask;
+			netmask.sin_addr.s_addr = ifaddr_in->ia_subnetmask;
 		}
-		cp = netname4(sin->sin_addr.s_addr, netmask);
-#endif
+		cp = netname4(sin, &netmask, nflag);
 		if (vflag)
 			n = strlen(cp) < 13 ? 13 : strlen(cp);
 		else
 			n = 13;
 		printf("%-*.*s ", n, n, cp);
-		cp = routename4(sin->sin_addr.s_addr);
+		cp = routename4(sin->sin_addr.s_addr, nflag);
 		if (vflag)
 			n = strlen(cp) < 17 ? 17 : strlen(cp);
 		else
@@ -390,7 +398,7 @@ print_addr(struct sockaddr *sa, struct sockaddr **rtinfo, struct if_data *ifd,
 				   sizeof inm);
 				printf("\n%25s %-17.17s ", "",
 				   routename4(
-				      inm.inm_addr.s_addr));
+				      inm.inm_addr.s_addr, nflag));
 				multiaddr =
 				   (u_long)inm.inm_list.le_next;
 			}
@@ -412,7 +420,7 @@ print_addr(struct sockaddr *sa, struct sockaddr **rtinfo, struct if_data *ifd,
 			netmask6 = &ifaddr_in6->ia_prefixmask;
 		}
 
-		cp = netname6(sin6, netmask6);
+		cp = netname6(sin6, netmask6, nflag);
 		if (vflag)
 			n = strlen(cp) < 13 ? 13 : strlen(cp);
 		else
@@ -623,7 +631,9 @@ __dead static void
 sidewaysintpr_sysctl(unsigned interval)
 {
 	sigset_t emptyset;
-	int line;
+	unsigned line;
+
+	set_lines();
 
 	fetchifs();
 	if (ip_cur.ift_name[0] == '\0') {
@@ -662,7 +672,7 @@ loop:
 		sigsuspend(&emptyset);
 	signalled = 0;
 	(void)alarm(interval);
-	if (line == 21)
+	if (line == redraw_lines)
 		goto banner;
 	goto loop;
 	/*NOTREACHED*/
@@ -675,10 +685,12 @@ sidewaysintpr_kvm(unsigned interval, u_long off)
 	struct ifnet ifnet;
 	u_long firstifnet;
 	struct iftot *ip, *total;
-	int line;
+	unsigned line;
 	struct iftot *lastif, *sum, *interesting;
 	struct ifnet_head ifhead;	/* TAILQ_HEAD */
 	int oldmask;
+
+	set_lines();
 
 	/*
 	 * Find the pointer to the first ifnet structure.  Replace
@@ -893,7 +905,7 @@ loop:
 	}
 	sigsetmask(oldmask);
 	signalled = false;
-	if (line == 21)
+	if (line == redraw_lines)
 		goto banner;
 	goto loop;
 	/*NOTREACHED*/

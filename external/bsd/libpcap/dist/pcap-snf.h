@@ -1,4 +1,4 @@
-/*	$NetBSD: pcap-snf.h,v 1.1.1.2 2013/04/06 15:57:45 christos Exp $	*/
+/*	$NetBSD: pcap-snf.h,v 1.2 2014/11/19 19:33:30 christos Exp $	*/
 
-pcap_t *snf_create(const char *, char *);
-int snf_platform_finddevs(pcap_if_t **devlistp, char *errbuf);
+pcap_t *snf_create(const char *, char *, int *);
+int snf_findalldevs(pcap_if_t **devlistp, char *errbuf);

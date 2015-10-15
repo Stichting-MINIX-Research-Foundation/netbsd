@@ -1,6 +1,6 @@
 /* Low level interface to i386 running the GNU Hurd.
 
-   Copyright (C) 1992-2013 Free Software Foundation, Inc.
+   Copyright (C) 1992-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -18,14 +18,10 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
 #include "defs.h"
+#include "x86-nat.h"
 #include "inferior.h"
 #include "floatformat.h"
 #include "regcache.h"
-
-#include "gdb_assert.h"
-#include <errno.h>
-#include <stdio.h>
-#include "gdb_string.h"
 
 #include <mach.h>
 #include <mach_error.h>
@@ -35,12 +31,8 @@
 #include "i386-tdep.h"
 
 #include "gnu-nat.h"
+#include "inf-child.h"
 #include "i387-tdep.h"
-
-#ifdef HAVE_SYS_PROCFS_H
-# include <sys/procfs.h>
-# include "gregset.h"
-#endif
 
 /* Offset to the thread_state_t location where REG is stored.  */
 #define REG_OFFSET(reg) offsetof (struct i386_thread_state, reg)
@@ -56,7 +48,6 @@ static int reg_offset[] =
 };
 
 #define REG_ADDR(state, regnum) ((char *)(state) + reg_offset[regnum])
-#define CREG_ADDR(state, regnum) ((const char *)(state) + reg_offset[regnum])
 
 
 /* Get the whole floating-point state of THREAD and record the values
@@ -90,24 +81,6 @@ fetch_fpregs (struct regcache *regcache, struct proc *thread)
     }
 }
 
-#ifdef HAVE_SYS_PROCFS_H
-/* These two calls are used by the core-regset.c code for
-   reading ELF core files.  */
-void
-supply_gregset (struct regcache *regcache, const gdb_gregset_t *gregs)
-{
-  int i;
-  for (i = 0; i < I386_NUM_GREGS; i++)
-    regcache_raw_supply (regcache, i, CREG_ADDR (gregs, i));
-}
-
-void
-supply_fpregset (struct regcache *regcache, const gdb_fpregset_t *fpregs)
-{
-  i387_supply_fsave (regcache, -1, fpregs);
-}
-#endif
-
 /* Fetch register REGNO, or all regs if REGNO is -1.  */
 static void
 gnu_fetch_registers (struct target_ops *ops,
@@ -119,7 +92,7 @@ gnu_fetch_registers (struct target_ops *ops,
   inf_update_procs (gnu_current_inf);
 
   thread = inf_tid_to_thread (gnu_current_inf,
-			      ptid_get_tid (inferior_ptid));
+			      ptid_get_lwp (inferior_ptid));
   if (!thread)
     error (_("Can't fetch registers from thread %s: No such thread"),
 	   target_pid_to_str (inferior_ptid));
@@ -212,7 +185,7 @@ gnu_store_registers (struct target_ops *ops,
   inf_update_procs (gnu_current_inf);
 
   thread = inf_tid_to_thread (gnu_current_inf,
-			      ptid_get_tid (inferior_ptid));
+			      ptid_get_lwp (inferior_ptid));
   if (!thread)
     error (_("Couldn't store registers into thread %s: No such thread"),
 	   target_pid_to_str (inferior_ptid));
@@ -296,6 +269,142 @@ gnu_store_registers (struct target_ops *ops,
     }
 }
 
+
+/* Support for debug registers.  */
+
+#ifdef i386_DEBUG_STATE
+/* Get debug registers for thread THREAD.  */
+
+static void
+i386_gnu_dr_get (struct i386_debug_state *regs, struct proc *thread)
+{
+  mach_msg_type_number_t count = i386_DEBUG_STATE_COUNT;
+  error_t err;
+
+  err = thread_get_state (thread->port, i386_DEBUG_STATE,
+			  (thread_state_t) regs, &count);
+  if (err != 0 || count != i386_DEBUG_STATE_COUNT)
+    warning (_("Couldn't fetch debug state from %s"),
+	     proc_string (thread));
+}
+
+/* Set debug registers for thread THREAD.  */
+
+static void
+i386_gnu_dr_set (const struct i386_debug_state *regs, struct proc *thread)
+{
+  error_t err;
+
+  err = thread_set_state (thread->port, i386_DEBUG_STATE,
+			  (thread_state_t) regs, i386_DEBUG_STATE_COUNT);
+  if (err != 0)
+    warning (_("Couldn't store debug state into %s"),
+	     proc_string (thread));
+}
+
+/* Set DR_CONTROL in THREAD.  */
+
+static void
+i386_gnu_dr_set_control_one (struct proc *thread, void *arg)
+{
+  unsigned long *control = arg;
+  struct i386_debug_state regs;
+
+  i386_gnu_dr_get (&regs, thread);
+  regs.dr[DR_CONTROL] = *control;
+  i386_gnu_dr_set (&regs, thread);
+}
+
+/* Set DR_CONTROL to CONTROL in all threads.  */
+
+static void
+i386_gnu_dr_set_control (unsigned long control)
+{
+  inf_update_procs (gnu_current_inf);
+  inf_threads (gnu_current_inf, i386_gnu_dr_set_control_one, &control);
+}
+
+/* Parameters to set a debugging address.  */
+
+struct reg_addr
+{
+  int regnum;		/* Register number (zero based).  */
+  CORE_ADDR addr;	/* Address.  */
+};
+
+/* Set address REGNUM (zero based) to ADDR in THREAD.  */
+
+static void
+i386_gnu_dr_set_addr_one (struct proc *thread, void *arg)
+{
+  struct reg_addr *reg_addr = arg;
+  struct i386_debug_state regs;
+
+  i386_gnu_dr_get (&regs, thread);
+  regs.dr[reg_addr->regnum] = reg_addr->addr;
+  i386_gnu_dr_set (&regs, thread);
+}
+
+/* Set address REGNUM (zero based) to ADDR in all threads.  */
+
+static void
+i386_gnu_dr_set_addr (int regnum, CORE_ADDR addr)
+{
+  struct reg_addr reg_addr;
+
+  gdb_assert (DR_FIRSTADDR <= regnum && regnum <= DR_LASTADDR);
+
+  reg_addr.regnum = regnum;
+  reg_addr.addr = addr;
+
+  inf_update_procs (gnu_current_inf);
+  inf_threads (gnu_current_inf, i386_gnu_dr_set_addr_one, &reg_addr);
+}
+
+/* Get debug register REGNUM value from only the one LWP of PTID.  */
+
+static unsigned long
+i386_gnu_dr_get_reg (ptid_t ptid, int regnum)
+{
+  struct i386_debug_state regs;
+  struct proc *thread;
+
+  /* Make sure we know about new threads.  */
+  inf_update_procs (gnu_current_inf);
+
+  thread = inf_tid_to_thread (gnu_current_inf, ptid_get_lwp (ptid));
+  i386_gnu_dr_get (&regs, thread);
+
+  return regs.dr[regnum];
+}
+
+/* Return the inferior's debug register REGNUM.  */
+
+static CORE_ADDR
+i386_gnu_dr_get_addr (int regnum)
+{
+  gdb_assert (DR_FIRSTADDR <= regnum && regnum <= DR_LASTADDR);
+
+  return i386_gnu_dr_get_reg (inferior_ptid, regnum);
+}
+
+/* Get DR_STATUS from only the one thread of INFERIOR_PTID.  */
+
+static unsigned long
+i386_gnu_dr_get_status (void)
+{
+  return i386_gnu_dr_get_reg (inferior_ptid, DR_STATUS);
+}
+
+/* Return the inferior's DR7 debug control register.  */
+
+static unsigned long
+i386_gnu_dr_get_control (void)
+{
+  return i386_gnu_dr_get_reg (inferior_ptid, DR_CONTROL);
+}
+#endif /* i386_DEBUG_STATE */
+
 /* Provide a prototype to silence -Wmissing-prototypes.  */
 extern initialize_file_ftype _initialize_i386gnu_nat;
 
@@ -306,6 +415,18 @@ _initialize_i386gnu_nat (void)
 
   /* Fill in the generic GNU/Hurd methods.  */
   t = gnu_target ();
+
+#ifdef i386_DEBUG_STATE
+  x86_use_watchpoints (t);
+
+  x86_dr_low.set_control = i386_gnu_dr_set_control;
+  gdb_assert (DR_FIRSTADDR == 0 && DR_LASTADDR < i386_DEBUG_STATE_COUNT);
+  x86_dr_low.set_addr = i386_gnu_dr_set_addr;
+  x86_dr_low.get_addr = i386_gnu_dr_get_addr;
+  x86_dr_low.get_status = i386_gnu_dr_get_status;
+  x86_dr_low.get_control = i386_gnu_dr_get_control;
+  x86_set_debug_register_length (4);
+#endif /* i386_DEBUG_STATE */
 
   t->to_fetch_registers = gnu_fetch_registers;
   t->to_store_registers = gnu_store_registers;

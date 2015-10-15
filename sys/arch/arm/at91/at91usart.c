@@ -1,5 +1,5 @@
-/*	$Id: at91usart.c,v 1.8 2012/11/12 18:00:36 skrll Exp $	*/
-/*	$NetBSD: at91usart.c,v 1.8 2012/11/12 18:00:36 skrll Exp $ */
+/*	$Id: at91usart.c,v 1.13 2015/04/13 21:18:40 riastradh Exp $	*/
+/*	$NetBSD: at91usart.c,v 1.13 2015/04/13 21:18:40 riastradh Exp $ */
 
 /*
  * Copyright (c) 2007 Embedtronics Oy. All rights reserved.
@@ -77,14 +77,13 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: at91usart.c,v 1.8 2012/11/12 18:00:36 skrll Exp $");
+__KERNEL_RCSID(0, "$NetBSD: at91usart.c,v 1.13 2015/04/13 21:18:40 riastradh Exp $");
 
 #include "opt_ddb.h"
 #include "opt_kgdb.h"
 
-#include "rnd.h"
 #ifdef RND_COM
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 #endif
 
 #ifdef	NOTYET
@@ -185,8 +184,18 @@ dev_type_tty(at91usart_tty);
 dev_type_poll(at91usart_poll);
 
 const struct cdevsw at91usart_cdevsw = {
-	at91usart_open, at91usart_close, at91usart_read, at91usart_write, at91usart_ioctl,
-	at91usart_stop, at91usart_tty, at91usart_poll, nommap, ttykqfilter, D_TTY
+	.d_open = at91usart_open,
+	.d_close = at91usart_close,
+	.d_read = at91usart_read,
+	.d_write = at91usart_write,
+	.d_ioctl = at91usart_ioctl,
+	.d_stop = at91usart_stop,
+	.d_tty = at91usart_tty,
+	.d_poll = at91usart_poll,
+	.d_mmap = nommap,
+	.d_kqfilter = ttykqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_TTY
 };
 
 #if	NOTYET
@@ -200,11 +209,8 @@ struct consdev at91usart_cons = {
 #define DEFAULT_COMSPEED 115200
 #endif
 
-#define COMUNIT_MASK    0x7ffff
-#define COMDIALOUT_MASK 0x80000
-
-#define COMUNIT(x)	(minor(x) & COMUNIT_MASK)
-#define COMDIALOUT(x)	(minor(x) & COMDIALOUT_MASK)
+#define COMUNIT(x)	TTUNIT(x)
+#define COMDIALOUT(x)	TTDIALOUT(x)
 
 #define COM_ISALIVE(sc)	((sc)->enabled != 0 && device_is_active((sc)->sc_dev))
 
@@ -305,7 +311,7 @@ at91usart_attach_subr(struct at91usart_softc *sc, struct at91bus_attach_args *sa
 
 #ifdef RND_COM
 	rnd_attach_source(&sc->rnd_source, device_xname(sc->sc_dev),
-			  RND_TYPE_TTY, 0);
+			  RND_TYPE_TTY, RND_FLAG_DEFAULT);
 #endif
 
 	/* if there are no enable/disable functions, assume the device

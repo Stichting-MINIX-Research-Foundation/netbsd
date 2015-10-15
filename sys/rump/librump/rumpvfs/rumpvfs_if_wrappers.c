@@ -1,9 +1,9 @@
-/*	$NetBSD: rumpvfs_if_wrappers.c,v 1.10 2012/11/18 18:40:45 pooka Exp $	*/
+/*	$NetBSD: rumpvfs_if_wrappers.c,v 1.13 2015/04/23 10:51:20 pooka Exp $	*/
 
 /*
  * Automatically generated.  DO NOT EDIT.
- * from: NetBSD: rumpvfs.ifspec,v 1.8 2012/11/18 18:39:23 pooka Exp 
- * by:   NetBSD: makerumpif.sh,v 1.5 2010/09/01 19:32:11 pooka Exp 
+ * from: NetBSD: rumpvfs.ifspec,v 1.10 2015/04/23 10:50:29 pooka Exp 
+ * by:   NetBSD: makerumpif.sh,v 1.9 2015/04/23 10:50:00 pooka Exp 
  */
 
 #include <sys/cdefs.h>
@@ -141,42 +141,6 @@ rump_pub_vp_interlock(struct vnode *arg1)
 	rump_schedule();
 	rump_vp_interlock(arg1);
 	rump_unschedule();
-}
-
-int
-rump_pub_etfs_register(const char *arg1, const char *arg2, enum rump_etfs_type arg3)
-{
-	int rv;
-
-	rump_schedule();
-	rv = rump_etfs_register(arg1, arg2, arg3);
-	rump_unschedule();
-
-	return rv;
-}
-
-int
-rump_pub_etfs_register_withsize(const char *arg1, const char *arg2, enum rump_etfs_type arg3, uint64_t arg4, uint64_t arg5)
-{
-	int rv;
-
-	rump_schedule();
-	rv = rump_etfs_register_withsize(arg1, arg2, arg3, arg4, arg5);
-	rump_unschedule();
-
-	return rv;
-}
-
-int
-rump_pub_etfs_remove(const char *arg1)
-{
-	int rv;
-
-	rump_schedule();
-	rv = rump_etfs_remove(arg1);
-	rump_unschedule();
-
-	return rv;
 }
 
 void
@@ -339,6 +303,7 @@ rump_pub_syspuffs_glueinit(int arg1, int *arg2)
 }
 __weak_alias(rump_syspuffs_glueinit,rump_vfs_unavailable);
 
+#ifdef COMPAT_50
 void
 rump_pub_vattr50_to_vattr(const struct vattr *arg1, struct vattr *arg2)
 {
@@ -347,7 +312,11 @@ rump_pub_vattr50_to_vattr(const struct vattr *arg1, struct vattr *arg2)
 	rump_vattr50_to_vattr(arg1, arg2);
 	rump_unschedule();
 }
+#else
+__strong_alias(rump_pub_vattr50_to_vattr,rump_vfs_unavailable);
+#endif /* COMPAT_50 */
 
+#ifdef COMPAT_50
 void
 rump_pub_vattr_to_vattr50(const struct vattr *arg1, struct vattr *arg2)
 {
@@ -356,3 +325,6 @@ rump_pub_vattr_to_vattr50(const struct vattr *arg1, struct vattr *arg2)
 	rump_vattr_to_vattr50(arg1, arg2);
 	rump_unschedule();
 }
+#else
+__strong_alias(rump_pub_vattr_to_vattr50,rump_vfs_unavailable);
+#endif /* COMPAT_50 */

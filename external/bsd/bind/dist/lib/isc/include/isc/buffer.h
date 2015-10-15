@@ -1,7 +1,7 @@
-/*	$NetBSD: buffer.h,v 1.5 2013/07/27 19:23:13 christos Exp $	*/
+/*	$NetBSD: buffer.h,v 1.8 2014/12/10 04:38:00 christos Exp $	*/
 
 /*
- * Copyright (C) 2004-2008, 2010, 2012  Internet Systems Consortium, Inc. ("ISC")
+ * Copyright (C) 2004-2008, 2010, 2012, 2014  Internet Systems Consortium, Inc. ("ISC")
  * Copyright (C) 1998-2002  Internet Software Consortium.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
@@ -666,12 +666,12 @@ ISC_LANG_ENDDECLS
 
 /*! \note
  * XXXDCL Something more could be done with initializing buffers that
- * point to const data.  For example, a new function, isc_buffer_initconst,
- * could be used, and a new boolean flag in the buffer structure could
- * indicate whether the buffer was initialized with that function.
- * (isc_bufer_init itself would be reprototyped to *not* have its "base"
- * parameter be const.)  Then if the boolean were true, the isc_buffer_put*
- * functions could assert a contractual requirement for a non-const buffer.
+ * point to const data.  For example, isc_buffer_constinit() could
+ * set a new boolean flag in the buffer structure indicating whether
+ * the buffer was initialized with that function.  * Then if the
+ * boolean were true, the isc_buffer_put* functions could assert a
+ * contractual requirement for a non-const buffer.
+ *
  * One drawback is that the isc_buffer_* functions (macros) that return
  * pointers would still need to return non-const pointers to avoid compiler
  * warnings, so it would be up to code that uses them to have to deal
@@ -789,7 +789,7 @@ ISC_LANG_ENDDECLS
 
 #define ISC__BUFFER_PUTMEM(_b, _base, _length) \
 	do { \
-		memcpy(isc_buffer_used(_b), (_base), (_length)); \
+		memmove(isc_buffer_used(_b), (_base), (_length)); \
 		(_b)->used += (_length); \
 	} while (/*CONSTCOND*/0)
 
@@ -799,7 +799,7 @@ ISC_LANG_ENDDECLS
 		unsigned char *_cp; \
 		_length = strlen(_source); \
 		_cp = isc_buffer_used(_b); \
-		memcpy(_cp, (_source), _length); \
+		memmove(_cp, (_source), _length); \
 		(_b)->used += (_length); \
 	} while (/*CONSTCOND*/0)
 
@@ -898,7 +898,7 @@ ISC_LANG_ENDDECLS
 		union { void *_var; const void *_const; } _deconst; \
 		_deconst._const = (_d); \
 		isc_buffer_init((_b), _deconst._var, (_l)); \
-	} while (0)
+	} while (/*CONSTCOND*/0)
 
 /*
  * No inline method for this one (yet).

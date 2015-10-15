@@ -1,6 +1,6 @@
 /* Top level stuff for GDB, the GNU debugger.
 
-   Copyright (C) 1999-2013 Free Software Foundation, Inc.
+   Copyright (C) 1999-2015 Free Software Foundation, Inc.
 
    Written by Elena Zannoni <ezannoni@cygnus.com> of Cygnus Solutions.
 
@@ -22,13 +22,13 @@
 #include "defs.h"
 #include "top.h"
 #include "inferior.h"
+#include "infrun.h"
 #include "target.h"
 #include "terminal.h"		/* for job_control */
 #include "event-loop.h"
 #include "event-top.h"
 #include "interps.h"
 #include <signal.h>
-#include "exceptions.h"
 #include "cli/cli-script.h"     /* for reset_command_nest_depth */
 #include "main.h"
 #include "gdbthread.h"
@@ -36,6 +36,7 @@
 #include "continuations.h"
 #include "gdbcmd.h"		/* for dont_repeat() */
 #include "annotate.h"
+#include "maint.h"
 
 /* readline include files.  */
 #include "readline/readline.h"
@@ -71,6 +72,7 @@ static void async_float_handler (gdb_client_data);
 #ifdef STOP_SIGNAL
 static void async_stop_sig (gdb_client_data);
 #endif
+static void async_sigterm_handler (gdb_client_data arg);
 
 /* Readline offers an alternate interface, via callback
    functions.  These are all included in the file callback.c in the
@@ -117,6 +119,11 @@ int exec_done_display_p = 0;
    read commands from.  */
 int input_fd;
 
+/* Used by the stdin event handler to compensate for missed stdin events.
+   Setting this to a non-zero value inside an stdin callback makes the callback
+   run again.  */
+int call_stdin_event_handler_again_p;
+
 /* Signal handling variables.  */
 /* Each of these is a pointer to a function that the event loop will
    invoke if the corresponding signal has received.  The real signal
@@ -134,6 +141,7 @@ static struct async_signal_handler *sigfpe_token;
 #ifdef STOP_SIGNAL
 static struct async_signal_handler *sigtstp_token;
 #endif
+static struct async_signal_handler *async_sigterm_token;
 
 /* Structure to save a partially entered command.  This is used when
    the user types '\' at the end of a command line.  This is necessary
@@ -166,9 +174,11 @@ rl_callback_read_char_wrapper (gdb_client_data client_data)
 }
 
 /* Initialize all the necessary variables, start the event loop,
-   register readline, and stdin, start the loop.  */
+   register readline, and stdin, start the loop.  The DATA is the
+   interpreter data cookie, ignored for now.  */
+
 void
-cli_command_loop (void)
+cli_command_loop (void *data)
 {
   display_gdb_prompt (0);
 
@@ -200,12 +210,63 @@ change_line_handler (void)
   else
     {
       /* Turn off editing by using gdb_readline2.  */
-      rl_callback_handler_remove ();
+      gdb_rl_callback_handler_remove ();
       call_readline = gdb_readline2;
 
       /* Set up the command handler as well, in case we are called as
          first thing from .gdbinit.  */
       input_handler = command_line_handler;
+    }
+}
+
+/* The functions below are wrappers for rl_callback_handler_remove and
+   rl_callback_handler_install that keep track of whether the callback
+   handler is installed in readline.  This is necessary because after
+   handling a target event of a background execution command, we may
+   need to reinstall the callback handler if it was removed due to a
+   secondary prompt.  See gdb_readline_wrapper_line.  We don't
+   unconditionally install the handler for every target event because
+   that also clears the line buffer, thus installing it while the user
+   is typing would lose input.  */
+
+/* Whether we've registered a callback handler with readline.  */
+static int callback_handler_installed;
+
+/* See event-top.h, and above.  */
+
+void
+gdb_rl_callback_handler_remove (void)
+{
+  rl_callback_handler_remove ();
+  callback_handler_installed = 0;
+}
+
+/* See event-top.h, and above.  Note this wrapper doesn't have an
+   actual callback parameter because we always install
+   INPUT_HANDLER.  */
+
+void
+gdb_rl_callback_handler_install (const char *prompt)
+{
+  /* Calling rl_callback_handler_install resets readline's input
+     buffer.  Calling this when we were already processing input
+     therefore loses input.  */
+  gdb_assert (!callback_handler_installed);
+
+  rl_callback_handler_install (prompt, input_handler);
+  callback_handler_installed = 1;
+}
+
+/* See event-top.h, and above.  */
+
+void
+gdb_rl_callback_handler_reinstall (void)
+{
+  if (!callback_handler_installed)
+    {
+      /* Passing NULL as prompt argument tells readline to not display
+	 a prompt.  */
+      gdb_rl_callback_handler_install (NULL);
     }
 }
 
@@ -227,7 +288,7 @@ change_line_handler (void)
    3. On prompting for pagination.  */
 
 void
-display_gdb_prompt (char *new_prompt)
+display_gdb_prompt (const char *new_prompt)
 {
   char *actual_gdb_prompt = NULL;
   struct cleanup *old_chain;
@@ -236,11 +297,6 @@ display_gdb_prompt (char *new_prompt)
 
   /* Reset the nesting depth used when trace-commands is set.  */
   reset_command_nest_depth ();
-
-  /* Each interpreter has its own rules on displaying the command
-     prompt.  */
-  if (!current_interp_display_prompt_p ())
-    return;
 
   old_chain = make_cleanup (free_current_contents, &actual_gdb_prompt);
 
@@ -267,7 +323,8 @@ display_gdb_prompt (char *new_prompt)
 	     the above two functions.  Calling
 	     rl_callback_handler_remove(), does the job.  */
 
-	  rl_callback_handler_remove ();
+	  gdb_rl_callback_handler_remove ();
+	  do_cleanups (old_chain);
 	  return;
 	}
       else
@@ -281,8 +338,8 @@ display_gdb_prompt (char *new_prompt)
 
   if (async_command_editing_p)
     {
-      rl_callback_handler_remove ();
-      rl_callback_handler_install (actual_gdb_prompt, input_handler);
+      gdb_rl_callback_handler_remove ();
+      gdb_rl_callback_handler_install (actual_gdb_prompt);
     }
   /* new_prompt at this point can be the top of the stack or the one
      passed in.  It can't be NULL.  */
@@ -368,7 +425,13 @@ stdin_event_handler (int error, gdb_client_data client_data)
       quit_command ((char *) 0, stdin == instream);
     }
   else
-    (*call_readline) (client_data);
+    {
+      do
+	{
+	  call_stdin_event_handler_again_p = 0;
+	  (*call_readline) (client_data);
+	} while (call_stdin_event_handler_again_p != 0);
+    }
 }
 
 /* Re-enable stdin after the end of an execution command in
@@ -466,6 +529,7 @@ command_line_handler (char *rl)
     {
       linelength = 80;
       linebuffer = (char *) xmalloc (linelength);
+      linebuffer[0] = '\0';
     }
 
   p = linebuffer;
@@ -602,9 +666,8 @@ command_line_handler (char *rl)
   *p = 0;
 
   /* Add line to history if appropriate.  */
-  if (instream == stdin
-      && ISATTY (stdin) && *linebuffer)
-    add_history (linebuffer);
+  if (*linebuffer && input_from_terminal_p ())
+    gdb_add_history (linebuffer);
 
   /* Note: lines consisting solely of comments are added to the command
      history.  This is useful when you type a command, and then
@@ -730,6 +793,8 @@ async_init_signals (void)
   sigint_token =
     create_async_signal_handler (async_request_quit, NULL);
   signal (SIGTERM, handle_sigterm);
+  async_sigterm_token
+    = create_async_signal_handler (async_sigterm_handler, NULL);
 
   /* If SIGTRAP was set to SIG_IGN, then the SIG_IGN will get passed
      to the inferior and breakpoints will be ignored.  */
@@ -766,7 +831,6 @@ async_init_signals (void)
   sigtstp_token =
     create_async_signal_handler (async_stop_sig, NULL);
 #endif
-
 }
 
 /* Tell the event loop what to do if SIGINT is received.
@@ -794,13 +858,33 @@ handle_sigint (int sig)
   gdb_call_async_signal_handler (sigint_token, immediate_quit);
 }
 
+/* Handle GDB exit upon receiving SIGTERM if target_can_async_p ().  */
+
+static void
+async_sigterm_handler (gdb_client_data arg)
+{
+  quit_force (NULL, stdin == instream);
+}
+
+/* See defs.h.  */
+volatile int sync_quit_force_run;
+
 /* Quit GDB if SIGTERM is received.
    GDB would quit anyway, but this way it will clean up properly.  */
 void
 handle_sigterm (int sig)
 {
   signal (sig, handle_sigterm);
-  quit_force ((char *) 0, stdin == instream);
+
+  /* Call quit_force in a signal safe way.
+     quit_force itself is not signal safe.  */
+  if (target_can_async_p ())
+    mark_async_signal_handler (async_sigterm_token);
+  else
+    {
+      sync_quit_force_run = 1;
+      set_quit_flag ();
+    }
 }
 
 /* Do the quit.  All the checks have been done by the caller.  */
@@ -867,7 +951,7 @@ async_disconnect (gdb_client_data arg)
 
   TRY_CATCH (exception, RETURN_MASK_ALL)
     {
-      pop_all_targets (1);
+      pop_all_targets ();
     }
 
   signal (SIGHUP, SIG_DFL);	/*FIXME: ???????????  */
@@ -953,7 +1037,7 @@ gdb_setup_readline (void)
      time.  */
   if (!batch_silent)
     gdb_stdout = stdio_fileopen (stdout);
-  gdb_stderr = stdio_fileopen (stderr);
+  gdb_stderr = stderr_fileopen ();
   gdb_stdlog = gdb_stderr;  /* for moment */
   gdb_stdtarg = gdb_stderr; /* for moment */
   gdb_stdtargerr = gdb_stderr; /* for moment */
@@ -1018,6 +1102,6 @@ gdb_disable_readline (void)
   gdb_stdtargerr = NULL;
 #endif
 
-  rl_callback_handler_remove ();
+  gdb_rl_callback_handler_remove ();
   delete_file_handler (input_fd);
 }

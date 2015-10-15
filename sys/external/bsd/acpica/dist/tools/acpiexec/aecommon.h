@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -56,6 +56,7 @@
 #include "acdebug.h"
 #include "actables.h"
 #include "acinterp.h"
+#include "amlresrc.h"
 #include "acapps.h"
 
 #include <stdio.h>
@@ -63,9 +64,14 @@
 #include <string.h>
 #include <signal.h>
 
-extern FILE                 *AcpiGbl_DebugFile;
 extern BOOLEAN              AcpiGbl_IgnoreErrors;
 extern UINT8                AcpiGbl_RegionFillValue;
+extern UINT8                AcpiGbl_UseHwReducedFadt;
+extern BOOLEAN              AcpiGbl_DisplayRegionAccess;
+extern BOOLEAN              AcpiGbl_DoInterfaceTests;
+extern BOOLEAN              AcpiGbl_LoadTestTables;
+extern FILE                 *AcpiGbl_NamespaceInitFile;
+extern ACPI_CONNECTION_INFO AeMyContext;
 
 /* Check for unexpected exceptions */
 
@@ -193,5 +199,29 @@ AeGlobalEventHandler (
     UINT32                  EventNumber,
     void                    *Context);
 
-#endif /* _AECOMMON */
+/* aeregion */
 
+ACPI_STATUS
+AeInstallDeviceHandlers (
+    void);
+
+void
+AeInstallRegionHandlers (
+    void);
+
+void
+AeOverrideRegionHandlers (
+    void);
+
+
+/* aeinitfile */
+
+int
+AeOpenInitializationFile (
+    char                    *Filename);
+
+void
+AeDoObjectOverrides (
+    void);
+
+#endif /* _AECOMMON */

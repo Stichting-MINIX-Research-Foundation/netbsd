@@ -1,4 +1,4 @@
-/*	$NetBSD: ichsmb.c,v 1.33 2013/11/07 15:55:08 msaitoh Exp $	*/
+/*	$NetBSD: ichsmb.c,v 1.42 2015/05/03 22:51:11 pgoyette Exp $	*/
 /*	$OpenBSD: ichiic.c,v 1.18 2007/05/03 09:36:26 dlg Exp $	*/
 
 /*
@@ -22,7 +22,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ichsmb.c,v 1.33 2013/11/07 15:55:08 msaitoh Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ichsmb.c,v 1.42 2015/05/03 22:51:11 pgoyette Exp $");
 
 #include <sys/param.h>
 #include <sys/device.h>
@@ -67,10 +67,13 @@ struct ichsmb_softc {
 		int          flags;
 		volatile int error;
 	}			sc_i2c_xfer;
+	device_t		sc_i2c_device;
 };
 
 static int	ichsmb_match(device_t, cfdata_t, void *);
 static void	ichsmb_attach(device_t, device_t, void *);
+static int	ichsmb_rescan(device_t, const char *, const int *);
+static void	ichsmb_chdet(device_t, device_t);
 
 static int	ichsmb_i2c_acquire_bus(void *, int);
 static void	ichsmb_i2c_release_bus(void *, int);
@@ -80,8 +83,8 @@ static int	ichsmb_i2c_exec(void *, i2c_op_t, i2c_addr_t, const void *,
 static int	ichsmb_intr(void *);
 
 
-CFATTACH_DECL_NEW(ichsmb, sizeof(struct ichsmb_softc),
-    ichsmb_match, ichsmb_attach, NULL, NULL);
+CFATTACH_DECL3_NEW(ichsmb, sizeof(struct ichsmb_softc),
+    ichsmb_match, ichsmb_attach, NULL, NULL, ichsmb_rescan, ichsmb_chdet, 0);
 
 
 static int
@@ -110,11 +113,19 @@ ichsmb_match(device_t parent, cfdata_t match, void *aux)
 		case PCI_PRODUCT_INTEL_6SERIES_SMB:
 		case PCI_PRODUCT_INTEL_7SERIES_SMB:
 		case PCI_PRODUCT_INTEL_8SERIES_SMB:
+		case PCI_PRODUCT_INTEL_9SERIES_SMB:
 		case PCI_PRODUCT_INTEL_CORE4G_M_SMB:
+		case PCI_PRODUCT_INTEL_CORE5G_M_SMB:
+		case PCI_PRODUCT_INTEL_BAYTRAIL_PCU_SMB:
 		case PCI_PRODUCT_INTEL_C600_SMBUS:
 		case PCI_PRODUCT_INTEL_C600_SMB_0:
 		case PCI_PRODUCT_INTEL_C600_SMB_1:
 		case PCI_PRODUCT_INTEL_C600_SMB_2:
+		case PCI_PRODUCT_INTEL_C610_SMB:
+		case PCI_PRODUCT_INTEL_EP80579_SMB:
+		case PCI_PRODUCT_INTEL_DH89XXCC_SMB:
+		case PCI_PRODUCT_INTEL_DH89XXCL_SMB:
+		case PCI_PRODUCT_INTEL_C2000_PCU_SMBUS:
 			return 1;
 		}
 	}
@@ -126,11 +137,12 @@ ichsmb_attach(device_t parent, device_t self, void *aux)
 {
 	struct ichsmb_softc *sc = device_private(self);
 	struct pci_attach_args *pa = aux;
-	struct i2cbus_attach_args iba;
 	pcireg_t conf;
 	bus_size_t iosize;
 	pci_intr_handle_t ih;
 	const char *intrstr = NULL;
+	char intrbuf[PCI_INTRSTR_LEN];
+	int flags;
 
 	sc->sc_dev = self;
 
@@ -142,14 +154,14 @@ ichsmb_attach(device_t parent, device_t self, void *aux)
 
 	if ((conf & LPCIB_SMB_HOSTC_HSTEN) == 0) {
 		aprint_error_dev(self, "SMBus disabled\n");
-		return;
+		goto out;
 	}
 
 	/* Map I/O space */
 	if (pci_mapreg_map(pa, LPCIB_SMB_BASE, PCI_MAPREG_TYPE_IO, 0,
 	    &sc->sc_iot, &sc->sc_ioh, NULL, &iosize)) {
 		aprint_error_dev(self, "can't map I/O space\n");
-		return;
+		goto out;
 	}
 
 	sc->sc_poll = 1;
@@ -159,7 +171,7 @@ ichsmb_attach(device_t parent, device_t self, void *aux)
 	} else {
 		/* Install interrupt handler */
 		if (pci_intr_map(pa, &ih) == 0) {
-			intrstr = pci_intr_string(pa->pa_pc, ih);
+			intrstr = pci_intr_string(pa->pa_pc, ih, intrbuf, sizeof(intrbuf));
 			sc->sc_ih = pci_intr_establish(pa->pa_pc, ih, IPL_BIO,
 			    ichsmb_intr, sc);
 			if (sc->sc_ih != NULL) {
@@ -172,6 +184,26 @@ ichsmb_attach(device_t parent, device_t self, void *aux)
 			aprint_normal_dev(self, "polling\n");
 	}
 
+	sc->sc_i2c_device = NULL;
+	flags = 0;
+	ichsmb_rescan(self, "i2cbus", &flags);
+
+out:	if (!pmf_device_register(self, NULL, NULL))
+		aprint_error_dev(self, "couldn't establish power handler\n");
+}
+
+static int
+ichsmb_rescan(device_t self, const char *ifattr, const int *flags)
+{
+	struct ichsmb_softc *sc = device_private(self);
+	struct i2cbus_attach_args iba;
+
+	if (!ifattr_match(ifattr, "i2cbus"))
+		return 0;
+
+	if (sc->sc_i2c_device)
+		return 0;
+
 	/* Attach I2C bus */
 	mutex_init(&sc->sc_i2c_mutex, MUTEX_DEFAULT, IPL_NONE);
 	sc->sc_i2c_tag.ic_cookie = sc;
@@ -182,10 +214,19 @@ ichsmb_attach(device_t parent, device_t self, void *aux)
 	memset(&iba, 0, sizeof(iba));
 	iba.iba_type = I2C_TYPE_SMBUS;
 	iba.iba_tag = &sc->sc_i2c_tag;
-	config_found(self, &iba, iicbus_print);
+	sc->sc_i2c_device = config_found_ia(self, ifattr, &iba, iicbus_print);
 
-	if (!pmf_device_register(self, NULL, NULL))
-		aprint_error_dev(self, "couldn't establish power handler\n");
+	return 0;
+}
+
+static void
+ichsmb_chdet(device_t self, device_t child)
+{
+	struct ichsmb_softc *sc = device_private(self);
+
+	if (sc->sc_i2c_device == child)
+		sc->sc_i2c_device = NULL;
+
 }
 
 static int

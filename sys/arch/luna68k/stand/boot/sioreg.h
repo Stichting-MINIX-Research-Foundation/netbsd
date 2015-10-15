@@ -1,4 +1,4 @@
-/*	$NetBSD: sioreg.h,v 1.2 2013/01/12 07:04:57 tsutsui Exp $	*/
+/*	$NetBSD: sioreg.h,v 1.4 2015/02/14 05:03:09 tsutsui Exp $	*/
 
 /*
  * Copyright (c) 1992 OMRON Corporation.
@@ -73,10 +73,10 @@
 /* sioreg.h   NOV-26-1991 */
 
 struct siodevice {
-	volatile u_char sio_data;
-	u_char sio_pad1;
-	volatile u_char sio_cmd;
-	u_char sio_pad2;
+	volatile uint8_t sio_data;
+	uint8_t sio_pad1;
+	volatile uint8_t sio_cmd;
+	uint8_t sio_pad2;
 };
 
 #define sio_stat sio_cmd
@@ -84,10 +84,10 @@ struct siodevice {
 #define splsio			spl6
 
 
-#define REG(u, r)	( (u << 4) | r )
-#define CHANNEL(r)	( r >> 4 )
-#define REGNO(r)	( r & 0x07 )
-#define isStatusReg(r)	( r & 0x08 )
+#define REG(u, r)	(((u) << 4) | (r))
+#define CHANNEL(r)	((r) >> 4)
+#define REGNO(r)	((r) & 0x07)
+#define isStatusReg(r)	((r) & 0x08)
 
 #define WR0		0x00
 #define WR1		0x01

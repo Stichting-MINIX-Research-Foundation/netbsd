@@ -1,4 +1,4 @@
-/*	$NetBSD: wdvar.h,v 1.40 2012/02/02 19:43:02 tls Exp $	*/
+/*	$NetBSD: wdvar.h,v 1.42 2015/04/13 16:33:24 riastradh Exp $	*/
 
 /*
  * Copyright (c) 1998, 2001 Manuel Bouyer.
@@ -31,7 +31,7 @@
 #include "opt_wd_softbadsect.h"
 #endif
 
-#include <sys/rnd.h>
+#include <sys/rndsource.h>
 
 struct wd_softc {
 	/* General disk infos */
@@ -59,8 +59,8 @@ struct wd_softc {
 #define WDF_LBA		0x040 /* using LBA mode */
 #define WDF_KLABEL	0x080 /* retain label after 'full' close */
 #define WDF_LBA48	0x100 /* using 48-bit LBA mode */
-	u_int64_t sc_capacity; /* full capacity of the device */
-	u_int32_t sc_capacity28; /* capacity accessible with LBA28 commands */
+	uint64_t sc_capacity; /* full capacity of the device */
+	uint32_t sc_capacity28; /* capacity accessible with LBA28 commands */
 
 	int retries; /* number of xfer retry */
 

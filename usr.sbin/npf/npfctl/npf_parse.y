@@ -1,7 +1,7 @@
-/*	$NetBSD: npf_parse.y,v 1.29 2013/11/19 00:28:41 rmind Exp $	*/
+/*	$NetBSD: npf_parse.y,v 1.38 2015/03/24 20:24:17 christos Exp $	*/
 
 /*-
- * Copyright (c) 2011-2013 The NetBSD Foundation, Inc.
+ * Copyright (c) 2011-2014 The NetBSD Foundation, Inc.
  * All rights reserved.
  *
  * This code is derived from software contributed to The NetBSD Foundation
@@ -31,10 +31,12 @@
 
 %{
 
-#include <stdio.h>
 #include <err.h>
-#include <vis.h>
 #include <netdb.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <vis.h>
 
 #include "npfctl.h"
 
@@ -84,6 +86,7 @@ yyerror(const char *fmt, ...)
 %}
 
 %token			ALG
+%token			ALGO
 %token			ALL
 %token			ANY
 %token			APPLY
@@ -91,6 +94,8 @@ yyerror(const char *fmt, ...)
 %token			ARROWLEFT
 %token			ARROWRIGHT
 %token			BLOCK
+%token			BPFJIT
+%token			CDB
 %token			CURLY_CLOSE
 %token			CURLY_OPEN
 %token			CODE
@@ -107,7 +112,6 @@ yyerror(const char *fmt, ...)
 %token			HASH
 %token			ICMPTYPE
 %token			ID
-%token			IFNET
 %token			IN
 %token			INET4
 %token			INET6
@@ -115,7 +119,9 @@ yyerror(const char *fmt, ...)
 %token			MAP
 %token			MINUS
 %token			NAME
+%token			NPT66
 %token			ON
+%token			OFF
 %token			OUT
 %token			PAR_CLOSE
 %token			PAR_OPEN
@@ -132,8 +138,10 @@ yyerror(const char *fmt, ...)
 %token			RETURNRST
 %token			RULESET
 %token			SEPLINE
+%token			SET
 %token			SLASH
 %token			STATEFUL
+%token			STATEFUL_ENDS
 %token			TABLE
 %token			TCP
 %token			TO
@@ -156,7 +164,8 @@ yyerror(const char *fmt, ...)
 %type	<str>		proc_param_val, opt_apply, ifname, on_ifname, ifref
 %type	<num>		port, opt_final, number, afamily, opt_family
 %type	<num>		block_or_pass, rule_dir, group_dir, block_opts
-%type	<num>		opt_stateful, icmp_type, table_type, map_sd, map_type
+%type	<num>		opt_stateful, icmp_type, table_type
+%type	<num>		map_sd, map_algo, map_type
 %type	<var>		ifaddrs, addr_or_ifaddr, port_range, icmp_type_and_code
 %type	<var>		filt_addr, addr_and_mask, tcp_flags, tcp_flags_and_mask
 %type	<var>		procs, proc_call, proc_param_list, proc_param
@@ -165,9 +174,11 @@ yyerror(const char *fmt, ...)
 %type	<filtopts>	filt_opts, all_or_filt_opts
 %type	<optproto>	opt_proto
 %type	<rulegroup>	group_opts
+%type	<tf>		onoff
 
 %union {
 	char *		str;
+	bool		tf;
 	unsigned long	num;
 	double		fpnum;
 	npfvar_t *	var;
@@ -185,7 +196,7 @@ input
 	;
 
 lines
-	: line SEPLINE lines
+	: lines SEPLINE line
 	| line
 	;
 
@@ -196,6 +207,7 @@ line
 	| group
 	| rproc
 	| alg
+	| set
 	|
 	;
 
@@ -203,6 +215,21 @@ alg
 	: ALG STRING
 	{
 		npfctl_build_alg($2);
+	}
+	;
+
+onoff
+	: ON {
+		$$ = true;
+	}
+	| OFF {
+		$$ = false;
+	}
+	;
+
+set
+	: SET BPFJIT onoff {
+		npfctl_bpfjit($3);
 	}
 	;
 
@@ -231,7 +258,7 @@ list
 	;
 
 list_elems
-	: element COMMA list_elems
+	: list_elems COMMA element
 	{
 		npfvar_add_elements($1, $3);
 	}
@@ -278,6 +305,7 @@ table
 table_type
 	: HASH		{ $$ = NPF_TABLE_HASH; }
 	| TREE		{ $$ = NPF_TABLE_TREE; }
+	| CDB		{ $$ = NPF_TABLE_CDB; }
 	;
 
 table_store
@@ -295,6 +323,11 @@ map_sd
 	|		{ $$ = NPFCTL_NAT_DYNAMIC; }
 	;
 
+map_algo
+	: ALGO NPT66	{ $$ = NPF_ALGO_NPT66; }
+	|		{ $$ = 0; }
+	;
+
 map_type
 	: ARROWBOTH	{ $$ = NPF_NATIN | NPF_NATOUT; }
 	| ARROWLEFT	{ $$ = NPF_NATIN; }
@@ -310,13 +343,13 @@ mapseg
 	;
 
 map
-	: MAP ifref map_sd mapseg map_type mapseg PASS filt_opts
+	: MAP ifref map_sd map_algo mapseg map_type mapseg PASS filt_opts
 	{
-		npfctl_build_natseg($3, $5, $2, &$4, &$6, &$8);
+		npfctl_build_natseg($3, $6, $2, &$5, &$7, &$9, $4);
 	}
-	| MAP ifref map_sd mapseg map_type mapseg
+	| MAP ifref map_sd map_algo mapseg map_type mapseg
 	{
-		npfctl_build_natseg($3, $5, $2, &$4, &$6, NULL);
+		npfctl_build_natseg($3, $6, $2, &$5, &$7, NULL, $4);
 	}
 	| MAP RULESET group_opts
 	{
@@ -336,7 +369,7 @@ rproc
 	;
 
 procs
-	: proc_call SEPLINE procs
+	: procs SEPLINE proc_call
 	{
 		$$ = npfvar_add_elements($1, $3);
 	}
@@ -357,7 +390,7 @@ proc_call
 	;
 
 proc_param_list
-	: proc_param COMMA proc_param_list
+	: proc_param_list COMMA proc_param
 	{
 		$$ = npfvar_add_elements($1, $3);
 	}
@@ -437,7 +470,7 @@ ruleset_block
 	;
 
 ruleset_def
-	: rule_group SEPLINE ruleset_def
+	: ruleset_def SEPLINE rule_group
 	| rule_group
 	;
 
@@ -544,6 +577,7 @@ all_or_filt_opts
 
 opt_stateful
 	: STATEFUL	{ $$ = NPF_RULE_STATEFUL; }
+	| STATEFUL_ENDS	{ $$ = NPF_RULE_STATEFUL | NPF_RULE_MULTIENDS; }
 	|		{ $$ = 0; }
 	;
 
@@ -584,7 +618,8 @@ filt_opts
 	;
 
 filt_addr
-	: addr_or_ifaddr	{ $$ = $1; }
+	: list			{ $$ = $1; }
+	| addr_or_ifaddr	{ $$ = $1; }
 	| TABLE_ID		{ $$ = npfctl_parse_table_id($1); }
 	| ANY			{ $$ = NULL; }
 	;
@@ -633,8 +668,11 @@ again:
 			$$ = vp;
 			break;
 		case NPFVAR_INTERFACE:
-			ifna = npfvar_get_data(vp, type, 0);
-			$$ = ifna->ifna_addrs;
+			$$ = NULL;
+			for (u_int i = 0; i < npfvar_get_count(vp); i++) {
+				ifna = npfvar_get_data(vp, type, i);
+				$$ = npfvar_add_elements($$, ifna->ifna_addrs);
+			}
 			break;
 		case -1:
 			yyerror("undefined variable '%s'", $1);

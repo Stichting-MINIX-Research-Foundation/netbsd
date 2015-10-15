@@ -1,7 +1,7 @@
-/*	$NetBSD: ecdb.c,v 1.5 2013/07/27 19:23:12 christos Exp $	*/
+/*	$NetBSD: ecdb.c,v 1.9 2015/07/08 17:28:58 christos Exp $	*/
 
 /*
- * Copyright (C) 2009-2011, 2013  Internet Systems Consortium, Inc. ("ISC")
+ * Copyright (C) 2009-2014  Internet Systems Consortium, Inc. ("ISC")
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -15,8 +15,6 @@
  * OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
  * PERFORMANCE OF THIS SOFTWARE.
  */
-
-/* Id: ecdb.c,v 1.10 2011/12/20 00:06:53 marka Exp  */
 
 #include "config.h"
 
@@ -117,7 +115,8 @@ static dns_rdatasetmethods_t rdataset_methods = {
 	NULL,			/* setadditional */
 	NULL,			/* putadditional */
 	rdataset_settrust,	/* settrust */
-	NULL			/* expire */
+	NULL,			/* expire */
+	NULL			/* clearprefetch */
 };
 
 typedef struct ecdb_rdatasetiter {
@@ -552,6 +551,7 @@ static dns_dbmethods_t ecdb_methods = {
 	detach,
 	NULL,			/* beginload */
 	NULL,			/* endload */
+	NULL,			/* serialize */
 	NULL,			/* dump */
 	NULL,			/* currentversion */
 	NULL,			/* newversion */
@@ -584,10 +584,12 @@ static dns_dbmethods_t ecdb_methods = {
 	NULL,			/* resigned */
 	NULL,			/* isdnssec */
 	NULL,			/* getrrsetstats */
-	NULL,			/* rpz_enabled */
-	NULL,			/* rpz_findips */
+	NULL,			/* rpz_attach */
+	NULL,			/* rpz_ready */
 	NULL,			/* findnodeext */
-	NULL			/* findext */
+	NULL,			/* findext */
+	NULL,			/* setcachestats */
+	NULL			/* hashsize */
 };
 
 static isc_result_t
@@ -774,23 +776,24 @@ rdataset_settrust(dns_rdataset_t *rdataset, dns_trust_t trust) {
 
 static void
 rdatasetiter_destroy(dns_rdatasetiter_t **iteratorp) {
+	isc_mem_t *mctx;
 	union {
 		dns_rdatasetiter_t *rdatasetiterator;
 		ecdb_rdatasetiter_t *ecdbiterator;
 	} u;
-	isc_mem_t *mctx;
 
 	REQUIRE(iteratorp != NULL);
+	REQUIRE(DNS_RDATASETITER_VALID(*iteratorp));
+
 	u.rdatasetiterator = *iteratorp;
-//	REQUIRE(DNS_RDATASETITER_VALID(&(u.ecdbiterator->common)));
 
 	mctx = u.ecdbiterator->common.db->mctx;
-
 	u.ecdbiterator->common.magic = 0;
 
 	dns_db_detachnode(u.ecdbiterator->common.db,
-	    &u.ecdbiterator->common.node);
-	isc_mem_put(mctx, u.ecdbiterator, sizeof(ecdb_rdatasetiter_t));
+			  &u.ecdbiterator->common.node);
+	isc_mem_put(mctx, u.ecdbiterator,
+		    sizeof(ecdb_rdatasetiter_t));
 
 	*iteratorp = NULL;
 }

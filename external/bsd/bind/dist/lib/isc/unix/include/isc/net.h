@@ -1,7 +1,7 @@
-/*	$NetBSD: net.h,v 1.3 2012/06/05 00:42:49 christos Exp $	*/
+/*	$NetBSD: net.h,v 1.6 2015/07/08 17:29:00 christos Exp $	*/
 
 /*
- * Copyright (C) 2004, 2005, 2007, 2008, 2012  Internet Systems Consortium, Inc. ("ISC")
+ * Copyright (C) 2004, 2005, 2007, 2008, 2012-2014  Internet Systems Consortium, Inc. ("ISC")
  * Copyright (C) 1999-2003  Internet Software Consortium.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
@@ -39,6 +39,7 @@
  *\li		struct sockaddr
  *\li		struct sockaddr_in
  *\li		struct sockaddr_in6
+ *\li		struct sockaddr_storage
  *\li		in_port_t
  *
  * It ensures that the AF_ and PF_ macros are defined.
@@ -189,6 +190,33 @@ struct in6_pktinfo {
 };
 #endif
 
+
+#ifndef ISC_PLATFORM_HAVESOCKADDRSTORAGE
+#define _SS_MAXSIZE 128
+#define _SS_ALIGNSIZE  (sizeof (isc_uint64_t))
+#ifdef ISC_PLATFORM_HAVESALEN
+#define _SS_PAD1SIZE (_SS_ALIGNSIZE - (2 * sizeof(isc_uint8_t)))
+#define _SS_PAD2SIZE (_SS_MAXSIZE - (_SS_ALIGNSIZE + _SS_PAD1SIZE \
+		       + 2 * sizeof(isc_uint8_t)))
+#else
+#define _SS_PAD1SIZE (_SS_ALIGNSIZE - sizeof(isc_uint16_t))
+#define _SS_PAD2SIZE (_SS_MAXSIZE - (_SS_ALIGNSIZE + _SS_PAD1SIZE \
+			+ sizeof(isc_uint16_t)))
+#endif
+
+struct sockaddr_storage {
+#ifdef ISC_PLATFORM_HAVESALEN
+       isc_uint8_t             ss_len;
+       isc_uint8_t             ss_family;
+#else
+       isc_uint16_t            ss_family;
+#endif
+       char                    __ss_pad1[_SS_PAD1SIZE];
+       isc_uint64_t            __ss_align;  /* field to force desired structure */
+       char                    __ss_pad2[_SS_PAD2SIZE];
+};
+#endif
+
 #if defined(ISC_PLATFORM_HAVEIPV6) && defined(ISC_PLATFORM_NEEDIN6ADDRANY)
 extern const struct in6_addr isc_net_in6addrany;
 /*%
@@ -325,6 +353,21 @@ isc_net_probeunix(void);
 /*
  * Returns whether UNIX domain sockets are supported.
  */
+
+#define ISC_NET_DSCPRECVV4	0x01	/* Can receive sent DSCP value IPv4 */
+#define ISC_NET_DSCPRECVV6	0x02	/* Can receive sent DSCP value IPv6 */
+#define ISC_NET_DSCPSETV4	0x04	/* Can set DSCP on socket IPv4 */
+#define ISC_NET_DSCPSETV6	0x08	/* Can set DSCP on socket IPv6 */
+#define ISC_NET_DSCPPKTV4	0x10	/* Can set DSCP on per packet IPv4 */
+#define ISC_NET_DSCPPKTV6	0x20	/* Can set DSCP on per packet IPv6 */
+#define ISC_NET_DSCPALL		0x3f	/* All valid flags */
+
+unsigned int
+isc_net_probedscp(void);
+/*%<
+ * Probe the level of DSCP support.
+ */
+
 
 isc_result_t
 isc_net_getudpportrange(int af, in_port_t *low, in_port_t *high);

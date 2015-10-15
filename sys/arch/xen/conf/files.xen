@@ -1,4 +1,4 @@
-#	$NetBSD: files.xen,v 1.129 2012/10/03 18:58:32 dsl Exp $
+#	$NetBSD: files.xen,v 1.137 2015/01/04 07:34:14 uebayasi Exp $
 #	NetBSD: files.x86,v 1.10 2003/10/08 17:30:00 bouyer Exp 
 #	NetBSD: files.i386,v 1.254 2004/03/25 23:32:10 jmc Exp 
 
@@ -55,7 +55,6 @@ file	arch/i386/i386/process_machdep.c
 file	arch/i386/i386/trap.c
 file	arch/i386/i386/lock_stubs.S
 
-
 file	arch/i386/i386/pmc.c			perfctrs
 
 file	crypto/des/arch/i386/des_enc.S		des
@@ -77,13 +76,14 @@ file	arch/amd64/amd64/gdt.c
 file	arch/amd64/amd64/machdep.c
 file	arch/amd64/amd64/process_machdep.c
 file	arch/amd64/amd64/trap.c
-file	arch/amd64/amd64/fpu.c
 file	arch/amd64/amd64/lock_stubs.S
 endif
 
 file	kern/subr_disk_mbr.c		disk
+file	arch/x86/x86/convert_xmm_s87.c
 file	arch/x86/x86/db_memrw.c		ddb | kgdb
 file	arch/x86/x86/db_trace.c		ddb
+file	arch/x86/x86/fpu.c
 file	arch/xen/x86/hypervisor_machdep.c
 # file 	arch/x86/x86/mtrr_i686.c	mtrr
 file	arch/x86/x86/syscall.c
@@ -109,6 +109,12 @@ file	dev/cons.c
 
 
 #
+# Stack-less Just-In-Time compiler
+#
+
+include	"external/bsd/sljit/conf/files.sljit"
+
+#
 # Machine-independent SCSI drivers
 #
 
@@ -123,22 +129,22 @@ include	"dev/ata/files.ata"
 # Memory Disk for install floppy
 file	dev/md_root.c			memory_disk_hooks
 
-file	arch/x86/x86/bus_dma.c		pci
+file	arch/x86/x86/bus_dma.c		machdep
 file	arch/x86/x86/core_machdep.c	coredump
-file	arch/xen/x86/xen_bus_dma.c	pci
-file	arch/x86/x86/bus_space.c	pci
-file	arch/xen/x86/consinit.c
-file	arch/x86/x86/identcpu.c
-file	arch/xen/x86/intr.c
+file	arch/xen/x86/xen_bus_dma.c	machdep
+file	arch/x86/x86/bus_space.c	machdep
+file	arch/xen/x86/consinit.c		machdep
+file	arch/x86/x86/identcpu.c		machdep
+file	arch/xen/x86/intr.c		machdep
 file	arch/xen/x86/xen_ipi.c		multiprocessor
-file	arch/x86/x86/pmap.c
-file	arch/x86/x86/pmap_tlb.c
+file	arch/x86/x86/pmap.c		machdep
+file	arch/x86/x86/pmap_tlb.c		machdep
 file	arch/x86/x86/procfs_machdep.c	procfs
-file	arch/x86/x86/sys_machdep.c
-file	arch/x86/x86/tsc.c
-file	arch/x86/x86/vm_machdep.c
-file	arch/x86/x86/x86_machdep.c
-file	arch/x86/x86/cpu_topology.c
+file	arch/x86/x86/sys_machdep.c	machdep
+file	arch/x86/x86/tsc.c		machdep
+file	arch/x86/x86/vm_machdep.c	machdep
+file	arch/x86/x86/x86_machdep.c	machdep
+file	arch/x86/x86/cpu_topology.c	machdep
 
 include	"arch/xen/conf/files.compat"
 
@@ -182,15 +188,6 @@ file arch/xen/xenbus/xenbus_comms.c xenbus needs-flag
 file arch/xen/xenbus/xenbus_dev.c xenbus needs-flag
 file arch/xen/xenbus/xenbus_probe.c xenbus needs-flag
 file arch/xen/xenbus/xenbus_xs.c xenbus needs-flag
-
-ifdef i386
-# Numeric Processing Extension; Math Co-processor
-device	npx
-file	arch/i386/isa/npx.c		npx needs-flag
-
-attach	npx at xendevbus with npx_hv
-file	arch/xen/i386/npx_hv.c		npx_hv
-endif
 
 # Xen console support
 device	xencons: tty
@@ -346,6 +343,11 @@ file	arch/i386/i386/freebsd_sigcode.S	compat_freebsd
 file	arch/i386/i386/freebsd_syscall.c	compat_freebsd
 
 elifdef amd64
+
+# Binary compatibility with previous NetBSD releases (COMPAT_XX)
+file	arch/amd64/amd64/compat_13_machdep.c	compat_13
+file	arch/amd64/amd64/compat_16_machdep.c	compat_16
+
 # NetBSD/i386 32-bit binary compatibility (COMPAT_NETBSD32)
 include "compat/netbsd32/files.netbsd32"
 file	arch/amd64/amd64/netbsd32_machdep.c	compat_netbsd32

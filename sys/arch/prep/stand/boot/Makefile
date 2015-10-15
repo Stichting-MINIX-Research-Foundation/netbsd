@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.27 2013/08/21 06:49:44 matt Exp $
+#	$NetBSD: Makefile,v 1.29 2014/08/08 16:56:31 joerg Exp $
 
 NOMAN= # defined
 
@@ -24,7 +24,7 @@ SRCS+= filesystem.c inkernel.c io.c tgets.c prf.c monitor.c
 SRCS+= kbd.c ns16550.c vers.c vreset.c vga.c 
 SRCS+= pci.c sd.c siop.c
 
-CFLAGS= -Os -mmultiple -ffreestanding
+CFLAGS= -Os -ffreestanding
 CFLAGS+= -Werror -Wall -Wstrict-prototypes -Wmissing-prototypes
 AFLAGS= -x assembler-with-cpp
 
@@ -46,6 +46,7 @@ BINMODE= 444
 
 # XXX SHOULD NOT NEED TO DEFINE THESE!
 LIBCRT0=
+LIBCRTI=
 LIBC=
 LIBCRTBEGIN=
 LIBCRTEND=

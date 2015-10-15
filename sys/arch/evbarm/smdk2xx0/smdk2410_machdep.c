@@ -1,4 +1,4 @@
-/*	$NetBSD: smdk2410_machdep.c,v 1.33 2013/08/18 15:58:21 matt Exp $ */
+/*	$NetBSD: smdk2410_machdep.c,v 1.35 2014/09/13 18:08:39 matt Exp $ */
 
 /*
  * Copyright (c) 2002, 2003 Fujitsu Component Limited
@@ -105,7 +105,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: smdk2410_machdep.c,v 1.33 2013/08/18 15:58:21 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: smdk2410_machdep.c,v 1.35 2014/09/13 18:08:39 matt Exp $");
 
 #include "opt_ddb.h"
 #include "opt_kgdb.h"
@@ -186,10 +186,10 @@ BootConfig bootconfig;		/* Boot config storage */
 char *boot_args = NULL;
 char *boot_file = NULL;
 
-vm_offset_t physical_start;
-vm_offset_t physical_freestart;
-vm_offset_t physical_freeend;
-vm_offset_t physical_end;
+vaddr_t physical_start;
+vaddr_t physical_freestart;
+vaddr_t physical_freeend;
+vaddr_t physical_end;
 u_int free_pages;
 
 /*int debug_flags;*/
@@ -197,7 +197,7 @@ u_int free_pages;
 int max_processes = 64;		/* Default number */
 #endif				/* !PMAP_STATIC_L1S */
 
-vm_offset_t msgbufphys;
+paddr_t msgbufphys;
 
 #ifdef PMAP_DEBUG
 extern int pmap_debug_level;
@@ -419,7 +419,7 @@ initarm(void *arg)
 	int progress_counter = 0;
 
 #ifdef DO_MEMORY_DISK
-	vm_offset_t md_root_start;
+	vaddr_t md_root_start;
 #define MD_ROOT_SIZE (MEMORY_DISK_ROOT_SIZE * DEV_BSIZE)
 #endif
 
@@ -975,26 +975,6 @@ kgdb_port_init(void)
 #endif
 }
 #endif
-
-static inline void
-writeback_dcache_line(vaddr_t va)
-{
-	/* writeback Dcache line */
-	/* we can't use cpu_dcache_wb_range() here, because cpufuncs for ARM9
-	 * assume write-through cache, and always flush Dcache instead of
-	 * cleaning it. Since Boot loader maps page table with write-back
-	 * cached, we really need to clean Dcache. */
-	__asm("mcr	p15, 0, %0, c7, c10, 1"
-	    : :	"r"(va));
-}
-
-static inline void
-clean_dcache_line(vaddr_t va)
-{
-	/* writeback and invalidate Dcache line */
-	__asm("mcr	p15, 0, %0, c7, c14, 1"
-	    : : "r"(va));
-}
 
 static struct arm32_dma_range smdk2410_dma_ranges[1];
 
